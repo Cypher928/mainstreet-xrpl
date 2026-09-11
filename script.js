@@ -13476,7 +13476,34 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
       <div class="rcs-panel-head">
         <span class="rcs-panel-title">&#x1F4CA; Reconciliation Summary</span>
         ${confidenceBadgeHtml}
-        <span class="rcs-coverage-badge">${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% coverage</span>
+        <!-- "coverage" was the wrong word for this ratio, and the two KPIs a
+             few lines below prove it: THEY are coverage — "Space under lease"
+             and "Covered all year", both 90.0% on Cascade Commons — while this
+             badge read "47.1% coverage" in the same panel head. A manager
+             comparing 47.1% with 90.0% sees the product contradicting itself
+             about how much of the building is covered.
+             WHAT IT ACTUALLY MEASURES: totalBilled ÷ totalPool. The numerator
+             is the sum of each tenant's post-cap totalAllocated; the
+             denominator is the gross invoice total. Coverage is only ONE of
+             the four reductions between them (see the comment above the
+             variance constant: coverage below 100%, non-CAM-eligible invoices,
+             per-tenant category exclusions, and caps), so naming the ratio
+             after that one input mislabels the other three.
+             WHY "allocated" AND NOT "recovery" OR "billed":
+               · "Recovered Revenue" is already a different figure in this
+                 product — cap savings + disputes + exclusions, money protected
+                 rather than money charged. Its own methodology block says so.
+                 Reusing the word here would create a second collision.
+               · "billed" is a claim the panel deliberately refuses to make
+                 while a run cannot be billed — the KPI below switches "Total
+                 Billed" to "Calculated Tenant Allocation" for exactly that
+                 reason, and nothing has been billed here.
+             "Allocated" is the panel's own word for this number (the KPI below,
+             and the ALLOCATED column in the table) and is true whether or not
+             the run is billable. The VALUE is untouched. -->
+        <span class="rcs-coverage-badge"
+          title="Share of the gross expense pool allocated to tenants: ${fmt(totalBilled)} of ${fmt(totalPool)}. Not a coverage figure — see &quot;Space under lease&quot; below for how much of the building a loaded lease covers."
+          >${totalPool > 0 ? (totalBilled / totalPool * 100).toFixed(1) : '—'}% of pool allocated</span>
         ${/* THE ROSTER LINE. On a phone the results table is several screens down
              and scrolls sideways, so the count that answers "who can I bill?"
              is stated here in words, beside the property verdict it qualifies.

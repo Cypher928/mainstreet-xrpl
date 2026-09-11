@@ -368,6 +368,7 @@ const SUITES = [
   { label: 'Invoice duplicate detection',        cmd: 'node test-invoice-duplicates.js' },
   { label: 'Spaces vocabulary & lease intake',   cmd: 'node test-spaces-vocabulary.js' },
   { label: 'Billing readiness consistency',      cmd: 'node test-billing-readiness-consistency.js' },
+  { label: 'CAM summary label truthfulness',     cmd: 'node test-cam-coverage-label.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
