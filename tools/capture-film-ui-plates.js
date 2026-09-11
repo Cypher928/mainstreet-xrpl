@@ -153,13 +153,18 @@ async function shootEl(page, handle, file, pad = 0) {
     const pane = document.getElementById('wsPane-documents');
     if (pane) pane.style.display = 'block';
     if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
+    // The block now collapses to a summary bar on a property whose leases are
+    // all reviewed. A collapsed card is a 0x0 box and the shutter would catch
+    // nothing, so open it explicitly rather than relying on the demo happening
+    // to have a lease in review.
+    try { if (window.PropertyOS) window.PropertyOS.toggleLeaseBlock(true); } catch (_) {}
   });
   await page.waitForTimeout(1600);
   // The side padding is not decoration. This plate is object-fit:cover in the
   // film, so it lands flush against the frame and the beat's camera move
   // (glide × the `arrive` entry) cropped 101px off the left — enough to turn
-  // "Extracted Tenants (5)" into "cted Tenants (5)". Padding the element before
-  // the shutter gives the push its own room to eat: 8% of the plate width each
+  // "Leases from your uploads (5)" into "from your uploads (5)". Padding the
+  // element before the shutter gives the push its own room to eat: 8% each
   // side, against a 7.3% worst-case crop once `pfArrive`'s tail is softened
   // (product-film.js). The card fills the frame almost exactly as the beat ends,
   // which is the arrival the move was aiming at all along.

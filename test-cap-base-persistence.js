@@ -207,9 +207,21 @@ async function openLeaseCard(page) {
     if (typeof renderBulkResults === 'function') renderBulkResults();
   });
   await page.waitForSelector('#btr-0', { state: 'attached', timeout: 15000 });
-  // The card renders collapsed; a person taps it open before the fields exist
-  // on screen. Expand it the same way.
+  // TWO taps, because there are two levels of collapse.
+  //
+  // The lease BLOCK folds to a summary bar on a property whose leases are all
+  // reviewed — which is exactly what this property becomes once the cap and
+  // base are entered and saved, so the second call to this helper (after the
+  // reload) arrives at a collapsed block. The fields are in the DOM but inside
+  // a display:none ancestor, so waiting for them to be VISIBLE times out. A
+  // person taps Open; so does this.
+  //
+  // Then the card's own detail, which renders collapsed and builds its fields
+  // on expand.
   await page.evaluate(() => {
+    if (window.PropertyOS && window.PropertyOS.revealForAnchor) {
+      window.PropertyOS.revealForAnchor(['cardLeases']);
+    }
     const det = document.getElementById('bdet-0');
     if (det && getComputedStyle(det).display === 'none') toggleBulkDetail(0);
   });

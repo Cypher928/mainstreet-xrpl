@@ -3868,6 +3868,9 @@ function _kpiTileNavigate(tab, anchors) {
   if (tab) { try { switchWorkspaceTab(tab); } catch (_) {} }
   var ids = typeof anchors === 'string' ? anchors.split(',') : (Array.isArray(anchors) ? anchors : []);
   requestAnimationFrame(function () {
+    // A collapsed card is still the target. Open it before choosing, or the
+    // "prefer a visible target" rule below quietly picks the fallback anchor.
+    try { if (window.PropertyOS && window.PropertyOS.revealForAnchor) window.PropertyOS.revealForAnchor(ids); } catch (_) {}
     var el = null;
     for (var i = 0; i < ids.length; i++) {
       var id = (ids[i] || '').trim();
@@ -8697,7 +8700,11 @@ function renderBulkResults() {
 
   el.innerHTML = `
     <div class="bulk-results-head">
-      <h3>Extracted Tenants (${tenants.length})</h3>
+      <!-- Not a tenant inventory: these are the leases just parsed out of the
+           uploaded PDFs, waiting to be checked. The Spaces list above is the
+           inventory. Naming this one after its SOURCE rather than after its
+           subject keeps the two from competing for the same job. -->
+      <h3>Leases from your uploads (${tenants.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
     ${_buildPreReconSummary(tenants)}
@@ -21070,8 +21077,15 @@ function openReviewItemFix(tenantId, field) {
   if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces');
   if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
   if (typeof renderBulkResults === 'function') renderBulkResults();
-  // The card renders collapsed and its detail is built on expand, so the target
-  // does not exist until after both.
+  // TWO levels of collapse now sit between here and the field, and both have to
+  // come open or this lands on nothing. The outer one is the lease block itself:
+  // it folds away on a property whose leases are all reviewed, and a lease can
+  // be `manually_verified` — reviewer-confirmed, so the block is "ready" — while
+  // the review queue still carries findings for it. That is the case where this
+  // would expand a detail inside a display:none card and scroll to nowhere.
+  try { if (window.PropertyOS && window.PropertyOS.revealForAnchor) window.PropertyOS.revealForAnchor(['cardLeases']); } catch (_) {}
+  // The inner one is the card's own detail, which is built on expand, so the
+  // target does not exist until after both.
   setTimeout(() => {
     const det = document.getElementById('bdet-' + i);
     if (det && getComputedStyle(det).display === 'none' && typeof toggleBulkDetail === 'function') {
@@ -24409,6 +24423,9 @@ async function savePropertyAndContinue() {
   // Tenant" or "Ask the Lease" and no drop zone at all — the user is told to
   // upload leases and handed a screen with nowhere to drop one.
   if (typeof switchLeaseTab === 'function') { try { switchLeaseTab('bulk'); } catch (_) {} }
+  // A brand-new property has no leases, so the block renders expanded — but
+  // never rely on that: scrolling to a hidden card strands the hand-off.
+  try { if (window.PropertyOS && window.PropertyOS.revealForAnchor) window.PropertyOS.revealForAnchor(['cardLeases']); } catch (_) {}
   const card = document.getElementById('cardLeases');
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   _setupNextSync();

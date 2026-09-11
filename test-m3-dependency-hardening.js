@@ -83,7 +83,11 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   is(total >= 28, 'A4 the inventory is not trivially small', total + ' names');
   eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'SourceValues'],
      'A5 three explicit module dependencies');
-  eq(INVENTORY.byKind.browser_only.length, 19, 'A6 nineteen browser-only names');
+  // 20 since the Spaces slice: property-workspace.js reads window.PropertyOS to
+  // reveal a COLLAPSED #cardLeases before navigating to it. The count is pinned
+  // deliberately — a name drifting into browser_only unnoticed is the thing this
+  // file exists to prevent — so moving it is a decision, recorded here.
+  eq(INVENTORY.byKind.browser_only.length, 20, 'A6 twenty browser-only names');
   eq(INVENTORY.byKind.env.slice().sort(),
      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_URL', 'VERCEL_ENV', 'XRPL_NETWORK'],

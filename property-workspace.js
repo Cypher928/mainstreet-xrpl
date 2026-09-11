@@ -153,6 +153,9 @@ window.PropertyWorkspace = (function () {
     if (!it || !it.nav) return;
     try { if (window.switchWorkspaceTab) window.switchWorkspaceTab(it.nav.tab); } catch (_e) {}
     var el = null, any = null, an = it.nav.anchors || [];
+    // Same reason as _kpiTileNavigate: reveal a collapsed target before the
+    // visibility test below decides it is not there.
+    try { if (window.PropertyOS && window.PropertyOS.revealForAnchor) window.PropertyOS.revealForAnchor(an); } catch (_e) {}
     for (var i = 0; i < an.length; i++) {
       var c = document.getElementById(an[i]);
       if (c && !any) any = c;

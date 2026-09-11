@@ -197,6 +197,179 @@ window.PropertyOS = (function () {
     setup.parentNode.insertBefore(bar, setup);
   }
 
+  // ── The lease block: an input surface, not a second inventory ──────────────
+  //
+  // _reparent() moves #cardLeases into the Spaces pane, so the tab shows the
+  // five spaces as cards — "📍 Whole Health Market … Open space →" — and then,
+  // immediately below, the same five again as "Extracted Tenants (5)" with
+  // Edit / View Lease / Remove. Two nouns for one set of things, two action
+  // sets, and nothing saying how they relate. A manager has to work out
+  // unaided that they are the same tenants and which list is authoritative.
+  //
+  // The block is the INPUT: upload a lease, and a space appears above. It stays
+  // — every control in it is reachable and several exist nowhere else — but it
+  // is framed as the source for the list above rather than as a rival to it,
+  // and it gets out of the way when there is no work in it.
+  //
+  // WHEN IT GETS OUT OF THE WAY is the whole question, and the answer is
+  // conservative: only when every tenant is ready. Anything unresolved — a
+  // lease needing review, missing data, or no tenants at all — and the block is
+  // the job, so it stays open. Failing open is deliberate: a collapsed block
+  // that hides work is worse than an expanded one that shows none.
+  //
+  // PURE, and injectable. `reviewStateOf` defaults to ReviewEngine but is a
+  // parameter so this decision can be exercised directly rather than inferred
+  // from rendered markup.
+  //
+  // The READY set is an allowlist, not the complement of an attention list.
+  // ReviewEngine returns exactly four statuses — incomplete, needs_review,
+  // verified, manually_verified — and only the last two mean "done". Listing
+  // what counts as ready means a fifth status added later lands in "needs a
+  // look" instead of silently collapsing the block over work nobody has seen.
+  var LEASE_BLOCK_READY_STATES = ['verified', 'manually_verified'];
+
+  function leaseBlockState(tenants, opts) {
+    var list = Array.isArray(tenants) ? tenants.filter(Boolean) : [];
+    var o = opts || {};
+    var stateOf = typeof o.reviewStateOf === 'function' ? o.reviewStateOf : null;
+    if (!stateOf) {
+      var g = (typeof window !== 'undefined') ? window : null;
+      var RE = g && g.ReviewEngine;
+      if (RE && typeof RE.getTenantReviewState === 'function') {
+        stateOf = function (t) { return RE.getTenantReviewState(t, o.reconResults || []); };
+      }
+    }
+
+    if (!list.length) {
+      return { collapsed: false, reason: 'no_tenants', needsAttention: 0, total: 0 };
+    }
+    // No way to ask about readiness ⇒ do not claim there is none.
+    if (!stateOf) {
+      return { collapsed: false, reason: 'review_state_unavailable',
+               needsAttention: null, total: list.length };
+    }
+
+    var needing = 0;
+    for (var i = 0; i < list.length; i++) {
+      var s;
+      try { s = stateOf(list[i]); } catch (_e) { s = null; }
+      // An unreadable state is not a clean state.
+      if (LEASE_BLOCK_READY_STATES.indexOf(s) === -1) needing++;
+    }
+    return needing > 0
+      ? { collapsed: false, reason: 'needs_attention', needsAttention: needing, total: list.length }
+      : { collapsed: true,  reason: 'all_ready',       needsAttention: 0,       total: list.length };
+  }
+
+  /** The one-line stand-in the lease block collapses to. Inserted once. */
+  function _ensureLeaseSummary(leases) {
+    if (!leases || _d('posLeaseSummary')) return;
+    var bar = document.createElement('div');
+    bar.id = 'posLeaseSummary';
+    bar.className = 'pos-setup-sum pos-lease-sum';
+    bar.style.display = 'none';
+    leases.parentNode.insertBefore(bar, leases);
+  }
+
+  function toggleLeaseBlock(force) {
+    var leases = _d('cardLeases'), bar = _d('posLeaseSummary');
+    if (!leases || !bar) return;
+    var open = (force != null) ? !!force : (leases.style.display === 'none');
+    leases.style.display = open ? '' : 'none';
+    bar.classList.toggle('pos-setup-sum--open', open);
+    var btn = _d('posLeaseToggle');
+    if (btn) btn.textContent = open ? 'Hide' : 'Open';
+  }
+
+  // Every card this module is allowed to collapse, and how to open it. A
+  // collapsed card is still a NAVIGATION TARGET: four places in the app scroll
+  // to #cardLeases ("Review leases", "Add cap", "View leases", and the hand-off
+  // at the end of property setup), and a target with display:none is a link
+  // that goes nowhere — or, worse, silently lands on the fallback anchor and
+  // leaves the manager looking for a control that is right there but hidden.
+  //
+  // So: one list, one reveal, called by every navigator. Adding a collapsible
+  // card here is what keeps its deep links honest.
+  var _COLLAPSIBLE = { cardLeases: function () { toggleLeaseBlock(true); },
+                       cardSetup:  function () { toggleSetup(true); } };
+
+  /**
+   * Open any collapsed card named in an anchor list, so navigation that targets
+   * it finds it visible. Accepts an array or a comma-separated string, matching
+   * both anchor conventions in the app. Returns the ids it opened.
+   */
+  function revealForAnchor(anchors) {
+    var ids = typeof anchors === 'string' ? anchors.split(',')
+            : (Array.isArray(anchors) ? anchors : []);
+    var opened = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = String(ids[i] || '').trim();
+      if (!_COLLAPSIBLE[id]) continue;
+      var el = _d(id);
+      if (!el || el.style.display !== 'none') continue;
+      try { _COLLAPSIBLE[id](); opened.push(id); } catch (_e) {}
+    }
+    return opened;
+  }
+
+  /**
+   * Render the summary and decide whether the block starts collapsed.
+   *
+   * NEVER COLLAPSE OUT FROM UNDER SOMEONE USING IT. This is the same guard the
+   * setup card carries, and for the same reason: the block holds file inputs, a
+   * tenant-name field and a filter box, and collapsing mid-interaction drops
+   * focus and reflows the page. Collapsing is for ARRIVING at a property whose
+   * leases are already in; it is not for the moment a tenant's last field is
+   * filled in.
+   */
+  function renderLeaseSummary(property, opts) {
+    var leases = _d('cardLeases');
+    if (!leases) return;
+    _ensureLeaseSummary(leases);
+    var bar = _d('posLeaseSummary');
+    if (!bar) return;
+
+    var tenants = (property && Array.isArray(property.tenants)) ? property.tenants.filter(Boolean) : [];
+    var snap = property && (property.camReconciliation || property.results);
+    var st = leaseBlockState(tenants, { reconResults: (snap && snap.results) || [] });
+
+    bar.style.display = '';
+    bar.innerHTML =
+      '<span class="pos-setup-name">\u{1F4C2} Lease intake</span>' +
+      '<span class="pos-setup-meta">' + _esc(leaseSummaryLine(st)) +
+        ' · upload or edit the leases behind the spaces above</span>' +
+      '<button type="button" class="pos-setup-edit" id="posLeaseToggle"' +
+        ' onclick="PropertyOS.toggleLeaseBlock()">Open</button>';
+
+    var active = document.activeElement;
+    if (active && leases.contains(active)) return;
+    // A refresh in place, not an arrival — leave whatever the manager set alone.
+    if (opts && opts.allowCollapse === false) { _syncLeaseToggleLabel(); return; }
+
+    // Arriving: the state decides. Work in the block ⇒ open it.
+    if (!st.collapsed) { toggleLeaseBlock(true); return; }
+    toggleLeaseBlock(false);
+  }
+
+  /** What the collapsed bar says. Named and pure so the words can be asserted. */
+  function leaseSummaryLine(st) {
+    var s = st || {};
+    if (!s.total) return 'No leases uploaded yet';
+    var leases = s.total + ' lease' + (s.total === 1 ? '' : 's');
+    // Readiness could not be determined — say that, rather than implying none.
+    if (s.needsAttention == null) return leases + ' on file · review status unavailable';
+    if (s.needsAttention > 0) {
+      return s.needsAttention + ' of ' + leases +
+        (s.needsAttention === 1 ? ' still needs' : ' still need') + ' a look';
+    }
+    return leases + ' on file, all reviewed';
+  }
+
+  function _syncLeaseToggleLabel() {
+    var leases = _d('cardLeases'), btn = _d('posLeaseToggle');
+    if (leases && btn) btn.textContent = leases.style.display === 'none' ? 'Open' : 'Hide';
+  }
+
   function _isConfigured() {
     var n = _d('propertyName'), q = _d('totalSqft');
     var name = n ? String(n.value || '').trim() : '';
@@ -827,6 +1000,9 @@ window.PropertyOS = (function () {
     try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
     // Collapse the first-run setup card once the building is configured.
     try { renderSetupSummary(property, opts); } catch (_) {}
+    // And the lease intake block, once every lease in it has been reviewed.
+    // Same guard, same reason — see renderLeaseSummary.
+    try { renderLeaseSummary(property, opts); } catch (_) {}
 
     var PR = window.PropertyReference;   // declared early: the documents section uses it
     var invs = invoices(property);
@@ -1127,6 +1303,7 @@ window.PropertyOS = (function () {
       '.pos-setup-meta{font-size:0.78rem;color:var(--text-4,#64748B);}',
       '.pos-setup-edit{margin-left:auto;font:600 0.74rem/1 inherit;color:var(--text-3,#94A3B8);background:rgba(var(--line-rgb,255,255,255),0.05);border:1px solid rgba(var(--line-rgb,255,255,255),0.14);border-radius:7px;padding:6px 12px;cursor:pointer;min-height:28px;}',
       '.pos-setup-edit:hover{color:var(--text-1,#E2E8F0);}',
+      '.pos-lease-sum{margin-top:18px;}',
       '.pos-add{font:700 0.76rem/1 inherit;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';border-radius:8px;padding:9px 15px;cursor:pointer;margin-bottom:12px;min-height:36px;}',
       '.pos-add:hover{filter:brightness(1.08);}',
       '.pos-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}',
@@ -1286,6 +1463,9 @@ window.PropertyOS = (function () {
     BUILDING_SYSTEMS: BUILDING_SYSTEMS, systemLabel: systemLabel,
     setRecordFilter: setRecordFilter, addRecord: addRecord, editRecord: editRecord, propertyRecords: propertyRecords,
     toggleSetup: toggleSetup, renderSetupSummary: renderSetupSummary,
+    leaseBlockState: leaseBlockState, leaseSummaryLine: leaseSummaryLine,
+    toggleLeaseBlock: toggleLeaseBlock, revealForAnchor: revealForAnchor,
+    renderLeaseSummary: renderLeaseSummary,
     relatedGroup: relatedGroup, systemStory: systemStory,
     propertyDocuments: propertyDocuments, openRecord: openRecord, ensureInvoiceIds: ensureInvoiceIds,
     attachToRecord: attachToRecord, pickAttachment: pickAttachment,
