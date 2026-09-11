@@ -24838,6 +24838,23 @@ function _lsLoad(id) {
  * Returns null when input is not an object. Never throws.
  * Sets _schemaVersion and _migrated on the returned object.
  */
+/**
+ * Is this value an identifier a record can actually be addressed by?
+ *
+ * Named and separate because "has an id" is a question about identity, not a
+ * question about truthiness, and conflating the two deleted every property's
+ * first dispute (see the dispute filter below). Zero is a perfectly good
+ * identifier; blank is not.
+ *
+ *   accepts   any finite number (0, 4, 9, -1), any non-blank string ('0', a UUID)
+ *   rejects   null, undefined, '', '   ', NaN, Infinity, booleans, objects
+ */
+function _isUsableRecordId(v) {
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v === 'string') return v.trim() !== '';
+  return false;
+}
+
 function normalizePropertyState(data) {
   if (!data || typeof data !== 'object') return null;
   const schemaVersion = data._schemaVersion || 0;
@@ -24867,7 +24884,27 @@ function normalizePropertyState(data) {
   const disputes = (() => {
     if (!Array.isArray(data.disputes)) return [];
     return data.disputes.filter(d => {
-      if (!d || typeof d !== 'object' || !d.id) { malformed = true; return false; }
+      // WAS `!d.id`, AND IT DELETED A DISPUTE ON EVERY PROPERTY.
+      //
+      // nextDisputeId starts at 0, so the FIRST dispute anyone ever files
+      // carries id 0 — and `!0` is true. This guard classified it as malformed,
+      // dropped it from the record, and set `malformed`, which raises an audit
+      // event claiming the data was corrupt. It was not: it was dispute #1.
+      //
+      // On the demo the effect was visible and confusing in two places at once.
+      // The register numbered its disputes #2 and #3 with no #1, because #1 had
+      // been deleted on load; and the property timeline still carried "Dispute
+      // opened / resolved — FitZone Athletics" for a dispute the register no
+      // longer had. Neither reads as data loss. Both were.
+      //
+      // A MISSING ID IS null/undefined/blank, NEVER ZERO. The values this
+      // changes, and only these: numeric 0 was rejected and is now kept, and
+      // NaN, Infinity, true and a non-array object — none of which this app can
+      // produce as an id, and none of which is one — were accepted by
+      // truthiness and are now rejected. '' and '  ' stay rejected; '0' and any
+      // other non-blank string stay accepted, which is the id contract the rest
+      // of the app already keeps (tenants carry crypto.randomUUID() strings).
+      if (!d || typeof d !== 'object' || !_isUsableRecordId(d.id)) { malformed = true; return false; }
       return true;
     });
   })();

@@ -370,6 +370,7 @@ const SUITES = [
   { label: 'Billing readiness consistency',      cmd: 'node test-billing-readiness-consistency.js' },
   { label: 'CAM summary label truthfulness',     cmd: 'node test-cam-coverage-label.js' },
   { label: 'Ask AI intent coverage',             cmd: 'node test-ai-intent-coverage.js' },
+  { label: 'Dispute id zero survives load',      cmd: 'node test-dispute-id-zero.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
