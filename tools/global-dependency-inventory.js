@@ -135,6 +135,7 @@ const CLASSIFICATION = {
   openDisputeWorkspace:{ kind: 'browser_only', why: 'navigates the browser to the dispute panel; reached only from a click handler in tenant-space.js' },
   generateTenantStatement: { kind: 'browser_only', why: 'renders a tenant statement into the page; a UI action reached only from a click handler' },
   _ccFlashEl:       { kind: 'browser_only', why: 'DOM highlight effect' },
+  tenantBillingState: { kind: 'browser_only', why: 'the billing verdict for one tenant, as the CAM screen computes it. tenant-space.js reads it so its financial tile reports the same answer the CAM table does instead of deriving its own from the calculation status. It closes over the browser\'s reconciliation globals (lastResults, lastTotal, buildAuditSummary), so it has no meaning on a server; absence is the handled branch — billingStatusLabel renders "Unknown" rather than assuming a tenant is billable' },
   PropertyOS:       { kind: 'browser_only', why: 'the Property subject page. property-workspace.js and script.js read it only to call revealForAnchor(), which opens a COLLAPSED card so navigation that targets it finds it visible — pure DOM, pure navigation, with no meaning on a server. Both call sites guard it with if (window.PropertyOS && window.PropertyOS.revealForAnchor), so absence is the handled branch and the anchor loop simply falls through to the next visible target' },
   FileReader:       { kind: 'browser_only', why: 'bare browser global at tenant-space.js:1114, inside an upload handler assemble() never reaches' },
 

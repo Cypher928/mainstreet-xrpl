@@ -84,10 +84,14 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'SourceValues'],
      'A5 three explicit module dependencies');
   // 20 since the Spaces slice: property-workspace.js reads window.PropertyOS to
-  // reveal a COLLAPSED #cardLeases before navigating to it. The count is pinned
-  // deliberately — a name drifting into browser_only unnoticed is the thing this
-  // file exists to prevent — so moving it is a decision, recorded here.
-  eq(INVENTORY.byKind.browser_only.length, 20, 'A6 twenty browser-only names');
+  // reveal a COLLAPSED #cardLeases before navigating to it.
+  // 21 since the billing-readiness slice: tenant-space.js reads
+  // window.tenantBillingState so its financial tile reports the CAM screen's
+  // verdict instead of deriving its own from the calculation status.
+  // The count is pinned deliberately — a name drifting into browser_only
+  // unnoticed is the thing this file exists to prevent — so moving it is a
+  // decision, recorded here.
+  eq(INVENTORY.byKind.browser_only.length, 21, 'A6 twenty-one browser-only names');
   eq(INVENTORY.byKind.env.slice().sort(),
      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_URL', 'VERCEL_ENV', 'XRPL_NETWORK'],

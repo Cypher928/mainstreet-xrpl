@@ -94,6 +94,43 @@ window.TenantSpace = (function () {
   }
   function _money(n) { try { return '$' + Math.round(Number(n)).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
 
+  // ── Can this tenant be billed? Ask the one place that decides. ──────────────
+  //
+  // This space's financial tile used to answer that itself:
+  //
+  //     var status = (cr.status === 'needs review') ? 'Needs review' : 'Ready';
+  //
+  // `cr.status` is the CALCULATION status. On Cascade Commons it is 'calculated'
+  // for every tenant, so the tile printed "Ready" five times while the CAM
+  // screen — reading AuditExposure.billingReadiness through _tenantBillingState
+  // — printed "Blocked · property" five times, for the same five tenants in the
+  // same run. Whether a statement may issue was never a question this tile was
+  // entitled to answer, and the answer it invented was the optimistic one.
+  //
+  // So it asks instead. `window.tenantBillingState` builds the exposure and
+  // delegates to the same _tenantBillingState the CAM table calls; nothing is
+  // recomputed here and no second rule exists to drift.
+  //
+  // UNKNOWN IS NOT READY. A null verdict means the question could not be
+  // answered — no audit module, no results loaded. The label says so. Printing
+  // "Ready" because we failed to ask is precisely the defect being removed.
+  //
+  // `billingStateOf` is injectable so this decision can be exercised directly
+  // rather than inferred from rendered markup.
+  var BILLING_STATUS_UNKNOWN = 'Unknown';
+
+  function billingStatusLabel(tenantName, opts) {
+    var o = opts || {};
+    var fn = (typeof o.billingStateOf === 'function') ? o.billingStateOf
+           : ((typeof window !== 'undefined' && typeof window.tenantBillingState === 'function')
+              ? window.tenantBillingState : null);
+    if (!fn || !tenantName) return BILLING_STATUS_UNKNOWN;
+    var st;
+    try { st = fn(tenantName); } catch (_e) { st = null; }
+    if (!st || typeof st.label !== 'string' || !st.label) return BILLING_STATUS_UNKNOWN;
+    return st.label;
+  }
+
   // Scope events to a space. Matches on subject id and tenantId, and falls back
   // to the subject's recorded label (the space name). The label fallback makes
   // scoping resilient if a persisted property's tenant ids ever drift from the
@@ -424,7 +461,16 @@ window.TenantSpace = (function () {
       // escaped it. A variance is now either persisted with its expected amount
       // or it is not a number this tile is entitled to invent: it shows "—".
       var vari = (cr.variance != null) ? cr.variance : null;
-      var status = (cr.status === 'needs review') ? 'Needs review' : 'Ready';
+      // WAS: (cr.status === 'needs review') ? 'Needs review' : 'Ready'.
+      // See billingStatusLabel — that read the calculation status and called
+      // everything else Ready, including five tenants the audit authority was
+      // blocking at the same moment.
+      // Keyed off the CAM RESULT's own name, which is the exact key the CAM
+      // screen uses (`results.forEach(r => _tenantBilling[r.name] = …)`). Using
+      // rec.space.name would drift, because that one falls back to the literal
+      // "Space" for an unnamed tenant and would look up a tenant that does not
+      // exist — silently producing a verdict about nobody.
+      var status = billingStatusLabel(cr.tenantName || cr.name || null);
       var vStr = vari == null ? '—' : ((vari > 0 ? '+' : '') + _money(vari));
       // Summary only — the full reconciliation stays in CAM.
       camResultHtml =
@@ -1455,6 +1501,10 @@ window.TenantSpace = (function () {
   return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
            addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); },
            openActivity: openActivity,
+           // Whether a statement may issue is one verdict with one source. This
+           // is exported so the tile's answer can be CALLED in a test rather
+           // than read off rendered markup.
+           billingStatusLabel: billingStatusLabel,
            // SEC-1 test seam. The stored-vs-inline decision picks between a
            // signed-URL round trip and a direct open, so it is worth asserting
            // as BEHAVIOUR rather than grepping for the branch in the source.

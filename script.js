@@ -8321,12 +8321,53 @@ function _tenantConfLevel(d) {
   return d._confidence || (d.extractionFailed ? 'failed' : d._needsReview ? 'medium' : null);
 }
 
+/**
+ * The tile counts, from the SAME state the row badges read.
+ *
+ * `needsAttn` counted the raw `t._needsReview` extraction flag while the badge
+ * on every row beneath it read the DERIVED review state. Harbor Nail & Beauty
+ * Studio is needs_review because it is an NNN lease with no cap percentage —
+ * derived, with the raw flag false — so the tile said "5 READY" directly above
+ * a row badged "⚠ Needs Review". Same list, same screen, two answers.
+ *
+ * This is the same fix already made one line of markup away, where the card's
+ * glyph read `d._needsReview` while its badge read the derived state: "One
+ * source for both."
+ *
+ * `reviewStateOf` is injectable so the tally can be exercised directly rather
+ * than inferred from rendered markup. It defaults to the file's own
+ * getTenantReviewState — the identical wrapper the row badge calls, supplying
+ * the same lastResults — so the two cannot consult different states.
+ *
+ * The pending/failed exclusions are PRESERVED, not folded into the review
+ * state. ReviewEngine reports a failed extraction as 'incomplete', so counting
+ * it here as well would tally one tenant twice and drive `ready` negative.
+ */
+function _leaseIntakeTally(tenants, opts) {
+  const list = Array.isArray(tenants) ? tenants.filter(Boolean) : [];
+  const o = opts || {};
+  const stateOf = (typeof o.reviewStateOf === 'function')
+    ? o.reviewStateOf
+    : (t) => { try { return getTenantReviewState(t); } catch (_) { return null; } };
+  const total   = list.length;
+  const pending = list.filter(t => t.status === 'pending').length;
+  const failed  = list.filter(t => t.extractionFailed).length;
+  const needsAttn = list.filter(t => {
+    if (t.extractionFailed || t.status === 'pending') return false;
+    const s = stateOf(t);
+    // An unreadable state is not a clean state — it needs a look.
+    return s == null || s === 'needs_review' || s === 'incomplete';
+  }).length;
+  return { total, pending, failed, needsAttn, ready: total - pending - failed - needsAttn };
+}
+
 function _buildPreReconSummary(tenants) {
-  const total    = tenants.length;
-  const pending  = tenants.filter(t => t.status === 'pending').length;
-  const failed   = tenants.filter(t => t.extractionFailed).length;
-  const needsAttn = tenants.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
-  const ready    = total - pending - failed - needsAttn;
+  const _tally = _leaseIntakeTally(tenants);
+  const total    = _tally.total;
+  const pending  = _tally.pending;
+  const failed   = _tally.failed;
+  const needsAttn = _tally.needsAttn;
+  const ready    = _tally.ready;
 
   // Leases expiring within 12 months from today
   const today = new Date();
@@ -19343,6 +19384,38 @@ function _tenantBillingState(tenantName, exposure) {
            reason: readiness.reason, propertyLevel, exclusionOnly: false, readiness, exclusion,
            cta: '\u26D4 Why it can\u2019t bill' };
 }
+
+/**
+ * The tenant's billing state, for a surface that lives OUTSIDE this file.
+ *
+ * Tenant Space showed a "Status" cell in its financial tile and derived it from
+ * `camResult.status !== 'needs review'`. That is the CALCULATION status \u2014 its
+ * value on every Cascade Commons tenant is 'calculated' \u2014 so the cell read
+ * "Ready" for all five while this file's own table read "Blocked \u00B7 property"
+ * for all five, off the audit authority. The space is where a manager goes to
+ * ask "can I bill this tenant?", and it was answering yes on a reconciliation
+ * that refuses to issue a single statement.
+ *
+ * NO NEW CALCULATION. This builds the exposure the way _statementReadinessBlock
+ * already does and hands it to _tenantBillingState \u2014 the same function the CAM
+ * table calls, which in turn calls AuditExposure.billingReadiness(x, tenant).
+ * One verdict, reached one way, wherever it is printed.
+ *
+ * Returns null when the question cannot be answered here \u2014 no audit module, no
+ * results loaded, no summary. Null is "unknown", and a caller must render it as
+ * unknown rather than as an all-clear; that is the whole failure being fixed.
+ */
+window.tenantBillingState = function (tenantName) {
+  try {
+    const AXs = window.AuditExposure;
+    if (!AXs || typeof lastResults === 'undefined' || !lastResults.length) return null;
+    let summary;
+    try { summary = buildAuditSummary(); } catch (_) { return null; }
+    const exposure = AXs.deriveExposure(summary, lastTotal || 0);
+    if (!exposure) return null;
+    return _tenantBillingState(tenantName, exposure);
+  } catch (_) { return null; }
+};
 
 function _statementReadinessBlock(tenantName) {
   const AXs = window.AuditExposure;
