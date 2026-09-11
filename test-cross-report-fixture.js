@@ -220,7 +220,17 @@ function run(box, src, expr) {
 
 // ── Report 1: the audit finding set (shared by Exception Summary + panel) ────
 
-const SUSPICIONS_SRC = fn('_detectInvoiceSuspicions');
+// _detectInvoiceSuspicions delegates its duplicate grouping to the shared rule,
+// so the sandbox needs that rule and the threshold it reads. Extracted from
+// script.js rather than re-implemented, for the same reason the dispute helpers
+// and CamPool are: a local copy would let this fixture agree with a script.js
+// that had drifted from the authority.
+const DUP_LIMIT_SRC = (() => {
+  const m = scriptSrc.match(/const _DUP_NEAR_DAY_LIMIT = \d+;/);
+  if (!m) throw new Error('_DUP_NEAR_DAY_LIMIT not found in script.js');
+  return m[0] + '\n';
+})();
+const SUSPICIONS_SRC = DUP_LIMIT_SRC + fn('_findDuplicateInvoices') + fn('_detectInvoiceSuspicions');
 
 function auditSummary() {
   const box = baseSandbox();

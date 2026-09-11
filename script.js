@@ -9329,6 +9329,42 @@ async function handleBatchInvoices(fileList) {
   });
 }
 
+/**
+ * The duplicate badge for one register row, from a verdict the shared rule
+ * already reached. Named and pure so its behaviour can be CALLED rather than
+ * grepped — mutation testing showed source assertions on it were hollow:
+ * blanking the whole badge, or dropping the vendor from one of its two
+ * branches, left every asserted string in place.
+ *
+ * Returns '' when the rule did not identify this invoice. It never decides
+ * anything itself.
+ */
+function _dupBadgeHtml(dup, i) {
+  if (!dup) return '';
+  const what = dup.kind === 'exact'
+    ? `\u26A0 Duplicate \u2014 ${esc(dup.displayVendor)} ${fmt(dup.amount)} on ${esc(dup.date)} appears ${dup.occurrences} times`
+    : `\u26A0 Possible duplicate \u2014 ${esc(dup.displayVendor)} ${fmt(dup.amount)} billed twice within ${dup.daysDiff} day${dup.daysDiff === 1 ? '' : 's'}`;
+  return `<span class="dup-row-badge" onclick="event.stopPropagation()">
+        ${what}
+        <button class="dup-row-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
+      </span>`;
+}
+
+/**
+ * What the Remove prompt says. "Remove this invoice from the list?" was the
+ * same sentence whichever row was clicked, on a register where rows repeat by
+ * vendor and amount and differ only by date — so the one detail that tells them
+ * apart was the one the prompt withheld. Named and pure for the same reason as
+ * above.
+ */
+function _removeInvoiceConfirmText(d) {
+  const who  = (d && (d.vendorName || d.vendor)) || '(unknown vendor)';
+  const amt  = (d && d.amount !== '' && d.amount != null)
+    ? fmt(parseFloat(d.amount) || 0) : 'no amount';
+  const when = (d && (d.invoiceDate || '').trim()) || 'no date';
+  return `Remove this invoice from the list?\n\n${who}\n${amt} \u00B7 ${when}`;
+}
+
 function renderInvResults() {
   const el = document.getElementById('invResults');
   if (!invoiceData.length) {
@@ -9337,6 +9373,11 @@ function renderInvResults() {
       'Upload invoices in the CAM tab before running a reconciliation.');
     return;
   }
+
+  // ONE duplicate verdict for the whole register, from the shared rule, derived
+  // once rather than per row — the old inline badge re-scanned every other
+  // invoice inside the map.
+  const _dupIndex = _findDuplicateInvoices(invoiceData).byIndex;
 
   const rows = invoiceData.map((d, i) => {
     const conf = d.confidence || {};
@@ -9361,23 +9402,8 @@ function renderInvResults() {
       `<option value="${rt.key}"${d.reserveType === rt.key ? ' selected' : ''}>${esc(rt.label)}</option>`
     ).join('') : '';
 
-    // Inline duplicate detection — check against all other items
-    let dupBadge = '';
-    if (d.vendorName && d.amount !== '') {
-      const amt = parseFloat(d.amount);
-      for (let j = 0; j < invoiceData.length; j++) {
-        if (j === i) continue;
-        const oth = invoiceData[j];
-        if (!oth || !oth.vendorName || oth.amount === '') continue;
-        if (Math.abs(amt - parseFloat(oth.amount)) <= 1 && similarVendor(d.vendorName, oth.vendorName)) {
-          dupBadge = `<span class="dup-row-badge" onclick="event.stopPropagation()">
-            ⚠ Possible duplicate of ${esc(oth.vendorName)}
-            <button class="dup-row-remove" onclick="event.stopPropagation();removeInvItem(${i})">Remove</button>
-          </span>`;
-          break;
-        }
-      }
-    }
+    // Duplicate badge — from the SHARED rule, resolved once above the map.
+    const dupBadge = _dupBadgeHtml(_dupIndex.get(i), i);
 
     // ── Verify blocks: computed explicitly for each field ──────────────────
     function _vblock(score, fieldName) {
@@ -9781,7 +9807,12 @@ function refreshInvSummary(i) {
 }
 
 async function removeInvItem(i) {
-  if (!confirm('Remove this invoice from the list?')) return;
+  // NAME WHAT IS ABOUT TO GO. "Remove this invoice from the list?" is the same
+  // sentence whichever row was clicked, on a register where rows repeat by
+  // vendor and amount and differ only by date — so the one detail that tells
+  // them apart was the one detail the prompt withheld. Reads the record, adds
+  // no step, and removal itself is unchanged.
+  if (!confirm(_removeInvoiceConfirmText(invoiceData[i]))) return;
   // PW-1 — stamp stable ids and migrate any positional Related-Items link
   // BEFORE the splice. After it, every index past `i` means a different
   // invoice, and a link recorded as "invoice 3" would silently re-point.
@@ -15642,12 +15673,46 @@ function _buildStaticDisputeExplanation(d) {
 // invoiceDate, fileUrl, fileName). Returns an array of
 // { severity: 'red'|'yellow', title, detail } objects.
 // Rules are deterministic and explainable — no ML required.
-function _detectInvoiceSuspicions(invoices) {
-  const flags = [];
-  if (!invoices.length) return flags;
+/**
+ * WHAT COUNTS AS A DUPLICATE INVOICE — the one rule, used by both surfaces.
+ *
+ * This was two rules. The audit summary's, below, is date-aware and correct: an
+ * exact duplicate shares vendor, amount AND DATE; a near duplicate shares vendor
+ * and amount and falls within seven days. Anything further apart is a recurring
+ * charge and is not flagged.
+ *
+ * The invoice register drew its own badge from `same vendor && |Δamount| <= 1`,
+ * with no date at all, and hung a Remove button on it. On the demo property that
+ * put "⚠ Possible duplicate — Remove" on 11 of 26 rows — every quarterly
+ * management, janitorial and security retainer — while the audit summary on the
+ * same screen reported "No duplicate or suspicious invoice patterns detected".
+ * Two answers to one question, and the destructive button was on the wrong one.
+ *
+ * TWO DIVERGENCES ARE RESOLVED IN THE AUTHORITY'S FAVOUR, deliberately:
+ *
+ *   amount   the authority keys on `amount.toFixed(2)` — equal to the cent. The
+ *            badge's ±$1 tolerance was not a documented intent, it was a looser
+ *            rule on the surface with the delete button, and it flags charges
+ *            that genuinely differ. Exact-cent equality it is.
+ *   vendor   the authority compares the normalised name; the badge used the
+ *            fuzzy similarVendor(). Fuzzy matching decides "Austin Energy" and
+ *            "Austin Energy Inc" are one vendor, which is a judgement the audit
+ *            engine does not make and which nothing here should make on its own.
+ *
+ * AN UNDATED INVOICE IS NEVER A DUPLICATE. The authority excludes it from both
+ * checks (`if (!r.date) return` and the `!isNaN(r.ts)` filter), because the
+ * evidence for the claim is the date and there isn't one. That refusal is
+ * preserved rather than reasoned around.
+ *
+ * Returns the normalised rows the other suspicion checks also use, the groups
+ * the flags are built from, and `byIndex` — what each invoice IS, for a surface
+ * that renders per row.
+ */
+const _DUP_NEAR_DAY_LIMIT = 7;
 
-  // Normalised view used by all checks
-  const rows = invoices.map((inv, idx) => {
+function _findDuplicateInvoices(invoices) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const rows = (Array.isArray(invoices) ? invoices : []).map((inv, idx) => {
     const vendor = (inv.vendorName || inv.vendor || '').toLowerCase().trim();
     const amount = parseFloat(inv.amount) || 0;
     const date   = (inv.invoiceDate || '').trim();
@@ -15666,19 +15731,66 @@ function _detectInvoiceSuspicions(invoices) {
     };
   }).filter(r => r.vendor && r.amount > 0);
 
-  const DAY_MS = 24 * 60 * 60 * 1000;
-
-  // ── 1. Exact duplicates: same vendor + amount + date → Red ───────────────
+  // ── 1. Exact: same vendor + amount + date ───────────────────────────────
   const exactMap = {};
   rows.forEach(r => {
     if (!r.date) return;
     const key = `${r.vendor}|${r.amtKey}|${r.date}`;
     (exactMap[key] = exactMap[key] || []).push(r);
   });
+  const exactGroups = Object.values(exactMap).filter(g => g.length >= 2);
   const exactFlaggedIdx = new Set();
-  Object.values(exactMap).forEach(group => {
+  exactGroups.forEach(g => g.forEach(r => exactFlaggedIdx.add(r.idx)));
+
+  // ── 2. Near: same vendor + amount, dates within the day limit ───────────
+  const nearMap = {};
+  rows.filter(r => !exactFlaggedIdx.has(r.idx)).forEach(r => {
+    const key = `${r.vendor}|${r.amtKey}`;
+    (nearMap[key] = nearMap[key] || []).push(r);
+  });
+  const nearPairs = [];
+  Object.values(nearMap).forEach(group => {
     if (group.length < 2) return;
-    group.forEach(r => exactFlaggedIdx.add(r.idx));
+    const dated = group.filter(r => !isNaN(r.ts)).sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < dated.length - 1; i++) {
+      const daysDiff = Math.round((dated[i + 1].ts - dated[i].ts) / DAY_MS);
+      if (daysDiff <= _DUP_NEAR_DAY_LIMIT) {
+        nearPairs.push({ a: dated[i], b: dated[i + 1], daysDiff });
+        break; // one flag per vendor+amount pair is enough
+      }
+    }
+  });
+
+  // What each invoice IS, by its position in the list it was handed. Only the
+  // invoices the rules above actually identified appear here — nothing is
+  // marked by association.
+  const byIndex = new Map();
+  exactGroups.forEach(g => g.forEach(r => byIndex.set(r.idx, {
+    kind: 'exact', displayVendor: r.displayVendor, amount: r.amount, date: r.date,
+    occurrences: g.length,
+  })));
+  nearPairs.forEach(p => [p.a, p.b].forEach(r => byIndex.set(r.idx, {
+    kind: 'near', displayVendor: r.displayVendor, amount: r.amount, date: r.date,
+    daysDiff: p.daysDiff,
+  })));
+
+  return { rows, exactGroups, nearPairs, byIndex, exactFlaggedIdx };
+}
+
+function _detectInvoiceSuspicions(invoices) {
+  const flags = [];
+  if (!invoices.length) return flags;
+
+  // Normalised view and duplicate grouping come from the shared rule above, so
+  // the badge in the register and these findings cannot disagree.
+  const _dups = _findDuplicateInvoices(invoices);
+  const rows  = _dups.rows;
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // ── 1. Exact duplicates: same vendor + amount + date → Red ───────────────
+  const exactFlaggedIdx = _dups.exactFlaggedIdx;
+  _dups.exactGroups.forEach(group => {
     const dupTotal = group[0].amount * (group.length - 1);
     flags.push({
       severity:   'red',
@@ -15694,34 +15806,23 @@ function _detectInvoiceSuspicions(invoices) {
     });
   });
 
-  // ── 2. Near-duplicate: same vendor + amount, dates within 7 days → Yellow ─
-  // (Skip invoices already flagged as exact duplicates)
-  const nearMap = {};
-  rows.filter(r => !exactFlaggedIdx.has(r.idx)).forEach(r => {
-    const key = `${r.vendor}|${r.amtKey}`;
-    (nearMap[key] = nearMap[key] || []).push(r);
-  });
-  Object.values(nearMap).forEach(group => {
-    if (group.length < 2) return;
-    const dated = group.filter(r => !isNaN(r.ts)).sort((a, b) => a.ts - b.ts);
-    for (let i = 0; i < dated.length - 1; i++) {
-      const daysDiff = Math.round((dated[i + 1].ts - dated[i].ts) / DAY_MS);
-      if (daysDiff <= 7) {
-        flags.push({
-          severity:   'yellow',
-          title:      `Possible duplicate: "${dated[i].displayVendor}" billed ${fmt(dated[i].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
-          detail:     `Same vendor and amount appearing ${daysDiff} day${daysDiff === 1 ? '' : 's'} apart. Monthly services are typically billed once per period — confirm whether both charges represent distinct services or whether one is a duplicate submission.`,
-          conditions: [
-            `Vendor: "${dated[i].displayVendor}"`,
-            `Amount: ${fmt(dated[i].amount)} (identical on both invoices)`,
-            `Invoice date 1: ${dated[i].date}`,
-            `Invoice date 2: ${dated[i + 1].date}`,
-            `Gap: ${daysDiff} day${daysDiff === 1 ? '' : 's'} (threshold for review: ≤7 days)`,
-          ],
-        });
-        break; // one flag per vendor+amount pair is enough
-      }
-    }
+  // ── 2. Near-duplicate: same vendor + amount, dates within the day limit → Yellow
+  // (Skip invoices already flagged as exact duplicates — done by the shared rule)
+  _dups.nearPairs.forEach(pair => {
+    const dated = [pair.a, pair.b];
+    const daysDiff = pair.daysDiff;
+    flags.push({
+      severity:   'yellow',
+      title:      `Possible duplicate: "${dated[0].displayVendor}" billed ${fmt(dated[0].amount)} twice within ${daysDiff} day${daysDiff === 1 ? '' : 's'}`,
+      detail:     `Same vendor and amount appearing ${daysDiff} day${daysDiff === 1 ? '' : 's'} apart. Monthly services are typically billed once per period — confirm whether both charges represent distinct services or whether one is a duplicate submission.`,
+      conditions: [
+        `Vendor: "${dated[0].displayVendor}"`,
+        `Amount: ${fmt(dated[0].amount)} (identical on both invoices)`,
+        `Invoice date 1: ${dated[0].date}`,
+        `Invoice date 2: ${dated[1].date}`,
+        `Gap: ${daysDiff} day${daysDiff === 1 ? '' : 's'} (threshold for review: ≤${_DUP_NEAR_DAY_LIMIT} days)`,
+      ],
+    });
   });
 
   // ── 3. Same source file attached to multiple invoice records → Red ────────
