@@ -17115,6 +17115,84 @@ function renderNarrativePanel() {
   }
 }
 
+// ── A FINDING THAT ASKS FOR A DECISION OFFERS THE CONTROL FOR IT ───────────
+//
+// The partial-period finding told the manager "Confirm the partial-period
+// basis" and the audit panel rendered that as text. confirmPartialPeriodBasis —
+// which writes the authoritative tenant_field_evidence row, flushes the blob
+// past its debounce, and makes the answer survive a reload as the MANAGER's
+// answer — had no caller anywhere in the app. The persistence was correct and
+// unreachable: the only way to confirm a basis was the browser console.
+//
+// The finding now carries `confirm` as data (reconciliation-engine.js) and this
+// turns it into a button. The visual pattern is the cap-base fix button two
+// panels over — an inline bordered control inside the warning it belongs to —
+// because that is the shape this app already uses for "act on this finding",
+// and inventing a second one would leave two.
+//
+// THE BUTTON SAYS WHAT IT WILL RECORD. "Confirm" alone asks a manager to
+// ratify something they cannot see, which on a figure already billed is the
+// same as asking them to trust the extraction. The label names the basis and
+// the tenant, and the line above it states the basis is the product's default
+// rather than a term of the lease — so the decision is legible before it is
+// made, and what gets recorded is what the button said.
+//
+// NO SECOND MECHANISM. This calls the existing production function and nothing
+// else; it does not write evidence, touch the blob, or re-implement any part of
+// the confirmation.
+function _auditFlagActionHtml(f) {
+  const c = f && f.confirm;
+  if (!c || c.kind !== 'partial_period_basis') return '';
+  const basis = String(c.proposed || '').trim();
+  if (!basis) return '';
+  const pretty = basis.replace(/_/g, '-');
+  // An id is what confirmPartialPeriodBasis resolves the tenant by. Without one
+  // there is nothing to record against, and the panel says so rather than
+  // offering a button that cannot work — the same rule the review queue applies
+  // to an item with no stored record id.
+  if (!_isUsableRecordId(c.tenantId)) {
+    return `<div class="ap-flag-actions"><span class="ap-flag-noact"
+      title="This finding has no stored tenant record id, so MainStreet cannot record a confirmation against it."
+      >Can&rsquo;t confirm &mdash; no saved record</span></div>`;
+  }
+  const tid = esc(String(c.tenantId)).replace(/'/g, "\\'");
+  return `<div class="ap-flag-actions">
+    <div class="ap-flag-ask">MainStreet applied a <strong>${esc(pretty)}</strong> apportionment because the lease is
+      silent. Confirming records it as your decision against this lease &mdash; not as the lease&rsquo;s own language.</div>
+    <button type="button" class="ap-flag-confirm"
+      onclick="confirmPartialBasisFromAudit('${tid}','${esc(basis)}',this)">
+      Confirm ${esc(pretty)} for ${esc(c.tenant || 'this lease')}</button>
+  </div>`;
+}
+
+// The click path. Disables the control while the production write is in flight —
+// a confirmation double-submitted writes a second evidence row — then re-renders
+// the panel so the finding it just resolved is gone from it.
+async function confirmPartialBasisFromAudit(tenantId, basis, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Recording…'; }
+  let ok = false;
+  try {
+    ok = await confirmPartialPeriodBasis(tenantId, basis);
+  } catch (e) {
+    console.warn('[partial-period] confirmation failed:', e && e.message);
+    ok = false;
+  }
+  if (!ok) {
+    // confirmPartialPeriodBasis has already told the manager why. Give the
+    // control back rather than leaving a dead button behind.
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm ' + String(basis).replace(/_/g, '-'); }
+    return false;
+  }
+  // The basis changes what the next run apportions on, so the figures on screen
+  // are now a run behind. Re-running here would silently rewrite the numbers the
+  // manager was just looking at; the toast confirmPartialPeriodBasis raises
+  // already says to re-run. What IS refreshed is the audit panel, so the finding
+  // that asked for this confirmation stops asking.
+  try { renderAuditPanel(); } catch (_) {}
+  return true;
+}
+window.confirmPartialBasisFromAudit = confirmPartialBasisFromAudit;
+
 // Builds and injects the AI Audit Panel into the results section.
 // Safe to call multiple times — removes any prior panel first.
 function renderAuditPanel() {
@@ -17138,6 +17216,7 @@ function renderAuditPanel() {
         <div class="ap-flag-title">${esc(f.title)}</div>
         ${f.detail ? `<div class="ap-flag-detail">${esc(f.detail)}</div>` : ''}
         ${f.conditions?.length ? `<ul class="ap-flag-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+        ${_auditFlagActionHtml(f)}
       </div>`).join('')}
     </div>`;
   };
@@ -29522,6 +29601,10 @@ const _ASYNC_USER_ACTIONS = [
   'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
   'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
   'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix', 'openReviewItemFix',
+  // The audit panel's partial-period confirmation: an async click that
+  // writes an evidence row. It catches and restores its own button, but a
+  // rethrow still has to reach the manager rather than dying in the console.
+  'confirmPartialBasisFromAudit',
 ];
 
 // What the user is told when an action fails. Names the action in their words.
@@ -29530,6 +29613,7 @@ const _ACTION_LABEL = {
   addNewProperty: 'create the property', confirmDeleteProperty: 'delete the property',
   archiveActiveProperty: 'archive the property', restoreProperty: 'restore the property',
   toggleArchivedProperties: 'open the archived properties',
+  confirmPartialBasisFromAudit: 'record that confirmation',
   handleBulkLeases: 'upload those leases', handleBatchInvoices: 'upload those invoices',
   runAllocation: 'run the reconciliation', confirmAllocation: 'run the reconciliation',
   generateTenantStatement: 'generate that statement', submitDispute: 'submit the dispute',

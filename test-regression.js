@@ -202,6 +202,10 @@ const SUITES = [
   // evidence row, because the two writes are not one transaction and the state
   // where they disagree is the state that was shipped.
   { label: 'Confirmation survives a reload (e2e)', cmd: 'node test-e2e-partial-basis-persistence.js' },
+  // The other half of that flow: the manager has to be able to GIVE the
+  // confirmation. confirmPartialPeriodBasis had no caller — the finding asked
+  // for a decision and rendered the ask as text.
+  { label: 'Confirming a basis through the UI', cmd: 'node test-e2e-partial-basis-confirm-ui.js' },
   // B. The two fields T2's arithmetic will read, followed from the prompt to the
   // resolver with /api/claude intercepted: prompt asks -> normaliser stores ->
   // clause becomes fieldEvidence -> normalizeTenant's ALLOW-LIST keeps it ->

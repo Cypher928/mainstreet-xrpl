@@ -5097,6 +5097,23 @@
     .ap-flag-detail { font-size: 0.75rem; color: var(--text-3); margin-top: 3px; line-height: 1.4; }
     .ap-flag-conditions { margin: 5px 0 0 0; padding: 0 0 0 14px; list-style: disc; font-size: 0.74rem; color: var(--text-3); line-height: 1.55; }
     .ap-flag-conditions li { margin: 0; }
+    /* A finding that asks for a decision carries the control for it. Same
+       inline bordered shape as the cap-base fix button on the CAM warning
+       above, so "act on this finding" looks like one thing in this app. */
+    .ap-flag-actions { margin-top: 8px; }
+    .ap-flag-ask {
+      font-size: 0.74rem; line-height: 1.5; color: var(--text-3); margin-bottom: 6px;
+    }
+    .ap-flag-ask strong { color: var(--text-1); }
+    .ap-flag-confirm {
+      background: transparent; border: 1px solid currentColor; color: var(--c-fbbf24, #fbbf24);
+      border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600;
+      cursor: pointer; font-family: inherit; min-height: 32px;
+    }
+    .ap-flag-confirm:hover:not(:disabled) { background: rgba(251,191,36,0.12); }
+    .ap-flag-confirm:disabled { opacity: 0.6; cursor: default; }
+    .ap-flag-confirm:focus-visible { outline: 2px solid var(--c-c9973a); outline-offset: 2px; }
+    .ap-flag-noact { font-size: 0.73rem; color: var(--text-4); font-style: italic; }
     /* ── Historical Trends Panel ─────────────────────────────────────── */
     .ht-rows { display: flex; flex-direction: column; gap: 6px; }
     .ht-row  { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 7px; border: 1px solid; }

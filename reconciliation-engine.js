@@ -282,6 +282,29 @@ window.ReconciliationEngine = (() => {
         actions: ['Confirm the partial-period basis',
                   'Check the lease for a proration clause',
                   'Record the basis against the lease'],
+        // THE ACTION THIS FINDING IS ASKING FOR, AS DATA.
+        //
+        // `actions` above is prose: the Exception Report prints it as the
+        // next steps, which is right for a document. It is not right for the
+        // working screen, where it rendered as inert text — the finding told a
+        // manager to confirm the basis and gave them nothing to confirm it
+        // with, and confirmPartialPeriodBasis had no caller anywhere in the app.
+        //
+        // This carries WHAT would be confirmed and FOR WHOM, and nothing about
+        // how it looks. The audit panel turns it into a control; this module
+        // stays free of markup and of any handler name, exactly as it is free
+        // of them for every other finding it raises.
+        confirm: {
+          kind:     'partial_period_basis',
+          tenantId: r.tenantId != null ? r.tenantId : null,
+          tenant:   r.name,
+          // The basis the reconciliation ALREADY APPLIED and billed on. The
+          // manager is confirming the figure in front of them, not choosing
+          // from an empty list — and `proposed` says so rather than implying
+          // this is the lease's word.
+          proposed: _basis.basis,
+          amount:   r.totalAllocated,
+        },
         conditions: cond([
           `Lease term: ${c.leaseStart} to ${c.leaseEnd}`,
           `Occupied within the period: ${_window}`,
