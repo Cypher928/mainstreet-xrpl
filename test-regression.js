@@ -126,6 +126,16 @@ const SUITES = [
   // Measured: a 2025 reconciliation, reloaded, year set to 2024, exported as
   // cam-reconciliation-<property>-2024.csv carrying the 2025 rows, silently.
   { label: 'Restored results keep their year',    cmd: 'node test-e2e-restored-year-guard.js' },
+  // TWO BUILDINGS IN ONE SESSION — no suite had ever opened a second property,
+  // which is how both of these survived. A restored reconciliation kept the
+  // PREVIOUS run's CAM pool, so one building's invoices were measured against
+  // another's ("199.1% of total CAM expenses ($42,000.00 of $21,100.00)"), and
+  // the debounced advisor refresh repainted the departing property's Spaces
+  // list over the arriving one's.
+  { label: 'Property switch isolation',           cmd: 'node test-e2e-property-switch-isolation.js' },
+  // And the stale-results refusal, which lived in a `let` that a reload reset:
+  // superseded square footage and dollar amounts exported silently afterwards.
+  { label: 'Stale results survive a reload',      cmd: 'node test-e2e-stale-results-persistence.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

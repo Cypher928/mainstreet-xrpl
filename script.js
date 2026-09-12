@@ -5662,6 +5662,53 @@ async function bulkApproveReady() {
 }
 
 // Shows/hides the stale-results warning banner based on _resultsStale flag.
+// ─── IS A SAVED RECONCILIATION STILL ABOUT THE CURRENT DATA? ─────────────────
+//
+// `_resultsStale` is set by the edit paths and reset by a run, and it is a
+// module-level `let` that starts false — so a reload cleared it and the two
+// refusals that read it (exportReconciliationCSV, generateTenantStatement)
+// silently passed. Measured: reconcile 2025, correct a tenant from 4,200 to
+// 5,200 sqft, save, reload, export — and out came
+// cam-reconciliation-<property>-2025.csv carrying "4200","16.15","19021.16",
+// every figure superseded, with no banner and no message. In the same session
+// before the reload, both actions refused correctly.
+//
+// Persisting the boolean would have been the wrong repair: it records that
+// something was edited, not whether the edit still matters, so a manager who
+// undid their change would stay blocked for ever. What is persisted instead is
+// a fingerprint of the INPUTS the allocation consumed; the reader recomputes it
+// from the current data and compares. Same function both times — there is one
+// definition of "the data this run was based on", not a writer's and a
+// reader's.
+//
+// Only the fields that can change an allocation are included, through the same
+// readers the engine uses (parseSqft, parseMoney, _appliedExclusions,
+// CamPool.isEligible), so a cosmetic edit does not invalidate a good run and a
+// material one cannot hide. Sorted, so reordering tenants or invoices is not
+// mistaken for a change.
+function camInputsFingerprint(tenants, invoices) {
+  const t = (tenants || [])
+    .filter(x => x && x.tenant_name)
+    .map(x => [
+      String(x.tenant_name).trim(),
+      String(parseSqft(x.leased_sqft) ?? ''),
+      String(x.cap ?? ''),
+      String(x.capBaseAmount ?? ''),
+      (_appliedExclusions(x) || []).slice().sort().join('+'),
+    ].join('|'))
+    .sort();
+  const i = (invoices || [])
+    .filter(x => x && x.vendorName)
+    .map(x => [
+      String(x.vendorName).trim(),
+      String(x.category || ''),
+      String(parseMoney(x.amount) ?? ''),
+      String(window.CamPool ? window.CamPool.isEligible(x) : true),
+    ].join('|'))
+    .sort();
+  return 't:' + t.join(';') + '#i:' + i.join(';');
+}
+
 function _updateStaleResultsBanner() {
   const el = document.getElementById('staleResultsBanner');
   if (el) el.style.display = _resultsStale ? 'block' : 'none';
@@ -11676,6 +11723,13 @@ async function runAllocation() {
       // silently acquires a claim it never made.
       schemaVersion: 2,
       total:        totalCost,
+      // What this run was based on. Read back on restore and compared against
+      // the data as it stands then, so a reload can tell a still-valid
+      // reconciliation from one the manager has since edited underneath.
+      inputsFingerprint: (() => {
+        try { return camInputsFingerprint(currentProperty()?.tenants, invoiceData); }
+        catch (_) { return null; }
+      })(),
       results:      fullResults.map(r => ({ ...r })),
       invoices:     lastInvoices,
       invoicesFull: lastInvoicesFull,
@@ -26778,6 +26832,21 @@ let _advisorRefreshTimer = null;
 function _refreshAdvisorSurfaces(prop) {
   clearTimeout(_advisorRefreshTimer);
   _advisorRefreshTimer = setTimeout(() => {
+    // THE PROPERTY THIS REFRESH IS ABOUT MAY NO LONGER BE THE ONE ON SCREEN.
+    //
+    // This fires 120ms late and holds the `prop` it was handed. selectProperty
+    // saves the property you are LEAVING, so opening another building queued a
+    // refresh for the old one and it landed on top of the new one's render.
+    // Measured: Fernhill → Marlow → Fernhill left the Spaces list showing
+    // Harbour Print Co and Ridgeline Fitness under "Every tenant space in this
+    // property", and the attention panel likewise described the wrong building.
+    // The instrumented order was renderList(Fernhill), renderList(Fernhill),
+    // then this timer with Marlow.
+    //
+    // Both surfaces below paint into fixed hosts, so a late write always wins.
+    // The guard is on identity, not on a snapshot of state: if the manager has
+    // moved on, this refresh has nothing to say about what they are looking at.
+    if (!prop || (activePropId != null && prop.id !== activePropId)) return;
     try {
       if (window.PropertyWorkspace && window.PropertyWorkspace.renderAttention) {
         window.PropertyWorkspace.renderAttention(prop);
@@ -27919,6 +27988,25 @@ function restoreResultsDisplay(snapshot) {
     );
     lastTenants      = snapshot.tenants      || [];
 
+    // THE POOL THE AUDIT FINDINGS MEASURE AGAINST.
+    //
+    // buildAuditSummary reads `lastCamPool || CamPool.total(invs) || lastTotal`.
+    // lastCamPool was assigned in runAllocation and restored nowhere, so opening
+    // a property whose results came from the snapshot left the PREVIOUS run's
+    // pool in place. Measured on two properties: Fernhill's invoices were
+    // measured against Marlow's $21,100 pool and the CAM screen reported
+    // "This invoice represents 199.1% of total CAM expenses ($42,000.00 of
+    // $21,100.00), exceeding the 40% materiality threshold by $22,810.00" —
+    // audit-grade findings, on a denominator belonging to another building.
+    //
+    // Recomputed from the invoices this snapshot itself carries, through the
+    // same CamPool authority the run used, rather than stored as a second
+    // number that could disagree with them. Zero when there is nothing to
+    // measure, which is what the existing fallback chain already expects.
+    lastCamPool = (window.CamPool && lastInvoicesFull.length)
+      ? (window.CamPool.total(lastInvoicesFull) || 0)
+      : 0;
+
     // THE ENGINE RECORDS THE VARIANCE PANEL NEEDS, from the saved reconciliation
     // rather than from a re-run. Both globals are assigned in runAllocation and
     // nowhere else, so before this a restored screen derived its breakdown from
@@ -27969,6 +28057,22 @@ function restoreResultsDisplay(snapshot) {
     // about these results. Unknown is reported as unknown, and the guards then
     // stay inert for that snapshot exactly as they do today.
     lastResultsYear = snapshot.camYear ? (parseInt(snapshot.camYear, 10) || null) : null;
+
+    // Does this snapshot still describe the data now on the property? Recomputed
+    // from the current tenants and invoices and compared with what the run
+    // recorded — see camInputsFingerprint. A snapshot written before the
+    // fingerprint existed carries none and cannot answer the question; it keeps
+    // the previous behaviour rather than blocking every reconciliation already
+    // saved, and that limitation is stated rather than hidden.
+    try {
+      if (snapshot.inputsFingerprint) {
+        const _now = camInputsFingerprint(currentProperty()?.tenants, invoiceData);
+        _resultsStale = _now !== snapshot.inputsFingerprint;
+      } else {
+        _resultsStale = false;
+      }
+    } catch (_) { _resultsStale = false; }
+    _updateStaleResultsBanner();
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
       camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
