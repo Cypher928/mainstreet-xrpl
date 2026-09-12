@@ -120,6 +120,12 @@ const SUITES = [
   // the CAM year — Cascade Commons cannot expose this, its dates match.
   { label: 'Refused run is not a reconciliation', cmd: 'node test-cam-refusal.js' },
   { label: 'CAM year refusal, end to end',        cmd: 'node test-e2e-cam-year-refusal.js' },
+  // THE GUARDS HAVE TO SURVIVE THE RELOAD. restoreResultsDisplay restored every
+  // other `last*` global and left lastResultsYear null, so the wrong-year
+  // refusals on CSV export and tenant statements read a falsy value and passed.
+  // Measured: a 2025 reconciliation, reloaded, year set to 2024, exported as
+  // cam-reconciliation-<property>-2024.csv carrying the 2025 rows, silently.
+  { label: 'Restored results keep their year',    cmd: 'node test-e2e-restored-year-guard.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

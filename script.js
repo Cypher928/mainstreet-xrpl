@@ -14345,7 +14345,10 @@ document.getElementById('leaseViewerModal')?.addEventListener('click', (e) => {
 // ─── Report State ─────────────────────────────────────────────────────────────
 const camRuns    = []; // previous run history
 let lastResults  = []; // ReconciliationResult[] — unified with lastFullResults
-let lastResultsYear = null; // CAM year of the most recent runAllocation() call
+// The CAM year the results currently in `lastResults` are FROM — set by a run
+// and by a restore, because both put results on screen. Describing it as "the
+// most recent runAllocation() call" is what let the restore path leave it null.
+let lastResultsYear = null;
 let _resultsStale = false; // true when field edits happen after a reconciliation run
 
 // ─── CAM Year ─────────────────────────────────────────────────────────────────
@@ -27946,6 +27949,26 @@ function restoreResultsDisplay(snapshot) {
     console.log('lastResults[0].includedInvoices[0]:', JSON.parse(JSON.stringify(lastResults[0]?.includedInvoices?.[0] || {})));
     console.log('invoiceData[0] at restore time:', JSON.parse(JSON.stringify(invoiceData[0] || {})));
     console.groupEnd();
+    // THE YEAR THESE RESULTS ARE FROM, NOT MERELY THE YEAR NOW SELECTED.
+    //
+    // Every other `last*` global above is restored here; this one was not, and
+    // it is the one two refusals read. exportReconciliationCSV and
+    // generateTenantStatement both guard on
+    // `lastResultsYear && getCamYear() !== lastResultsYear`, so a null left it
+    // falsy and the guard silently passed. Measured: a 2025 reconciliation,
+    // reloaded, year switched to 2024 — in-session both actions refused with
+    // "Results are from 2025"; after the reload neither said anything and the
+    // export produced cam-reconciliation-<property>-2024.csv containing the 2025
+    // rows, with no year written inside the file.
+    //
+    // Set from the snapshot's own camYear, the same value the line below feeds
+    // to setCamYear, so there is one year of record and not two. Assigned
+    // unconditionally: a snapshot saved before camYear was stamped cannot say
+    // what year it is from, and leaving the previous value in place would let
+    // the year of the LAST property reconciled this session stand as a claim
+    // about these results. Unknown is reported as unknown, and the guards then
+    // stay inert for that snapshot exactly as they do today.
+    lastResultsYear = snapshot.camYear ? (parseInt(snapshot.camYear, 10) || null) : null;
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
       camRuns.splice(0, camRuns.length, ...snapshot.camRuns.map(run => ({
