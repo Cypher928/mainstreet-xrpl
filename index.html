@@ -2963,6 +2963,62 @@
       font-size: 0.76rem; line-height: 1.5; color: var(--text-3);
     }
     .rc-breakdown-absent-cta { display: block; margin-top: 5px; color: var(--text-2); font-weight: 600; }
+    /* P2-3 — what the lease withheld, below the charges it was withheld from.
+       Amber rather than red: an exclusion is the lease working as written, not a
+       fault. Collapsed by default so the included breakdown stays the subject. */
+    .rc-excl-block {
+      margin-top: 10px; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(245,158,11,0.28);
+      background: var(--bgc-1e293b, rgba(30,41,59,0.45));
+    }
+    .rc-excl-head {
+      display: flex; align-items: center; gap: 10px; padding: 10px 13px; cursor: pointer;
+      background: rgba(245,158,11,0.07);
+    }
+    .rc-excl-head:hover { background: rgba(245,158,11,0.12); }
+    .rc-excl-head-left { flex: 1; min-width: 0; }
+    .rc-excl-title { font-size: 0.82rem; font-weight: 600; color: var(--text-1); }
+    .rc-excl-meta  { font-size: 0.72rem; color: var(--text-3); margin-top: 1px; }
+    .rc-excl-chevron { color: var(--text-3); transition: transform 0.18s ease; flex: none; }
+    .rc-excl-head.active .rc-excl-chevron { transform: rotate(90deg); }
+    .rc-excl-body { padding: 4px 13px 12px; }
+    /* Read before the figures it qualifies: `cents` is a withheld share, and
+       nothing in the record is the invoice's own total. */
+    .rc-excl-caveat {
+      font-size: 0.73rem; line-height: 1.5; color: var(--text-3);
+      padding: 8px 0 10px; border-bottom: 1px solid rgba(148,163,184,0.16);
+    }
+    .rc-excl-row {
+      display: flex; align-items: flex-start; gap: 12px; padding: 9px 0;
+      border-bottom: 1px solid rgba(148,163,184,0.12);
+    }
+    .rc-excl-left { flex: 1; min-width: 0; }
+    .rc-excl-vendor { font-size: 0.8rem; font-weight: 600; color: var(--text-1); }
+    .rc-excl-reason { font-size: 0.74rem; color: var(--c-fbbf24, #fbbf24); margin-top: 2px; }
+    .rc-excl-scope  { font-size: 0.71rem; color: var(--text-3); margin-top: 1px; }
+    .rc-excl-right  { text-align: right; flex: none; }
+    .rc-excl-amt    { font-size: 0.84rem; font-weight: 700; color: var(--text-1); white-space: nowrap; }
+    .rc-excl-amt--unknown { font-size: 0.76rem; font-weight: 600; color: var(--text-3); }
+    .rc-excl-amt-lbl { font-size: 0.6rem; letter-spacing: 0.06em; color: var(--text-3); margin-top: 1px; }
+    .rc-excl-total {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+      padding: 10px 0 0; font-size: 0.78rem; color: var(--text-2);
+    }
+    .rc-excl-total-amt { font-weight: 700; color: var(--text-1); white-space: nowrap; }
+    /* The residual sentence. It is the one line that must not overclaim, so it
+       gets its own block rather than being tucked into the caveat above. */
+    .rc-excl-gap {
+      margin-top: 10px; padding: 9px 11px; border-radius: 8px;
+      background: rgba(15,23,42,0.45); border-left: 3px solid var(--c-38bdf8, #38bdf8);
+      font-size: 0.74rem; line-height: 1.55; color: var(--text-2);
+    }
+    .rc-excl-idnote {
+      margin-top: 8px; font-size: 0.72rem; line-height: 1.5; color: var(--text-3);
+    }
+    @media (max-width: 560px) {
+      .rc-excl-row { flex-direction: column; gap: 4px; }
+      .rc-excl-right { text-align: left; }
+    }
     /* T2 — a prorated tenant's arithmetic, shown end to end. */
     .ts-occupancy { margin: 14px 0; padding: 12px 14px; border-radius: 10px;
       background: var(--bgc-1e293b, rgba(30,41,59,0.5));

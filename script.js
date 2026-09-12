@@ -11501,7 +11501,9 @@ async function runAllocation() {
       : '';
 
     // ── Category-grouped invoice breakdown (matches Tenant Statement style) ──
-    const invBreakdown = _invoiceBreakdownHtml(r);
+    // The same total this card's "Included" stat prints, so the exclusion
+    // residual is measured against the denominator the manager is reading.
+    const invBreakdown = _invoiceBreakdownHtml(r, invoices.length);
 
     // ── Confidence stat ────────────────────────────────────────────────
     // D16 — the per-tenant "Confidence N%" stat is gone; see ReconciliationResult.
@@ -12904,6 +12906,198 @@ function _buildNeedsReviewRollupHtml(results) {
   </div>`;
 }
 
+// ── WHAT THE LEASE WITHHELD, READ FROM THE RECORD (P2-3) ────────────────────
+//
+// The result card says "Included 22 of 26" and stopped there, so the four
+// expenses on the other side of that sentence were a number with no account.
+// This reads them off `excludedShares` — the list the allocation loop RECORDS
+// when a lease's exclusion schedule withholds a category (D8) — and derives
+// nothing.
+//
+// THE EXCLUSION PREDICATE IS NOT RE-APPLIED HERE. Re-deriving "which invoices
+// were excluded" in a renderer is how a second definition of the concept gets
+// born, and the D8 comment exists because the variance panel already reached
+// this answer by subtraction once and put a rounding artefact under the label.
+// The loop decided; this function reports the decision.
+//
+// WHAT THE RECORD DOES NOT CONTAIN, IT DOES NOT INVENT. An entry is
+// `{id, vendorName, category, scope, cents}`. On the path a manager actually
+// lands on — a card replayed from a persisted snapshot — `id` is null, so these
+// records cannot be linked to individual invoices, and variance-breakdown.js
+// already states the rule for exactly this data: the entries "cannot be matched
+// to a specific invoice at all, and MUST NOT be guessed at". No date is
+// fabricated and no path-dependent join is attempted.
+//
+// `cents` IS THE WITHHELD SHARE, NOT THE INVOICE TOTAL. For a shared expense it
+// is this tenant's share of an invoice billed to everyone; for a direct one it
+// is the whole charge. Neither is the invoice's own amount, which is not in the
+// record, so no caller may label it that way.
+//
+// THE RESIDUAL IS THE HONESTY VALVE, and it is computed for presentation only —
+// nothing here feeds an allocation. `excludedShares` holds ONE reason: a lease
+// schedule. The same loop also holds out invoices for reasons it never exposes
+// (outside the occupancy window, undated, direct-matched to another tenant), and
+// upstream a pool can drop a non-eligible or out-of-year invoice. So
+// `denominator - eligibleCount` is a gap this list may only PARTLY explain, and
+// the difference between the two is stated rather than absorbed:
+//
+//   residual === 0    the records account for the gap — sayable
+//   residual  >  0    some expenses are held out for reasons not recorded here
+//   residual  <  0    more records than gap; the figures do not reconcile
+//   residual === null the denominator was not supplied; nothing is claimed
+//
+// On the Cascade Commons demo residual is 0 for every tenant, which is precisely
+// why a renderer that claimed "these account for the difference" unconditionally
+// would look correct here and lie on the first property that has an unplaced
+// invoice.
+//
+// Returns null when there is nothing to report, which is the signal the
+// presentation layer uses to omit the section entirely rather than render an
+// empty one.
+function excludedExpenseSummary(result, denominator) {
+  const r = result || {};
+  const list = Array.isArray(r.excludedShares) ? r.excludedShares : [];
+  if (!list.length) return null;
+
+  const _fin = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const _str = v => (typeof v === 'string' && v.trim() !== '') ? v : null;
+
+  // ONE ROW PER RECORDED DECISION. Four $7,600 management invoices from one
+  // vendor produce four entries with identical display fields, and they are four
+  // exclusions — collapsing them because they look alike would report one
+  // decision where the lease made four, and would silently change the count the
+  // section leads with.
+  const records = list.map(e => {
+    const x = e || {};
+    return {
+      vendorName:    _str(x.vendorName),
+      category:      _str(x.category),
+      scope:         (x.scope === 'direct' || x.scope === 'shared') ? x.scope : null,
+      withheldCents: _fin(x.cents),
+      // Whether this record can be pointed at an invoice AT ALL. The same
+      // predicate the dispute register uses, so "has an id" means one thing.
+      identified:    _isUsableRecordId(x.id),
+    };
+  });
+
+  // An aggregate is only reportable if every part of it was recorded. One
+  // unreadable `cents` makes the total unknown, and unknown is said, not summed
+  // as if the missing entry were zero.
+  const totalWithheldCents = records.every(x => x.withheldCents !== null)
+    ? records.reduce((s, x) => s + x.withheldCents, 0)
+    : null;
+
+  const eligible = _fin(r.eligibleCount);
+  const denom    = _fin(denominator);
+  const residual = (denom !== null && eligible !== null)
+    ? denom - eligible - records.length
+    : null;
+
+  return {
+    count: records.length,
+    records,
+    totalWithheldCents,
+    eligibleCount: eligible,
+    denominator: denom,
+    residual,
+    gap: residual === null ? 'unknown'
+       : residual === 0   ? 'accounted'
+       : residual  >  0   ? 'partial'
+       :                    'inconsistent',
+    // True only when NOTHING in the list can be tied to an invoice, which is the
+    // condition the section discloses once instead of per row.
+    anyIdentified: records.some(x => x.identified),
+  };
+}
+
+// The presentation half. Kept separate from the summary above so the decision of
+// WHAT IS TRUE is testable without parsing HTML, and so both result-card
+// renderers are physically unable to word it differently.
+function _excludedExpensesHtml(result, denominator) {
+  const s = excludedExpenseSummary(result, denominator);
+  if (!s) return '';
+
+  const _money = c => {
+    const MC = (typeof window !== 'undefined') ? window.MoneyCents : null;
+    return fmt(MC && typeof MC.fromCents === 'function' ? MC.fromCents(c) : c / 100);
+  };
+
+  const rows = s.records.map(x => {
+    // The reason is the schedule term the loop matched, not a guess from the
+    // vendor. Where the category was not recorded the sentence says so instead
+    // of naming nothing and reading as though it had.
+    const reason = x.category
+      ? `Excluded by lease schedule: ${esc(x.category)}`
+      : 'Excluded by lease schedule (category not recorded)';
+    const scope = x.scope === 'direct' ? 'Direct charge'
+                : x.scope === 'shared' ? 'Shared expense'
+                : 'Scope not recorded';
+    const amt = x.withheldCents !== null
+      ? `<div class="rc-excl-amt">${_money(x.withheldCents)}</div>
+         <div class="rc-excl-amt-lbl">WITHHELD</div>`
+      : `<div class="rc-excl-amt rc-excl-amt--unknown">Not recorded</div>
+         <div class="rc-excl-amt-lbl">WITHHELD</div>`;
+    return `
+      <div class="rc-excl-row">
+        <div class="rc-excl-left">
+          <div class="rc-excl-vendor">${esc(x.vendorName || 'Vendor not recorded')}</div>
+          <div class="rc-excl-reason">${reason}</div>
+          <div class="rc-excl-scope">${scope}</div>
+        </div>
+        <div class="rc-excl-right">${amt}</div>
+      </div>`;
+  }).join('');
+
+  const total = s.totalWithheldCents !== null
+    ? `<div class="rc-excl-total"><span>Total withheld from this tenant</span><span
+         class="rc-excl-total-amt">${_money(s.totalWithheldCents)}</span></div>`
+    : `<div class="rc-excl-total"><span>Total withheld from this tenant</span><span
+         class="rc-excl-total-amt">Not recorded</span></div>`;
+
+  // The one sentence that must never overclaim. Each branch says only what the
+  // residual supports.
+  const gapNote =
+      s.gap === 'accounted'
+        ? `These ${s.count} record${s.count !== 1 ? 's' : ''} account for the difference between
+           ${s.denominator} expense${s.denominator !== 1 ? 's' : ''} in this reconciliation and the
+           ${s.eligibleCount} included above.`
+    : s.gap === 'partial'
+        ? `${s.residual} further expense${s.residual !== 1 ? 's' : ''} ${s.residual !== 1 ? 'were' : 'was'}
+           not included in this tenant's share and ${s.residual !== 1 ? 'are' : 'is'} not attributed by the
+           record${s.count !== 1 ? 's' : ''} above. Why ${s.residual !== 1 ? 'they were' : 'it was'} held out is
+           not recorded on this reconciliation.`
+    : s.gap === 'inconsistent'
+        ? `These ${s.count} records exceed the difference between ${s.denominator} expenses and the
+           ${s.eligibleCount} included above, so the two figures do not reconcile. The exclusion
+           records are shown as stored.`
+    : `The number of expenses in this reconciliation is not available here, so these
+       record${s.count !== 1 ? 's' : ''} cannot be reconciled against the ${s.count === 1 ? 'count' : 'counts'} above.`;
+
+  const idNote = s.anyIdentified ? '' :
+    `<div class="rc-excl-idnote" role="note">Invoice references were not stored with these exclusion
+       records, so they cannot be linked to individual invoices or dated.</div>`;
+
+  return `
+    <div class="rc-excl-block">
+      <div class="rc-excl-head"
+        onclick="(function(hdr){var b=hdr.nextElementSibling;var open=b.style.display==='block';b.style.display=open?'none':'block';hdr.classList.toggle('active',!open);})(this)">
+        <div class="rc-excl-head-left">
+          <div class="rc-excl-title">Excluded from this tenant's share</div>
+          <div class="rc-excl-meta">${s.count} record${s.count !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="rc-excl-chevron">&#x203A;</div>
+      </div>
+      <div class="rc-excl-body" style="display:none;">
+        <div class="rc-excl-caveat">Amounts below are what this lease withheld from this tenant — not
+          the invoice totals, which these records do not carry.</div>
+        ${rows}
+        ${total}
+        <div class="rc-excl-gap">${gapNote}</div>
+        ${idNote}
+      </div>
+    </div>`;
+}
+
 // ── ONE INVOICE BREAKDOWN, BUILT ONCE (N2) ──────────────────────────────────
 //
 // This markup used to exist only inside runAllocation's result-card loop. The
@@ -12920,7 +13114,13 @@ function _buildNeedsReviewRollupHtml(results) {
 //
 // Returns '' when there is genuinely nothing to show, which is the signal the
 // caller uses to disclose reduced fidelity instead.
-function _invoiceBreakdownHtml(r) {
+//
+// `denominator` is the SAME total each caller already prints in its "N of M"
+// stat — passed in rather than re-derived, because the two callers read it from
+// different globals and a residual computed from a different M than the card
+// displays would contradict the card. Omitted, the exclusion section says the
+// count is unavailable rather than assuming it reconciles.
+function _invoiceBreakdownHtml(r, denominator) {
     if (!r.includedInvoices.length) return '';
 
     // Group invoices by category, accumulate share per category
@@ -13003,7 +13203,7 @@ function _invoiceBreakdownHtml(r) {
       ? `<div class="recon-cap-note">&#x26A0; Cap applied — ${fmt(r.capAdjustment)} reduced</div>`
       : '';
 
-    return `<div class="rc-cat-breakdown">${capLine}${catCards}</div>`;
+    return `<div class="rc-cat-breakdown">${capLine}${catCards}${_excludedExpensesHtml(r, denominator)}</div>`;
 }
 
 // ── T2 · HOW A SHARE WAS ARRIVED AT, SAID ONCE ───────────────────────────────
@@ -27694,7 +27894,7 @@ function restoreResultsDisplay(snapshot) {
             onclick="(function(btn){var w=btn.nextElementSibling;var open=w.style.display==='block';w.style.display=open?'none':'block';btn.classList.toggle('rc-breakdown-toggle--open',!open);})(this)">
             &#x25B8; View invoice breakdown (${_n} invoice${_n !== 1 ? 's' : ''})
           </button>
-          <div class="rc-breakdown-wrap" style="display:none;">${_invoiceBreakdownHtml(r)}</div>`;
+          <div class="rc-breakdown-wrap" style="display:none;">${_invoiceBreakdownHtml(r, lastInvoicesFull.length)}</div>`;
       })()}
       <div class="result-card-actions">
         <button class="explain-btn" onclick="openExplainPanel('${esc(r.name)}')">&#x1F4CA; View Calculation</button>
