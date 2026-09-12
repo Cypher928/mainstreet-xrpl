@@ -2975,6 +2975,30 @@
       font-size: 0.76rem; line-height: 1.5; color: var(--text-3);
     }
     .rc-breakdown-absent-cta { display: block; margin-top: 5px; color: var(--text-2); font-weight: 600; }
+    /* R-1 — the engine refused to reconcile, said durably instead of in a toast.
+       Occupies the results area outright: this is not an annotation on a run,
+       it is the statement that no run happened. Amber, not red — the data is
+       fine, the year selection is what disagrees with it. */
+    .cam-refusal {
+      border: 1px solid rgba(245,158,11,0.45);
+      background: var(--bgc-431407, rgba(67,20,7,0.55));
+      border-radius: 10px; padding: 16px 18px; margin: 4px 0 2px;
+    }
+    .cam-refusal-title {
+      font-size: 0.98rem; font-weight: 700; color: var(--c-fed7aa, #fed7aa);
+      margin-bottom: 7px; line-height: 1.35;
+    }
+    .cam-refusal-detail {
+      font-size: 0.86rem; line-height: 1.55; color: var(--text-1);
+    }
+    .cam-refusal-consequence {
+      font-size: 0.84rem; line-height: 1.55; color: var(--text-2); margin-top: 7px;
+    }
+    .cam-refusal-action {
+      font-size: 0.84rem; line-height: 1.5; font-weight: 600;
+      color: var(--c-fed7aa, #fed7aa); margin-top: 10px;
+      padding-top: 10px; border-top: 1px solid rgba(245,158,11,0.22);
+    }
     /* P2-3 — what the lease withheld, below the charges it was withheld from.
        Amber rather than red: an exclusion is the lease working as written, not a
        fault. Collapsed by default so the included breakdown stays the subject. */

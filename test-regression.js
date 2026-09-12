@@ -112,6 +112,14 @@ const SUITES = [
   // this one carries all three through to the allocation, because the danger is
   // unreadable -> missing -> assumed full period -> billed.
   { label: 'Unreadable vs missing dates (D-1)', cmd: 'node test-unreadable-date-distinction.js' },
+  // A REFUSED RUN IS NOT A RECONCILIATION (R-1/R-2). The engine refused a 2026
+  // run on 2025 invoices and the application carried on: a `cam_reconciled`
+  // timeline event at severity success reading "0 tenants · $117,750.00", a run
+  // history entry, a ✓ on Calculate, a completion toast, and $117,750 on the
+  // portfolio as CAM under management. Both suites use invoices dated outside
+  // the CAM year — Cascade Commons cannot expose this, its dates match.
+  { label: 'Refused run is not a reconciliation', cmd: 'node test-cam-refusal.js' },
+  { label: 'CAM year refusal, end to end',        cmd: 'node test-e2e-cam-year-refusal.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

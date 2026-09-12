@@ -11398,6 +11398,33 @@ async function runAllocation() {
       { camEligible: inv.camEligible, spaceId: inv.spaceId, system: inv.system })
   ));
   const fullResults = runFullReconciliation(_prop);
+
+  // ── THE ENGINE'S VERDICT, READ BEFORE ANYTHING RECORDS A SUCCESS ──────────
+  //
+  // Everything below this point writes a reconciliation down: the run history,
+  // the activity log, the portfolio sync, the saved snapshot, the property
+  // timeline, the step bar and the completion toast. All of it used to run after
+  // a refusal, because the refusal lived only in a local inside the engine and
+  // an empty `fullResults` looked exactly like a run where nobody happened to be
+  // billed. `_yearScope.refused` is the engine saying so in as many words, and
+  // it is the single signal this branch turns on — the count of results is NOT a
+  // second definition of the same thing.
+  const _yearScope = _prop._yearScope || null;
+  if (_yearScope && _yearScope.refused === true) {
+    renderCamRefusal(section, body, _yearScope);
+    // The manager is still at Calculate. Marking it done was the step bar's own
+    // conclusion, drawn from the fact that the function had got this far.
+    updateStepBar('calculate');
+    const _refProp = currentProperty();
+    if (_refProp) {
+      // Stored verbatim so the restored view renders from the engine's words and
+      // not from a paraphrase that could drift away from them.
+      _refProp.camRefusal = { ..._yearScope, refusedAt: new Date().toISOString() };
+      await saveProperty(_refProp);
+    }
+    return;
+  }
+
   // The records the engine ran on, kept so the variance panel can say which
   // invoices were held out of the allocation and why. `invoices` above cannot:
   // it is stripped to {vendor, category, amount} before the summary sees it.
@@ -11634,6 +11661,10 @@ async function runAllocation() {
   // results survive logout, browser refresh, and cleared localStorage.
   const _snapProp = currentProperty();
   if (_snapProp) {
+    // This run reconciled, so any refusal recorded by an earlier one is spent.
+    // Left behind, it would outlive the condition that caused it and the
+    // restored view would keep explaining a refusal that no longer applies.
+    delete _snapProp.camRefusal;
     _snapProp.camReconciliation = {
       propId:       _snapProp.id,
       propName,
@@ -12252,6 +12283,78 @@ function showErr(body, section, msg) {
   body.innerHTML = `<div class="err-banner">${esc(msg)}</div>`;
   section.style.display = 'block';
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── A RUN THE ENGINE REFUSED IS NOT A RECONCILIATION ─────────────────────────
+//
+// runFullReconciliation decides whether a run can happen at all, and records
+// that decision on the property it was handed as `_yearScope.refused`. That
+// verdict is the ONLY authority here. Nothing below re-decides success by
+// counting results or re-reading invoice dates — the whole defect this exists
+// to close was the application layer running on past a refusal and letting four
+// separate surfaces each conclude, independently, that the run had worked.
+//
+// Measured before the fix, on a property with four 2025 invoices reconciled as
+// 2026: the engine refused, and the app still wrote a `cam_reconciled` timeline
+// event at severity `success` reading "0 tenants · $117,750.00 in expenses",
+// stored a run-history entry, ticked ✓ CALCULATE, showed "✓ CAM Reconciliation
+// Complete", and pushed $117,750 onto the portfolio as CAM under management. The
+// one true sentence was a toast that lasted fourteen seconds.
+//
+// camRefusalNotice is pure and takes the scope object verbatim, so the live run
+// and the restored view cannot drift: both render from this one function.
+function camRefusalNotice(scope) {
+  if (!scope || scope.refused !== true) return null;
+  const year    = String(scope.year != null ? scope.year : '');
+  const outside = Number(scope.excluded) || 0;
+  const undated = Number(scope.undated)  || 0;
+  const loaded  = outside + undated;
+  // The two refusals differ in what the manager has to look at. Saying "all of
+  // them are dated outside the year" when some carry no date at all sends them
+  // hunting through dates that were never there.
+  const detail = scope.reason === 'all_out_of_year'
+    ? `All ${outside} invoice${outside !== 1 ? 's' : ''} loaded ${outside !== 1 ? 'are' : 'is'} dated outside the ${year} CAM year.`
+    : `None of the ${loaded} invoice${loaded !== 1 ? 's' : ''} loaded is dated in ${year}. `
+      + `${outside} ${outside !== 1 ? 'are' : 'is'} dated outside it`
+      + (undated ? `, and ${undated} carr${undated !== 1 ? 'y' : 'ies'} no date at all — those alone cannot establish a CAM year` : '')
+      + '.';
+  return {
+    year,
+    reason:      scope.reason || 'refused',
+    title:       `No CAM was reconciled for ${year}`,
+    detail,
+    consequence: 'No tenant was charged and nothing was saved as a reconciliation. '
+               + 'The expenses below are the invoices you loaded, not allocated CAM.',
+    action:      `Switch the CAM year to match your invoices, or upload invoices for ${year}.`,
+  };
+}
+
+function _camRefusalHtml(scope) {
+  const n = camRefusalNotice(scope);
+  if (!n) return '';
+  return `<div class="cam-refusal" data-refusal-year="${esc(n.year)}" data-refusal-reason="${esc(n.reason)}">
+    <div class="cam-refusal-title">&#x26A0;&#xFE0F; ${esc(n.title)}</div>
+    <div class="cam-refusal-detail">${esc(n.detail)}</div>
+    <div class="cam-refusal-consequence">${esc(n.consequence)}</div>
+    <div class="cam-refusal-action">${esc(n.action)}</div>
+  </div>`;
+}
+
+// Paints the refusal over whatever the results area was showing. Used by the
+// live run and by the restored view, so a manager who comes back tomorrow reads
+// the same sentence they read when they clicked the button.
+function renderCamRefusal(section, body, scope) {
+  const n = camRefusalNotice(scope);
+  if (!n || !section || !body) return false;
+  // A cap warning from this same run says "these charges were calculated" about
+  // charges that do not exist. It is prepended before the engine is called, so
+  // it is already on screen by the time the refusal is known.
+  section.querySelectorAll('.cam-cap-incomplete-warning').forEach(el => el.remove());
+  const title = document.getElementById('resultsTitle');
+  if (title) title.textContent = `CAM ${n.year} — not reconciled`;
+  body.innerHTML = _camRefusalHtml(scope);
+  section.style.display = 'block';
+  return true;
 }
 
 // ─── Previous Runs ────────────────────────────────────────────────────────────
@@ -24508,6 +24611,12 @@ async function selectProperty(id) {
     // Reconciliation results are always applied — they don't depend on tenant count.
     property.results           = safeResults;
     property.camReconciliation = safeCamRec;
+    // The refusal travels with the reconciliation it stands in for. loadPropertyData
+    // returned it and nothing applied it, which is the same shape of omission the
+    // timeline note below describes: read from storage, dropped on the floor, and
+    // the manager told "No CAM allocation has been run yet" about a run they
+    // watched being refused.
+    property.camRefusal        = data.camRefusal ?? null;
     property.camYear           = data.camYear ?? property.camYear ?? null;
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
@@ -26500,6 +26609,11 @@ async function saveProperty(property) {
       camYear:           stripped.camYear           ?? null,
       results:           stripped.results           ?? null,
       camReconciliation: stripped.camReconciliation ?? null,
+      // The engine's refusal, persisted next to the reconciliation it stands in
+      // for. Without this the reload told the manager "No CAM allocation has
+      // been run yet" — which is the one thing that is definitely not true of
+      // someone who ran one and watched it be refused.
+      camRefusal:        stripped.camRefusal        ?? null,
       // Settlement record (RLUSD proof-of-settlement). MUST be persisted here — otherwise the
       // next saveProperty rewrites properties.data without it, wiping the seeded record and
       // dropping the settlement flow back to "pending".
@@ -26919,6 +27033,7 @@ async function loadPropertyData(id) {
         camYear:           d.camYear           ?? null,
         results:           d.results           ?? null,
         camReconciliation: d.camReconciliation ?? null,
+        camRefusal:        d.camRefusal        ?? null,
         settlement:        d.settlement        ?? null,
         aiDrafts:          d.aiDrafts          || [],
         activityLog:       d.activityLog       || [],
@@ -27080,6 +27195,7 @@ async function loadPropertyData(id) {
     timeline:          _mergedTl,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
+    camRefusal:        dbData.camRefusal        ?? base.camRefusal        ?? null,
     // Settlement record (RLUSD proof-of-settlement) — persisted in properties.data;
     // preserve it through the merge so the settlement flow doesn't fall back to pending
     // when a property is opened via loadPropertyData (loadProperties already keeps it).
@@ -27302,7 +27418,21 @@ function renderProperty(property, opts = {}) {
     } else {
       const body    = document.getElementById('resultsBody');
       const section = document.getElementById('results');
-      if (body) {
+      // A refused run leaves no results, which is indistinguishable from never
+      // having run at all — and "No CAM allocation has been run yet" is exactly
+      // the wrong thing to tell someone who ran one and watched it be refused.
+      //
+      // Scoped to the year the screen is currently set to — getCamYear() is that
+      // one authority, and selectProperty resolves it from the property's own
+      // record before this runs, so a reload compares against the right year.
+      // Once the manager picks a different year the refusal no longer describes
+      // what they are looking at, and saying it would be its own false claim.
+      const _ref = property.camRefusal;
+      const _refApplies = !!(_ref && _ref.refused === true &&
+        String(_ref.year) === String(getCamYear()));
+      if (body && _refApplies && renderCamRefusal(section, body, _ref)) {
+        // painted by renderCamRefusal
+      } else if (body) {
         body.innerHTML = _workspaceEmptyStateHtml('&#x1F4CA;',
           'No CAM allocation has been run yet.',
           'Upload leases and invoices, then run CAM Allocation to generate results.');
