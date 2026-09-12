@@ -88,10 +88,14 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   // 21 since the billing-readiness slice: tenant-space.js reads
   // window.tenantBillingState so its financial tile reports the CAM screen's
   // verdict instead of deriving its own from the calculation status.
+  // 22 since the unbilled-pool slice: property-workspace.js reads
+  // window.varianceBreakdownOnScreen so the Overview describes the unbilled part
+  // of the pool with the causes the CAM panel already named, instead of
+  // subtracting and calling the total "unrecovered underbilling".
   // The count is pinned deliberately — a name drifting into browser_only
   // unnoticed is the thing this file exists to prevent — so moving it is a
   // decision, recorded here.
-  eq(INVENTORY.byKind.browser_only.length, 21, 'A6 twenty-one browser-only names');
+  eq(INVENTORY.byKind.browser_only.length, 22, 'A6 twenty-two browser-only names');
   eq(INVENTORY.byKind.env.slice().sort(),
      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_URL', 'VERCEL_ENV', 'XRPL_NETWORK'],
