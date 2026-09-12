@@ -364,6 +364,18 @@
       font-size: 0.82rem; color: var(--text-4); margin: -4px 0 14px;
       line-height: 1.5; font-style: italic;
     }
+    /* THE BADGE NAMES ITS SUBJECT; IT DOES NOT NUMBER IT (P2-2).
+       These badges once carried 1-8, authored when this file was one linear
+       scrolling page. property-os.js `_reparent()` later moved the cards into
+       subject tabs, so no reader ever saw the run: Property showed 1, CAM showed
+       3-4-5, Reports 6, Reserves 7-8, and the Spaces card between them had been
+       re-badged already. Five tabs cannot be walked 1 -> 8 in order, so the
+       ordinals were renamed to glyphs rather than renumbered — renumbering would
+       have restored a linear claim the navigation no longer supports, and made a
+       third numbering system alongside the two that already agree.
+       The numbered workflow that IS live is the step bar below, whose digits
+       come from updateStepBar() and follow actual progress; the onboarding modal
+       lists the same five steps. Nothing reads these badges. */
     .sec-num {
       width: 28px; height: 28px; border-radius: 50%;
       background: #C9973A; color: var(--theme-on-accent);
@@ -7285,10 +7297,10 @@
 
   <!-- ── Step Progress Bar ─────────────────────────────────────────── -->
 
-  <!-- ── SECTION 1: Property Setup ─────────────────────────────────── -->
+  <!-- ── Property Setup ────────────────────────────────────────────── -->
   <div class="card" id="cardSetup">
     <div class="sec-head">
-      <div class="sec-num">1</div>
+      <div class="sec-num">&#x1F4D0;</div>
       <div><h2>Property Setup</h2><p>Enter property details to begin the CAM reconciliation</p></div>
     </div>
     <div class="field-row">
@@ -7457,10 +7469,10 @@
     <div id="glImportBar"></div>
   </div>
 
-  <!-- ── SECTION 3: Invoice Upload ─────────────────────────────────── -->
+  <!-- ── Invoice Upload ────────────────────────────────────────────── -->
   <div class="card" id="cardInvoices">
     <div class="sec-head">
-      <div class="sec-num">3</div>
+      <div class="sec-num">&#x1F9FE;</div>
       <div>
         <h2>Invoice Upload</h2>
         <p>Upload CAM expense invoices or import from Yardi Genesis</p>
@@ -7524,13 +7536,13 @@
     </div>
   </div>
 
-  <!-- ── SECTION 4: Run Allocation ─────────────────────────────────── -->
+  <!-- ── Run Allocation ────────────────────────────────────────────── -->
   <button id="runBtn" onclick="showAllocationModal()">Calculate CAM Charges</button>
 
   <!-- Results -->
   <div class="card" id="results">
     <div class="sec-head">
-      <div class="sec-num green">4</div>
+      <div class="sec-num green">&#x1F4CA;</div>
       <div>
         <h2 id="resultsTitle">Allocation Results</h2>
         <p>Review calculated charges for each tenant</p>
@@ -7549,10 +7561,10 @@
     <div id="previousRunsList"></div>
   </div>
 
-  <!-- ── SECTION 5: Tenant Disputes ───────────────────────────────── -->
+  <!-- ── Tenant Disputes ──────────────────────────────────────────── -->
   <div class="card" id="disputeSection">
     <div class="sec-head">
-      <div class="sec-num" style="background:#ea580c;">5</div>
+      <div class="sec-num" style="background:#ea580c;">&#x2696;&#xFE0F;</div>
       <div>
         <div class="view-label landlord">Landlord View</div>
         <h2>Tenant Disputes <span id="openDisputeHeadBadge" class="ds-open-badge"></span></h2>
@@ -7571,10 +7583,10 @@
   <!-- ══════════════════════════ TAB: Reports ════════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-reports" style="display:none;">
 
-  <!-- ── SECTION 6: Reports ─────────────────────────────────────────── -->
+  <!-- ── Reports ────────────────────────────────────────────────────── -->
   <div class="card" id="reportsSection">
     <div class="sec-head">
-      <div class="sec-num" style="background:#7c3aed;">6</div>
+      <div class="sec-num" style="background:#7c3aed;">&#x1F4D1;</div>
       <div>
         <h2>Reports</h2>
         <p>Generate printable reports for landlords and tenants</p>
@@ -7652,12 +7664,12 @@
   <!-- ══════════════════════════ TAB: Reserves ═══════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-reserves" style="display:none;">
 
-  <!-- ── SECTION 7: Reserve & Loan Documents (Phase 21D: split from requests —
+  <!-- ── Reserve & Loan Documents (Phase 21D: split from requests —
        "what the lender holds and requires" is a different workflow from
        "getting reimbursed for a repair") ─────────────────────────────────── -->
   <div class="card" id="escrowSection">
     <div class="sec-head">
-      <div class="sec-num" style="background:#0e7490;">7</div>
+      <div class="sec-num" style="background:#0e7490;">&#x1F3E6;</div>
       <div>
         <h2>Reserve &amp; Loan Documents</h2>
         <p>These documents define what reserves exist, current balances, eligible uses, lender
@@ -7672,10 +7684,10 @@
     <div id="escrowReservesList"></div>
   </div>
 
-  <!-- ── SECTION 8: Reserve Requests — every repair reimbursement starts here ── -->
+  <!-- ── Reserve Requests — every repair reimbursement starts here ──── -->
   <div class="card" id="escrowRequestsSection">
     <div class="sec-head">
-      <div class="sec-num" style="background:#0e7490;">8</div>
+      <div class="sec-num" style="background:#0e7490;">&#x1F4B8;</div>
       <div>
         <h2>Reserve Requests</h2>
         <p>Every repair reimbursement starts here. Attach the invoices, bids, photos, and

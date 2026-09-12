@@ -372,6 +372,7 @@ const SUITES = [
   { label: 'Ask AI intent coverage',             cmd: 'node test-ai-intent-coverage.js' },
   { label: 'Dispute id zero survives load',      cmd: 'node test-dispute-id-zero.js' },
   { label: 'Excluded expenses accounted for',    cmd: 'node test-excluded-expenses.js' },
+  { label: 'Section badges name their subject',  cmd: 'node test-section-badges.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
