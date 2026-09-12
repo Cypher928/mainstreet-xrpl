@@ -43,6 +43,27 @@
  * This suite drives a REAL reload — a fresh page load reading state back out of
  * storage — because an in-session check passes either way, and did.
  *
+ * THE NEGATIVE CONTROL, AND WHY IT IS NOT OPTIONAL
+ *
+ * Anchor Provisions' lease STATES its basis, and carries an EXTRACTED evidence
+ * row for it — a verbatim clause, a page, manually_edited false — seeded into
+ * tenant_field_evidence, the same authoritative table the confirmation writes
+ * to. It must read `source: 'lease'` before the reload, after the reload, and
+ * after another tenant's confirmation has been written.
+ *
+ * Without it, two wrong implementations pass: forcing `source` to 'manual'
+ * outright, and treating "has an evidence snapshot" as "a manager confirmed it".
+ * Both repair the confirmed tenant by turning every extracted value into a
+ * confirmation nobody gave, which is the same defect pointing the other way.
+ *
+ * THE EVIDENCE WRITE LANDS ON A TICK
+ *
+ * The production write is awaited deliberately — "it is awaited by the caller
+ * that needs it" — and against a synchronous mock, dropping that await is
+ * invisible. So tenant_field_evidence upserts land on a timer here: an awaited
+ * write is on disk when the confirmation returns, an un-awaited one is not.
+ * Deterministic, because a timer always loses to synchronous code.
+ *
  * DETERMINISM
  * Fixed timezone, fixed fixture, own port and localStorage key, no network egress.
  */
@@ -107,8 +128,14 @@ const PROP_ID = 'pb-prop-000000000001';
 // the state every lease in Pilot is in today. One is confirmed; the other is
 // the control that must stay held.
 const TENANTS = [
+  // THE NEGATIVE CONTROL. This lease STATES its partial-period basis, and no
+  // manager has touched it. It must read as the lease's own language before and
+  // after the reload — the mirror of the defect: a fix that simply forced
+  // `source` to 'manual' would repair the confirmed tenant and silently turn
+  // every extracted basis into a confirmation nobody gave.
   { id: 'pb-t-anchor', tenant_name: 'Anchor Provisions', leased_sqft: 30000,
     lease_type: 'Triple Net (NNN)', start_date: '2018-01-01', end_date: '2032-12-31',
+    partial_period_basis: 'monthly',
     cap: '', capBaseAmount: '', excluded_categories: '', status: 'complete' },
   { id: 'pb-t-quill',  tenant_name: 'Quill & Press',     leased_sqft: 10000,
     lease_type: 'Triple Net (NNN)', start_date: '2026-04-01', end_date: '2031-03-31',
@@ -141,20 +168,41 @@ const SUPABASE_MOCK = `
   var USER_ID='pb-user', _user={id:USER_ID,email:'pb@e2e-test.local'}, _session=null, KEY='__pb_store';
   var seed={properties:[{id:${JSON.stringify(PROP_ID)},user_id:USER_ID,name:'Pemberton Walk',sqft:50000,
     data:{invoices:${JSON.stringify(INVOICES)},disputes:[],camYear:2026,results:null,camReconciliation:null,
-          activityLog:[],timeline:[],escrowReserves:[],drawRequests:[],tenants:${JSON.stringify(TENANTS)}}}],tenants:[]};
+          activityLog:[],timeline:[],escrowReserves:[],drawRequests:[],tenants:${JSON.stringify(TENANTS)}}}],tenants:[],
+    // The negative control's evidence, in the authoritative table, shaped as
+    // EXTRACTION writes it: a verbatim clause, a page, and manually_edited
+    // false. A reader that treats "has a snapshot" as "a manager confirmed it"
+    // reports this as manual, which is the mirror of the D-2 defect.
+    tenant_field_evidence:[{id:'pb-ev-anchor-basis',property_id:${JSON.stringify(PROP_ID)},
+      tenant_id:'pb-t-anchor',field_key:'partial_period_basis',value:'monthly',
+      confidence_status:'verified',confidence_note:'Clause located in the executed lease',
+      source_file:'anchor-lease.pdf',source_page:12,approved:true,manually_edited:false,
+      original_extracted_value:'monthly',reviewed_at:null,
+      quote:'prorated based on the number of full calendar months in such partial year'}]};
   function load(){try{var r=localStorage.getItem(KEY);if(r)return JSON.parse(r);}catch(e){}return JSON.parse(JSON.stringify(seed));}
   function persist(){try{localStorage.setItem(KEY,JSON.stringify(_store));}catch(e){}}
   var _store=load(); window.__store=function(){return _store;};
   function res(d){return Promise.resolve({data:d,error:null});} var _seq=0;
-  function table(name){var rows=_store[name]||(_store[name]=[]);var last=null;var api={
+  function table(name){var rows=_store[name]||(_store[name]=[]);var last=null;
+    // tenant_field_evidence lands on a TICK, not synchronously. The production
+    // write is awaited on purpose — "it is awaited by the caller that needs it" —
+    // and against a synchronous mock, dropping that await is invisible. Deferring
+    // the row by a timer makes the difference observable: an awaited write is on
+    // disk when the confirmation returns, an un-awaited one is not.
+    var _pending=null;
+    function _land(a){a.forEach(function(row){rows.push(row);});persist();}
+    var api={
     select:function(){last=null;return api;},eq:function(){return api;},not:function(){return api;},
     is:function(){return api;},in:function(){return api;},order:function(){return api;},limit:function(){return api;},
     maybeSingle:function(){return res(last||rows[0]||null);},single:function(){return res(last||rows[0]||null);},
     insert:function(v){var a=[].concat(v).map(function(r){var row=JSON.parse(JSON.stringify(r));if(!row.id)row.id='m-'+name+'-'+(++_seq);rows.push(row);return row;});last=a[0];persist();return api;},
-    upsert:function(v){var a=[].concat(v).map(function(r){var row=JSON.parse(JSON.stringify(r));if(!row.id)row.id='m-'+name+'-'+(++_seq);var i=rows.findIndex(function(x){return x.id===row.id;});if(i>=0){rows[i]=Object.assign({},rows[i],row);persist();return rows[i];}rows.push(row);return row;});last=a[0];persist();return api;},
+    upsert:function(v){var a=[].concat(v).map(function(r){var row=JSON.parse(JSON.stringify(r));if(!row.id)row.id='m-'+name+'-'+(++_seq);return row;});last=a[0];
+      if(name==='tenant_field_evidence'){_pending=new Promise(function(rs){setTimeout(function(){_land(a);rs();},25);});return api;}
+      a.forEach(function(row){var i=rows.findIndex(function(x){return x.id===row.id;});if(i>=0){rows[i]=Object.assign({},rows[i],row);}else{rows.push(row);}});persist();return api;},
     update:function(v){rows.forEach(function(r){Object.assign(r,JSON.parse(JSON.stringify(v)));});last=rows[0];persist();return api;},
     delete:function(){return api;},
-    then:function(f){return Promise.resolve({data:last?[last]:rows,error:null}).then(f);}};return api;}
+    then:function(f){var p=_pending||Promise.resolve();_pending=null;
+      return p.then(function(){return {data:last?[last]:rows,error:null};}).then(f);}};return api;}
   window.supabase = { createClient: function () { return {
     auth: {
       getSession: function () { return Promise.resolve({ data: { session: _session }, error: null }); },
@@ -241,6 +289,21 @@ const SUPABASE_MOCK = `
       JSON.stringify(before));
   yes('and the tenant is held', before.held === true && before.chip === 'Needs confirmation',
       JSON.stringify(before));
+
+  // ── The negative control, read BEFORE anything is confirmed ──────────────
+  console.log('\n── A lease that STATES its basis reads as the lease ──');
+  const leaseBefore = await readState('Anchor Provisions');
+  R('basis', leaseBefore.basis);
+  R('source', leaseBefore.source);
+  R('confidence', leaseBefore.confidence);
+  yes('the stated value is read', leaseBefore.basis === 'monthly' && leaseBefore.resolved === 'monthly',
+      JSON.stringify(leaseBefore));
+  yes('and its source is the LEASE, not a manager',
+      leaseBefore.source === 'lease' && leaseBefore.stated === true, JSON.stringify(leaseBefore));
+  yes('    with no manual snapshot behind it',
+      leaseBefore.snapshots.every(s => s.manual !== true), JSON.stringify(leaseBefore.snapshots));
+  yes('    and it is not held for a confirmation it does not need',
+      leaseBefore.held === false, JSON.stringify({ held: leaseBefore.held }));
 
   console.log('\n── The manager confirms, and the write is awaited ──');
   const confirmed = await page.evaluate(async (PID) => {
@@ -338,6 +401,31 @@ const SUPABASE_MOCK = `
   yes('    on the same dollars',
       Math.abs(recovered.allocated - before.allocated) < 0.005,
       JSON.stringify({ before: before.allocated, recovered: recovered.allocated }));
+
+  // ── The negative control, across the same real reload ────────────────────
+  // Read AFTER the reload and after another tenant's confirmation was written,
+  // so this proves two things at once: the reload does not promote an extracted
+  // value to a manual one, and one tenant's confirmation does not leak onto
+  // another's provenance.
+  console.log('\n── And the stated lease is STILL the lease, after the reload ──');
+  const leaseAfter = await readState('Anchor Provisions');
+  R('basis', leaseAfter.basis);
+  R('source', leaseAfter.source);
+  R('confidence', leaseAfter.confidence);
+  R('snapshots', leaseAfter.snapshots);
+  yes('the stated value survived', leaseAfter.basis === 'monthly' && leaseAfter.resolved === 'monthly',
+      JSON.stringify(leaseAfter));
+  yes('IT IS STILL LEASE-DERIVED — the reload did not promote it to a confirmation',
+      leaseAfter.source === 'lease',
+      `source came back as "${leaseAfter.source}" — an extracted value is being reported as a manager's answer`);
+  yes('    no manual snapshot was invented for it',
+      leaseAfter.snapshots.every(s => s.manual !== true), JSON.stringify(leaseAfter.snapshots));
+  yes('    and its confidence surface does not claim a manual entry',
+      leaseAfter.confidence.source !== 'manual' && leaseAfter.confidence.status !== 'manual',
+      JSON.stringify(leaseAfter.confidence));
+  yes('    confirming another lease did not change this one',
+      leaseAfter.source === leaseBefore.source && leaseAfter.basis === leaseBefore.basis,
+      JSON.stringify({ before: leaseBefore.source, after: leaseAfter.source }));
 
   console.log('\n── The control: the OTHER silent lease is still held ──');
   const rowan = await readState('Rowan Threads');
