@@ -107,6 +107,11 @@ const SUITES = [
   // apportions, because how a partial period is billed is still an open
   // question and a helper returning a factor would answer it by accident.
   { label: 'Lease term vs CAM period (T1)',     cmd: 'node test-lease-period.js' },
+  // D-1. Three states, not two: a date the lease HAS and we cannot read is not
+  // a date it lacks. The existing suites pin the stored shape and the finding;
+  // this one carries all three through to the allocation, because the danger is
+  // unreadable -> missing -> assumed full period -> billed.
+  { label: 'Unreadable vs missing dates (D-1)', cmd: 'node test-unreadable-date-distinction.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally
