@@ -149,6 +149,16 @@ const SUITES = [
   // when one invoice was marked not CAM-eligible, and the gross figure labelled
   // "Total CAM pool" beside an allocation that ran on a smaller one.
   { label: 'Allocation disclosure',               cmd: 'node test-e2e-allocation-disclosure.js' },
+  // ONE REGISTER DECIDES WHAT AN INVOICE IS. Every invoice-scoped detector keyed
+  // its impact items `invoice:<vendorName>`, so Cascade's 26 invoices from 10
+  // vendors — four quarterly utility bills, four janitorial, four management —
+  // collapsed onto 10 ids and deriveExposure's max-dedupe discarded $82,950.
+  // One finding then stated two amounts three lines apart. Identity is resolved
+  // against invoiceData now, because the detectors do not read one array:
+  // concentration walks lastInvoicesFull, whose rows may carry neither the id
+  // nor the date their register twin has. Fixtures give same-vendor invoices
+  // DIFFERENT amounts so a vendor-keyed build cannot pass by coincidence.
+  { label: 'Invoice evidence identity',           cmd: 'node test-e2e-invoice-evidence-identity.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

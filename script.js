@@ -16507,6 +16507,74 @@ function buildAuditSummary() {
   const camPool  = lastCamPool || window.CamPool.total(invs) || (lastTotal || 0);
   const allInvData = invoiceData.filter(inv => inv && inv.vendorName);
   const paidInvData = allInvData.filter(inv => parseFloat(inv.amount) > 0);
+
+  // ── THE INVOICE REGISTER IS THE AUTHORITY ON INVOICE IDENTITY ────────────
+  //
+  // deriveExposure de-duplicates impact items by id and keeps the LARGEST.
+  // That rule is correct and is what makes one invoice named by several
+  // findings contribute its dollars once. It puts the whole weight on the id:
+  // two findings about ONE invoice must agree on it, and two findings about
+  // DIFFERENT invoices must not collide.
+  //
+  // Every invoice-scoped detector used `invoice:<vendorName>`. A vendor name is
+  // not an invoice. Cascade bills 26 invoices from 10 vendors — four quarterly
+  // utility bills, four janitorial, four management — so 16 of the 26 shared an
+  // id and the max silently discarded $82,950: a pool the finding's own text
+  // called $188,300 was exposed as $105,350.
+  //
+  // Keying on the record's `id` instead does not work on its own, for two
+  // measured reasons:
+  //
+  //   · invoiceData records have no id until PropertyOS.ensureInvoiceIds runs,
+  //     and the upload path never calls it. Every freshly uploaded invoice
+  //     would key on `invoice:undefined`.
+  //   · the detectors do not read one array. Concentration walks camInvs, from
+  //     lastInvoicesFull; the documentation detectors walk invoiceData. Those
+  //     hold DIFFERENT OBJECTS for the same invoice, and the fields they carry
+  //     are not consistent — in the Test 3 replay the register row has an id
+  //     and a date while its lastInvoicesFull twin has neither.
+  //
+  // So identity is resolved against ONE register, invoiceData, and every
+  // detector asks it rather than inventing a key from whatever fields its own
+  // array happens to carry.
+  const _invRegisterEntry = (inv) => {
+    if (!inv) return null;
+    // Already a register row — it is its own authority.
+    if (allInvData.indexOf(inv) !== -1) return inv;
+    // A foreign row (lastInvoicesFull) resolves by id when that is unambiguous.
+    if (inv.id != null) {
+      const byId = allInvData.filter(x => x && x.id === inv.id);
+      if (byId.length === 1) return byId[0];
+    }
+    // Otherwise by vendor and amount — the two fields both arrays always carry.
+    // EXACTLY ONE match, or none: several matching rows mean this record cannot
+    // be tied to a particular invoice, and picking the first would be a guess.
+    const v = String(inv.vendorName || inv.vendor || '').trim();
+    const a = parseFloat(inv.amount);
+    const hits = allInvData.filter(x => x &&
+      String(x.vendorName || '').trim() === v && parseFloat(x.amount) === a);
+    return hits.length === 1 ? hits[0] : null;
+  };
+
+  // NULL MEANS "THIS RECORD CANNOT BE TIED TO ONE INVOICE", and callers must
+  // treat that as a finding with no priced impact rather than inventing a key.
+  // The vendor name is not available as a fallback: register rows key on their
+  // id or their own natural key, so a vendor-scoped id would merge with neither
+  // and the same dollars would land on both the documentation and concentration
+  // axes — $31,000 of a $22,000 pool in the F fixture. An unpriced finding is
+  // the honest answer and the product already has a word for it: the exposure
+  // panel reports it as "not yet quantified — NOT counted as zero".
+  const _invImpactId = (inv) => {
+    const row = _invRegisterEntry(inv);
+    if (!row) return null;
+    if (row.id != null) return 'invoice:' + row.id;
+    // No id anywhere yet: a natural key off the register row's own fields. Not
+    // a position — a position in one array means nothing in the other.
+    return 'invoice:' + String(row.vendorName || '').trim() + '|'
+         + (row.amount == null ? '' : row.amount) + '|'
+         + (row.invoiceDate || '');
+  };
+
   const results  = lastResults;
   const tenants  = lastTenants;
   const total    = lastTotal || 0;
@@ -16533,13 +16601,20 @@ function buildAuditSummary() {
           // answer is an independent bid, not a receipt.
           //
           // `items` carries the atom this finding is about. Every invoice-scoped
-          // finding uses the same `invoice:<vendor>` id, so one invoice flagged
+          // finding resolves its id through _invImpactId, so one invoice flagged
           // by several detectors contributes its dollars once. A near-miss on
           // that convention — "invoice:" here against "invoices:" elsewhere —
-          // is what reported $110,000 of a $67,300 pool.
-          impact: { amount: amt, kind: 'concentration',
-                    items: [{ id: `invoice:${vendor}`, amount: amt }],
-                    basis: `Single invoice at ${pct}% of the pool, pending independent verification` },
+          // is what reported $110,000 of a $67,300 pool. This detector reads
+          // lastInvoicesFull, so its rows are resolved back to the register
+          // before an identity is taken.
+          // An unresolvable row yields no priced impact at all — not an amount
+          // without items, which deriveExposure would give a throwaway id and
+          // count on its own.
+          impact: _invImpactId(inv)
+            ? { amount: amt, kind: 'concentration',
+                items: [{ id: _invImpactId(inv), amount: amt }],
+                basis: `Single invoice at ${pct}% of the pool, pending independent verification` }
+            : undefined,
           actions: ['Obtain competitive bids', 'Verify against vendor contract', 'Attach supporting detail'],
           source: 'Invoice amount vs total CAM pool',
           conditions: [
@@ -16637,7 +16712,8 @@ function buildAuditSummary() {
         // a documentation gap, not a determination that the charge is wrong.
         impact: missingAmt > 0
           ? { amount: missingAmt, kind: 'unsubstantiated',
-              items: missing.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+              items: missing.map(i => ({ id: _invImpactId(i), amount: parseFloat(i.amount) || 0 }))
+                      .filter(x => x.id),
               basis: 'Charges with no attached invoice or receipt' }
           : undefined,
         actions: ['Attach source invoices', 'Request copies from vendor', 'Exclude from billing until documented'],
@@ -16667,11 +16743,13 @@ function buildAuditSummary() {
       yellow.push({
         group:  'missing_docs',
         severity: 'yellow',
-        // Same expense-side axis, scoped by vendor so an invoice that is both
-        // undated and undocumented is one sum of money, counted once.
+        // Same expense-side axis, and the same register-resolved identity, so an
+        // invoice that is both undated and undocumented is one sum of money,
+        // counted once — see _invImpactId above.
         impact: noDateAmt > 0
           ? { amount: noDateAmt, kind: 'unsubstantiated',
-              items: noDates.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+              items: noDates.map(i => ({ id: _invImpactId(i), amount: parseFloat(i.amount) || 0 }))
+                      .filter(x => x.id),
               basis: `Charges that cannot be placed in the ${camYr} period from the document alone` }
           : undefined,
         actions: ['Obtain dated invoice', 'Confirm service period with vendor', 'Exclude if outside the CAM year'],
@@ -16737,10 +16815,12 @@ function buildAuditSummary() {
           // differs.
           title:  `Confirm whether ${inv.vendorName} belongs to ${cand.tenantName} — it names ${names.length} tenants`,
           detail: `${inv.vendorName} (${fmt(amt)}) matched ${who} equally well — ${tied.map(c => `${c.tenantName} on ${c.reason}`).join(', ')}. A direct match bills the whole invoice to one tenant, and this reconciliation billed it to ${inv.matchedTenant} because that lease was read first, not because the document says so. Confirm which tenant it belongs to, or correct the unit or vendor name on the invoice, and re-run.`,
-          impact: { amount: amt, kind: 'unsubstantiated',
-                    scope: `tenant:${cand.tenantName}`,
-                    items: [{ id: `invoice:${inv.vendorName}`, amount: amt }],
-                    basis: `Whole invoice assigned to one of ${names.length} equally-matched tenants by array order` },
+          impact: _invImpactId(inv)
+            ? { amount: amt, kind: 'unsubstantiated',
+                scope: `tenant:${cand.tenantName}`,
+                items: [{ id: _invImpactId(inv), amount: amt }],
+                basis: `Whole invoice assigned to one of ${names.length} equally-matched tenants by array order` }
+            : undefined,
           actions: ['Confirm which tenant this invoice belongs to',
                     'Correct the unit number or vendor name on the invoice',
                     'Re-run the reconciliation'],
@@ -16779,7 +16859,8 @@ function buildAuditSummary() {
         // and the amount are held exactly as they were; only the words a manager
         // reads have changed.
         impact: { amount: nmAmt, kind: 'unsubstantiated',
-                  items: nearMiss.map(i => ({ id: `invoice:${i.vendorName}`, amount: parseFloat(i.amount) || 0 })),
+                  items: nearMiss.map(i => ({ id: _invImpactId(i), amount: parseFloat(i.amount) || 0 }))
+                        .filter(x => x.id),
                   basis: 'Allocated pro-rata; a short tenant identifier appears in the invoice text' },
         actions: ['Confirm whether the invoice is a direct charge',
                   'Add the full tenant name or a longer unit reference to the invoice',
