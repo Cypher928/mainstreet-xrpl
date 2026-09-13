@@ -143,6 +143,12 @@ const SUITES = [
   // Covers all three generations plus the seeded demo, which passes the check
   // rather than being exempt from it.
   { label: 'Legacy snapshot integrity',           cmd: 'node test-e2e-legacy-snapshot-integrity.js' },
+  // THREE THINGS THE PRODUCT NAMED THAT WERE NOT THERE, found by walking the
+  // pilot journey: an empty state pointing at a Documents tab that does not
+  // exist, a confirmation modal promising to allocate the gross invoiced total
+  // when one invoice was marked not CAM-eligible, and the gross figure labelled
+  // "Total CAM pool" beside an allocation that ran on a smaller one.
+  { label: 'Allocation disclosure',               cmd: 'node test-e2e-allocation-disclosure.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

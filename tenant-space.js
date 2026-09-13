@@ -727,7 +727,18 @@ window.TenantSpace = (function () {
     injectStyles();
     var tenants = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
     if (!tenants.length) {
-      host.innerHTML = '<div class="ts-empty">No tenant spaces yet. Add tenants under Documents → Add One Tenant, and they’ll appear here as spaces.</div>';
+      // POINT AT THE BUTTON THAT IS ON THIS SCREEN.
+      //
+      // This said "Add tenants under Documents → Add One Tenant". There is no
+      // Documents tab — the six are Overview, Property, Spaces, CAM, Reserves
+      // and Reports — and the control it names is in Lease intake, directly
+      // below this message. It is the first instruction a manager follows when
+      // adding her first tenant, and it sent her looking for a tab that does
+      // not exist. The same defect was already fixed once for the lease-upload
+      // empty state; this is its surviving sibling.
+      host.innerHTML = '<div class="ts-empty">No tenant spaces yet. Use ' +
+        '<strong>Upload Leases</strong> or <strong>Add One Tenant</strong> in Lease intake below, ' +
+        'and each tenant will appear here as a space.</div>';
       return;
     }
     host.innerHTML = '<div class="tsl-grid">' + tenants.map(function (t) {

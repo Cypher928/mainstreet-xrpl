@@ -10475,9 +10475,26 @@ function showAllocationModal() {
 
   const total = invoices.reduce((s, inv) => s + parseFloat(inv.amount), 0);
 
-  // Category breakdown rows
+  // ── WHAT IS ACTUALLY ABOUT TO BE ALLOCATED ────────────────────────────────
+  //
+  // This modal said "You are about to allocate $114,500.00 across 2 tenants"
+  // on a property where the manager had marked one $26,100 invoice not
+  // CAM-eligible. The engine allocates from the RECOVERABLE pool — $88,400 —
+  // and the modal never mentioned the exclusion at all. It is the last thing
+  // she reads before committing, and it overstated the basis by 23%.
+  //
+  // CamPool is the same authority runAllocation uses to build `lastCamPool`,
+  // so this reads the decision rather than making a second one: nothing here
+  // re-derives what is eligible.
+  const eligible = window.CamPool ? window.CamPool.eligible(invoices) : invoices;
+  const camPool  = window.CamPool ? (window.CamPool.total(invoices) || 0) : total;
+  const excluded = Math.max(0, total - camPool);
+
+  // Category rows are struck off the ELIGIBLE set so the breakdown adds up to
+  // the figure above it. The excluded money is not hidden — it gets its own
+  // line, named for why it is out.
   const catTotals = {};
-  invoices.forEach(inv => {
+  eligible.forEach(inv => {
     catTotals[inv.category] = (catTotals[inv.category] || 0) + parseFloat(inv.amount);
   });
   const catRows = Object.entries(catTotals)
@@ -10490,13 +10507,20 @@ function showAllocationModal() {
 
   document.getElementById('allocModalBody').innerHTML = `
     <div class="modal-confirm-msg">
-      You are about to allocate <strong>${fmt(total)}</strong> across
-      <strong>${tenants.length}</strong> tenant${tenants.length !== 1 ? 's' : ''}.
+      You are about to allocate <strong>${fmt(camPool)}</strong> of CAM-recoverable
+      expenses across <strong>${tenants.length}</strong> tenant${tenants.length !== 1 ? 's' : ''}.
+      ${excluded > 0
+        ? `<strong>${fmt(excluded)}</strong> of the ${fmt(total)} invoiced is marked
+           not CAM-eligible and will not be allocated.`
+        : ''}
       Please confirm this looks correct.
     </div>
     <table class="modal-summary-table">
       <tr><td>Total Invoices</td><td>${invoices.length}</td></tr>
-      <tr><td>Total Amount</td><td>${fmt(total)}</td></tr>
+      <tr><td>Invoiced total</td><td>${fmt(total)}</td></tr>
+      ${excluded > 0
+        ? `<tr><td>Not CAM-eligible</td><td>&minus;${fmt(excluded)}</td></tr>` : ''}
+      <tr><td><strong>Allocating from</strong></td><td><strong>${fmt(camPool)}</strong></td></tr>
       <tr><td>Tenants</td><td>${tenants.length}</td></tr>
       ${catRows}
     </table>`;
@@ -17042,7 +17066,7 @@ function buildAuditNarrative() {
   const readiness = AX && exposure ? AX.billingReadiness(exposure) : null;
   const financialImpact = (AX && exposure)
     ? AX.describeExposure(exposure)
-    : (total > 0 ? `${fmt(total)} total CAM pool` : 'Insufficient data');
+    : (total > 0 ? `${fmt(total)} total invoiced expenses` : 'Insufficient data');
 
   // ── Summary Paragraph ─────────────────────────────────────────────────────
   const parts = [];
@@ -17311,7 +17335,9 @@ function renderNarrativePanel() {
         if (!x || !x.totalPool) return '';
         const money = (v) => '$' + Math.round(v).toLocaleString('en-US');
         const rows = [
-          ['Total CAM pool', money(x.totalPool), null],
+          // Gross invoiced, not the recoverable pool the allocation runs on —
+          // see describeExposure in audit-exposure.js for why the name matters.
+          ['Total invoiced expenses', money(x.totalPool), null],
           ['Requiring lease verification', money(x.confirmedAtRisk),
             x.confirmedAtRisk > 0 ? 'an-exp--risk' : null],
           ['Requiring review', money(x.requiringReview),

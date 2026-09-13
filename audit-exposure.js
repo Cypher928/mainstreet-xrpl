@@ -402,7 +402,15 @@
   function describeExposure(x) {
     if (!x || !x.totalPool) return 'Insufficient data';
 
-    const parts = [`${fmtMoney(x.totalPool)} total CAM pool`];
+    // NOT "total CAM pool". Every caller passes the GROSS invoiced total, and
+    // the expense-side axis this module measures is about dollars in the
+    // invoice pool regardless of whether they are recoverable. Calling it the
+    // CAM pool put "$114,500 total CAM pool" on a screen that allocated from
+    // $88,400 and, two lines away, said "$26,100 marked not CAM-eligible" — a
+    // manager who had just excluded that invoice could only read it as her
+    // exclusion not having taken. The figure is unchanged; the name now says
+    // which of the two pools it is.
+    const parts = [`${fmtMoney(x.totalPool)} total invoiced expenses`];
     if (x.confirmedAtRisk > 0)     parts.push(`${fmtMoney(x.confirmedAtRisk)} ${KIND_LABEL.at_risk}`);
     if (x.requiringReview > 0)     parts.push(`${fmtMoney(x.requiringReview)} ${KIND_LABEL.under_review}`);
     if (x.excludedRecoverable > 0) parts.push(`${fmtMoney(x.excludedRecoverable)} excluded or recovered`);
@@ -431,7 +439,7 @@
       && !(x.poolFlagged > 0) && x.unquantified === 0;
 
     if (nothingOutstanding && x.counts.red === 0 && x.counts.yellow === 0) {
-      return `${fmtMoney(x.totalPool)} total CAM pool — no at-risk amounts identified`;
+      return `${fmtMoney(x.totalPool)} total invoiced expenses — no at-risk amounts identified`;
     }
     return parts.join(' · ');
   }
