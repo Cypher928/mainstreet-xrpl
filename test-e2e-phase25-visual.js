@@ -177,7 +177,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const dashVisible = await page.$eval('#portfolioDashboard', el => el.style.display !== 'none').catch(() => false);
     assert(dashVisible, 'P25-V1: portfolio dashboard visible after sign-in');
@@ -223,7 +223,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     const panelStillHidden = await page.$eval('#demoWelcomePanel', el => el.style.display === 'none').catch(() => false);
     assert(panelStillHidden, 'P25-V3: panel stays dismissed after reload (localStorage persisted)');
     // Demo cards must remain visible even with the panel dismissed — they are
@@ -293,7 +293,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const el = document.getElementById('mainWorkflow');
       return el && el.style.display !== 'none';
-    }, { timeout: 15000 });
+    }, null, { timeout: 45000 });
     await page.waitForSelector('#restoredBanner', { timeout: 10000 });
     const bannerText = await page.$eval('#restoredBanner', el => el.textContent).catch(() => '');
     assert(bannerText.includes('demo property'), 'P25-V5: demo banner reads "viewing demo property", not "restored from previous session"', bannerText);
@@ -308,7 +308,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const el = document.getElementById('portfolioDashboard');
       return el && el.style.display !== 'none';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     await page.evaluate(() => { window.prompt = () => 'Visual QA Test Acquisition'; });
     await page.evaluate(() => createAcquisitionReview());
@@ -323,7 +323,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const el = document.getElementById('portfolioDashboard');
       return el && el.style.display !== 'none';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     // ── 🔍 Probe: open Harborview acquisition demo from the same grid ─────────
     section('P25-V7: 🔍 Probe — Harborview demo card opens acquisition review, not property workspace');
@@ -343,7 +343,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const el = document.getElementById('mainWorkflow');
       return el && el.style.display !== 'none';
-    }, { timeout: 15000 });
+    }, null, { timeout: 45000 });
     await page.evaluate(() => switchWorkspaceTab('cam'));
     await page.evaluate(() => {
       invoiceData.splice(0, invoiceData.length,
@@ -389,7 +389,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const el = document.getElementById('portfolioDashboard');
       return el && el.style.display !== 'none';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     // ── Console error check ─────────────────────────────────────────────────────
     section('P25-V8: Console error check');

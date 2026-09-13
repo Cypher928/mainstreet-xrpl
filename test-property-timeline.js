@@ -53,9 +53,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
 
   try {
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForFunction(() => { const a = document.getElementById('appContent'); return a && a.style.display !== 'none' && a.style.display !== ''; }, { timeout: 10000 });
+    await page.waitForFunction(() => { const a = document.getElementById('appContent'); return a && a.style.display !== 'none' && a.style.display !== ''; }, null, { timeout: 45000 });
     await page.evaluate(() => loadDemo());
-    await page.waitForFunction(() => { const el = document.getElementById('mainWorkflow'); return el && el.style.display !== 'none'; }, { timeout: 15000 });
+    await page.waitForFunction(() => { const el = document.getElementById('mainWorkflow'); return el && el.style.display !== 'none'; }, null, { timeout: 45000 });
     await page.evaluate(() => switchWorkspaceTab('overview'));
     await page.waitForTimeout(500);
 
@@ -69,7 +69,17 @@ srv.listen(PORT, '127.0.0.1', async () => {
     reg.exists ? ok('window.PropertyTimeline loaded') : bad('module missing');
     (reg.maint && reg.maint.label === 'Maintenance') ? ok('describe() resolves manual category → "Maintenance"') : bad('describe manual', JSON.stringify(reg.maint));
     (reg.lease && reg.lease.label === 'Lease') ? ok('describe() resolves auto type → "Lease"') : bad('describe auto', JSON.stringify(reg.lease));
-    (reg.cats && reg.cats.includes('maintenance') && reg.cats.includes('capital_improvement') && reg.cats.length === 11) ? ok('11 property-management categories registered') : bad('categories', JSON.stringify(reg.cats));
+    // 11 tenancy/operations categories, plus the 8 building-level ones the
+    // Property Workspace added (taxes, financing, survey, site plan, building
+    // plan, environmental, photo, warranty). They live on ONE registry on
+    // purpose — a building category is a category on the same timeline, not a
+    // new store. docs/PROPERTY_WORKSPACE.md.
+    var _needCats = ['maintenance', 'capital_improvement', 'real_estate_taxes', 'mortgage_financing',
+      'survey', 'site_plan', 'building_plan', 'environmental', 'building_photo', 'warranty'];
+    var _missCats = _needCats.filter(function (k) { return !(reg.cats || []).includes(k); });
+    (reg.cats && !_missCats.length && reg.cats.length === 19)
+      ? ok('19 categories registered — 11 operational + 8 building-level')
+      : bad('categories', 'missing: ' + (_missCats.join(',') || 'none') + ' | n=' + (reg.cats || []).length);
 
     sec('Schema defaults (additive, back-compatible)');
     const sch = await page.evaluate(() => {
@@ -517,10 +527,17 @@ srv.listen(PORT, '127.0.0.1', async () => {
     const invArch = await page.evaluate(() => {
       const p = currentProperty();
       const before = PropertyOS.invoices(p).length;
-      PropertyOS.setInvoiceRelation(0, 'system', 'roof');
-      PropertyOS.setInvoiceRelation(0, 'camEligible', false);
+      // PW-2 — relations are written by stable invoice ID, not array position.
+      // A positional write is unsafe by construction: an invoice removed
+      // between render and click silently retargets the write onto a different
+      // invoice, and `system` feeds the Roof/HVAC story. Stamp ids, then
+      // address the invoices the way the product now does.
+      PropertyOS.ensureInvoiceIds(p);
+      const inv0 = p.invoices[0].id, inv1 = p.invoices[1].id;
+      PropertyOS.setInvoiceRelation(inv0, 'system', 'roof');
+      PropertyOS.setInvoiceRelation(inv0, 'camEligible', false);
       const t = (p.tenants || [])[0];
-      PropertyOS.setInvoiceRelation(1, 'spaceId', t.id);
+      PropertyOS.setInvoiceRelation(inv1, 'spaceId', t.id);
       const after = PropertyOS.invoices(p);
       return {
         onProperty: Array.isArray(p.invoices) && p.invoices.length > 0,

@@ -17,6 +17,105 @@ window.ReviewEngine = (() => {
     'amendment_applied', 'multiple_amendments',
   ]);
 
+  // ── What actually stops the CAM engine ─────────────────────────────────────
+  //
+  // getValidTenants() in script.js is the authority. It keeps a lease only when
+  // it has a name, leased_sqft > 0, a successful extraction, and no UNCONFIRMED
+  // property mismatch. Anything else — a missing cap percentage, an unresolved
+  // audit-rights clause, an amendment on file — changes how much trust the
+  // resulting number deserves, not whether it can be produced.
+  //
+  // This set names the warning types that correspond to those blocking
+  // conditions, so the readiness UI and the engine reach the same answer from
+  // one derivation instead of two.
+  //
+  // THIS SET IS NOT A SUBSET OF MISSING_FIELD_TYPES, AND MUST NOT BE MADE ONE.
+  // It was, and that is precisely how the property mismatch went unmodelled:
+  // MISSING_FIELD_TYPES means "a required field is absent", while a property
+  // mismatch is the opposite — a field is present and CONFLICTS with the
+  // property it was filed under. Deriving the blocking set from the missing set
+  // could only ever describe blockers of the first kind. The two sets answer
+  // different questions and are now defined independently; the only invariant
+  // between them is that camBlocking and reviewItems stay disjoint.
+  //
+  // Only the UNCONFIRMED mismatch is listed. deriveTenantReviewState emits
+  // `property_name_mismatch` when a human has not vouched for the lease and
+  // `property_name_confirmed` when one has, so a confirmed lease stops blocking
+  // by virtue of carrying a different warning type. That is why no second
+  // "is it confirmed" predicate is needed here, and why none should be added:
+  // isPropertyMismatchConfirmed() is consulted once, in one place.
+  const CAM_BLOCKING_FIELD_TYPES = new Set([
+    'missing_sqft',
+    'property_name_mismatch',
+  ]);
+
+  // How each blocking condition is described to a reader. Kept beside the set so
+  // a type can never be added to one without the other. The bulk screen used to
+  // hard-code the word "missing" before every blocker label, which reads as
+  // nonsense for a mismatch ("missing Lease document names a different
+  // property"), so the phrasing lives with the type that earns it.
+  const CAM_BLOCKER_REASON = {
+    missing_sqft:           'missing Sq Ft',
+    property_name_mismatch: 'lease names a different property, not yet confirmed',
+  };
+
+  // ── The required fields the card asks a reader to fill in ─────────────────
+  //
+  // The red "Needs Review" box on a lease card rendered
+  // getWarnings(computeFlags(t)) — a SECOND, older enumeration of what a lease is
+  // missing, and one with no square-footage branch at all. On a lease with no
+  // sqft, no end date and no lease type it listed two of the three gaps, and the
+  // one it silently dropped was the CAM blocker: the field that decides whether
+  // the lease can be reconciled at all. The reader had to scroll the form and
+  // find the blank themselves.
+  //
+  // deriveTenantReviewState already knows about all three, and its warnings are
+  // what camBlocking, reviewItems and the "Next step" CTA are built from. This
+  // maps those same warning types to the sentences the card shows, so the list a
+  // reader is given and the list the product acts on are one list.
+  //
+  // computeFlags IS DELIBERATELY LEFT ALONE, and must stay that way. It also
+  // feeds the health score — `score -= getWarnings(computeFlags(t)).length * 5`
+  // — so adding a type to it would move every score for a lease missing that
+  // field, and missing sqft already carries its own −25. The score was not what
+  // was wrong here; the list on the card was.
+  //
+  // PROPERTY_NAME_MISMATCH is deliberately absent. It is not an absent field but
+  // a present one that contradicts the property, and the card already renders it
+  // with its own explanation and its own Confirm control (see
+  // _leaseEdgeCaseAndReviewNotesHtml). Listing it here would say the same thing
+  // twice in two different vocabularies.
+  const REQUIRED_FIELD_TYPES = [
+    'missing_sqft', 'missing_lease_type', 'missing_start_date', 'missing_end_date',
+  ];
+  const REQUIRED_FIELD_SENTENCE = {
+    missing_sqft:       'Missing leased square footage',
+    missing_lease_type: 'Lease type not specified',
+    missing_start_date: 'Missing start date',
+    missing_end_date:   'Missing end date',
+  };
+  const NO_TERM_SENTENCE = 'No lease term found in document — please enter manually';
+
+  /**
+   * Every required field this lease is still missing, as reader-facing sentences.
+   * Pure: derived from the warnings deriveTenantReviewState already produced.
+   */
+  function requiredFieldGaps(t, warnings) {
+    const types = new Set((warnings || []).map(w => w.type));
+    // Preserved from computeFlags: when the document states no term at all,
+    // "missing start date / missing end date" is two symptoms of one cause, and
+    // the single sentence tells the reader more than the pair does.
+    const noTerm = !!(t && t.doc_has_dates === false && !t.start_date && !t.end_date);
+    const out = [];
+    REQUIRED_FIELD_TYPES.forEach(ty => {
+      if (!types.has(ty)) return;
+      if (noTerm && (ty === 'missing_start_date' || ty === 'missing_end_date')) return;
+      out.push(REQUIRED_FIELD_SENTENCE[ty]);
+    });
+    if (noTerm) out.push(NO_TERM_SENTENCE);
+    return out;
+  }
+
   const _FINANCIAL_PROTECTION_TYPES = new Set([
     'nnn_cap_missing', 'admin_fee_present', 'gross_up_present', 'expense_stop_present',
   ]);
@@ -26,6 +125,29 @@ window.ReviewEngine = (() => {
   const _AMENDMENT_TYPES = new Set([
     'amendment_applied', 'multiple_amendments',
   ]);
+
+  // ── Square footage, read the same way the CAM gate reads it ───────────────
+  //
+  // These three predicates used to be `!t.leased_sqft`, which is false for the
+  // string "50,000" — so a lease with a formatted area raised NO missing_sqft
+  // warning, scored as if the field were present, and derived to 'verified',
+  // while getValidTenants() excluded it from the reconciliation entirely. The
+  // card said verified about a lease that was not in the run.
+  //
+  // FAILS CLOSED. If source-values.js has not loaded, every lease reads as
+  // having no usable area: the warning fires, the CAM blocker stands, and
+  // nothing is quietly included. Over-warning is recoverable; silent exclusion
+  // is what this whole change exists to stop.
+  function _hasArea(t) {
+    var SV = (typeof window !== 'undefined' && window.SourceValues) || null;
+    if (!SV || typeof SV.readArea !== 'function') {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[ReviewEngine] source-values.js is not loaded — every lease will read as missing its area.');
+      }
+      return false;
+    }
+    return SV.readArea(t && t.leased_sqft).usable;
+  }
 
   function getWarnings(flags) {
     if (!Array.isArray(flags)) return [];
@@ -86,7 +208,7 @@ window.ReviewEngine = (() => {
    */
   function deriveTenantReviewState(t, reconResults) {
     const _empty = {
-      status: 'incomplete', score: 0, warnings: [],
+      status: 'incomplete', score: 0, warnings: [], requiredGaps: [],
       warningGroups: { financialProtections: [], tenantRights: [], amendments: [], dataQuality: [] },
       reviewerConfirmed: false, reviewedAt: null, reviewedBy: null, notes: null,
     };
@@ -97,7 +219,7 @@ window.ReviewEngine = (() => {
     // ── Structured warnings ────────────────────────────────────────────────
     const warnings = [];
     if (!t.lease_type)  warnings.push({ type: 'missing_lease_type',  severity: 'high',   label: 'Lease Type' });
-    if (!t.leased_sqft) warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
+    if (!_hasArea(t))   warnings.push({ type: 'missing_sqft',        severity: 'high',   label: 'Sq Ft' });
     if (!t.start_date)  warnings.push({ type: 'missing_start_date',  severity: 'high',   label: 'Start Date' });
     if (!t.end_date)    warnings.push({ type: 'missing_end_date',    severity: 'high',   label: 'End Date' });
     const isNNN = /nnn|triple[\s-]?net/i.test(String(t.lease_type || ''));
@@ -144,19 +266,40 @@ window.ReviewEngine = (() => {
     const edgeCaseTypes = (t._edgeCases && Array.isArray(t._edgeCases.edgeCases))
       ? t._edgeCases.edgeCases.map(e => e.type) : [];
     const hasPropertyMismatch = edgeCaseTypes.includes('PROPERTY_NAME_MISMATCH');
-    if (hasPropertyMismatch) {
+
+    // The landlord may have explicitly confirmed this lease belongs here. That
+    // resolves the warning; it does not erase it — the warning stays, at low
+    // severity, saying a human vouched for it. A reviewer three months from now
+    // needs to see that this lease was flagged AND who cleared it.
+    //
+    // Delegated to LeaseIntelligence so this module and the CAM gate cannot form
+    // two different opinions of "confirmed". Guarded, and FAILS CLOSED: if that
+    // module is unavailable the lease reads as unconfirmed and keeps the high
+    // severity warning, which is the safe direction.
+    const _LI = (typeof window !== 'undefined' && window.LeaseIntelligence) || null;
+    const propertyConfirmed = !!(hasPropertyMismatch && _LI &&
+      typeof _LI.isPropertyMismatchConfirmed === 'function' && _LI.isPropertyMismatchConfirmed(t));
+
+    if (hasPropertyMismatch && !propertyConfirmed) {
       warnings.push({ type: 'property_name_mismatch', severity: 'high',
         label: 'Lease document names a different property — confirm this lease belongs here' });
+    } else if (propertyConfirmed) {
+      warnings.push({ type: 'property_name_confirmed', severity: 'low',
+        label: 'Lease names a different property — confirmed by the property owner as belonging here' });
     }
 
     // ── Score ──────────────────────────────────────────────────────────────
     let score = 100;
-    if (!t.leased_sqft)  score -= 25;
+    if (!_hasArea(t))    score -= 25;
     if (!t.lease_type)   score -= 25;
     if (t._usedFallback) score -= 15;
     if (sqftConf != null && sqftConf < 70) score -= 10;
     if (isNNN && (t.cap == null || t.cap === '')) score -= 10;
-    if (hasPropertyMismatch) score -= 30;
+    // The -30 is for an UNRESOLVED mismatch. Once the owner has verified the
+    // lease belongs here, the doubt the penalty represents has been answered, so
+    // it lifts. Every other penalty is untouched — confirmation says nothing
+    // about missing sqft, a missing cap, or a low-confidence extraction.
+    if (hasPropertyMismatch && !propertyConfirmed) score -= 30;
     score -= getWarnings(computeFlags(t)).length * 5;
     score = Math.max(0, Math.min(100, score));
 
@@ -179,6 +322,10 @@ window.ReviewEngine = (() => {
     if (reviewerConfirmed || hasLegacyOverride) {
       return {
         status: 'manually_verified', score, warnings, warningGroups, reviewerConfirmed,
+        // Carried on the acknowledged path too. A manual override records that a
+        // human vouched for the lease; it does not fill in a field, and a reader
+        // looking at the card still needs to see what is blank.
+        requiredGaps: requiredFieldGaps(t, warnings),
         reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
         notes: persisted.notes || null,
       };
@@ -188,7 +335,7 @@ window.ReviewEngine = (() => {
     let status;
     if (!t.tenant_name || (t.extractionFailed && !t._userConfirmed)) {
       status = 'incomplete';
-    } else if (!t.lease_type || !t.leased_sqft || !t.start_date || !t.end_date) {
+    } else if (!t.lease_type || !_hasArea(t) || !t.start_date || !t.end_date) {
       status = 'incomplete';
     } else if (
       t._usedFallback === true ||
@@ -196,7 +343,22 @@ window.ReviewEngine = (() => {
       (isNNN && (t.cap == null || t.cap === '')) ||
       t._needsReview === true ||
       (recon && recon.proRata > 1.0) ||
-      hasPropertyMismatch
+      // UNCONFIRMED, matching the score penalty on line ~222 and the CAM gate.
+      //
+      // This read the raw detector, so a lease that had ever shown a property
+      // mismatch stayed in 'needs_review' permanently — the landlord could open
+      // the review panel, press "Confirm lease belongs to this property", watch
+      // the CAM blocker clear and the lease enter the reconciliation, and the
+      // card would still say Needs Review with a warning glyph. There was no
+      // action anywhere in the product that could clear it.
+      //
+      // The same function already treats confirmation as resolving the
+      // consequence when it computes the score (the -30 penalty lifts), so the
+      // two answers disagreed about one fact inside one derivation. The finding
+      // itself is untouched and still recorded on _edgeCases: confirmation
+      // resolves the CONSEQUENCE, never the finding, and the warning array
+      // still carries property_name_confirmed so the history stays visible.
+      (hasPropertyMismatch && !propertyConfirmed)
     ) {
       status = 'needs_review';
     } else {
@@ -205,6 +367,7 @@ window.ReviewEngine = (() => {
 
     return {
       status, score, warnings, warningGroups, reviewerConfirmed: false,
+      requiredGaps: requiredFieldGaps(t, warnings),
       reviewedAt: persisted.reviewedAt || null, reviewedBy: persisted.reviewedBy || null,
       notes: persisted.notes || null,
     };
@@ -221,6 +384,11 @@ window.ReviewEngine = (() => {
 
   return {
     MISSING_FIELD_TYPES,
+    CAM_BLOCKING_FIELD_TYPES,
+    CAM_BLOCKER_REASON,
+    REQUIRED_FIELD_TYPES,
+    REQUIRED_FIELD_SENTENCE,
+    requiredFieldGaps,
     getWarnings,
     computeFlags,
     computeFlagsStrict,

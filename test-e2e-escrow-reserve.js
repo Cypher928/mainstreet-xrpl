@@ -186,7 +186,7 @@ const SUPABASE_MOCK = `
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     assert(true, 'ESC-E2E-1: app content visible after auth mock fires');
 
     // Dismiss any onboarding/demo-welcome overlays that intercept clicks.
@@ -200,7 +200,7 @@ const SUPABASE_MOCK = `
     // ── ESC-E2E-2: Create a property and inject reserve/invoice fixtures ──
     section('ESC-E2E-2: Create property; inject reserve fixtures');
     await page.click('.add-prop-btn');
-    await page.waitForFunction(() => typeof window.currentProperty === 'function' && !!window.currentProperty(), { timeout: 10000 });
+    await page.waitForFunction(() => typeof window.currentProperty === 'function' && !!window.currentProperty(), null, { timeout: 45000 });
 
     const propName = await page.evaluate(() => window.currentProperty().name);
     assert(!!propName, 'ESC-E2E-2: property created and selected', propName);
@@ -276,11 +276,11 @@ const SUPABASE_MOCK = `
       const prop = window.currentProperty();
       window.openEscrowPackageView(prop.escrowReserves[0].id);
     });
-    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'flex', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'flex', null, { timeout: 45000 });
     const packageBodyText = await page.$eval('#escrowPackageBody', el => el.textContent);
     assert(/\d+ document/.test(packageBodyText), 'ESC-E2E-3: Package View modal shows the reserve\'s document count', packageBodyText.replace(/\s+/g, ' ').slice(0, 150));
     await page.evaluate(() => window.closeEscrowPackageView());
-    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'none', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('escrowPackageModal').style.display === 'none', null, { timeout: 45000 });
 
     // ── ESC-E2E-4: Source Citation viewer ───────────────────────────────────
     section('ESC-E2E-4: Source Citation viewer');
@@ -303,7 +303,7 @@ const SUPABASE_MOCK = `
       const roofReserve = prop.escrowReserves.find(r => r.reserveType === 'roof');
       window.openDrawBuilder(roofReserve.id);
     });
-    await page.waitForFunction(() => document.getElementById('drawBuilderModal').style.display === 'flex', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('drawBuilderModal').style.display === 'flex', null, { timeout: 45000 });
 
     const roofInvoiceRows = await page.$$eval('#drawBuilderBody .escrow-invoice-row', els => els.map(e => e.textContent));
     assert(roofInvoiceRows.length === 1 && roofInvoiceRows[0].includes('ABC Roofing'),
@@ -323,7 +323,7 @@ const SUPABASE_MOCK = `
     assert(/Submission Ready: \d+ of \d+ documents/.test(checklistText), 'ESC-E2E-5: Required Documents checklist shows a "Submission Ready: X of Y" count', checklistText.replace(/\s+/g, ' ').slice(0, 200));
 
     await page.click('.modal-confirm:has-text("Create Draw Request")');
-    await page.waitForFunction(() => document.getElementById('drawBuilderModal').style.display === 'none', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('drawBuilderModal').style.display === 'none', null, { timeout: 45000 });
 
     const drawCount = await page.$$eval('.escrow-draw-card', els => els.length);
     assert(drawCount === 1, 'ESC-E2E-5: draw request created and rendered', String(drawCount));
@@ -338,7 +338,7 @@ const SUPABASE_MOCK = `
     // present in the DOM behind a hidden tab pane).
     await page.evaluate(() => window.switchWorkspaceTab('reserves'));
     await page.click('.escrow-draw-card button:has-text("Generate Package")');
-    await page.waitForFunction(() => document.getElementById('reportOverlay').style.display !== 'none', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('reportOverlay').style.display !== 'none', null, { timeout: 45000 });
     const reportHtml = await page.$eval('#rptBody', el => el.innerHTML);
     assert(reportHtml.includes('Reserve Agreement Citation'), 'ESC-E2E-6: package includes the Reserve Agreement Citation section');
     assert(reportHtml.includes('75,000'), 'ESC-E2E-6: package citation includes the verbatim quote');
@@ -352,7 +352,7 @@ const SUPABASE_MOCK = `
     // ── ESC-E2E-7: Generate Submission Email ────────────────────────────────
     section('ESC-E2E-7: Generate Submission Email');
     await page.click('.escrow-draw-card button:has-text("Generate Email")');
-    await page.waitForFunction(() => document.getElementById('drawEmailModal').style.display === 'flex', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('drawEmailModal').style.display === 'flex', null, { timeout: 45000 });
     const subjectVal = await page.$eval('#drawEmailSubject', el => el.value);
     const bodyVal    = await page.$eval('#drawEmailBody', el => el.value);
     assert(subjectVal.includes('Roof Reserve Draw Request'), 'ESC-E2E-7: email subject names the reserve type', subjectVal);

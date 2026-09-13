@@ -6,6 +6,7 @@
 //   3. source is always 'lease_ai' from this endpoint
 //   4. Lease silence → Info/High — never Warning or Critical
 
+const { VALIDATION_SYSTEM, buildClausePrompt } = require('./_validate-lease-contract');
 const _t = require('./_pilot-target');
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -13,14 +14,10 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error('[api/validate-lease] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -46,7 +43,13 @@ const VALIDATION_TIMEOUT = 45000;
 const VALIDATION_MODEL   = 'claude-sonnet-4-6';
 
 const TIER2_CHECKS      = new Set(['CAM_EXCLUSIONS', 'STRUCT_EXCLUSIONS', 'TAX_ALLOCATION']);
-const VALID_SEVERITIES  = new Set(['info', 'warning', 'critical']);
+// 'unconfirmed' is a verdict, not a lesser 'info'. 'info' asserts that the
+// lease affirmatively supports the condition and renders as PASSED; a lease
+// that is SILENT supports nothing, and saying otherwise turns absence of
+// evidence into evidence of compliance — the one inversion this codebase
+// must never make. The client has rendered 'unconfirmed' as NOT CONFIRMED
+// since the four-verdict panel landed; only this tier could not produce it.
+const VALID_SEVERITIES  = new Set(['info', 'unconfirmed', 'warning', 'critical']);
 const VALID_CONFIDENCES = new Set(['high', 'medium', 'low']);
 
 // Phrases Claude uses to indicate the lease does not address an item.
@@ -90,7 +93,10 @@ function normalizeFinding(f) {
   let severity   = typeof f.severity   === 'string' ? f.severity.toLowerCase()   : '';
   let confidence = typeof f.confidence === 'string' ? f.confidence.toLowerCase() : '';
 
-  if (!VALID_SEVERITIES.has(severity))    severity   = 'info';
+  // Fails SAFE, not open. An unrecognised verdict used to default to 'info',
+  // which renders as an affirmative green PASSED — so a malformed or future
+  // severity was reported to the reader as compliance confirmed.
+  if (!VALID_SEVERITIES.has(severity))    severity   = 'unconfirmed';
   if (!VALID_CONFIDENCES.has(confidence)) confidence = 'medium';
 
   const quote       = typeof f.quote       === 'string' && f.quote.trim()       ? f.quote.trim()       : null;
@@ -105,10 +111,21 @@ function normalizeFinding(f) {
     confidence = confidence === 'high' ? 'medium' : confidence;
   }
 
-  // Hard requirement 4: Lease silence → Info/High
+  // Hard requirement 4: lease silence → Unconfirmed/High.
+  //
+  // This is the deterministic guarantee behind the prompt rule, and it is the
+  // one that matters: it holds whether or not the model complies. It used to
+  // coerce silence to 'info', which the panel renders as PASSED with a green
+  // tick — so "the lease does not address structural exclusions" was shown to a
+  // reader as a passed check on a $55,000 unitemised category. The finding text
+  // is unchanged; only the verdict it carries.
+  //
+  // Confidence stays 'high' and means what it always meant here: high
+  // confidence in the READING (the lease really is silent), not high confidence
+  // that the condition holds. The panel labels it accordingly.
   const findingLc = finding.toLowerCase();
   if (SILENCE_PHRASES.some(p => findingLc.includes(p))) {
-    severity   = 'info';
+    severity   = 'unconfirmed';
     confidence = 'high';
   }
 
@@ -139,50 +156,6 @@ function parseValidationFindings(raw) {
     .map(normalizeFinding);
 }
 
-function buildClausePrompt(leaseText, lineItems, totalExpenses, year) {
-  const itemLines = (lineItems || [])
-    .map(li => `  - ${li.category}: $${Number(li.amount || 0).toLocaleString()}`)
-    .join('\n') || '  (none provided)';
-
-  return `You are a commercial real estate lease compliance auditor.
-Review the lease text below against the CAM reconciliation data and perform the three checks listed.
-
-RECONCILIATION DATA (${year || 'current year'}):
-  Total CAM Expenses: $${Number(totalExpenses || 0).toLocaleString()}
-  Line Items:
-${itemLines}
-
-LEASE TEXT:
-${leaseText}
-
-CHECKS TO PERFORM:
-1. CAM_EXCLUSIONS — Do any reconciliation line items appear in the lease's explicit CAM exclusion list?
-2. STRUCT_EXCLUSIONS — Does the reconciliation include capital expenditures or structural repairs that the lease explicitly excludes from CAM?
-3. TAX_ALLOCATION — Is property tax handling in the reconciliation consistent with the lease's stated allocation method?
-
-STRICT RULES:
-- Only report severity "critical" when you can cite exact verbatim lease language AND a specific section reference. Both quote and section must be non-null.
-- If the lease is silent or ambiguous on an item, return severity "info" and confidence "high". Never return "warning" or "critical" for lease silence.
-- Confidence must reflect how directly the lease language supports the finding: "high" = explicit exact language, "medium" = related but ambiguous language, "low" = inferred.
-- Prefer fewer high-confidence findings. A missed finding is acceptable; an unsupported critical finding is not.
-
-Return ONLY valid JSON — no markdown, no text outside the object:
-{
-  "findings": [
-    {
-      "check": "CAM_EXCLUSIONS",
-      "severity": "info" | "warning" | "critical",
-      "confidence": "high" | "medium" | "low",
-      "finding": "Human-readable summary (1-2 sentences)",
-      "quote": "Verbatim excerpt from the lease or null",
-      "section": "Section X.Y or null",
-      "page": 12,
-      "explanation": "Why this conflicts with the reconciliation, or null if compliant"
-    }
-  ]
-}`;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -190,8 +163,9 @@ export default async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 10, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 10, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   const { leaseDocumentId, reconciliationData } = req.body || {};
@@ -249,6 +223,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model:      VALIDATION_MODEL,
         max_tokens: 2048,
+        system:     VALIDATION_SYSTEM,
         messages: [{
           role:    'user',
           content: buildClausePrompt(

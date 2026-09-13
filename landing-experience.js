@@ -452,6 +452,14 @@
     var params = new URLSearchParams(location.search);
     var forced = params.get('landing') === '1';
     if (/^#review\//i.test(location.hash) && !forced) return;
+    // Someone who clicked "Log in" on the marketing page has already answered
+    // the only question this overlay asks. script.js reveals #loginScreen for
+    // them immediately (_maybeShowLoginFromIntent), and that reveal is exactly
+    // the trigger below — so the hero mounted at z-index 99000 directly ON TOP
+    // of the sign-in form, and its nav "Sign in" was the second click reported
+    // from the pilot walkthrough. Marketing page → hero → form is the
+    // three-screen sign-in. Explicit intent wins over the pitch.
+    if (params.get('signin') === '1' && !forced) return;
     if (isAuthed() && !forced) return;
     var login = document.getElementById('loginScreen');
     if (!login) return;

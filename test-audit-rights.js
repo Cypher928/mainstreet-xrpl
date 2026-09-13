@@ -80,8 +80,15 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
 
   console.log('\n── Granted, deadline not parsable ──');
   r = await check(true, 'Tenant may audit the records upon reasonable notice.');
-  (!r.threw && /could not be computed/i.test(r.finding) && r.severity === 'info')
+  // Was `severity === 'info'`, which the panel renders as a green PASSED tick.
+  // The right exists but its window cannot be computed, so whether the tenant
+  // can still audit is UNKNOWN — the one thing it is not is confirmed. The
+  // assertion's intent is unchanged and now also pins the negative.
+  (!r.threw && /could not be computed/i.test(r.finding) && r.severity === 'unconfirmed')
     ? ok('reports the clause and says the deadline is unknown') : bad('unexpected', JSON.stringify(r));
+  r.severity !== 'info'
+    ? ok('an uncomputable audit window is not reported as a pass')
+    : bad('an unknown audit window still renders as PASSED');
 
   console.log('\n── Granted, no quote captured ──');
   r = await check(true, null);
@@ -94,8 +101,16 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   (waived.severity === 'warning' && /waived/i.test(waived.finding))
     ? ok(`waiver is a review item, not a pass: "${waived.finding}"`)
     : bad('waiver not surfaced as warning', JSON.stringify(waived));
-  (silent.severity === 'info' && /not addressed/i.test(silent.finding))
+  // Was `silent.severity === 'info'`. That expectation is what made "Audit
+  // rights are not addressed in this lease" display a green PASSED badge —
+  // absence of evidence shown as confirmation, which is indefensible in front
+  // of a tenant auditor. The intent of this case ("silence is distinct from
+  // waiver") is unchanged; only the severity it was pinned to was wrong.
+  (silent.severity === 'unconfirmed' && /not addressed/i.test(silent.finding))
     ? ok(`silence is distinct: "${silent.finding}"`) : bad('silence wrong', JSON.stringify(silent));
+  (silent.severity !== 'info' && silent.severity !== 'warning')
+    ? ok('silence is neither a pass nor a fault')
+    : bad('silence was collapsed into pass or warning', silent.severity);
   (waived.finding !== silent.finding)
     ? ok('the two states are reported differently') : bad('waived and silent are indistinguishable');
 

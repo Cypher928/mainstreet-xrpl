@@ -1,7 +1,7 @@
 {
   "name": "cam-logic",
   "version": "1.0.0",
-  "description": "CAM Logic — Commercial Area Maintenance reconciliation platform for commercial real estate",
+  "description": "CAM Logic \u2014 Commercial Area Maintenance reconciliation platform for commercial real estate",
   "main": "allocation-engine.js",
   "scripts": {
     "test": "node test-allocation.js",
@@ -15,6 +15,7 @@
     "xrpl": "^4.6.0"
   },
   "devDependencies": {
-    "pdfjs-dist": "^4.0.379"
+    "pdfjs-dist": "^4.0.379",
+    "pdfjs-v3": "npm:pdfjs-dist@3.11.174"
   }
 }

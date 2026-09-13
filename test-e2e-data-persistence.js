@@ -31,6 +31,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7856', 10);
@@ -189,13 +190,12 @@ const SUPABASE_MOCK = `
 `;
 
 async function login(page, port, email, password) {
-  await page.fill('#loginEmail', email);
-  await page.fill('#loginPassword', password);
-  await page.click('#loginBtn');
-  await page.waitForFunction(() => {
-    const app = document.getElementById('appContent');
-    return app && app.style.display !== 'none' && app.style.display !== '';
-  }, { timeout: 10000 }).catch(() => {});
+  // THE SWALLOW IS PRESERVED. This helper has always tolerated a sign-in that
+  // does not complete — the `.catch(() => {})` below was on the original wait —
+  // and this refactor is not the place to decide that it should not. What it
+  // gains is the shared retry: a first click whose promise never resolves left
+  // the button disabled, and every later click was a no-op.
+  try { await _e2eSignIn(page, { email, password }); } catch (_) {}
 }
 
 (async () => {
@@ -233,7 +233,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'New Property';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     pass('STEP 1: new property created via addNewProperty() and auto-opened');
 
     const createdId = await page.evaluate(() => activePropId);
@@ -258,7 +258,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     const portfolioAfterReload = await page.evaluate(() => document.querySelector('#propertyCardsGrid')?.innerText || '');
@@ -280,7 +280,7 @@ async function login(page, port, email, password) {
     await page.waitForFunction(() => {
       const login = document.getElementById('loginScreen');
       return login && getComputedStyle(login).display !== 'none';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     pass('STEP 3: login screen reappears after signOut()');
 
     const propsAfterLogout = await page.evaluate(() => (_props || []).length);

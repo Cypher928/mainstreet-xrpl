@@ -26,6 +26,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7855', 10);
@@ -207,6 +208,7 @@ const REPORT_BUTTONS = [
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -222,20 +224,14 @@ const REPORT_BUTTONS = [
     section('STEP 1: Login, open property, run CAM');
     await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
 
-    await page.fill('#loginEmail', 'reports@e2e-test.local');
-    await page.fill('#loginPassword', 'ReportsUser123!');
-    await page.click('#loginBtn');
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "reports@e2e-test.local", errors: _e2eErrors });
 
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
     await page.evaluate((propId) => { if (typeof selectProperty === 'function') selectProperty(propId); }, PROP_ID);
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Crestview Commons';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
     await page.waitForTimeout(800);
 
     await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam'); });
@@ -247,7 +243,7 @@ const REPORT_BUTTONS = [
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.includes('Pacific Hardware');
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camOk = await page.$eval('#resultsBody', el => el.innerText.includes('Pacific Hardware')).catch(() => false);
     assert(camOk, 'STEP 1: CAM allocation ran successfully');
@@ -263,7 +259,7 @@ const REPORT_BUTTONS = [
       const opened = await page.waitForFunction(() => {
         const overlay = document.getElementById('reportOverlay');
         return overlay && overlay.style.display !== 'none';
-      }, { timeout: 8000 }).then(() => true).catch(() => false);
+      }, null, { timeout: 45000 }).then(() => true).catch(() => false);
       assert(opened, 'REPORT[' + r.id + ']: report overlay opened');
 
       if (opened) {
@@ -286,7 +282,7 @@ const REPORT_BUTTONS = [
         const opened = await page.waitForFunction(() => {
           const overlay = document.getElementById('reportOverlay');
           return overlay && overlay.style.display !== 'none';
-        }, { timeout: 8000 }).then(() => true).catch(() => false);
+        }, null, { timeout: 45000 }).then(() => true).catch(() => false);
         assert(opened, 'REPORT[test-lab-score]: Lease Intelligence Score report overlay opened');
         if (opened) {
           const html = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
@@ -308,7 +304,7 @@ const REPORT_BUTTONS = [
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 });
+    }, null, { timeout: 45000 });
 
     const toolBtnFontSize = await page.$eval('.rpt-tool-btn', el => getComputedStyle(el).fontSize).catch(() => '');
     assert(toolBtnFontSize === '12.48px', 'STEP 3: mobile @media(max-width:600px) report toolbar styling applied', toolBtnFontSize);

@@ -9,6 +9,22 @@
 window.Selectors = (() => {
   'use strict';
 
+  /**
+   * M7 — one definition of an open dispute, read at call time.
+   *
+   * buildPropMeta's `openDisputes` used `status === 'open'`, so it reported 1 on
+   * a property holding one `open` and one `docs_requested` dispute while the
+   * Overview attention panel — reading DisputeStatus — reported 2. That gap is
+   * why property-workspace.js carries a comment explaining that it deliberately
+   * stopped trusting `meta.openDisputes`; this is the other half of that fix.
+   * The literal fallback matches the one there.
+   */
+  const _isOpenDispute = (d) => {
+    const DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  };
+
   // ── Sort constants ────────────────────────────────────────────────────────
 
   // Canonical review queue order — must be stable across all renders.
@@ -95,7 +111,7 @@ window.Selectors = (() => {
     const reconResults = results; // alias for clarity below
 
     const missingDocs  = invoices.filter(i => i && !i.fileUrl && !i.fileName).length;
-    const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length;
+    const openDisputes = (prop.disputes || []).filter(_isOpenDispute).length;
 
     let redCount = 0, yellowCount = 0;
     if (snap) {
@@ -341,7 +357,7 @@ window.Selectors = (() => {
       totalExpired     += tenants.filter(t => t.end_date && t.end_date < today).length;
       totalExpiring    += tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
       totalLowConf     += tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
-      totalExposure    += (p.disputes || []).filter(d => d.status === 'open')
+      totalExposure    += (p.disputes || []).filter(_isOpenDispute)
         .reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
       const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
       if (results.length > 0 && Math.abs(totalPR - 100) >= 5) proRataGapProps++;

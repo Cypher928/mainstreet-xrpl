@@ -164,6 +164,44 @@ srv.listen(PORT, '127.0.0.1', async () => {
                         : 'the document loads no Supabase client');
   }
 
+  // ── Tenant portal magic-link redirect ───────────────────────────────────────
+  // Same failure this file already guards for the landlord app, on a new surface.
+  // Tenants authenticate by magic link, so the redirect target IS the sign-in:
+  // if it resolves to a document that loads no Supabase client, the token
+  // fragment is dropped and the tenant simply never gets in — and unlike a
+  // password flow there is no second way for them to try.
+  const psrc = fs.readFileSync(path.join(ROOT, 'portal.js'), 'utf8');
+
+  const pm = psrc.match(/(?:const|var|let) PORTAL_URL =[\s\S]*?:\s*window\.location\.origin \+ '([^']+)';/);
+  pm ? ok(`resolved PORTAL_URL -> "${pm[1]}"`)
+     : bad('could not resolve PORTAL_URL in portal.js');
+
+  const pTargets = [];
+  let pmt; const rePortal = /emailRedirectTo:\s*([A-Za-z_]+)/g;
+  while ((pmt = rePortal.exec(psrc))) pTargets.push(pmt[1]);
+  pTargets.length
+    ? ok(`found ${pTargets.length} auth redirect target(s) in portal.js`)
+    : bad('portal.js declares no emailRedirectTo — a magic link would land wherever Supabase defaults to');
+
+  // Every portal redirect must be built from PORTAL_URL, never a bare origin.
+  pTargets.every(t => t === 'redirect' || t === 'PORTAL_URL')
+    ? ok('portal redirect targets derive from PORTAL_URL')
+    : bad('a portal redirect target is not derived from PORTAL_URL', pTargets.join(', '));
+
+  if (pm) {
+    const r = await get(pm[1]);
+    const canAuth = /supabase-config\.js|@supabase\/supabase-js|createClient/.test(r.body || '');
+    canAuth
+      ? ok(`PORTAL_URL -> ${pm[1]}, which loads a Supabase client and can complete the magic-link sign-in`)
+      : bad(`PORTAL_URL -> ${pm[1]} cannot establish a session`,
+            'the document loads no Supabase client, so the magic-link fragment is dropped');
+
+    // The portal must not ship the landlord bundle — that is the B1 boundary.
+    /src="script\.js"/.test(r.body || '')
+      ? bad(`${pm[1]} loads script.js — the tenant would receive the landlord application`)
+      : ok(`${pm[1]} does not load the landlord bundle`);
+  }
+
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + 'RESULT: ' + pass + ' passed, ' + fail + ' failed\x1b[0m');
   srv.close(); process.exit(fail ? 1 : 0);
 });

@@ -231,7 +231,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const dashVisible = await page.$eval('#portfolioDashboard', el => el.style.display !== 'none').catch(() => false);
     assert(dashVisible, 'ACQ-E2E-1: portfolio dashboard visible after auth mock fires');
@@ -266,7 +266,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const titleText = await page.$eval('#acqDetailTitle', el => el.textContent).catch(() => '');
     assert(titleText.includes('123 Main Street'), 'ACQ-E2E-3: detail panel title matches review name', titleText);
@@ -316,7 +316,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const c = document.getElementById('acqReportContainer');
       return c && c.innerHTML.length > 100;
-    }, { timeout: 8000 });
+    }, null, { timeout: 45000 });
 
     // ACQ-E2E-5: KPI cards rendered
     const kpiRow = await page.$('.acq-kpi-row').catch(() => null);
@@ -360,7 +360,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const reportAfterReentry = await page.$eval('#acqReportContainer', el => el.innerHTML).catch(() => '');
     assert(reportAfterReentry.length > 100, 'ACQ-E2E-9: report container still has content after re-entry', reportAfterReentry.length + ' chars');

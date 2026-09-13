@@ -4,6 +4,11 @@ The philosophy first, then the mechanics. MainStreet's codebase has held a
 15-suite regression gate green through seven consecutive feature phases — the
 rules below are how.
 
+See also [ARCHITECTURE_PRINCIPLES.md](./ARCHITECTURE_PRINCIPLES.md) — the
+system-level invariants a new feature can break without anyone noticing. This
+document is how to write code here; that one is what the system must not stop
+doing.
+
 ---
 
 ## 1. Coding philosophy

@@ -120,7 +120,10 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
 
   console.log('\n── Networking is consistent ──');
   const net = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
-  const ef = net.slice(net.indexOf('async function explainFetch'), net.indexOf('const CAM_EXPLAIN_SYSTEM_PROMPT'));
+  // The old end marker was `const CAM_EXPLAIN_SYSTEM_PROMPT`, which AI-2 deleted
+  // — the system prompts moved to api/_explain-tasks.js. Anchor on the comment
+  // that replaced it so the slice still ends where explainFetch does.
+  const ef = net.slice(net.indexOf('async function explainFetch'), net.indexOf('// AI-2 — CAM_EXPLAIN_SYSTEM_PROMPT'));
   /_fetchWithTimeout\('\/api\/explain'/.test(ef)
     ? ok('explainFetch goes through _fetchWithTimeout like every other Claude call')
     : bad('explainFetch still calls fetch directly', 'an unbounded request can hang the pipeline');

@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://mainstreetcam.com/sitemap.xml
+Sitemap: https://www.mainstreetcam.com/sitemap.xml

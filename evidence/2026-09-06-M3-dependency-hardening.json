@@ -1,0 +1,402 @@
+{
+  "phase": "M3 — dependency hardening",
+  "date": "2026-09-06",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "66538cc",
+  "scope": "Inventory and containment of the server-side PropertyRecord graph's global dependencies. No MCP tools, HTTP endpoints, auth infrastructure, schema, Pilot data, Production, payment/Ripple, UI or CAM repair.",
+  "headline": {
+    "outcome": "No unsafe undeclared dependency was found, and that is now a measurement rather than an absence of evidence.",
+    "detail": "The graph reaches for 29 names. All 29 are classified. The 19 browser-only ones live in the render and action halves of tenant-space.js and property-workspace.js; the widest property this graph can be handed — two tenants, two disputes, eleven timeline events covering every attachment kind, a CAM reconciliation with results, lease document URLs, three invoices — reaches none of them.",
+    "why_that_needed_proving": "M2 measured only what five thin scenarios happened to touch. A window.showToast on a branch no fixture reached would have been live, undeclared, and invisible to it."
+  },
+  "what_M3_added": [
+    "tools/global-dependency-inventory.js — the static half of the measurement, including BARE identifiers, which no window.* scan can see",
+    "a \"rich\" scenario in the runtime harness that exercises disputes, every attachment kind, CAM results and lease documents",
+    "module-instance identity checks with negative controls, so two copies of the same logic cannot assemble one record unnoticed",
+    "environment variables treated as runtime dependencies and inventoried alongside browser globals"
+  ],
+  "inventory": {
+    "byKind": {
+      "browser_only": [
+        "_ccFlashEl",
+        "appendPropertyTimelineEvent",
+        "AuthService",
+        "currentProperty",
+        "docImageHtml",
+        "docLinkHtml",
+        "DocViewer",
+        "esc",
+        "FileReader",
+        "generateTenantStatement",
+        "isStoredDocumentRef",
+        "openDisputeWorkspace",
+        "PropertyTimeline",
+        "saveProperty",
+        "savePropertyNow",
+        "Selectors",
+        "showToast",
+        "SpaceActions",
+        "switchWorkspaceTab"
+      ],
+      "env": [
+        "PILOT_SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL",
+        "VERCEL_ENV",
+        "XRPL_NETWORK"
+      ],
+      "module": [
+        "CamPool",
+        "MoneyCents",
+        "SourceValues"
+      ],
+      "shimmed": [
+        "PropertyReference"
+      ]
+    },
+    "rows": {
+      "_ccFlashEl": {
+        "kind": "browser_only",
+        "why": "DOM highlight effect",
+        "windowReadBy": [
+          "property-workspace.js",
+          "tenant-space.js"
+        ]
+      },
+      "appendPropertyTimelineEvent": {
+        "kind": "browser_only",
+        "why": "a WRITE path — it appends an event to the property record, and must never be reachable from a read-only server module",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "AuthService": {
+        "kind": "browser_only",
+        "why": "browser SESSION state — the current signed-in user",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "currentProperty": {
+        "kind": "browser_only",
+        "why": "browser SESSION state — the property open in the tab",
+        "windowReadBy": [
+          "property-workspace.js",
+          "tenant-space.js"
+        ]
+      },
+      "docImageHtml": {
+        "kind": "browser_only",
+        "why": "HTML rendering helper",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "docLinkHtml": {
+        "kind": "browser_only",
+        "why": "HTML rendering helper",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "DocViewer": {
+        "kind": "browser_only",
+        "why": "opens a document in a DOM overlay; tenant-space.js reaches for it only from click handlers, never from assemble()",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "esc": {
+        "kind": "browser_only",
+        "why": "HTML escaper; each file has its own local fallback",
+        "windowReadBy": [
+          "property-workspace.js",
+          "tenant-space.js"
+        ]
+      },
+      "FileReader": {
+        "kind": "browser_only",
+        "why": "bare browser global at tenant-space.js:1114, inside an upload handler assemble() never reaches",
+        "windowReadBy": [],
+        "bareIn": [
+          "tenant-space.js"
+        ]
+      },
+      "generateTenantStatement": {
+        "kind": "browser_only",
+        "why": "renders a tenant statement into the page; a UI action reached only from a click handler",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "isStoredDocumentRef": {
+        "kind": "browser_only",
+        "why": "storage-reference helper; falls back to a local test",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "openDisputeWorkspace": {
+        "kind": "browser_only",
+        "why": "navigates the browser to the dispute panel; reached only from a click handler in tenant-space.js",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "PropertyTimeline": {
+        "kind": "browser_only",
+        "why": "property-timeline.js touches document at load",
+        "windowReadBy": [
+          "tenant-space.js"
+        ],
+        "bareIn": [
+          "tenant-space.js"
+        ]
+      },
+      "saveProperty": {
+        "kind": "browser_only",
+        "why": "a WRITE path; must never be reachable from a read-only server module",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "savePropertyNow": {
+        "kind": "browser_only",
+        "why": "a WRITE path; must never be reachable from a read-only server module",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "Selectors": {
+        "kind": "browser_only",
+        "why": "pure logic, but calls a BARE ReviewEngine identifier that only a second global could satisfy. Reads {} here; the hydrator reports the degradation as attention.without_selectors_readiness.",
+        "windowReadBy": [
+          "property-workspace.js"
+        ]
+      },
+      "showToast": {
+        "kind": "browser_only",
+        "why": "transient UI notification; every call site guards it with if (window.showToast), so absence is the handled branch",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "SpaceActions": {
+        "kind": "browser_only",
+        "why": "UI action dispatcher",
+        "windowReadBy": [
+          "tenant-space.js"
+        ]
+      },
+      "switchWorkspaceTab": {
+        "kind": "browser_only",
+        "why": "moves the browser tab focus between workspace panels; navigation, with no meaning on a server",
+        "windowReadBy": [
+          "property-workspace.js",
+          "tenant-space.js"
+        ]
+      },
+      "PILOT_SUPABASE_SERVICE_ROLE_KEY": {
+        "kind": "env",
+        "why": "pilot transport credential",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "SUPABASE_ANON_KEY": {
+        "kind": "env",
+        "why": "production transport credential",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "SUPABASE_SERVICE_ROLE_KEY": {
+        "kind": "env",
+        "why": "production transport credential",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "SUPABASE_URL": {
+        "kind": "env",
+        "why": "production transport target",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "VERCEL_ENV": {
+        "kind": "env",
+        "why": "selects production vs pilot; absent ⇒ pilot, which is the fail-safe direction",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "XRPL_NETWORK": {
+        "kind": "env",
+        "why": "read by _pilot-target.js for other callers; unused by the hydrator",
+        "windowReadBy": [
+          "api/_pilot-target.js"
+        ]
+      },
+      "CamPool": {
+        "kind": "module",
+        "why": "variance-breakdown.js falls back to require('./cam-pool.js')",
+        "windowReadBy": [
+          "variance-breakdown.js"
+        ]
+      },
+      "MoneyCents": {
+        "kind": "module",
+        "why": "cam-pool.js and variance-breakdown.js fall back to require('./money-cents.js')",
+        "windowReadBy": [
+          "cam-pool.js",
+          "variance-breakdown.js"
+        ]
+      },
+      "SourceValues": {
+        "kind": "module",
+        "why": "cam-pool.js and money-cents.js fall back to require('./source-values.js')",
+        "windowReadBy": [
+          "cam-pool.js",
+          "money-cents.js"
+        ]
+      },
+      "PropertyReference": {
+        "kind": "shimmed",
+        "why": "pure; supplied by the allow-list, and read at call time by property-workspace.js:86 with no fallback",
+        "windowReadBy": [
+          "property-workspace.js",
+          "tenant-space.js"
+        ]
+      }
+    }
+  },
+  "selectors_decision": {
+    "verdict": "KEPT EXCLUDED",
+    "selectors_js_is_pure": "zero document, zero localStorage, zero fetch, zero timers, zero innerHTML",
+    "review_engine_is_pure_too": "its six \"document\" occurrences are the English word inside strings and comments, not the DOM API",
+    "first_blocker": "selectors.js calls a BARE ReviewEngine identifier at 7 call sites, never window.ReviewEngine. A sealed shim cannot satisfy a bare identifier; only global.ReviewEngine could, which is exactly the second global workaround the phase forbids.",
+    "second_blocker": "review-engine.js:142 resolves SourceValues as (window.SourceValues) || null with NO require fallback, and its own error message states the cost: \"every lease will read as missing its area\". Supplying ReviewEngine without also supplying SourceValues would silently corrupt every readiness answer.",
+    "cost_of_inclusion": "editing selectors.js (a browser-loaded file), broadening the allow-list by three names, and changing PropertyRecord semantics by adding attention items",
+    "what_exclusion_costs": "attention is composed from fewer inputs; the hydrator reports it as degraded[\"attention.without_selectors_readiness\"], and meta.unavailable is untouched because attention IS composed",
+    "all_of_which_is_tested": "section E of test-m3-dependency-hardening.js, 15 assertions"
+  },
+  "runtime_measurement": {
+    "scenario": "rich",
+    "browser_only_names_reached": 0,
+    "window_names_reached": [
+      "CamPool",
+      "MoneyCents",
+      "PropertyReference",
+      "Selectors",
+      "SourceValues"
+    ],
+    "undeclared_at_runtime": [
+      "CamPool",
+      "MoneyCents",
+      "Selectors",
+      "SourceValues"
+    ],
+    "each_of_which": "is classified module (require fallback verified in source) or browser_only (Selectors, reported as degradation)",
+    "booby_trapped_globals_touched": 0,
+    "new_globals_created": 0,
+    "leaked_window": false,
+    "record_content_proving_the_fixture_did_work": {
+      "disputes": 2,
+      "timeline_events": 6,
+      "documents": 3,
+      "space_events": [
+        5,
+        1
+      ],
+      "space_disputes": [
+        1,
+        1
+      ],
+      "cam_results": 2,
+      "spaces": 2,
+      "attention": 2
+    }
+  },
+  "removed_or_contained": {
+    "removed": "nothing — no unsafe undeclared dependency existed to remove after M1b and M2",
+    "contained": [
+      "the three dual-resolution module names resolve through require() on the server, and the resolved instance is asserted identical to the declared dependency set",
+      "the 19 browser-only names are unreachable from assemble(), measured under the widest fixture, and any future reachability shows up as a new undeclared read that fails the suite",
+      "the six environment reads live in one file, and the unset direction resolves to pilot, never production"
+    ],
+    "dead_code_removed": "the probe's identityExpected field, which a mutation exposed as output nothing read once the expected polarity moved into the test"
+  },
+  "verification": {
+    "m3": {
+      "command": "node test-m3-dependency-hardening.js",
+      "passed": 130,
+      "failed": 0
+    },
+    "m2": {
+      "command": "node test-m2-runtime-harness.js",
+      "passed": 152,
+      "failed": 0
+    },
+    "m1b": {
+      "command": "node test-property-record-hydrator.js",
+      "passed": 102,
+      "failed": 0
+    },
+    "mutation_m3": {
+      "mutants": 34,
+      "killed": 34,
+      "survived": 0,
+      "gaps_the_first_run_exposed": [
+        "S-unclassified-hidden and S-classify-always-module — nothing fed an UNKNOWN global through inventory(); now a fixture repo does (A7a/A7b)",
+        "F-disputes-not-passed and F-timeline-not-passed — the rich fixture could be gutted and D5 would still pass; the record content is now asserted (D9a-D9f)",
+        "F-sameinstance-blind — per-name literals could be hardcoded true; the check is now table-driven with negative controls (F1a-F6)",
+        "C-shimmed-list-widened — my first version of this mutant was MALFORMED (a duplicate object key that the later entry overwrote, so it was a no-op). Rewritten to reclassify an existing entry, and it dies."
+      ]
+    },
+    "mutation_m2": {
+      "mutants": 31,
+      "killed": 31,
+      "survived": 0
+    },
+    "mutation_m1b": {
+      "mutants": 34,
+      "killed": 33,
+      "survived": 1,
+      "survivor": "D-prune-removed — the same equivalent mutant reported and explained in M1b, unchanged"
+    },
+    "full_regression": {
+      "command": "node test-regression.js",
+      "suites_run": 119,
+      "suites_passed": 118,
+      "suites_failed": 1,
+      "failing_suite": "Broken promises (dead controls) — test-broken-promises.js",
+      "failing_assertions": [
+        "4 control(s) promise an object and navigate generically",
+        "review actions do not carry the tenant id"
+      ],
+      "baseline_check": "the identical two assertions fail at c3dbee9, before M1b — preserved as the known unrelated baseline, not fixed or repinned",
+      "m_suites_inside_the_run": {
+        "M1b": "passed",
+        "M2": "passed",
+        "M3": "passed"
+      }
+    }
+  },
+  "constraints_honoured": {
+    "mcp_tools": false,
+    "http_endpoints": false,
+    "auth_infrastructure": false,
+    "schema_or_migrations": false,
+    "pilot_data": false,
+    "production": false,
+    "payment_or_ripple": false,
+    "ui_or_public_site": false,
+    "cam_data_repair": false,
+    "broken_promises_touched": false,
+    "shim_allow_list_broadened": false,
+    "browser_globals_introduced": false,
+    "network_reachable_from_tests": false
+  }
+}

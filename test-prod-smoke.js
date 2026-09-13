@@ -333,11 +333,11 @@ const MOCK_UPLOAD_RESPONSE = {
       page.waitForFunction(() => {
         const a = document.getElementById('appContent');
         return a && a.style.display !== 'none';
-      }, { timeout: 12000 }).then(() => 'dashboard'),
+      }, null, { timeout: 45000 }).then(() => 'dashboard'),
       page.waitForFunction(() => {
         const m = document.getElementById('loginMsg');
         return m && m.textContent.trim().length > 5;
-      }, { timeout: 12000 }).then(() => 'message'),
+      }, null, { timeout: 45000 }).then(() => 'message'),
     ]).catch(() => 'timeout');
 
     const signupMsg  = await page.$eval('#loginMsg', el => el.textContent.trim()).catch(() => '');
@@ -369,7 +369,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const dashAppeared = await page.waitForFunction(() => {
       const a = document.getElementById('appContent');
       return a && a.style.display !== 'none';
-    }, { timeout: 25000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(dashAppeared, 'Dashboard visible after login', '', page);
 
     const loginGone = await page.$eval('#loginScreen', el => el.style.display === 'none').catch(() => false);
@@ -388,7 +388,7 @@ const MOCK_UPLOAD_RESPONSE = {
       const a = document.getElementById('appContent');
       const l = document.getElementById('loginScreen');
       return (a && a.style.display !== 'none') || (l && l.style.display === 'none');
-    }, { timeout: 20000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(stillAuth, 'Supabase session persists after page reload', '', page);
 
     // Dismiss welcome panel if present
@@ -408,7 +408,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const workflowOpen = await page.waitForFunction(() => {
       const w = document.getElementById('mainWorkflow');
       return w && w.style.display !== 'none';
-    }, { timeout: 15000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(workflowOpen, 'New property created — workflow panel visible', '', page);
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const loginBack = await page.waitForFunction(() => {
       const l = document.getElementById('loginScreen');
       return l && l.style.display !== 'none';
-    }, { timeout: 10000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(loginBack, 'Logged out — login screen visible', '', page);
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const loginOk = await page.waitForFunction(() => {
       const a = document.getElementById('appContent');
       return a && a.style.display !== 'none';
-    }, { timeout: 25000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(loginOk, 'Login again succeeded — dashboard visible', '', page);
 
     await page.waitForTimeout(1500); // allow portfolio to render
@@ -504,7 +504,7 @@ const MOCK_UPLOAD_RESPONSE = {
       await page.waitForFunction(() => {
         const w = document.getElementById('mainWorkflow');
         return w && w.style.display !== 'none';
-      }, { timeout: 12000 }).catch(() => {});
+      }, null, { timeout: 45000 }).catch(() => {});
       await page.waitForTimeout(500);
     }
 
@@ -558,7 +558,7 @@ const MOCK_UPLOAD_RESPONSE = {
              tenantData[0]?.tenant_name &&
              tenantData[0]?.status !== 'pending' &&
              tenantData[0]?.status !== 'processing';
-    }, { timeout: 35000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(extractionDone, 'Lease uploaded and extraction pipeline completed', '', page);
 
     const extractedName = await page.evaluate(() => tenantData?.[0]?.tenant_name ?? null);
@@ -590,7 +590,7 @@ const MOCK_UPLOAD_RESPONSE = {
       await page.waitForFunction(() => {
         const w = document.getElementById('mainWorkflow');
         return w && w.style.display !== 'none';
-      }, { timeout: 12000 }).catch(() => {});
+      }, null, { timeout: 45000 }).catch(() => {});
       await page.waitForTimeout(1500);
     }
 
@@ -635,7 +635,7 @@ const MOCK_UPLOAD_RESPONSE = {
       await page.waitForFunction(() => {
         const m = document.getElementById('allocModal');
         return m && m.style.display !== 'none';
-      }, { timeout: 8000 }).catch(() => {});
+      }, null, { timeout: 45000 }).catch(() => {});
       await page.waitForTimeout(200);
 
       // Confirm allocation via the production function (avoids ambiguous selector)
@@ -646,7 +646,7 @@ const MOCK_UPLOAD_RESPONSE = {
         return typeof lastResults !== 'undefined' &&
                Array.isArray(lastResults) &&
                lastResults.length > 0;
-      }, { timeout: 20000 }).then(() => true).catch(() => false);
+      }, null, { timeout: 45000 }).then(() => true).catch(() => false);
 
       const resultCount = await page.evaluate(() => lastResults?.length ?? 0);
       await assertR(gotResults && resultCount >= 1, 'CAM allocation produced results', 'count=' + resultCount, page);
@@ -668,7 +668,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const reportOpen = await page.waitForFunction(() => {
       const o = document.getElementById('reportOverlay');
       return o && o.style.display !== 'none';
-    }, { timeout: 8000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
     await assertR(reportOpen, 'Master Report overlay opened (#reportOverlay visible)', '', page);
 
     if (reportOpen) {
@@ -694,7 +694,7 @@ const MOCK_UPLOAD_RESPONSE = {
     const leaseModalOpen = await page.waitForFunction(() => {
       const m = document.getElementById('leaseViewerModal');
       return m && m.style.display !== 'none';
-    }, { timeout: 6000 }).then(() => true).catch(() => false);
+    }, null, { timeout: 45000 }).then(() => true).catch(() => false);
 
     if (!leaseModalOpen) {
       // If the leaseUrl didn't survive the refresh, we'll get a toast — that's ok

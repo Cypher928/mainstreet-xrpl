@@ -40,8 +40,53 @@
 'use strict';
 
 const target = require('./_pilot-target.js');
+const { checkRate, sendRateLimited } = require('./_rate-limit');
+const { checkEncodedSize, MAX_UPLOAD_BYTES } = require('../request-limits.js');
 
-const MAX_FILE = 8 * 1024 * 1024;
+// ── SEC-6 (audit part 4): why this endpoint is public, and what bounds it ────
+//
+// It is UNAUTHENTICATED BY DESIGN and that is correct: it backs the "Request a
+// Pilot" form on home.html, which anonymous visitors fill in. Requiring a login
+// to ask for a login is not a security control, it is a broken funnel. The
+// service role is used because the pilot_requests table has RLS on with no
+// policies — nothing but this endpoint may read or write it, which is the right
+// shape for a lead store.
+//
+// What was genuinely missing is everything that bounds an open endpoint:
+//
+//   1. NO RATE LIMIT. Every other handler limits by user id; there is no user
+//      here, so this had nothing at all. Anyone could POST unlimited rows and
+//      files into the same Supabase project that holds customer data. Now
+//      limited by client IP.
+//
+//   2. NO FILE TYPE CHECK. api/upload.js validates extension against MIME;
+//      this accepted arbitrary bytes with an arbitrary Content-Type. The
+//      pilot-requests bucket is private (docs/PILOT_REQUESTS_SETUP.md), so this
+//      was storage abuse rather than malware hosting — but an open write path
+//      with no type check is a liability either way.
+//
+//   3. A LYING SIZE CONSTANT. MAX_FILE was 8 MB against a ~4.5 MB platform
+//      body limit, so it fails closed by accident rather than by design. It now
+//      uses the shared ceiling in request-limits.js.
+//
+// What is deliberately NOT added: an origin/referer allowlist. Both headers are
+// trivially forged, so it would filter honest browsers and nothing else. Rate
+// limiting is the control that actually bites. A captcha is the next step if
+// abuse appears — it is a product decision, not a code one.
+
+// A sample lease attached to a lead. Same allowlist shape as api/upload.js.
+const LEAD_FILE_TYPES = {
+  pdf:  'application/pdf',
+  doc:  'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+function _clientIp(req) {
+  const fwd = (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])) || '';
+  // x-forwarded-for is a comma-separated chain; the first entry is the client.
+  const first = String(fwd).split(',')[0].trim();
+  return first || 'unknown';
+}
 const PROPS = ['1', '2–5', '6–20', '21–50', '50+', '2-5', '6-20', '21-50'];
 
 function clean(v, max) {
@@ -52,6 +97,13 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Bound before any parsing work. 10 lead submissions per minute per IP is far
+  // above any honest use of a contact form.
+  {
+    const rl = checkRate('ip:' + _clientIp(req), 10, 60000);
+    if (!rl.ok) return sendRateLimited(res, rl);
   }
 
   let body = req.body;
@@ -74,12 +126,25 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Unrecognised property count' });
   }
 
-  let leaseName = null, leasePath = null, fileBuf = null;
+  let leaseName = null, leasePath = null, fileBuf = null, leaseMime = null;
   if (body.lease && typeof body.lease === 'object' && body.lease.data) {
     leaseName = clean(body.lease.name, 240) || 'lease';
+
+    // Type first — before decoding megabytes of base64 for a file we will not keep.
+    const ext = (leaseName.split('.').pop() || '').toLowerCase();
+    leaseMime = Object.prototype.hasOwnProperty.call(LEAD_FILE_TYPES, ext) ? LEAD_FILE_TYPES[ext] : null;
+    if (!leaseMime) {
+      return res.status(400).json({
+        error: `A sample lease must be one of: ${Object.keys(LEAD_FILE_TYPES).join(', ')}.`,
+      });
+    }
+
+    const sizeVerdict = checkEncodedSize(String(body.lease.data).length, 'sample lease');
+    if (!sizeVerdict.ok) return res.status(413).json({ error: sizeVerdict.error });
+
     try { fileBuf = Buffer.from(String(body.lease.data), 'base64'); } catch (e) { fileBuf = null; }
-    if (fileBuf && fileBuf.length > MAX_FILE) {
-      return res.status(413).json({ error: 'Sample lease is larger than 8MB' });
+    if (fileBuf && fileBuf.length > MAX_UPLOAD_BYTES) {
+      return res.status(413).json({ error: `A sample lease must be under ${(MAX_UPLOAD_BYTES / 1048576).toFixed(1)} MB.` });
     }
   }
 
@@ -104,7 +169,8 @@ module.exports = async function handler(req, res) {
       const up = await fetch(`${BASE}/storage/v1/object/pilot-requests/${encodeURIComponent(key)}`, {
         method: 'POST',
         headers: Object.assign({}, auth, {
-          'Content-Type': clean(body.lease.type, 100) || 'application/octet-stream',
+          // The MIME we validated from the extension — never the caller's claim.
+          'Content-Type': leaseMime,
           'x-upsert': 'false',
         }),
         body: fileBuf,

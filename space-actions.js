@@ -243,11 +243,16 @@ window.SpaceActions = (function () {
     needsInput: true, inputLabel: "Tenant's message (optional)", inputPlaceholder: 'Paste the tenant’s question…',
     cta: 'Draft reply',
   });
-  // Future actions (registered when built — same record, different prompt/output):
-  registerAction('landlord_update', { label: 'Draft landlord update', icon: '\u{1F4E8}', available: false });
-  registerAction('explain_cam',     { label: 'Explain CAM charges',   icon: '\u{1F4CA}', available: false });
-  registerAction('review_warranty', { label: 'Review warranty coverage', icon: '\u{1F6E1}️', available: false });
-  registerAction('maintenance_summary', { label: 'Maintenance summary', icon: '\u{1F527}', available: false });
+  // Nothing is registered until it is built. Four actions used to appear here as
+  // available:false and rendered as disabled "soon" chips, so four of the five
+  // things this surface offered did nothing — which reads as unfinished software
+  // rather than as a roadmap. One working action is a feature; five where four
+  // are dead is a promise the screen cannot keep.
+  //
+  // When the next one is built, register it here and it appears. Candidates:
+  // draft landlord update, explain CAM charges, maintenance summary. NOT
+  // "review warranty coverage" — standalone warranties were removed; warranty
+  // cover belongs to the maintenance record it came from.
 
   function injectStyles() {
     if (document.getElementById('sa-styles')) return;

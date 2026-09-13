@@ -21,6 +21,19 @@
 window.CommandCenter = (() => {
   'use strict';
 
+  /**
+   * M7 — one definition of an open dispute, read at call time.
+   *
+   * The portfolio open-dispute exposure used `status === 'open'`, so a
+   * docs_requested charge — undecided, and every bit as much money in limbo —
+   * was left out of the figure the briefing leads with.
+   */
+  const _isOpenDispute = (d) => {
+    const DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  };
+
   // ── helpers ────────────────────────────────────────────────────────────────
 
   const _esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
@@ -560,7 +573,7 @@ window.CommandCenter = (() => {
       return ((_recon(p)?.results || []).length && pool > 0 && (100 - pr) >= 5) ? s + pool * ((100 - pr) / 100) : s;
     }, 0);
     const openExposure = safeProps.reduce((s, p) =>
-      s + (p.disputes || []).filter(dd => dd && dd.status === 'open')
+      s + (p.disputes || []).filter(_isOpenDispute)
             .reduce((x, dd) => x + _num(dd.tenantShare ?? dd.amount), 0), 0);
     // Lender reimbursements whose readiness gate passes — recoverable cash, so it
     // joins the identified total. (Draws still missing documentation are cards

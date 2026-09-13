@@ -89,9 +89,24 @@ window.AuthService = (() => {
     const meta = (sbUser.user_metadata && typeof sbUser.user_metadata === 'object')
       ? sbUser.user_metadata
       : {};
+    const appMeta = (sbUser.app_metadata && typeof sbUser.app_metadata === 'object')
+      ? sbUser.app_metadata
+      : {};
 
     const email = sbUser.email || '';
-    const role  = _normalizeRole(meta.role);
+
+    // Phase A — role provenance.
+    // user_metadata is writable by the client that owns the session: a user can
+    // PATCH /auth/v1/user and set role:'landlord' on themselves. app_metadata is
+    // writable only with the service role. So app_metadata wins when present,
+    // and `roleTrusted` records which source was used.
+    //
+    // This does NOT make role an authorization input. Tenant authorization is
+    // the tenant_users table and public.tenant_ids_for_current_user() in the
+    // database (migration 012); RLS never reads a role claim, and a forged
+    // landlord role returns zero rows. Role here drives UI affordances only.
+    const roleTrusted = typeof appMeta.role === 'string';
+    const role = _normalizeRole(roleTrusted ? appMeta.role : meta.role);
 
     // property_ids must be an array of strings; default to empty array
     let propertyIds = [];
@@ -99,12 +114,23 @@ window.AuthService = (() => {
       propertyIds = meta.property_ids.filter(v => typeof v === 'string');
     }
 
+    // Tenant memberships. Server-derived only — populated by setTenantIds()
+    // from a SELECT against tenant_users, which RLS restricts to the caller's
+    // own rows. Never read from a client-supplied claim. Empty means "no
+    // membership known yet", and every consumer must fail closed on empty.
+    let tenantIds = [];
+    if (Array.isArray(appMeta.tenant_ids)) {
+      tenantIds = appMeta.tenant_ids.filter(v => typeof v === 'string');
+    }
+
     _currentUser = {
       id:          sbUser.id   || '',
       email,
       role,
+      roleTrusted,
       displayName: _deriveDisplayName(meta, email),
       propertyIds,
+      tenantIds,
       createdAt:   sbUser.created_at || null,
     };
 
@@ -194,11 +220,34 @@ window.AuthService = (() => {
       id:          normalizedUser.id          || '',
       email,
       role,
+      roleTrusted: normalizedUser.roleTrusted === true,
       displayName: normalizedUser.displayName || email.split('@')[0] || '',
       propertyIds: Array.isArray(normalizedUser.propertyIds) ? normalizedUser.propertyIds.filter(v => typeof v === 'string') : [],
+      tenantIds:   Array.isArray(normalizedUser.tenantIds)   ? normalizedUser.tenantIds.filter(v => typeof v === 'string')   : [],
       createdAt:   normalizedUser.createdAt   || null,
     };
     return _currentUser;
+  }
+
+  /**
+   * Records the tenant memberships the DATABASE reported for this session.
+   *
+   * The caller must obtain these by selecting from tenant_users while
+   * authenticated — RLS (policy tenant_users_self_select) restricts that read
+   * to the caller's own rows, which is what makes the result trustworthy.
+   * Never populate this from a client-supplied claim or a URL parameter.
+   *
+   * Authorization does not depend on this value: the database enforces tenant
+   * scope on every query regardless of what the client believes. This exists so
+   * the UI can avoid rendering affordances that would only fail server-side.
+   *
+   * @param {string[]} ids - tenant_ids from tenant_users
+   * @returns {string[]} the stored list (empty if no user / bad input)
+   */
+  function setTenantIds(ids) {
+    if (!_currentUser) return [];
+    _currentUser.tenantIds = Array.isArray(ids) ? ids.filter(v => typeof v === 'string') : [];
+    return _currentUser.tenantIds;
   }
 
   // ── Exports ─────────────────────────────────────────────────────────────────
@@ -207,6 +256,7 @@ window.AuthService = (() => {
     VALID_ROLES,
     hydrateFromSupabaseUser,
     setUser,
+    setTenantIds,
     getCurrentUser,
     isAuthenticated,
     getUserRole,

@@ -167,14 +167,23 @@ window.QAHarness = (() => {
       'Sample B → expired lease flag (red)');
     s.assert(bIssues.some(i => i.severity === 'yellow' && /Cap applied/i.test(i.title)),
       'Sample B → cap applied flag (yellow)');
-    s.assert(bIssues.some(i => /Pro-rata coverage gap/i.test(i.title)),
-      'Sample B → pro-rata gap flag');
+    s.assert(bIssues.some(i => /Property CAM coverage/i.test(i.title)),
+      'Sample B → property coverage gap flag');
     s.assert(bIssues.some(i => i.severity === 'yellow' && /Gross-lease/i.test(i.title)),
       'Sample B → gross lease CAM flag (yellow)');
 
-    // 8% gap → red (|gap| > 5)
-    const gapFlag = bIssues.find(i => /Pro-rata coverage gap/i.test(i.title));
-    s.assertEq(gapFlag?.severity, 'red',         'Pro-rata 8% gap → red severity');
+    // Under-coverage is not an error: the loaded leases simply cover less of the
+    // building than its total sqft. It is yellow at any magnitude, and it must
+    // not claim a tenant is missing. Over-allocation (>100%) stays red — see
+    // reconciliation-engine.js section 3.
+    const gapFlag = bIssues.find(i => /Property CAM coverage/i.test(i.title));
+    s.assertEq(gapFlag?.severity, 'yellow',      'Under-coverage → yellow, not red');
+    s.assert(!/tenant may be missing/i.test(gapFlag?.detail || ''),
+      'Coverage gap does not assert a tenant is missing');
+    s.assert(/vacant space/i.test(gapFlag?.detail || '') && /not been uploaded yet/i.test(gapFlag?.detail || ''),
+      'Coverage gap offers both causes');
+    s.assert(/unaffected/i.test(gapFlag?.detail || ''),
+      'Coverage gap states tenant charges are unaffected');
 
     // ── All issues have required shape ──
     bIssues.forEach((issue, i) => {
@@ -1262,25 +1271,33 @@ window.QAHarness = (() => {
     // tenant canViewProperty — null property → false (ids are set, so no match)
     s.assert(!AC.canViewProperty(tt, null),
       'tenant: canViewProperty with null property false (propertyIds not empty)');
-    // tenant canViewProperty — empty propertyIds → true (no restriction)
+    // tenant canViewProperty — empty propertyIds → FALSE (Phase A: fail closed).
+    // This asserted `true` ("no restriction configured yet") until Phase A. An
+    // unknown scope must deny, not grant.
     const ttNoIds = { id: 't2', email: 't2@t.com', role: 'tenant', propertyIds: [] };
-    s.assert(AC.canViewProperty(ttNoIds, { id: 'any-prop' }),
-      'tenant: canViewProperty with empty propertyIds true (no restriction)');
-    s.assert(AC.canViewProperty(ttNoIds, null),
-      'tenant: canViewProperty with empty propertyIds and null property true');
+    s.assert(!AC.canViewProperty(ttNoIds, { id: 'any-prop' }),
+      'tenant: canViewProperty with empty propertyIds FALSE (fail closed)');
+    s.assert(!AC.canViewProperty(ttNoIds, null),
+      'tenant: canViewProperty with empty propertyIds and null property false');
 
-    // tenant canViewTenant — matching user_id → true
-    const ownTenantByUserId = { id: 'rec-1', user_id: 't1', name: 'Coffee Co' };
-    s.assert(AC.canViewTenant(tt, ownTenantByUserId),
-      'tenant: canViewTenant with matching user_id true');
-    // tenant canViewTenant — matching id (tenant record id === user id) → true
-    const ownTenantById = { id: 't1', user_id: 'other', name: 'Coffee Co' };
-    s.assert(AC.canViewTenant(tt, ownTenantById),
-      'tenant: canViewTenant with matching tenant.id true');
-    // tenant canViewTenant — mismatched → false
-    const otherTenant = { id: 'rec-other', user_id: 'other-user', name: 'Other Co' };
-    s.assert(!AC.canViewTenant(tt, otherTenant),
-      'tenant: canViewTenant with mismatched ids false');
+    // tenant canViewTenant — Phase A: membership comes from user.tenantIds,
+    // populated from tenant_users by AuthService.setTenantIds(). The old
+    // assertions below tested tenant.user_id (a column public.tenants does not
+    // have) and tenant.id === user.id (a tenant record id is never an auth uid);
+    // both could only ever return false, so they asserted nothing real.
+    const ttMember = { id: 't1', email: 't1@t.com', role: 'tenant',
+                       propertyIds: ['prop-riverfront'], tenantIds: ['rec-1'] };
+    s.assert(AC.canViewTenant(ttMember, { id: 'rec-1', name: 'Coffee Co' }),
+      'tenant: canViewTenant true for a tenant id in user.tenantIds');
+    s.assert(!AC.canViewTenant(ttMember, { id: 'rec-other', name: 'Other Co' }),
+      'tenant: canViewTenant false for a tenant id not in user.tenantIds');
+    // No tenantIds at all → deny (fail closed).
+    s.assert(!AC.canViewTenant(tt, { id: 'rec-1', name: 'Coffee Co' }),
+      'tenant: canViewTenant false when user has no tenantIds (fail closed)');
+    // A tenant record carrying a user_id must NOT grant access on its own —
+    // guards against reintroducing the removed tenant.user_id assumption.
+    s.assert(!AC.canViewTenant(tt, { id: 'rec-1', user_id: 't1', name: 'Coffee Co' }),
+      'tenant: canViewTenant ignores tenant.user_id (removed assumption)');
     // tenant canViewTenant — null tenant → false
     s.assert(!AC.canViewTenant(tt, null),
       'tenant: canViewTenant with null tenant false');
