@@ -259,13 +259,19 @@ else {
     for (const [k, v] of Object.entries(wired)) assert(`${k} is defined`, v === 'function', v);
 
     // ── SEC-3 ────────────────────────────────────────────────────────────
-    const rescue = await p.evaluate(() => {
+    // _onAuthLost is async since it began VERIFYING the session before
+    // declaring it expired — a 401 the client caused for itself (a lost refresh
+    // race) used to be enough to tell the user their session had gone. The
+    // mock's getSession() returns no session, so this is still the genuine
+    // signed-out path and every assertion below is unchanged; it just has to be
+    // awaited now.
+    const rescue = await p.evaluate(async () => {
       _lsUserId = 'user-A';
       _props.length = 0;
       _props.push({ id: 'p-1', name: 'Cedar Park', totalSqft: 1000, invoices: [], tenants: [] });
       _props.push({ id: 'p-2', name: 'Harborview', totalSqft: 2000, invoices: [], tenants: [] });
       localStorage.removeItem('_ms_props_v2_user-A');
-      window._onAuthLost('test');
+      await window._onAuthLost('test');
       const stored = JSON.parse(localStorage.getItem('_ms_props_v2_user-A') || '{}');
       const banner = document.getElementById('msAuthLostBanner');
       return {
@@ -291,8 +297,8 @@ else {
     assert('in-memory work is NOT cleared', rescue.propsStillInMemory === 2,
       String(rescue.propsStillInMemory));
 
-    const once = await p.evaluate(() => {
-      window._onAuthLost('again'); window._onAuthLost('and again');
+    const once = await p.evaluate(async () => {
+      await window._onAuthLost('again'); await window._onAuthLost('and again');
       return document.querySelectorAll('#msAuthLostBanner').length;
     });
     assert('repeated failures raise one banner, not one per request', once === 1, String(once));

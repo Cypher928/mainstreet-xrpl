@@ -159,6 +159,15 @@ const SUITES = [
   // nor the date their register twin has. Fixtures give same-vendor invoices
   // DIFFERENT amounts so a vendor-keyed build cannot pass by coincidence.
   { label: 'Invoice evidence identity',           cmd: 'node test-e2e-invoice-evidence-identity.js' },
+  // A 401 IS EVIDENCE, NOT PROOF — AND HISTORY MEANS THE SERVER HAS IT. Found
+  // by walking the Pilot in a real browser. _authHeaders returned no header at
+  // all when a token refresh lost its race, the server refused the unsigned
+  // request, and the client read its own omission as "your session expired"
+  // while Supabase still held a live session. Separately, camRuns.unshift()
+  // recorded every run hundreds of lines before saveCamResults was called and
+  // Previous Runs read that array alone, so a refused save appeared as saved
+  // history beside the banner saying it had not been saved.
+  { label: 'Session + CAM persistence truth',     cmd: 'node test-e2e-session-persistence-truth.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

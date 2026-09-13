@@ -359,6 +359,29 @@
 
     /* Section header */
     .sec-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
+    /* The signpost from Spaces down to Lease intake. Pushed to the right of the
+       heading so it reads as an action on this section rather than a second
+       heading, and wraps under it on a phone rather than squeezing the title. */
+    .spaces-intake-link {
+      margin-left: auto; align-self: center; flex: none;
+      background: rgba(201,151,58,.10); color: #C9973A;
+      border: 1px solid rgba(201,151,58,.35); border-radius: 8px;
+      padding: 8px 14px; font-size: .82rem; font-weight: 600; cursor: pointer;
+      font-family: inherit; white-space: nowrap; transition: background .15s ease, border-color .15s ease;
+    }
+    .spaces-intake-link:hover { background: rgba(201,151,58,.18); border-color: rgba(201,151,58,.6); }
+    .spaces-intake-link:focus-visible { outline: 2px solid #C9973A; outline-offset: 2px; }
+    /* A short highlight on the card the signpost just scrolled to. */
+    .card--flash { animation: cardFlash 1.5s ease-out 1; }
+    @keyframes cardFlash {
+      0%, 100% { box-shadow: none; }
+      15%, 55% { box-shadow: 0 0 0 2px rgba(201,151,58,.55); }
+    }
+    @media (prefers-reduced-motion: reduce) { .card--flash { animation: none; } }
+    @media (max-width: 560px) {
+      .spaces-intake-link { margin-left: 0; width: 100%; white-space: normal; }
+      .sec-head { flex-wrap: wrap; }
+    }
     /* Helper text */
     .rpt-helper-text {
       font-size: 0.82rem; color: var(--text-4); margin: -4px 0 14px;
@@ -7397,6 +7420,18 @@
           <h2>Spaces</h2>
           <p>Every tenant space in this property — open one to see its complete story and act on it.</p>
         </div>
+        <!-- WHERE SPACES COME FROM, SAID ON THE SCREEN THAT LISTS THEM.
+             Lease intake is the card directly below this one and it owns the
+             whole workflow; a pilot walkthrough still concluded lease management
+             was missing, because nothing up here pointed down there and the
+             empty state only speaks when there are no spaces at all. This is a
+             signpost, not a second entry point: it calls the same
+             switchLeaseTab() the card's own tabs call, and adds no lease logic
+             of its own. -->
+        <button type="button" class="spaces-intake-link" id="spacesIntakeLink"
+                onclick="goToLeaseIntake('bulk')">
+          &#x1F4C2; Add or upload leases
+        </button>
       </div>
       <div id="spacesList"></div>
     </div>

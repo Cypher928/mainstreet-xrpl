@@ -337,6 +337,53 @@ const seedProp = (id, name, excludeOne) => `(async () => {
     ? ok('the concentration finding still measures against the recoverable $88,400 and keeps its own name')
     : bad('the concentration basis changed', String(panel.concentrationBasis));
 
+  // ══ 4 · THE SPACES LIST POINTS AT WHERE ITS CONTENTS COME FROM ══════════
+  // The empty state above only speaks when there are no spaces. A property with
+  // tenants showed no route to Lease intake at all, and a pilot walkthrough
+  // concluded lease management was missing. The signpost must be a signpost:
+  // one lease-intake card, reached through the controls that already exist.
+  sec('4 · Lease intake is discoverable from a property that HAS spaces');
+  const signpost = await p.evaluate(async () => {
+    const vis = e => { if (!e) return false; const r = e.getBoundingClientRect();
+      return getComputedStyle(e).display !== 'none' && r.height > 2; };
+    window.switchWorkspaceTab && window.switchWorkspaceTab('spaces');
+    await new Promise(r => setTimeout(r, 1200));
+    const link = document.getElementById('spacesIntakeLink');
+    const before = document.getElementById('lTabBulk');
+    // start from a DIFFERENT tab so activation is observable
+    try { switchLeaseTab('center'); } catch (_) {}
+    await new Promise(r => setTimeout(r, 200));
+    const wasActive = before ? before.classList.contains('active') : null;
+    if (link) link.click();
+    await new Promise(r => setTimeout(r, 600));
+    const card = document.getElementById('cardLeases');
+    return {
+      spacesRendered: document.querySelectorAll('#spacesList .ts-space-card, #spacesList [class*=space]').length,
+      linkPresent: !!link,
+      linkVisible: vis(link),
+      linkText: link ? (link.innerText || '').replace(/\s+/g, ' ').trim() : null,
+      bulkWasActiveBefore: wasActive,
+      bulkActiveAfter: !!(before && before.classList.contains('active')),
+      cardExists: !!card,
+      cardVisible: vis(card),
+      // one implementation, not two
+      intakeCards: document.querySelectorAll('#cardLeases').length,
+      uploadControls: document.querySelectorAll('#lTabBulk').length,
+    };
+  });
+  signpost.linkPresent && signpost.linkVisible
+    ? ok(`Spaces offers a route to lease intake: "${signpost.linkText}"`)
+    : bad('no visible route from Spaces to Lease intake', JSON.stringify(signpost));
+  (signpost.bulkWasActiveBefore === false && signpost.bulkActiveAfter === true)
+    ? ok('it activates the existing Upload Leases tab')
+    : bad('the signpost did not drive the existing tab', JSON.stringify(signpost));
+  signpost.cardExists && signpost.cardVisible
+    ? ok('and the Lease intake card it points at is on screen')
+    : bad('the lease intake card is not reachable', JSON.stringify(signpost));
+  (signpost.intakeCards === 1 && signpost.uploadControls === 1)
+    ? ok('there is still exactly ONE lease-intake card and one upload control')
+    : bad('lease intake was duplicated', JSON.stringify(signpost));
+
   sec('page errors');
   const real = errs.filter(e => !/cdnjs|jsdelivr|fonts|Failed to fetch|supabase|ResizeObserver/i.test(e));
   real.length === 0 ? ok('no uncaught page errors') : bad('uncaught page errors', real.join('\n      '));

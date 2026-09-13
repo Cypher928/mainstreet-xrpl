@@ -497,8 +497,37 @@ const MAX_LEASES  = 3;
  * this function exists to save.
  */
 let _authLostHandled = false;
-function _onAuthLost(where) {
+async function _onAuthLost(where) {
   if (_authLostHandled) return;       // one banner, not one per in-flight request
+
+  // A 401 IS EVIDENCE, NOT PROOF. This function used to take a single 401 as a
+  // finished verdict, and a 401 is exactly what the client produced for itself
+  // whenever a token refresh lost a race — the request went out with no
+  // Authorization header, the server refused it, and the user was told their
+  // session had expired while Supabase still held a perfectly live one. Ask the
+  // authority before saying something that stops all saving.
+  try {
+    const { data } = await db.auth.getSession();
+    if (data?.session) {
+      // The session is live, so this 401 is not an expiry whatever the refresh
+      // does. Attempt one anyway — it repairs a token that is merely stale, so
+      // the next write goes out with a good one — but the verdict is already
+      // settled by the session above, and the outcome is deliberately not
+      // branched on.
+      await _refreshSessionOnce().catch(() => {});
+      console.warn('[auth] 401 at', where, '— session is still live, treating as transient');
+      // Still say that THIS write did not land. Silence here would be the
+      // opposite failure: a save that failed and nobody told.
+      try { _setSyncStatus('error', 'Could not reach the server — work saved on this device'); } catch (_) {}
+      try { for (const p of (Array.isArray(_props) ? _props : [])) { if (p && p.id) _lsSave(p); } } catch (_) {}
+      return;
+    }
+  } catch (e) {
+    // Cannot verify — fall through and treat it as lost, which is the safe
+    // direction: work is rescued and the user is told.
+    console.warn('[auth] could not verify session at', where, '—', e && e.message);
+  }
+
   _authLostHandled = true;
   console.warn('[auth] session lost at', where, '— preserving work locally');
 
@@ -583,6 +612,23 @@ function _fetchWithTimeout(url, opts, ms = 58000) {
 // Returns the Authorization header object for the current Supabase session.
 // Returns {} (no-op spread) when unauthenticated so calls still go through
 // to get a clean 401 from the server rather than silently failing client-side.
+// ONE REFRESH AT A TIME. Twenty-four call sites reach _authHeaders, and a
+// single CAM run fires savePropertyData, syncPortfolioEntry and saveCamResults
+// within milliseconds of each other. Supabase ROTATES the refresh token, so
+// concurrent refreshes race: the first wins, the losers are handed an error for
+// a token that was valid when they read it. Serialising them means one network
+// refresh per expiry window however many callers ask.
+let _refreshInFlight = null;
+function _refreshSessionOnce() {
+  if (!_refreshInFlight) {
+    _refreshInFlight = Promise.resolve()
+      .then(() => db.auth.refreshSession())
+      .catch(e => ({ data: null, error: e }))
+      .finally(() => { _refreshInFlight = null; });
+  }
+  return _refreshInFlight;
+}
+
 async function _authHeaders() {
   try {
     const { data } = await db.auth.getSession();
@@ -591,9 +637,16 @@ async function _authHeaders() {
     // never receive an expired JWT (getSession() returns stale tokens as-is).
     const expiresAt = data.session.expires_at ?? 0;
     if (expiresAt - Date.now() / 1000 < 60) {
-      const { data: r } = await db.auth.refreshSession();
-      const tok = r?.session?.access_token;
-      return tok ? { 'Authorization': `Bearer ${tok}` } : {};
+      const r = await _refreshSessionOnce();
+      const tok = r?.data?.session?.access_token;
+      if (tok) return { 'Authorization': `Bearer ${tok}` };
+      // A FAILED REFRESH IS NOT A SIGNED-OUT USER. Returning {} here sent the
+      // request with no Authorization header at all, the server answered 401 —
+      // correctly — and the client read its own omission as proof the session
+      // had expired. The token in hand has not expired yet (that is why we are
+      // in the sub-60-second window and not past it), so send it and let the
+      // server be the one that decides.
+      return { 'Authorization': `Bearer ${data.session.access_token}` };
     }
     return { 'Authorization': `Bearer ${data.session.access_token}` };
   } catch { return {}; }
@@ -4252,6 +4305,38 @@ function _fmtKpiTimestamp(ts) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   } catch { return ts; }
 }
+
+/**
+ * The Spaces header's signpost down to Lease intake.
+ *
+ * A SIGNPOST, NOT A SECOND ENTRY POINT. A pilot walkthrough concluded lease
+ * management was missing: the Spaces list gives no hint that the card beneath it
+ * is where its contents come from, and the empty state that does say so only
+ * appears when there are no spaces at all — so the moment a property has one
+ * tenant, the instruction disappears. This scrolls to the card that already owns
+ * the workflow and opens the tab the caller names, through the same
+ * switchLeaseTab() its own tab bar calls. It adds no lease logic and holds no
+ * state, so there is still exactly one lease-intake implementation.
+ */
+function goToLeaseIntake(tab) {
+  const card = document.getElementById('cardLeases');
+  if (!card) return;
+  // The card lives on the Spaces workspace tab; make sure that pane is showing
+  // before scrolling, or the scroll lands on a hidden element.
+  try {
+    if (typeof switchWorkspaceTab === 'function' &&
+        card.closest('[id^="wsPane-"]')?.id === 'wsPane-spaces') {
+      switchWorkspaceTab('spaces');
+    }
+  } catch (_) {}
+  try { switchLeaseTab(tab || 'bulk'); } catch (_) {}
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // A brief highlight, so the eye lands on the card rather than on whatever
+  // happens to be at the top of the viewport after the scroll.
+  card.classList.add('card--flash');
+  setTimeout(() => card.classList.remove('card--flash'), 1600);
+}
+window.goToLeaseIntake = goToLeaseIntake;
 
 function switchLeaseTab(tab) {
   document.getElementById('lTabBulk').classList.toggle('active', tab === 'bulk');
@@ -11734,6 +11819,13 @@ async function runAllocation() {
     propName,
     camYear:       getCamYear(),
     timestamp:     new Date(),
+    // NOT ON THE SERVER UNTIL THE SERVER SAYS SO. This record is created here,
+    // several hundred lines before saveCamResults is even called, and Previous
+    // Runs rendered it immediately — so a reconciliation whose save was refused
+    // appeared as saved history beside the banner saying it had not been saved.
+    // The flag starts false and is set from the save result below; nothing else
+    // may write it, and renderPreviousRuns shows only runs the server has.
+    persisted:     false,
     totalExpenses: totalCost,
     tenantCount:   fullResults.length,
     invoiceCount:  invoices.length,
@@ -11793,7 +11885,13 @@ async function runAllocation() {
   {
     const _camSave = await saveCamResults(currentProperty()?.id, fullResults, getCamYear(), totalCost)
       .catch(e => ({ ok: false, reason: e?.message || 'network error' }));
-    if (!_camSave.ok) _showCamSaveWarning(_camSave);
+    // ONE ANSWER, WRITTEN ONCE, READ BY BOTH SURFACES. The warning banner and
+    // Previous Runs now come from the same fact rather than from two
+    // independent guesses about the same save.
+    if (camRuns.length) camRuns[0].persisted = !!_camSave.ok;
+    if (_camSave.ok) _clearCamSaveWarning(); else _showCamSaveWarning(_camSave);
+    // Re-render: the entry was drawn before the save was attempted.
+    renderPreviousRuns();
   }
 
   // Snapshot the full reconciliation and immediately persist to Supabase so
@@ -11925,6 +12023,14 @@ function _showMigrationMissingWarning() {
 // banner in the results panel so the landlord knows the write failed.
 // User-facing copy stays plain-language; the technical reason (migration
 // missing, anon key, etc.) is logged to the console for support/debugging.
+// The counterpart to _showCamSaveWarning. Without this the banner outlived the
+// failure that raised it: one refused save, then a successful re-run, and the
+// screen still said the results were not on the server.
+function _clearCamSaveWarning() {
+  const banner = document.getElementById('camSaveWarningBanner');
+  if (banner) { banner.textContent = ''; banner.style.display = 'none'; }
+}
+
 function _showCamSaveWarning(saveResult) {
   console.warn('[CAM] save failed —', saveResult.code || saveResult.reason || 'unknown reason', saveResult);
   const msg = '⚠ These CAM results weren’t saved to the server. They’re still visible now, but will be lost if you close this tab — export or print them, then contact support.';
@@ -12555,18 +12661,37 @@ function renderPrevRunHistItem(run, camIdx) {
     </div>`;
 }
 
+// HISTORY MEANS THE SERVER HAS IT.
+//
+// A run is history when it is on the server. `persisted` is stamped false at
+// the moment a run is computed and set true only by a confirmed save, so a
+// refused save can no longer put a run under Previous Runs — which is what let
+// one screen say "these results weren't saved" while the panel below it listed
+// the same run as saved.
+//
+// A run with NO `persisted` field predates this and came back from a stored
+// snapshot, which is itself server state, so absent reads as persisted. Only an
+// explicit false is treated as not-on-the-server.
+function _isPersistedRun(run) { return !run || run.persisted !== false; }
+
 function renderPreviousRuns() {
   const sec  = document.getElementById('previousRunsSection');
   const list = document.getElementById('previousRunsList');
-  if (camRuns.length < 2) { sec.style.display = 'none'; return; }
+  if (!sec || !list) return;
+  // camRuns[0] is the run on screen; the rest are history, and only the ones
+  // the server actually holds may be shown as such.
+  const history = camRuns.slice(1).filter(_isPersistedRun);
+  if (!history.length) { sec.style.display = 'none'; list.innerHTML = ''; return; }
   sec.style.display = 'block';
 
-  // Group historical runs (all but camRuns[0]) by property name, preserving DESC order
+  // Group historical runs by property name, preserving DESC order. camIdx must
+  // stay the index into camRuns, because togglePrevRunDetail addresses it.
   const grouped = new Map();
-  camRuns.slice(1).forEach((run, sliceIdx) => {
+  camRuns.forEach((run, camIdx) => {
+    if (camIdx === 0 || !_isPersistedRun(run)) return;
     const key = (run.propName || '').trim();
     if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push({ run, camIdx: sliceIdx + 1 });
+    grouped.get(key).push({ run, camIdx });
   });
 
   // Sort groups by each property's most recent run, newest first
@@ -26414,12 +26539,15 @@ function _startLeaseValidation(panelId, tenantIdx) {
 async function saveCamResults(propertyId, fullResults, year, totalExpenses = null) {
   if (!propertyId || !year) return { ok: false, reason: 'missing propertyId or year' };
 
-  // Delete previous reconciliation rows for this property+year before inserting new ones
-  try {
-    await db.from('cam_reconciliations').delete().match({ property_id: propertyId, year: year });
-  } catch (_delErr) {
-    console.warn('[saveCamResults] pre-delete failed (non-fatal):', _delErr?.message);
-  }
+  // THE PRE-DELETE USED TO LIVE HERE, AND IT DESTROYED GOOD DATA.
+  //
+  // api/cam-reconciliations.js already does DELETE-then-INSERT for the same
+  // property+year, after verifying the caller and their ownership of the
+  // property. This client-side copy ran FIRST and unconditionally: it wiped the
+  // rows of the previously persisted run, and then the POST behind it could
+  // still fail — a 401, a rate limit — leaving the server with no run for that
+  // year at all while the screen went on showing one. A replace has to be the
+  // server's single authorized operation, not two hopeful halves.
 
   const reconciledAt = new Date().toISOString();
   const rows = (fullResults || []).map(r => {
@@ -26458,7 +26586,10 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
     };
   });
   try {
-    const resp = await fetch('/api/cam-reconciliations', {
+    // _fetchWithTimeout, not a bare fetch: this call had no timeout at all, and
+    // its 401s never reached the auth handler that every other API call routes
+    // through — so a dead session failed here silently and differently.
+    const resp = await _fetchWithTimeout('/api/cam-reconciliations', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
       body:    JSON.stringify({ propertyId, year, rows }),
@@ -26468,8 +26599,16 @@ async function saveCamResults(propertyId, fullResults, year, totalExpenses = nul
       console.error('[saveCamResults] error:', result.error, result.detail);
       return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
     }
-    console.log('[saveCamResults] persisted', (result.data || []).length, 'row(s) for', propertyId, 'year', year);
-    return { ok: true, rows: (result.data || []).length };
+    // A 200 THAT STORED NOTHING IS NOT A SAVE. The old code read any non-error
+    // response as success and reported `rows: 0` beside it, so a write that
+    // landed nowhere produced a green result and a Previous Run entry.
+    const written = (result.data || []).length;
+    if (rows.length > 0 && written === 0) {
+      console.error('[saveCamResults] server accepted the write but stored 0 of', rows.length, 'row(s)');
+      return { ok: false, reason: 'the server accepted the write but stored no rows', rows: 0 };
+    }
+    console.log('[saveCamResults] persisted', written, 'row(s) for', propertyId, 'year', year);
+    return { ok: true, rows: written };
   } catch (e) {
     console.error('[saveCamResults] exception:', e?.message);
     return { ok: false, reason: e?.message || 'network error' };
