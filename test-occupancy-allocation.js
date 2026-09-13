@@ -52,6 +52,10 @@ function loadEngine() {
     extract(/\nclass ReconciliationResult \{[\s\S]*?\n\}\n/, 'class ReconciliationResult'),
     extract(/\nfunction parseSqft\(v\) \{[\s\S]*?\n\}\n/, 'parseSqft'),
     extract(/\nfunction parseMoney\(v\) \{[\s\S]*?\n\}\n/, 'parseMoney'),
+    // runFullReconciliation scopes its inputs to the CAM year through this
+    // predicate rather than an inline date test, so that the confirmation modal
+    // can state the same pool. It has to come into the sandbox with the engine.
+    extract(/\nfunction camYearScopeOf\(inv, year\) \{[\s\S]*?\n\}\n/, 'camYearScopeOf'),
     // H — the engine's cap ceiling and its expected-CAM derivation; the cap gate
     // and the expectation both call these, so the sandbox supplies them for the
     // same reason it supplies MoneyCents: they are the engine's own arithmetic.

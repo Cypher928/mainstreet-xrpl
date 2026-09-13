@@ -168,6 +168,15 @@ const SUITES = [
   // Previous Runs read that array alone, so a refused save appeared as saved
   // history beside the banner saying it had not been saved.
   { label: 'Session + CAM persistence truth',     cmd: 'node test-e2e-session-persistence-truth.js' },
+  // SAY THE POOL THE RUN WILL ALLOCATE, AND COUNT THE INVOICES IT USED. Found
+  // on Maple Plaza in the Pilot: the confirmation modal promised to allocate
+  // $13,700 when $9,200 of that was dated outside the CAM year and the engine
+  // never saw it, and the explanation said "5 invoices distributed pro-rata"
+  // while every tenant card read "3 of 5". The modal now asks the engine's own
+  // year predicate, and the count comes from r.eligibleCount rather than from
+  // the register. Fixture amounts differ in and out of year so a build that
+  // reports the gross figure cannot pass by coincidence.
+  { label: 'CAM scope disclosure',                cmd: 'node test-e2e-cam-scope-disclosure.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

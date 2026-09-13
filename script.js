@@ -10517,6 +10517,35 @@ function parseSqft(v) {
   return window.SourceValues.readArea(v).value || 0;
 }
 
+/**
+ * ONE ANSWER TO "DOES THIS INVOICE BELONG TO THE CAM YEAR?"
+ *
+ * Extracted from runFullReconciliation's own filter, unchanged. Three outcomes,
+ * because two would lose the distinction the engine depends on:
+ *
+ *   'in'      dated, and inside the reconciliation year
+ *   'out'     dated, and outside it — the engine drops these
+ *   'undated' no readable date. DELIBERATELY KEPT by the engine: dropping an
+ *             undated invoice would silently lose a real expense, so it is
+ *             allocated and separately reported instead.
+ *
+ * It lives here so the confirmation modal can state the pool the run will
+ * actually allocate from. The modal previously read CamPool alone, which knows
+ * about CAM-eligibility and nothing about the year, so on a property with
+ * $13,700 invoiced and $9,200 of it dated outside the year it promised to
+ * allocate the whole $13,700.
+ */
+function camYearScopeOf(inv, year) {
+  const raw = (inv && (inv.invoiceDate || inv.date)) || '';
+  const d = raw ? new Date(raw) : null;
+  if (!d || isNaN(d.getTime())) return 'undated';
+  return String(d.getFullYear()) === String(year) ? 'in' : 'out';
+}
+/** What the engine keeps: everything except a date that falls outside the year. */
+function camYearIncludes(inv, year) { return camYearScopeOf(inv, year) !== 'out'; }
+window.camYearScopeOf  = camYearScopeOf;
+window.camYearIncludes = camYearIncludes;
+
 function showAllocationModal() {
   const totalSqft = parseFloat(document.getElementById('totalSqft').value);
   // Canonical tenant fields are snake_case — normalizeTenant() produces
@@ -10571,9 +10600,27 @@ function showAllocationModal() {
   // CamPool is the same authority runAllocation uses to build `lastCamPool`,
   // so this reads the decision rather than making a second one: nothing here
   // re-derives what is eligible.
-  const eligible = window.CamPool ? window.CamPool.eligible(invoices) : invoices;
-  const camPool  = window.CamPool ? (window.CamPool.total(invoices) || 0) : total;
-  const excluded = Math.max(0, total - camPool);
+  const eligibleAll = window.CamPool ? window.CamPool.eligible(invoices) : invoices;
+  const camPool     = window.CamPool ? (window.CamPool.total(invoices) || 0) : total;
+  const excluded    = Math.max(0, total - camPool);
+
+  // ── AND THE YEAR, WHICH ELIGIBILITY KNOWS NOTHING ABOUT ───────────────────
+  //
+  // CamPool answers "may a tenant be billed for this?" and nothing else. The
+  // engine ALSO scopes its inputs to the reconciliation year, so on a property
+  // with $13,700 invoiced and $9,200 of it dated outside the year this modal
+  // promised to allocate $13,700 and the run allocated from $4,500. Same
+  // species of overstatement the exclusion line was added to stop, one filter
+  // further along. camYearIncludes is the engine's own predicate.
+  const _camYear   = (typeof getCamYear === 'function' ? getCamYear() : null);
+  const eligible   = _camYear ? eligibleAll.filter(inv => camYearIncludes(inv, _camYear)) : eligibleAll;
+  const outOfYear  = eligibleAll
+    .filter(inv => _camYear && !camYearIncludes(inv, _camYear))
+    .reduce((s, inv) => s + (parseFloat(inv.amount) || 0), 0);
+  // What the run will allocate FROM: CAM-recoverable, and in the year.
+  const allocPool  = Math.max(0, camPool - outOfYear);
+  const undatedCount = _camYear
+    ? eligible.filter(inv => camYearScopeOf(inv, _camYear) === 'undated').length : 0;
 
   // Category rows are struck off the ELIGIBLE set so the breakdown adds up to
   // the figure above it. The excluded money is not hidden — it gets its own
@@ -10592,11 +10639,19 @@ function showAllocationModal() {
 
   document.getElementById('allocModalBody').innerHTML = `
     <div class="modal-confirm-msg">
-      You are about to allocate <strong>${fmt(camPool)}</strong> of CAM-recoverable
+      You are about to allocate <strong>${fmt(allocPool)}</strong> of CAM-recoverable
       expenses across <strong>${tenants.length}</strong> tenant${tenants.length !== 1 ? 's' : ''}.
       ${excluded > 0
         ? `<strong>${fmt(excluded)}</strong> of the ${fmt(total)} invoiced is marked
            not CAM-eligible and will not be allocated.`
+        : ''}
+      ${outOfYear > 0
+        ? `<strong>${fmt(outOfYear)}</strong> is dated outside ${esc(String(_camYear))}
+           and is not part of this reconciliation.`
+        : ''}
+      ${undatedCount > 0
+        ? `${undatedCount} invoice${undatedCount === 1 ? ' has' : 's have'} no readable date and
+           ${undatedCount === 1 ? 'is' : 'are'} included on that basis.`
         : ''}
       Please confirm this looks correct.
     </div>
@@ -10605,7 +10660,9 @@ function showAllocationModal() {
       <tr><td>Invoiced total</td><td>${fmt(total)}</td></tr>
       ${excluded > 0
         ? `<tr><td>Not CAM-eligible</td><td>&minus;${fmt(excluded)}</td></tr>` : ''}
-      <tr><td><strong>Allocating from</strong></td><td><strong>${fmt(camPool)}</strong></td></tr>
+      ${outOfYear > 0
+        ? `<tr><td>Dated outside ${esc(String(_camYear))}</td><td>&minus;${fmt(outOfYear)}</td></tr>` : ''}
+      <tr><td><strong>Allocating from</strong></td><td><strong>${fmt(allocPool)}</strong></td></tr>
       <tr><td>Tenants</td><td>${tenants.length}</td></tr>
       ${catRows}
     </table>`;
@@ -10903,13 +10960,15 @@ function runFullReconciliation(property) {
   const _year = property.camYear != null ? String(property.camYear) : null;
   let _outOfYear = 0, _undated = 0, _datedInYear = 0;
   if (_year) {
+    // The predicate is camYearScopeOf (defined below) rather than an inline
+    // date test, because the confirmation modal has to state the same pool this
+    // filter is about to produce and could not reach a local. Same three
+    // outcomes, same undated-invoices-are-kept rule; only the name is new.
     invoices = invoices.filter(inv => {
-      const raw = inv.invoiceDate || inv.date || '';
-      const d = raw ? new Date(raw) : null;
-      if (!d || isNaN(d.getTime())) { _undated++; return true; }
-      const keep = String(d.getFullYear()) === _year;
-      if (keep) _datedInYear++; else _outOfYear++;
-      return keep;
+      const scope = camYearScopeOf(inv, _year);
+      if (scope === 'undated') { _undated++; return true; }
+      if (scope === 'in')      { _datedInYear++; return true; }
+      _outOfYear++; return false;
     });
 
     // THE UNDATED INVOICES WERE HOLDING THE RUN OPEN.
@@ -17020,18 +17079,40 @@ function buildAuditSummary() {
         // reconciliation-engine.js section 3 and the banner (gap > 2).
         //
         // No allocation math is touched here — this reads engine output only.
-        const _n          = paidInvData.length;
+        // THE INVOICES THAT WERE ACTUALLY DISTRIBUTED, not every invoice loaded.
+        //
+        // This counted paidInvData — every invoice with an amount — and said
+        // "5 invoices distributed pro-rata" on a run where each tenant card
+        // correctly read "3 of 5" and the reconciliation reported that 2 could
+        // not be matched to an allocation. The engine drops out-of-year
+        // invoices before allocating, so the loaded count and the distributed
+        // count are different questions.
+        //
+        // r.eligibleCount IS includedInvoices.length on the engine's own result
+        // object, so this reads the allocation rather than recounting the
+        // register. The MAX across tenants is the size of the distributed set:
+        // a tenant with a category exclusion sees fewer, and the claim is about
+        // the invoices that reached at least one tenant. A result that predates
+        // the field falls back to the old count rather than reporting zero.
+        const _eligCounts = results
+          .map(r => Number(r && r.eligibleCount))
+          .filter(x => Number.isFinite(x) && x >= 0);
+        const _n          = _eligCounts.length ? Math.max(..._eligCounts) : paidInvData.length;
+        const _notIncluded = Math.max(0, paidInvData.length - _n);
         const _invWord    = _n === 1 ? 'invoice' : 'invoices';
         const _prSum      = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
         const _billed     = results.reduce((s, r) => s + (r.totalAllocated || 0), 0);
         const _incomplete = _prSum < 98;
         green.push({
-          title:  `${_n} ${_invWord} allocated as shared CAM expense${_n === 1 ? '' : 's'} (pro-rata)`,
+          title:  `${_n}${_notIncluded > 0 ? ` of ${paidInvData.length}` : ''} ${_invWord} allocated as shared CAM expense${_n === 1 ? '' : 's'} (pro-rata)`,
           detail: _incomplete
-            ? `No invoice was matched to an individual tenant — each was distributed pro-rata across the currently loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, so ${fmt(_billed)} of the ${fmt(total)} expense pool is billed to them. The remainder is the share of space no loaded lease covers and is not allocated in this reconciliation.`
-            : `No invoice was matched to an individual tenant — each was distributed pro-rata across the loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, and ${fmt(_billed)} of the ${fmt(total)} expense pool is billed across them.`,
+            ? `No invoice was matched to an individual tenant — the ${_n} ${_invWord} in this allocation were distributed pro-rata across the currently loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, so ${fmt(_billed)} of the ${fmt(total)} expense pool is billed to them. The remainder is the share of space no loaded lease covers and is not allocated in this reconciliation.`
+            : `No invoice was matched to an individual tenant — the ${_n} ${_invWord} in this allocation were distributed pro-rata across the loaded tenant leases, using each lease's leased square footage as a share of total building square footage. The loaded leases cover ${_prSum.toFixed(2)}% of the property, and ${fmt(_billed)} of the ${fmt(total)} expense pool is billed across them.`,
           conditions: [
             `${_n} ${_invWord} distributed pro-rata; none directly charged to a single tenant`,
+            ...(_notIncluded > 0
+              ? [`${_notIncluded} of the ${paidInvData.length} loaded invoice${paidInvData.length === 1 ? '' : 's'} did not enter this allocation and ${_notIncluded === 1 ? 'is' : 'are'} reported separately`]
+              : []),
             'Allocation basis: each loaded lease\'s leased sqft as a percentage of total building sqft',
             ...(_incomplete
               ? [`Loaded leases cover ${_prSum.toFixed(2)}% of the property — the unallocated remainder is reported separately under property coverage`]
