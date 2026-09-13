@@ -136,6 +136,13 @@ const SUITES = [
   // And the stale-results refusal, which lived in a `let` that a reload reset:
   // superseded square footage and dollar amounts exported silently afterwards.
   { label: 'Stale results survive a reload',      cmd: 'node test-e2e-stale-results-persistence.js' },
+  // THE SAME QUESTION, FOR RECONCILIATIONS SAVED BEFORE FINGERPRINTS EXISTED —
+  // which on the day that shipped was every reconciliation in the pilot. A
+  // snapshot still carrying its inputs is fingerprinted from them; one that
+  // carries neither cannot account for itself and is not presented as current.
+  // Covers all three generations plus the seeded demo, which passes the check
+  // rather than being exempt from it.
+  { label: 'Legacy snapshot integrity',           cmd: 'node test-e2e-legacy-snapshot-integrity.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

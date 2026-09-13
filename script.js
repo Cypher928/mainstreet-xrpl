@@ -5686,6 +5686,17 @@ async function bulkApproveReady() {
 // CamPool.isEligible), so a cosmetic edit does not invalidate a good run and a
 // material one cannot hide. Sorted, so reordering tenants or invoices is not
 // mistaken for a change.
+//
+// TWO INPUT SHAPES, ONE DEFINITION. A live tenant carries the raw lease field
+// `excluded_categories`; a row inside a saved snapshot carries `excludedCategories`,
+// which is the list that run actually applied — already the output of
+// _appliedExclusions. Resolving both here is what lets a legacy snapshot be
+// fingerprinted by this same function instead of a parallel one.
+function _camInputExclusions(x) {
+  if (Array.isArray(x && x.excludedCategories)) return x.excludedCategories;
+  return _appliedExclusions(x) || [];
+}
+
 function camInputsFingerprint(tenants, invoices) {
   const t = (tenants || [])
     .filter(x => x && x.tenant_name)
@@ -5694,7 +5705,7 @@ function camInputsFingerprint(tenants, invoices) {
       String(parseSqft(x.leased_sqft) ?? ''),
       String(x.cap ?? ''),
       String(x.capBaseAmount ?? ''),
-      (_appliedExclusions(x) || []).slice().sort().join('+'),
+      (_camInputExclusions(x) || []).slice().sort().join('+'),
     ].join('|'))
     .sort();
   const i = (invoices || [])
@@ -5709,9 +5720,65 @@ function camInputsFingerprint(tenants, invoices) {
   return 't:' + t.join(';') + '#i:' + i.join(';');
 }
 
+// ─── A SNAPSHOT SAVED BEFORE FINGERPRINTS EXISTED ────────────────────────────
+//
+// Every reconciliation in the pilot today predates the fingerprint, so "no
+// fingerprint" is not a rare legacy corner — it is the whole existing
+// population on the day this ships. Measured: strip the fingerprint from a real
+// snapshot, correct a lease from 4,200 to 5,200 sqft, save, reload, export, and
+// out came the superseded "4200","16.15","19021.16" with no warning.
+//
+// _stripBlobs removes only `invoicesFull`, so a saved snapshot still carries the
+// inputs the run consumed: `tenants` (the lastTenants projection) and
+// `engineInvoices`. Those are mapped onto the shapes camInputsFingerprint
+// already reads and handed to THAT function — the reconstruction decides
+// nothing about what counts as a change, it only says where the values live.
+// engineInvoices rows need no mapping at all: vendorName, category, amount and
+// camEligible are the fields the fingerprint reads.
+//
+// Returns null when the snapshot cannot say what it was based on. That is a
+// different answer from "unchanged", and the caller must not conflate them.
+function camSnapshotInputsFingerprint(rec) {
+  if (!rec) return null;
+  const tRows = rec.tenants;
+  const iRows = rec.engineInvoices;
+  // A run cannot have happened with no tenants or no invoices — runAllocation
+  // refuses both — so an empty list here means the record is not complete
+  // enough to reconstruct, not that the run had nothing in it.
+  if (!Array.isArray(tRows) || !tRows.length) return null;
+  if (!Array.isArray(iRows) || !iRows.length) return null;
+  try {
+    return camInputsFingerprint(
+      tRows.map(t => ({
+        tenant_name:        t.name,
+        leased_sqft:        t.leasedSqft,
+        cap:                t.capPct,
+        capBaseAmount:      t.capBaseAmount,
+        excludedCategories: t.excludedCategories,
+      })),
+      iRows);
+  } catch (_) { return null; }
+}
+
+// True when the results on screen could not be checked against the current data
+// at all — as opposed to checked and found out of date. Both block the same
+// actions; they are not the same sentence to put in front of a manager.
+let _resultsUnverified = false;
+
 function _updateStaleResultsBanner() {
   const el = document.getElementById('staleResultsBanner');
-  if (el) el.style.display = _resultsStale ? 'block' : 'none';
+  if (!el) return;
+  el.style.display = _resultsStale ? 'block' : 'none';
+  // "Fields were edited since the last run" is the wrong sentence for a saved
+  // reconciliation that cannot be checked at all — nothing was necessarily
+  // edited, and saying so would be its own false claim. Same block, different
+  // reason, so the manager is told which one they are looking at.
+  if (_resultsStale) {
+    el.textContent = _resultsUnverified
+      ? '⚠ This saved reconciliation cannot be checked against the current lease and '
+        + 'invoice data, so it is not treated as current — re-run CAM allocation to confirm it.'
+      : '⚠ Fields were edited since the last run — re-run CAM allocation to update results.';
+  }
 }
 
 function handleFieldBlur(index, field, value, el) {
@@ -11216,6 +11283,7 @@ async function runAllocation() {
   try {
 
   _resultsStale = false;
+  _resultsUnverified = false;   // this run establishes what the results are based on
   _updateStaleResultsBanner();
 
   const propName  = document.getElementById('propertyName').value.trim() || 'Property';
@@ -20974,6 +21042,17 @@ async function ensureDemoProperty() {
     invoices:     invoiceSummary,
     invoicesFull: demoInvoiceList, // full objects; stripped on save, re-hydrated on load
     tenants:      tenantSummary,
+    // The demo is a REAL reconciliation of the tenants and invoices seeded
+    // beside it, so it can say what it was based on. Computed from those exact
+    // inputs, through the same function a live run uses, so the restore checks
+    // it the way it checks any other snapshot — the demo is not exempted, it
+    // simply passes. Without this it would open permanently unverifiable, which
+    // is the correct treatment for a record that cannot account for itself and
+    // the wrong thing to show a manager on their first screen.
+    inputsFingerprint: (() => {
+      try { return camInputsFingerprint(demoTenants, demoInvoiceList); }
+      catch (_) { return null; }
+    })(),
     camRuns: [{
       propName:      PROP_NAME,
       camYear:       CAM_YEAR,
@@ -24864,7 +24943,7 @@ function resetWorkflow() {
   invoiceData.length = 0;
   lastResults = []; lastInvoices = []; lastTenants = [];
   lastPropName = ''; lastTotal = 0; lastInvoicesFull = []; lastFullResults = [];
-  _lastReconIssues = []; _dwActiveDid = null; _resultsStale = false;
+  _lastReconIssues = []; _dwActiveDid = null; _resultsStale = false; _resultsUnverified = false;
   // A verdict outliving the reconciliation it describes would answer questions
   // about a run that is no longer on screen.
   _lastBillingVerdict = null;
@@ -28064,14 +28143,25 @@ function restoreResultsDisplay(snapshot) {
     // fingerprint existed carries none and cannot answer the question; it keeps
     // the previous behaviour rather than blocking every reconciliation already
     // saved, and that limitation is stated rather than hidden.
+    //
+    // THREE GENERATIONS OF SNAPSHOT, ONE QUESTION. A run since the fingerprint
+    // shipped carries its own. An older one carries the inputs it consumed, so
+    // the fingerprint is rebuilt from those. An older one still — the seeded
+    // demo, written before engineInvoices existed — carries neither, and cannot
+    // answer. Unknown is NOT valid: a reconciliation that cannot be checked is
+    // not presented as current, and the guards that read _resultsStale keep it
+    // out of exports and statements until a fresh run settles it.
     try {
-      if (snapshot.inputsFingerprint) {
+      const _was = snapshot.inputsFingerprint || camSnapshotInputsFingerprint(snapshot);
+      if (_was) {
         const _now = camInputsFingerprint(currentProperty()?.tenants, invoiceData);
-        _resultsStale = _now !== snapshot.inputsFingerprint;
+        _resultsStale     = _now !== _was;
+        _resultsUnverified = false;
       } else {
-        _resultsStale = false;
+        _resultsStale      = true;
+        _resultsUnverified = true;
       }
-    } catch (_) { _resultsStale = false; }
+    } catch (_) { _resultsStale = true; _resultsUnverified = true; }
     _updateStaleResultsBanner();
     if (snapshot.camYear) setCamYear(snapshot.camYear);
     if (Array.isArray(snapshot.camRuns) && snapshot.camRuns.length) {
