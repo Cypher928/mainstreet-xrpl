@@ -24,6 +24,9 @@
  *   S13  the caption stops saying it is not a photograph
  *   S14  a real property is given the demo image
  *   S15  the records are not manual records
+ *   S16  opening the demo from its card does not bring it to the current seed
+ *   S17  the seeded live object carries no version (first save drops it → re-seed)
+ *   S18  a property loaded from the store does not carry its version
  *
  * A FAILING BASELINE IS NOT A PASS.
  */
@@ -69,6 +72,15 @@ const MUTANTS = [
   { id: 'S15', file: S, why: 'the records are not manual records',
     from: "        manual:              true,\n        severity:            'info',\n        propertyId:          DEMO_PROPERTY_ID,\n        tenantId:            null,\n        actor:               x.actor || PM,",
     to:   "        manual:              false,\n        severity:            'info',\n        propertyId:          DEMO_PROPERTY_ID,\n        tenantId:            null,\n        actor:               x.actor || PM," },
+  // The existing-demo path: a row from the previous seed, opened from its card.
+  { id: 'S16', file: S, why: 'opening the demo from its card does not bring it to the current seed',
+    from: "  if (DEMO_PROPERTY_ID && id === DEMO_PROPERTY_ID && typeof ensureDemoProperty === 'function') {",
+    to:   "  if (false) {" },
+  { id: 'S17', file: S, why: 'the seeded live object carries no version, so the first save drops it and the next open re-seeds',
+    from: "    _demoVersion:      DEMO_VERSION,\n    _demoV:            DEMO_VERSION,\n    settlement:        DEMO_SETTLEMENT,",
+    to:   "    settlement:        DEMO_SETTLEMENT," },
+  { id: 'S18', file: S, why: 'a property loaded from the store does not carry its version, so a save from that session drops it',
+    from: "    if (data._demoV != null)       property._demoV       = data._demoV;", to: "    if (false)       property._demoV       = data._demoV;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'showmut-'));

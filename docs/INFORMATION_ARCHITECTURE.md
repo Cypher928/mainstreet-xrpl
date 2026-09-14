@@ -269,11 +269,11 @@ are still samples: they are not among the records and never counted.
   architectural rendering captioned "demonstration illustration, not a
   photograph". No property image model exists beyond that field; a real
   property without one shows no image rather than an invented one.
-- **The demo re-seeds after any save** (pre-existing, found while populating
-  it): the in-memory demo object never carries `_demoV`, an app save writes the
-  row without it, and the next load fails the idempotency check and re-seeds —
-  so a record a user adds to Cascade Commons does not survive a reload. Real
-  properties are unaffected. Not changed here; called out.
+- **The demo opens at its current seed from any route** (`selectProperty`
+  runs the idempotent seed for the demo id), and its version marker now
+  travels with the live object and through the load path, so an ordinary save
+  no longer drops it and the next open no longer re-seeds over a manager's own
+  demo records. See `docs/DEMO_SHOWROOM.md`, "A demo that already existed".
 - **Invoice relations do not persist** (pre-existing): `_stripBlobs` keeps
   `id`, `camEligible` and the match fields on an invoice but not `system` or
   `spaceId`, so a Space/System relation set in the register is lost on reload.

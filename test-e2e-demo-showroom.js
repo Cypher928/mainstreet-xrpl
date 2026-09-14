@@ -471,8 +471,200 @@ const sorted = a => a.slice().sort();
   is(samples.samplesInRecords, 0, 'no sample row sits inside the records list');
   yes(!!samples.boxAfterRecords, 'the box comes after the records');
 
-  // ══ 9 · quiet page ═════════════════════════════════════════════════════════
-  sec('9 · no page errors');
+  // ══ 9 · the landing counts are the drawers' contents ═══════════════════════
+  sec('9 · every landing count is what its drawer shows');
+  const agree = await page.evaluate((DRAWER_IDS) => {
+    const p = currentProperty();
+    const idx = PropertyCabinet.buildIndex(p);
+    PropertyCabinetView.closeDrawer();
+    const tiles = {};
+    document.querySelectorAll('#propertyOsBody .pcv-tile').forEach(t => {
+      tiles[t.dataset.drawer] = ((t.querySelector('.pcv-tile-m') || {}).textContent || '').trim();
+    });
+    const out = {};
+    ['taxes', 'insurance', 'financing', 'financials', 'agreements', 'building'].forEach(k => {
+      PropertyCabinetView.openDrawer(k, { year: null, cat: 'all', system: null, recordId: null });
+      const shown = eval(DRAWER_IDS).length;
+      const m = /(\d+)\s+record/.exec(tiles[k] || '');
+      out[k] = { tile: m ? Number(m[1]) : null, index: idx.drawers[k].count, shown, tileText: tiles[k] };
+    });
+    // History's tile counts every PROPERTY record (a Space's lease events are
+    // the Space's); its "All activity" list is those same records, and its
+    // own filed records are the fallbacks.
+    PropertyCabinetView.openDrawer('history', { year: null, cat: 'all', system: null, recordId: null });
+    const filed = eval(DRAWER_IDS).length;
+    for (let i = 0; i < 20; i++) { const b = Array.from(document.querySelectorAll('#propertyOsBody .pcv-more')).pop(); if (!b) break; b.click(); }
+    const hm = /(\d+)\s+event/.exec(tiles.history || '');
+    const spaceScoped = p.timeline.filter(e => e && PropertyCabinet.scopeOf(e) !== 'property').length;
+    const hist = { tile: hm ? Number(hm[1]) : null, propertyRecords: idx.records.length, timeline: p.timeline.length, spaceScoped,
+                   filed, filedIndex: idx.drawers.history.count,
+                   rows: document.querySelectorAll('#propertyOsBody .pcv-arows--history .pcv-arow').length };
+    const dm = /(\d+)\s+upcoming/.exec(tiles.dates || '');
+    const withInfo = Object.assign({}, p, { info: PropertyReference.infoFor(p) });
+    const dates = { tile: dm ? Number(dm[1]) : null,
+                    within90: PropertyCabinet.importantDates(withInfo).length,
+                    all: PropertyCabinet.importantDates(withInfo, { horizonDays: null }).length };
+    PropertyCabinetView.openDrawer('dates');
+    const counts = Array.from(document.querySelectorAll('#propertyOsBody .pcv-sec-title .pcv-count')).map(e => Number(e.textContent));
+    dates.drawerSoon = counts[0]; dates.drawerLater = counts[1] || 0;
+    dates.rows = Array.from(document.querySelectorAll('#propertyOsBody .pcv-date')).map(r => r.querySelector('.pcv-date-d').textContent + ' · ' + r.querySelector('.pcv-date-t').textContent);
+    return { out, hist, dates, im: idx.invoices ? idx.invoices.total : (PropertyOS.invoices(p).length) };
+  }, DRAWER_IDS);
+  Object.keys(agree.out).forEach(k => {
+    const a = agree.out[k];
+    yes(a.tile != null && a.tile === a.index && a.index === a.shown,
+        `${k}: the tile says ${a.tile}, the index says ${a.index}, the drawer shows ${a.shown}`, JSON.stringify(a));
+  });
+  yes(agree.out.financials.index === 5 + agree.out.financials.index - 5 && agree.out.financials.index >= 10,
+      'Property Financials counts its five records beside the reconciliation events that always lived there', JSON.stringify(agree.out.financials));
+  yes(agree.hist.tile === agree.hist.propertyRecords && agree.hist.rows === agree.hist.propertyRecords
+      && agree.hist.propertyRecords + agree.hist.spaceScoped === agree.hist.timeline,
+      `History's tile counts the property's ${agree.hist.propertyRecords} records and lists them all — the ${agree.hist.spaceScoped} lease events belong to their Spaces`, JSON.stringify(agree.hist));
+  yes(agree.hist.filed === agree.hist.filedIndex && agree.hist.filed === agree.hist.propertyRecords - Object.keys(agree.out).reduce((s, k) => s + agree.out[k].index, 0),
+      `History files only what no other drawer claimed (${agree.hist.filed}) — it does not swallow the other drawers' records`, JSON.stringify(agree.hist));
+  yes(agree.dates.tile === agree.dates.within90 && agree.dates.drawerSoon === agree.dates.within90 && agree.dates.drawerSoon + agree.dates.drawerLater === agree.dates.all,
+      `Important Dates: the tile counts the next 90 days (${agree.dates.within90}); the drawer shows those plus ${agree.dates.drawerLater} later — ${agree.dates.all} in all`, JSON.stringify(agree.dates));
+  console.log('      dates on screen: ' + agree.dates.rows.join(' | '));
+
+  // ══ 10 · a demo that already existed ═══════════════════════════════════════
+  // The deployed showroom opened Cascade Commons from its portfolio card —
+  // selectProperty, not loadDemo — and the account's row was still the
+  // previous seed: the drawers read "Nothing filed yet" against a seed that
+  // says otherwise. This is that account: a stored v7 row and a matching
+  // localStorage copy, opened from the card, then saved to, reloaded, opened
+  // again.
+  sec('10 · a demo row from the previous seed opens at the current seed — from its portfolio card');
+  const ctx2 = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+  const p2 = await ctx2.newPage();
+  const errs2 = [], seeds = [];
+  p2.on('pageerror', e => errs2.push(String(e.message).split('\n')[0]));
+  p2.on('console', m => { if (/\[ensureDemoProperty\] seeding/.test(m.text())) seeds.push(m.text()); });
+  p2.on('dialog', d => d.dismiss().catch(() => {}));
+  await p2.route('**cdnjs**',   r => r.fulfill({ status: 200, body: '/*x*/' }));
+  await p2.route('**jsdelivr**', r => r.fulfill({ status: 200, body: '/*x*/' }));
+  await p2.route('**fonts.g**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await p2.addInitScript('window.__TEST_AUTHED=true;');
+  await p2.addInitScript(DB);
+  const boot2 = async () => {
+    await p2.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await p2.waitForTimeout(2600);
+    await p2.evaluate(() => { try { window.MainStreetLanding && window.MainStreetLanding.hide(); } catch (_) {} });
+    await p2.waitForTimeout(600);
+  };
+  const openFromCard = async () => {
+    const found = await p2.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.ptf-prop-card:not(.ptf-demo-card)'))
+        .find(c => /Cascade Commons/.test((c.querySelector('.ptf-prop-name') || {}).textContent || ''));
+      if (!card) return false;
+      card.click(); return true;
+    });
+    if (!found) return false;
+    await p2.waitForFunction(() => {
+      const el = document.getElementById('mainWorkflow'); const p = currentProperty();
+      return el && el.style.display !== 'none' && p && (p.timeline || []).length && document.getElementById('propertyOsBody');
+    }, null, { timeout: 30000 });
+    await p2.waitForTimeout(1500);   // the background load and its merge
+    await p2.evaluate(() => switchWorkspaceTab('property'));
+    await p2.waitForTimeout(500);
+    return true;
+  };
+  const walk = async () => p2.evaluate((DRAWER_IDS) => {
+    const p = currentProperty();
+    const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
+    const out = {};
+    ['taxes', 'insurance', 'financing', 'financials', 'agreements', 'building', 'history'].forEach(k => {
+      PropertyCabinetView.openDrawer(k, { year: null, cat: 'all', system: null, recordId: null });
+      out[k] = eval(DRAWER_IDS).filter(id => /^demo-rec-/.test(id)).length;
+    });
+    PropertyCabinetView.closeDrawer();
+    const tiles = {};
+    document.querySelectorAll('#propertyOsBody .pcv-tile').forEach(t => { tiles[t.dataset.drawer] = ((t.querySelector('.pcv-tile-m') || {}).textContent || '').trim(); });
+    return { out, tiles, recs: p.timeline.filter(e => /^demo-rec-/.test(String(e.id))).length, memV: p._demoV,
+             rowV: row && row.data._demoV, rowRecs: row ? (row.data.timeline || []).filter(e => /^demo-rec-/.test(String(e.id))).length : -1,
+             invoiceIds: (p.invoices || []).every(i => /^inv-\d+$/.test(String(i.id))),
+             note: p.timeline.some(e => e.title === 'Manager note on the demo'),
+             rowNote: !!row && (row.data.timeline || []).some(e => e.title === 'Manager note on the demo') };
+  }, DRAWER_IDS);
+
+  await boot2();
+  // The seeder's own output carries the version: a save that lands before the
+  // background load has applied anything (loadDemo renders instantly and loads
+  // on a timer) must not write the row without it.
+  const early = await p2.evaluate(async () => {
+    await ensureDemoProperty();
+    const live = _props.find(p => p.id === DEMO_PROPERTY_ID);
+    await saveProperty(live);
+    await new Promise(r => setTimeout(r, 600));
+    const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
+    return { memV: live._demoV, rowV: row && row.data._demoV, recs: (row.data.timeline || []).filter(e => /^demo-rec-/.test(String(e.id))).length };
+  });
+  is(early, { memV: 8, rowV: 8, recs: ALL_IDS.length }, 'the seeded live object carries its version, so a save straight after seeding keeps the row at seed 8');
+  await p2.evaluate(() => loadDemo());
+  await p2.waitForFunction(() => (currentProperty() || {}).timeline && currentProperty().timeline.length > 20, null, { timeout: 30000 });
+  await p2.waitForTimeout(800);
+  // Age what is stored to the previous seed: no cabinet records, no invoice ids, version 7.
+  const aged = await p2.evaluate(() => {
+    const age = d => {
+      d.timeline = (d.timeline || []).filter(e => !/^demo-rec-/.test(String(e.id)));
+      d.invoices = (d.invoices || []).map(i => { const c = Object.assign({}, i); delete c.id; return c; });
+      d._demoV = 7; d._demoVersion = 7;
+    };
+    const s = JSON.parse(localStorage.getItem('__mockdb'));
+    const row = s.properties.find(r => r.id === DEMO_PROPERTY_ID);
+    age(row.data); localStorage.setItem('__mockdb', JSON.stringify(s));
+    const key = Object.keys(localStorage).find(k => /^_ms_props_v2_/.test(k));
+    let ls = null;
+    if (key) { const st = JSON.parse(localStorage.getItem(key)); if (st[DEMO_PROPERTY_ID]) { age(st[DEMO_PROPERTY_ID]); ls = st[DEMO_PROPERTY_ID].timeline.length; localStorage.setItem(key, JSON.stringify(st)); } }
+    return { v: row.data._demoV, rowEvents: row.data.timeline.length, lsEvents: ls };
+  });
+  is(aged.v, 7, `fixture: the stored demo is a v7 row (${aged.rowEvents} events, none of them cabinet records; localStorage copy ${aged.lsEvents})`);
+  seeds.length = 0;
+  await boot2();
+  const cardOk = await openFromCard();
+  yes(cardOk, 'after a reload the demo is an ordinary card in the portfolio, and it opens');
+  const w1 = await walk();
+  is(w1.recs, ALL_IDS.length, 'opening it from the card brings the 49 cabinet records');
+  is(w1.out, { taxes: 9, insurance: 4, financing: 4, financials: 5, agreements: 5, building: 17, history: 5 }, 'and each drawer shows its own');
+  yes(/9 record/.test(w1.tiles.taxes) && /17 record/.test(w1.tiles.building) && /4 record/.test(w1.tiles.financing), 'the landing tiles count them', JSON.stringify(w1.tiles));
+  is(seeds.length, 1, 'because the seed ran once — the row was behind');
+  is([w1.rowV, w1.memV, w1.invoiceIds], [8, 8, true], 'the stored row and the live property are both at seed 8, and the register has its ids');
+
+  // A manager writes to the demo and the app saves. The version marker must survive that.
+  const saved = await p2.evaluate(async () => {
+    const p = currentProperty();
+    appendPropertyTimelineEvent(p, { manual: true, category: 'other', type: 'manual_other', title: 'Manager note on the demo', subject: { type: 'property', id: p.id }, actor: 'Test' });
+    await savePropertyData();
+    await new Promise(r => setTimeout(r, 800));
+    const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
+    return { rowV: row.data._demoV, rowNote: (row.data.timeline || []).some(e => e.title === 'Manager note on the demo') };
+  });
+  is(saved, { rowV: 8, rowNote: true }, 'an ordinary save keeps the row at seed 8 and stores the manager’s note');
+
+  seeds.length = 0;
+  await boot2();
+  await openFromCard();
+  const w2 = await walk();
+  is(seeds.length, 0, 'reloaded and opened from the card again: the seed does NOT run (the row is current)');
+  is([w2.recs, w2.note, w2.rowNote, w2.memV], [ALL_IDS.length, true, true, 8], 'the 49 records and the manager’s note are all still there, and the live property carries the version it was loaded with');
+  is(w2.out, { taxes: 9, insurance: 4, financing: 4, financials: 5, agreements: 5, building: 17, history: 5 }, 'the drawers read the same after the reload');
+  // …and a save from THIS session (whose property came from the store, not the seeder) keeps the marker too.
+  const saved2 = await p2.evaluate(async () => {
+    await savePropertyData();
+    await new Promise(r => setTimeout(r, 800));
+    const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
+    return { rowV: row.data._demoV, rowNote: (row.data.timeline || []).some(e => e.title === 'Manager note on the demo') };
+  });
+  is(saved2, { rowV: 8, rowNote: true }, 'a save from a session that loaded the demo from the store keeps the marker and the note');
+  seeds.length = 0;
+  await boot2();
+  await openFromCard();
+  const w3 = await walk();
+  is([seeds.length, w3.recs, w3.note], [0, ALL_IDS.length, true], 'third open: still no reseed, records and note intact');
+  is(errs2, [], 'no uncaught errors on the existing-demo path');
+  await ctx2.close();
+
+  // ══ 11 · quiet page ════════════════════════════════════════════════════════
+  sec('11 · no page errors');
   is(errs, [], 'no uncaught errors while walking the showroom');
 
   await browser.close(); srv.close();

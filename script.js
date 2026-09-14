@@ -21790,6 +21790,15 @@ async function ensureDemoProperty() {
   // ── Update in-memory _props with full state ───────────────────────────────
   const demoPropFull = {
     id:                DEMO_PROPERTY_ID,
+    // THE VERSION MARKER TRAVELS WITH THE DEMO. The persisted row carries
+    // _demoV/_demoVersion and the save payload copies them from the live
+    // object — which never had them, so the first ordinary save wrote the row
+    // without a version and the next open re-seeded it, discarding whatever
+    // the manager had added to the demo. Carried here, and applied on load
+    // (loadPropertyData / selectProperty), the marker survives a save and the
+    // seed check stays a no-op until the seed itself changes.
+    _demoVersion:      DEMO_VERSION,
+    _demoV:            DEMO_VERSION,
     settlement:        DEMO_SETTLEMENT,
     name:              PROP_NAME,
     totalSqft:         PROP_SQFT,
@@ -25223,6 +25232,22 @@ async function selectProperty(id) {
     return;
   }
 
+  // THE DEMO OPENS AT ITS CURRENT SEED, WHICHEVER WAY IT IS OPENED.
+  //
+  // ensureDemoProperty() ran only from loadDemo() — the "Open Demo" card and
+  // the "Try Live Demo" button. Once the demo row exists it is also an ordinary
+  // card in the portfolio, and that card, the global search and every attention
+  // link arrive here directly, so an account that had Cascade Commons before a
+  // seed bump opened it as whatever version last seeded it: v8's 49 cabinet
+  // records never arrived, and the drawers read "Nothing filed yet" against a
+  // seed that says otherwise. The seed is idempotent — one read when the row is
+  // current — so the demo is brought to the current seed here, before its data
+  // is loaded. A failure to seed must not stop the property from opening.
+  if (DEMO_PROPERTY_ID && id === DEMO_PROPERTY_ID && typeof ensureDemoProperty === 'function') {
+    try { await ensureDemoProperty(); }
+    catch (e) { console.warn('[selectProperty] demo seed check failed — opening as stored:', e?.message); }
+  }
+
   // Save the property we're leaving — flush DOM values immediately (not debounced)
   // so edits made between the last keypress and navigation are not discarded when
   // resetWorkflow() cancels the pending debounce timer.
@@ -25329,6 +25354,10 @@ async function selectProperty(id) {
     // applied here, so Property Information was demo-only by omission. Same
     // four-site shape as camRefusal above (Property Workspace V2, decision 5).
     property.info              = (data.info && typeof data.info === 'object') ? data.info : (property.info ?? null);
+    // The demo's seed version, so a save from this session keeps the row at
+    // its version and the next open does not re-seed it (demoPropFull).
+    if (data._demoV != null)       property._demoV       = data._demoV;
+    if (data._demoVersion != null) property._demoVersion = data._demoVersion;
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
@@ -27789,6 +27818,9 @@ async function loadPropertyData(id) {
         escrowReserves:    d.escrowReserves    || [],
         drawRequests:      d.drawRequests      || [],
         info:              (d.info && typeof d.info === 'object') ? d.info : null,
+        // The demo's seed version — see demoPropFull in ensureDemoProperty.
+        _demoV:            d._demoV        ?? null,
+        _demoVersion:      d._demoVersion  ?? null,
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -27954,6 +27986,8 @@ async function loadPropertyData(id) {
     // server has none, so a stale snapshot cannot overwrite an edit made on
     // another device.
     info:              (dbData.info && typeof dbData.info === 'object') ? dbData.info : (base.info ?? null),
+    _demoV:            dbData._demoV       ?? base._demoV       ?? null,
+    _demoVersion:      dbData._demoVersion ?? base._demoVersion ?? null,
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects

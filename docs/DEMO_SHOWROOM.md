@@ -85,13 +85,30 @@ and a real property gets none; the samples box is closed, tagged, after the
 records and never counted. `tools/demo-showroom-mutation.js` breaks the seed,
 the writer and the image one decision at a time to prove the suite looks.
 
-## Two things found and not changed
+## A demo that already existed
 
-- **The demo re-seeds after any save.** The in-memory demo object never
-  carries `_demoV`; an app save writes the row without it; the next load fails
-  the idempotency check and re-seeds. A record a user adds to Cascade Commons
-  does not survive a reload (real properties are unaffected). Pre-existing;
-  the key-date persistence proof therefore runs on a non-demo property.
+`ensureDemoProperty()` used to run only from `loadDemo()` — the "Open Demo"
+card and the "Try Live Demo" button. Once the demo row exists it is also an
+ordinary card in the portfolio, and that card (like the global search and every
+attention link) calls `selectProperty` directly, so an account that had Cascade
+Commons before a seed bump opened it as whatever version last seeded it: the
+v8 records never arrived and the drawers read "Nothing filed yet". That is
+what the first deployed showroom showed.
+
+Now `selectProperty(DEMO_PROPERTY_ID)` runs the seed first. The seed is
+idempotent — one read when the row is at the current version — so this costs
+nothing until the seed itself changes, and then it runs once. For that to hold,
+the version marker has to survive an ordinary save: the seeded live object now
+carries `_demoV`/`_demoVersion`, `loadPropertyData` reads them from the row and
+`selectProperty` applies them, so the save payload (which copies them from the
+live object) keeps the row at its version. A note a manager adds to the demo
+therefore survives a reload; before, the first save dropped the marker and the
+next open re-seeded the demo over it. Section 10 of the showroom suite is
+exactly this account: a stored v7 row plus its localStorage copy, opened from
+the card, written to, reloaded, opened again — seeded once, never again.
+
+## One thing found and not changed
+
 - **Invoice relations do not persist.** `_stripBlobs` does not keep `system`
   or `spaceId` on an invoice, so a Space/System relation set in the register is
   lost on reload. The demo links bills from the record side (`relatedTo`,
