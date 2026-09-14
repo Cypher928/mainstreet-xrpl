@@ -13281,10 +13281,13 @@ function openVarianceDetails() {
 // The destinations behind the Variance details next step. Same navigate-and-
 // flash shape as openReviewItemFix: close the report, switch to the pane that
 // holds the control, put the control on screen. It changes nothing.
+// Property Workspace V2: the invoice register is the Invoices DRAWER of the
+// cabinet, so the register targets name it; the selector is what to flash
+// once the drawer is open.
 const _VARIANCE_FIX_TARGET = {
-  out_of_year:  { tab: 'property', sel: '.pos-reg' },
-  not_eligible: { tab: 'property', sel: '.pos-reg' },
-  residual:     { tab: 'property', sel: '.pos-reg' },
+  out_of_year:  { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
+  not_eligible: { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
+  residual:     { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
   uncovered:    { tab: 'spaces',   sel: null },
   claim:        { tab: 'spaces',   sel: null },
   caps:         { tab: 'spaces',   sel: null },
@@ -13298,6 +13301,9 @@ function openVarianceFix(key) {
     try { window.TenantSpace.closeSpace(); } catch (_) {}
   }
   if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab(target.tab);
+  if (target.drawer && window.PropertyCabinetView && typeof window.PropertyCabinetView.openDrawer === 'function') {
+    try { window.PropertyCabinetView.openDrawer(target.drawer); } catch (_) {}
+  }
   if (target.tab === 'spaces') {
     if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
     if (typeof renderBulkResults === 'function') renderBulkResults();

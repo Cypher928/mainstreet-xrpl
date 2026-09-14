@@ -586,8 +586,9 @@ sec('E. lease.sqft is the same answer to every reader');
      'E10 the space detail view shows a Leased area row for a zero area');
   is(/lease\.sqft != null \? ' · ' \+ lease\.sqft/.test(src),
      'E11 the summary builder is `!= null`, not truthiness');
-  is(/if \(rec\.lease\.sqft != null\) meta\.push/.test(src),
-     'E12 and the space-list card stays as M8c left it');
+  // V2 (Phase 1): the card became a table row; the reading is the same `!= null`.
+  is(/sqft: rec\.lease\.sqft != null \? _numish\(rec\.lease\.sqft\) : null/.test(src),
+     'E12 and the space-list row stays as M8c left it');
 
   // No truthiness read of lease.sqft survives anywhere in the file.
   const truthy = src.split('\n')

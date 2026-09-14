@@ -361,6 +361,8 @@ const SNAPSHOT = () => {
     PropertyOS.init();
     switchWorkspaceTab('property');            // the tab a manager taps
     PropertyOS.renderPropertyPage(currentProperty());
+    // V2: the register is the Invoices drawer of the cabinet — the tile a manager taps next.
+    PropertyCabinetView.openDrawer('invoices');
   });
   const boxSel = `input[data-inv-id="${ROOF_ID}"]`;
   const boxThere = await page.evaluate((s) => {

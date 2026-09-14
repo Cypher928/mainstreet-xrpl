@@ -95,7 +95,12 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   // The count is pinned deliberately — a name drifting into browser_only
   // unnoticed is the thing this file exists to prevent — so moving it is a
   // decision, recorded here.
-  eq(INVENTORY.byKind.browser_only.length, 22, 'A6 twenty-two browser-only names');
+  // 24 since Property Workspace V2 Phase 1: tenant-space.js reads
+  // window.PropertyCabinet (the vacancy predicate, in the Spaces list only) and
+  // property-workspace.js reads window.PropertyCabinetView (to open a drawer
+  // from an attention item's click). Neither is reachable from assemble() or
+  // collectAttention(), which section D measures.
+  eq(INVENTORY.byKind.browser_only.length, 24, 'A6 twenty-four browser-only names');
   eq(INVENTORY.byKind.env.slice().sort(),
      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_URL', 'VERCEL_ENV', 'XRPL_NETWORK'],

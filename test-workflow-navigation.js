@@ -210,7 +210,7 @@ sec('C. The space overlay names its property');
 }
 
 // ── D. Vacancy: found, and deliberately NOT guessed at ───────────────────────
-sec('D. A vacant suite is not distinguished — and why that is not fixed here');
+sec('D. A vacant suite is distinguished by a flag on its row — never by its name');
 {
   // A rent roll carries "Vacant" as a tenant NAME. In the Spaces list that
   // card renders exactly like a tenancy: same icon, same "Open space →", its
@@ -231,10 +231,12 @@ sec('D. A vacant suite is not distinguished — and why that is not fixed here')
     ok(/vacant\s*=\s*Math\.max\(0,\s*bsqft - occupied\)/.test(acq),
        'the structural definition of vacancy moved — re-check before modelling it per tenant');
   });
-  t('D2 nothing in the product marks a tenant row as vacant', () => {
-    const joined = scriptSrc + code(tsSrc);
-    ok(!/\bis_vacant\b|\bisVacant\b|\bvacancy_flag\b/.test(joined),
-       'a per-tenant vacancy flag now exists — the Spaces list can and should use it');
+  // Property Workspace V2 modelled vacancy per tenant row (`vacant: true`,
+  // decision 4) with ONE predicate, PropertyCabinet.isVacant. The Spaces list
+  // reads that predicate — and still never the name.
+  t('D2 a tenant row is marked vacant through the one predicate, PropertyCabinet.isVacant', () => {
+    ok(/PC\.isVacant\(t\)/.test(code(tsSrc)) && /t\.vacant === true/.test(code(tsSrc)),
+       'the Spaces list no longer reads vacancy through PropertyCabinet.isVacant (with the same strict-boolean fallback)');
   });
   t('D3 and the name is still not treated as a vacancy signal', () => {
     ok(!/tenant_name\s*===\s*['"]Vacant['"]/i.test(code(tsSrc) + scriptSrc),
