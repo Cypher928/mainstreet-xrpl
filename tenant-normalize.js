@@ -20,6 +20,9 @@
  * are pinned against a frozen pre-extraction baseline of 31 cases in
  * evidence/2026-09-05-normalize-tenant-baseline.json. If a future edit changes
  * an answer, test-tenant-normalize-extraction.js fails and names the case.
+ * One field has been added since the move — `vacant` (Property Workspace V2,
+ * Phase 0) — and the frozen answers were amended for exactly that field, as an
+ * additive diff recorded in the baseline's `amended` note.
  *
  * PURE, AND IT MUST STAY PURE
  * ---------------------------
