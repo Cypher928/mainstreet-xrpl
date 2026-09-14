@@ -184,15 +184,29 @@ vacancy, addressing) as a pure module with behaviour tests and a mutation
 harness. Persist `property.info` (four sites, mirroring `camRefusal`). Preserve
 `vacant` through the tenant allow-list. No visible change.
 
-**Phase 1 — the visible cabinet.** Property tab becomes the drawers with live
-counts; Invoices drawer paged and searchable; Building & Systems with info,
-systems, warranties, photos; History; derived Important Dates. Overview gains
-tiles and the next-90-days dates. Spaces becomes a searchable, sortable list —
-Suite · Tenant · Sqft · Lease end · Occupied/Vacant · counts — and the Space
-file splits CAM from Invoices and links the tenant statement. The flat Property
-Records list and the 40-row register are replaced, not deleted. CAM inputs and
-coverage read `activeTenants()` (a change to what CAM is *handed*, not to the
-engine — approved separately).
+**Phase 1 — the visible cabinet (shipped).** `property-cabinet-view.js`
+renders the Property tab as the front page of the record — header (name,
+address, Total size · Spaces · Occupied · Vacant · Occupancy, a quiet Edit
+property), What Needs Your Attention (the same items PropertyWorkspace ranks,
+mounted a second time; the insurance item now opens the Insurance drawer),
+nine cabinet tiles whose counts come from `PropertyCabinet.buildIndex()`, and
+Recent activity (five pointers into History). Each tile opens a drawer:
+records drawers group by year and reuse `PropertyOS.recordCardHtml` (Edit ·
+Attach · Link · revisions unchanged); Invoices is searched, filtered by year /
+vendor / category / space and paged 25 at a time through
+`PropertyCabinet.invoiceQuery`; Building & Systems holds Property information,
+the systems grid and — when a system is chosen — the whole story, with records
+homed elsewhere shown as pointers; Important Dates is derived; History is home
+to the fallbacks and lists everything. `#property/<drawer>/<year>/<id>` and
+`#spaces/<id>` are written with `replaceState` and read on `hashchange`.
+Spaces is a searchable, sortable table — Suite · Tenant · Sq ft · Lease end ·
+Occupied/Vacant · Records — with vacant rows as real rows, and the Space file
+is ten sections: Lease & Terms · Tenant Documents · CAM · Invoices ·
+Statements · Disputes · Photos · Warranties · Notes · History. The flat
+Property Records list and the 40-row register are replaced (the legacy page
+remains as the fallback when the view module is absent). **Not done in Phase
+1, by decision:** CAM inputs and coverage still read `property.tenants`, not
+`activeTenants()` — a change to what CAM is *handed*, approved separately.
 
 **Phase 2 — move things to where they belong.** Invoice/GL upload re-parented to
 Property → Invoices (CAM references). Reserve & Loan documents surfaced in
@@ -217,7 +231,13 @@ its own `info` or an honest empty state.
 - **Team Workspace / Team access** are named and not implemented.
 - **Tab order** renders `Overview · Property · Spaces · CAM · Reports · Reserves`;
   left alone (decision 1).
-- **Space → Disputes** is reachable from CAM and not yet a Space section (Phase 2).
-- **Statements** has no home today beyond Reports (Phase 1 links it from the Space).
-- The hidden `Documents` and `Estoppels` panes are dead markup, removed once the
-  drawers cover what Documents once held (Phase 1).
+- **Space → Disputes** is a section of the Space file (surfaced); the dispute
+  workflow stays in CAM, and a property-level roll-up is Phase 2.
+- **Statements** is a Space section that links to the generator in Reports; a
+  statement history per space is not yet recorded.
+- **Property image**: no property carries an image field today, so the header
+  shows none rather than inventing one.
+- The hidden `Estoppels` pane is dead markup behind a commented-out tab; left
+  alone in Phase 1 because it is outside the Property/Spaces surfaces.
+- The seeded demo's **reference samples** (site plan, survey, roof warranty…)
+  surface in Building & Systems only, visibly apart from records.

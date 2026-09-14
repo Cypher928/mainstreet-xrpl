@@ -1,12 +1,17 @@
 # Property Workspace
 
-**Status:** 🧊 FROZEN pending Christy's walkthrough — bug fixes only, no new
-work. See the freeze notice at the top of `PILOT_ACCEPTANCE_CHECKLIST.md`.
-First increment SHIPPED. Property Records, building-level
-categories, the Building System subject, and provenance are in.
-**Walked by:** `test-property-workspace.js` (28 checks).
-**Not yet done:** the Mortgage/Financing link to the escrow engine, and an
-archived property's workspace — see "Still open" below.
+**Status:** SHIPPED, and re-surfaced as the **filing cabinet** in Property
+Workspace V2 Phase 1 — see `docs/INFORMATION_ARCHITECTURE.md`. Property
+Records, building-level categories, the Building System subject, provenance,
+Related Items and Documents-as-a-view are all in and unchanged underneath; what
+changed is the surface: `property-cabinet-view.js` files the same records by
+drawer and year, and the flat list is the fallback only when that module is not
+loaded.
+**Walked by:** `test-property-workspace.js` (the invariants below, read from
+the drawers), `test-e2e-property-cabinet-view.js` and `test-e2e-spaces-list.js`.
+**Not yet done:** the Mortgage/Financing link to the escrow engine beyond the
+reserve-document pointers, and an archived property's workspace — see "Still
+open" below.
 
 The Space workspace made a suite the operational record for a tenancy. This does
 the same for the building itself — and reuses that implementation rather than

@@ -187,6 +187,13 @@ const SUITES = [
   // the life of the product.
   { label: 'Property cabinet (V2 Phase 0)',       cmd: 'node test-property-cabinet.js' },
   { label: 'Property foundations persistence (e2e)', cmd: 'node test-e2e-property-foundations.js' },
+  // PHASE 1 — THE CABINET AS A SURFACE. The Property tab is the landing page
+  // (header · attention · tiles · recent activity) and the drawers; Spaces is a
+  // searchable list of every physical space and the ten-section tenant file.
+  // Every count is held to the index, every record to exactly one drawer, the
+  // register to a page at a time, and deep links to what they name.
+  { label: 'Property cabinet view (V2 Phase 1, e2e)', cmd: 'node test-e2e-property-cabinet-view.js' },
+  { label: 'Spaces list & tenant file (V2 Phase 1, e2e)', cmd: 'node test-e2e-spaces-list.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

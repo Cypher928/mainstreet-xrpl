@@ -376,8 +376,8 @@ srv.listen(PORT, '127.0.0.1', async () => {
     });
     view.open ? ok('Tenant Space view opens') : bad('space view did not open');
     view.framing ? ok('"everything about this space, in one place" framing present') : bad('no framing');
-    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => view.titles.includes(s)))
-      ? ok('all sections render (lease · financial · maintenance · photos · documents · timeline)') : bad('sections', JSON.stringify(view.titles));
+    (['Lease & Terms', 'Tenant Documents', 'CAM', 'Invoices', 'Statements', 'Disputes', 'Photos', 'Warranties', 'Notes', 'History'].every(s => view.titles.includes(s)))
+      ? ok('all ten sections of the tenant file render (Lease & Terms … History)') : bad('sections', JSON.stringify(view.titles));
     view.photoImg ? ok('photos render as thumbnails in the space view') : bad('no photo thumbnails');
 
     const openBtn = await page.evaluate(() => {
@@ -495,14 +495,14 @@ srv.listen(PORT, '127.0.0.1', async () => {
       TenantSpace.renderList(currentProperty());
       const pane = document.getElementById('wsPane-spaces');
       const visible = pane ? getComputedStyle(pane).display !== 'none' : false;
-      const cards = document.querySelectorAll('#spacesList .tsl-card').length;
+      const cards = document.querySelectorAll('#spacesList .tsl-row').length;
       const opens = !!document.querySelector('#spacesList .tsl-open');
       switchWorkspaceTab('overview');
       return { visible, cards, opens };
     });
     list.visible ? ok('Spaces tab opens its own pane') : bad('spaces pane not visible');
-    (list.cards >= 1) ? ok('Spaces lists each tenant space as a card (' + list.cards + ')') : bad('no space cards');
-    list.opens ? ok('each space card has "Open space →"') : bad('no open button');
+    (list.cards >= 1) ? ok('Spaces lists each tenant space as a row (' + list.cards + ')') : bad('no space rows');
+    list.opens ? ok('each space row offers Open') : bad('no open button');
 
     sec('Information architecture — subject-based navigation');
     const ia = await page.evaluate(() => {
@@ -543,8 +543,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
         onProperty: Array.isArray(p.invoices) && p.invoices.length > 0,
         count: before,
         sys: after[0].system, cam: after[0].camEligible, space: after[1].spaceId, tId: t.id,
-        register: !!document.querySelector('#wsPane-property .pos-reg'),
-        systems: document.querySelectorAll('#wsPane-property .pos-sys-cell').length,
+        // V2: the register is the Invoices drawer; the systems grid is Building & Systems.
+        register: (function () { PropertyCabinetView.openDrawer('invoices'); return !!document.querySelector('#wsPane-property .pos-reg'); })(),
+        systems: (function () { PropertyCabinetView.openDrawer('building'); var n = document.querySelectorAll('#wsPane-property .pos-sys-cell').length; PropertyCabinetView.closeDrawer(); return n; })(),
       };
     });
     invArch.onProperty ? ok('invoices are stored on the property record (property.invoices)') : bad('invoices not property-owned');
@@ -558,9 +559,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
     const where = await page.evaluate(() => {
       const has = (sel) => !!document.querySelector(sel);
       return {
-        insurance: has('#wsPane-property .pos-docs, #wsPane-property .pos-empty'), // property documents section exists
-        taxbill:   has('#wsPane-property #propertyOsBody'),
-        roofwarr:  has('#wsPane-property .pos-sys'),
+        insurance: has('#wsPane-property .pcv-tile[data-drawer="insurance"]'),
+        taxbill:   has('#wsPane-property .pcv-tile[data-drawer="taxes"]'),
+        roofwarr:  has('#wsPane-property .pcv-tile[data-drawer="building"]'),
         lease:     has('#wsPane-spaces #spacesList'),
         photos:    has('#wsPane-spaces #spacesList'),
         cam:       has('#wsPane-cam'),
@@ -580,12 +581,13 @@ srv.listen(PORT, '127.0.0.1', async () => {
       TenantSpace.closeSpace();
       return titles;
     });
-    (['Lease', 'Financial activity', 'Maintenance', 'Photos', 'Documents', 'Timeline'].every(s => spaceSecs.includes(s)))
-      ? ok('Space sections match the model (Lease · Financial · Maintenance · Photos · Documents · Timeline)') : bad('space sections', JSON.stringify(spaceSecs));
+    (JSON.stringify(spaceSecs) === JSON.stringify(['Lease & Terms', 'Tenant Documents', 'CAM', 'Invoices', 'Statements', 'Disputes', 'Photos', 'Warranties', 'Notes', 'History']))
+      ? ok('Space sections match the V2 model, in order (Lease & Terms · Tenant Documents · CAM · Invoices · Statements · Disputes · Photos · Warranties · Notes · History)') : bad('space sections', JSON.stringify(spaceSecs));
 
     sec('Property Information — reference facts (frozen IA: depth, not moves)');
     const pinfo = await page.evaluate(() => {
       if (window.PropertyOS) { PropertyOS.init(); PropertyOS.renderPropertyPage(currentProperty()); }
+      PropertyCabinetView.openDrawer('building');   // V2: the facts live in Building & Systems
       const pane = document.getElementById('wsPane-property');
       const html = pane ? pane.innerHTML : '';
       const rows = pane ? pane.querySelectorAll('.pos-info-row').length : 0;
@@ -673,7 +675,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
         const c = s && s.querySelector('.ts-sec-count');
         return { count: c ? Number(c.textContent) : null, rows: s ? s.querySelectorAll('.ts-doc, .ts-photo, .ts-tl-row, .ts-note').length : 0 };
       };
-      const docs = secCount('Documents'), photos = secCount('Photos'), timeline = secCount('Timeline');
+      const docs = secCount('Tenant Documents'), photos = secCount('Photos'), timeline = secCount('History');
       const refRows = ov.querySelectorAll('.ts-doc--ref').length;
       const refAreLinks = ov.querySelectorAll('a.ts-doc--ref').length;
       const sampleTags = ov.querySelectorAll('.ts-doc-sample').length;

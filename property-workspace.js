@@ -208,10 +208,13 @@ window.PropertyWorkspace = (function () {
       var info = PR && PR.infoFor(p);
       if (info && info.insuranceExpires) {
         var days = Math.round((new Date(info.insuranceExpires + 'T12:00:00') - Date.now()) / 86400000);
+        // V2: the action names the Insurance DRAWER, so the click lands on the
+        // policy rather than on the generic Property tab. `anchors` stays as
+        // the fallback for a build without the cabinet view.
         if (days >= 0 && days <= 120) items.push(_mk(days <= 45 ? 'warning' : 'info', '\u{1F6E1}\u{FE0F}',
           'Insurance renewal in ' + days + ' days',
           (info.insuranceCarrier || 'Carrier') + ' policy expires ' + info.insuranceExpires + '.',
-          { tab: 'property', anchors: ['propertySection'] }, 'View policy'));
+          { tab: 'property', anchors: ['propertySection'], drawer: 'insurance' }, 'View policy'));
       }
       // The part of the pool that was not billed, INTERPRETED BY THE AUTHORITY
       // THAT ALREADY EXPLAINS IT rather than by this line's own subtraction.
@@ -263,6 +266,11 @@ window.PropertyWorkspace = (function () {
     var it = _lastItems[idx];
     if (!it || !it.nav) return;
     try { if (window.switchWorkspaceTab) window.switchWorkspaceTab(it.nav.tab); } catch (_e) {}
+    // A drawer address is the precise destination; the anchor chain below is
+    // the fallback when the cabinet view is not loaded.
+    if (it.nav.drawer && window.PropertyCabinetView && window.PropertyCabinetView.openDrawer) {
+      try { if (window.PropertyCabinetView.openDrawer(it.nav.drawer)) return; } catch (_e) {}
+    }
     var el = null, any = null, an = it.nav.anchors || [];
     // Same reason as _kpiTileNavigate: reveal a collapsed target before the
     // visibility test below decides it is not there.
@@ -293,6 +301,11 @@ window.PropertyWorkspace = (function () {
     // only a browser takes, and the result is handed to collectAttention.
     var items = collectAttention(property, _scopedVarianceBreakdown(property));
     _lastItems = items;
+
+    // V2: the Property landing page mounts the SAME list. One computation, one
+    // index space, so PropertyWorkspace.act(i) means the same item on either
+    // surface; the cabinet mount is a second view, not a second authority.
+    _renderCabinetMount(items);
 
     if (!items.length) {
       slot.innerHTML =
@@ -329,6 +342,37 @@ window.PropertyWorkspace = (function () {
               ? '<button class="pw-attn-all" onclick="PropertyWorkspace.toggleAll()">Show top ' + MAX_SHOWN + ' &#x2191;</button>'
               : '')) +
       '</div>';
+  }
+
+  // The Property landing page's copy of the list: compact cards, the top three
+  // by default, "View all" for the rest. Each card is the same item, at the
+  // same index, with the same action.
+  var CABINET_SHOWN = 3;
+  function _renderCabinetMount(items) {
+    var host = document.getElementById('pcvAttention');
+    if (!host) return;
+    var count = document.getElementById('pcvAttentionCount');
+    if (count) count.textContent = items.length ? String(items.length) : '';
+    if (!items.length) {
+      host.innerHTML = '<div class="pcv-attn-clear"><span class="pcv-attn-check">✓</span>' +
+        '<span>You’re all caught up — nothing needs action on this property right now.</span></div>';
+      return;
+    }
+    var shown = _expanded ? items : items.slice(0, CABINET_SHOWN);
+    host.innerHTML = '<div class="pcv-attn">' + shown.map(function (it, i) {
+      return '<button type="button" class="pcv-attn-card pcv-attn-card--' + it.severity + '" data-attn="' + i + '"' +
+        ' onclick="if(window.PropertyWorkspace){PropertyWorkspace.act(' + i + ');}">' +
+        '<span class="pcv-attn-dot" aria-hidden="true"></span>' +
+        '<span class="pcv-attn-main">' +
+          '<span class="pcv-attn-t">' + _esc(it.title) + '</span>' +
+          '<span class="pcv-attn-w">' + _esc(it.why) + '</span>' +
+          '<span class="pcv-attn-a">' + _esc(it.action) + ' &#x2192;</span>' +
+        '</span></button>';
+    }).join('') + '</div>' +
+    (items.length > CABINET_SHOWN
+      ? '<button type="button" class="pcv-attn-all" onclick="PropertyWorkspace.toggleAll()">' +
+          (_expanded ? 'Show top ' + CABINET_SHOWN + ' &#x2191;' : 'View all ' + items.length + ' &#x2192;') + '</button>'
+      : '');
   }
 
   // "View all" — the widget stays prioritized by default; the full list is one

@@ -385,10 +385,17 @@ const freshEmpties = await (async () => {
   return out;
 })();
 console.log('   ' + freshEmpties.map(x=>x.section+': '+(x.empty?'teaches':'(has content)')).join('\n   '));
-const maintEmpty=(freshEmpties.find(x=>/Maintenance/i.test(x.section))||{}).empty||'';
-(/repairs, inspections/i.test(maintEmpty))
-  ? ok('an untouched space explains what maintenance is for')
-  : bad('the Maintenance section does not explain what to record', JSON.stringify(maintEmpty).slice(0,160));
+// V2 (Phase 1): the tenant file has no Maintenance section — repairs and
+// inspections read in History with their type, and warranties have a section
+// of their own. Each of those must still say what to record there.
+const histEmpty=(freshEmpties.find(x=>/^History$/i.test(x.section))||{}).empty||'';
+(/repair.*photo.*note.*document/i.test(histEmpty))
+  ? ok('an untouched space explains what its History is for (repairs, photos, notes, documents)')
+  : bad('the History section does not explain what to record', JSON.stringify(histEmpty).slice(0,160));
+const warrEmpty=(freshEmpties.find(x=>/^Warranties$/i.test(x.section))||{}).empty||'';
+(/warrant.*expiry/i.test(warrEmpty))
+  ? ok('and what Warranties is for')
+  : bad('the Warranties section does not explain what to record', JSON.stringify(warrEmpty).slice(0,160));
 const noEmpty=freshEmpties.filter(x=>!x.empty);
 const shortOnes=freshEmpties.filter(x=>x.empty&&x.empty.length<60);
 (noEmpty.length===0 && shortOnes.length===0)

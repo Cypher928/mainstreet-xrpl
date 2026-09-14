@@ -552,6 +552,9 @@ window.PropertyTimeline = (function () {
 
     try { if (window.savePropertyData) await window.savePropertyData(); } catch (_e) {}
     try { if (window.renderPropertyActivity) window.renderPropertyActivity(property); } catch (_e) {}
+    // The Property page files the record in its drawer; a record added or
+    // edited from inside a drawer must appear there without a full reload.
+    try { if (window.PropertyOS && window.PropertyOS.renderPropertyPage) window.PropertyOS.renderPropertyPage(property, { allowCollapse: false }); } catch (_e) {}
 
     closeModal();
     if (failed) _toast('Saved — ' + failed + ' attachment' + (failed !== 1 ? 's' : '') + " couldn't upload", 'err');

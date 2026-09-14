@@ -2,8 +2,8 @@
 /**
  * Spaces list must be refreshed after an upload changes the tenant array.
  *
- * The Spaces cards bake tenant ids into their "Open space" buttons
- * (tenant-space.js:393). The upload pipeline can change which ids exist — a
+ * The Spaces rows bake tenant ids into their "Open" buttons (tenant-space.js,
+ * renderList). The upload pipeline can change which ids exist — a
  * matched upload writes onto the existing tenant's id and splices the
  * placeholder out — so a list rendered before the pipeline points at an id that
  * no longer exists. openSpace() then finds nothing, assemble() falls back to
@@ -23,7 +23,7 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
 
 // The premise: buttons carry ids, so a stale list is a broken list.
 console.log('\n── The premise ──');
-TS.split('\n').some(l => l.includes('openSpace(') && l.includes('_esc(t.id)'))
+TS.split('\n').some(l => l.includes('openSpace(') && /_esc\((t|r)\.id\)/.test(l))   // V2: the row (r) carries the tenant's id
   ? ok('Spaces buttons embed the tenant id, so the list goes stale when ids change')
   : bad('could not confirm the button embeds t.id', 'the premise of this test may no longer hold');
 

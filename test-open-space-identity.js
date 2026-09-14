@@ -244,7 +244,7 @@ sec('A′. An id-less card shows no figures it cannot attribute');
     const { TS: TS2, doc: d2 } = loadTenantSpace(PROPERTY, []);
     TS2.renderList(PROPERTY);
     const h2 = d2._nodes.spacesList.innerHTML;
-    ok(/9200 sqft/.test(h2), 'the working card lost the area it always showed');
+    ok(/9,?200/.test(h2), 'the working row lost the area it always showed');
     ok(/2 events/.test(h2), `the working card lost its record counts:\n${h2}`);
     ok(/1 invoice/.test(h2), 'the working card lost its attachment counts');
   });

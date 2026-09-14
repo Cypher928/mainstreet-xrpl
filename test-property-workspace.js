@@ -17,6 +17,11 @@
 // Everything is driven through the real controls: ➕ Add Record opens the real
 // PropertyTimeline modal, the real form is filled, the real Save runs.
 //
+// Property Workspace V2 (Phase 1): the Property tab is now the filing cabinet
+// (property-cabinet-view.js), so a record is read from its DRAWER rather than
+// from one flat list. The invariant is unchanged — every drawer is a view of
+// the one timeline, and clearing the timeline empties every drawer.
+//
 // Run: node test-property-workspace.js
 // ============================================================================
 'use strict';
@@ -104,38 +109,40 @@ const CLICK_LABEL = function (rx) {
   const boot = await page.evaluate((prop) => {
     if (!window.PropertyOS) return { missing: 'PropertyOS' };
     if (!window.PropertyTimeline) return { missing: 'PropertyTimeline' };
+    if (!window.PropertyCabinetView) return { missing: 'PropertyCabinetView' };
     _props = [prop];
     activePropId = prop.id;
     window.currentProperty = function () { return _props[0]; };
     PropertyOS.init();
     // The Property pane ships display:none until its tab is picked. Reveal it —
     // a control inside a hidden pane is not clickable, and every assertion below
-    // goes through real clicks. The first run of this file reported
-    // "Add Record not found" for exactly that reason.
+    // goes through real clicks.
     const pane = document.getElementById('wsPane-property');
     if (pane) pane.style.display = 'block';
     const ws = document.getElementById('mainWorkflow');
     if (ws) ws.style.display = 'block';
     PropertyOS.renderPropertyPage(_props[0]);
-    const body = document.getElementById('propertyOsBody');
-    // Scope the empty-state read to the RECORDS section. Reading the whole pane
-    // matched the Property Information empty state instead ("...insurance, roof
-    // and HVAC details...") and passed while saying nothing about records.
-    const secs = [].slice.call(body.querySelectorAll('.pos-sec'));
-    const recSec = secs.find(x => /Property records/i.test(x.textContent)) || body;
-    return { text: (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim(),
-             recText: (recSec.innerText || recSec.textContent || '').replace(/\s+/g, ' ').trim(),
-             paneVisible: !!pane && pane.style.display === 'block' };
+    // V2: the Property tab is the filing cabinet. An empty building is nine
+    // tiles that say so, and each drawer's empty state says what belongs in it.
+    const tiles = [].slice.call(document.querySelectorAll('.pcv-tile')).map(t => t.querySelector('.pcv-tile-m').textContent);
+    PropertyCabinetView.openDrawer('building');
+    const bodyB = (document.getElementById('propertyOsBody').innerText || '').replace(/\s+/g, ' ');
+    PropertyCabinetView.openDrawer('history');
+    const bodyH = (document.getElementById('propertyOsBody').innerText || '').replace(/\s+/g, ' ');
+    PropertyCabinetView.closeDrawer();
+    return { tiles, bodyB, bodyH, paneVisible: !!pane && pane.style.display === 'block' };
   }, PROP);
   check('the Property workspace renders', !boot.missing, boot.missing || 'ok');
   check('and its pane is on screen so the controls are reachable', boot.paneVisible);
 
   // ── the empty state has to teach, not shrug ──────────────────────────────
-  check('an empty building says what belongs here — in the RECORDS section',
-        /tax bills.*insurance.*survey/i.test(boot.recText || ''),
-        (boot.recText || '').slice(0, 120));
-  check('and says these are entries on the property timeline',
-        /property timeline/i.test(boot.recText || ''));
+  check('an empty building says so on every tile — in words, not zeros',
+        (boot.tiles || []).length === 9 && boot.tiles.every(t => /No records yet|No invoices yet|Nothing in the next 90 days|No activity yet/.test(t)),
+        (boot.tiles || []).join(' | '));
+  check('and an empty drawer says what belongs in it',
+        /warranties.*photos.*plans.*surveys/i.test(boot.bodyB || ''), (boot.bodyB || '').slice(0, 160));
+  check('and History says every record added to any drawer appears there',
+        /every record added to any drawer appears here/i.test(boot.bodyH || ''));
 
   // ── the categories the building actually needs ───────────────────────────
   const cats = await page.evaluate(() => {
@@ -203,21 +210,24 @@ const CLICK_LABEL = function (rx) {
   // ── the surface reflects it ──────────────────────────────────────────────
   const after = await page.evaluate(() => {
     PropertyOS.renderPropertyPage(_props[0]);
+    const tile = document.querySelector('.pcv-tile[data-drawer="building"]');
+    const tileM = tile ? tile.querySelector('.pcv-tile-m').textContent : '';
+    const tileS = tile ? ((tile.querySelector('.pcv-tile-s') || {}).textContent || '') : '';
+    PropertyCabinetView.openDrawer('building');
     const body = document.getElementById('propertyOsBody');
     const txt = (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim();
-    const chips = [].slice.call(body.querySelectorAll('.pos-chip')).map(c => c.textContent.trim());
     const sysCell = [].slice.call(body.querySelectorAll('.pos-sys-cell'))
       .find(c => /Roof/.test(c.textContent));
-    return { txt, chips, roofCell: sysCell ? sysCell.textContent.replace(/\s+/g, ' ').trim() : null,
+    return { txt, tileM, tileS, roofCell: sysCell ? sysCell.textContent.replace(/\s+/g, ' ').trim() : null,
              recCount: body.querySelectorAll('.pos-rec').length };
   });
-  check('the record shows on the Property Records surface', after.recCount === 1, String(after.recCount));
+  check('the record shows in the Building & Systems drawer', after.recCount === 1, String(after.recCount));
   check('the warranty appears in the Roof system count',
         /1 record/.test(after.roofCell || ''), after.roofCell);
   check('the record names its system and who recorded it',
         /Roof/.test(after.txt) && /Recorded by dana@example.com/.test(after.txt));
-  check('a Warranty filter chip appeared, because there is now something to filter',
-        after.chips.some(c => /Warranty/i.test(c)), after.chips.join(' | '));
+  check('the Building & Systems tile counts it and names the system',
+        /1 system · 1 record/.test(after.tileM) && /Roof/.test(after.tileS), after.tileM + ' / ' + after.tileS);
 
   // ── categories are a FILTER, not separate screens ────────────────────────
   const filtered = await page.evaluate(async () => {
@@ -228,9 +238,10 @@ const CLICK_LABEL = function (rx) {
       subject: { type: 'property', id: 'prop-maple', label: null },
       actor: 'dana@example.com', metadata: { recordedBy: 'dana@example.com' },
     });
-    PropertyOS.setRecordFilter('all', null);
-    const both = document.querySelectorAll('#propertyOsBody .pos-rec').length;
+    PropertyCabinetView.openDrawer('history');
+    const both = document.querySelectorAll('#propertyOsBody .pcv-arow').length;
     PropertyOS.setRecordFilter('warranty', null);
+    const drawerW = PropertyCabinetView.state().drawer;
     const onlyWarranty = [].slice.call(document.querySelectorAll('#propertyOsBody .pos-rec'))
       .map(r => r.textContent);
     PropertyOS.setRecordFilter('all', 'roof');
@@ -238,17 +249,20 @@ const CLICK_LABEL = function (rx) {
       .map(r => r.textContent);
     const paneCount = document.querySelectorAll('#propertyOsBody .pos-recs').length;
     PropertyOS.setRecordFilter('all', null);
-    return { both, onlyWarranty, onlyRoof, paneCount };
+    PropertyCabinetView.openDrawer('taxes');
+    const taxes = document.querySelectorAll('#propertyOsBody .pos-rec').length;
+    return { both, drawerW, onlyWarranty, onlyRoof, paneCount, taxes };
   });
-  check('both records are on the one surface', filtered.both === 2, String(filtered.both));
-  check('filtering by category narrows it in place',
-        filtered.onlyWarranty.length === 1 && /warranty/i.test(filtered.onlyWarranty[0]),
-        String(filtered.onlyWarranty.length));
+  check('both records are on the one History surface', filtered.both === 2, String(filtered.both));
+  check('a category filter opens the category’s drawer, narrowed to it',
+        filtered.drawerW === 'building' && filtered.onlyWarranty.length === 1 && /warranty/i.test(filtered.onlyWarranty[0]),
+        filtered.drawerW + ' / ' + filtered.onlyWarranty.length);
   check('filtering by Building System narrows it in place',
         filtered.onlyRoof.length === 1 && /Roof/.test(filtered.onlyRoof[0]),
         String(filtered.onlyRoof.length));
   check('there is ONE records list, not a screen per category',
         filtered.paneCount === 1, String(filtered.paneCount));
+  check('the tax record is filed under Real Estate Taxes', filtered.taxes === 1, String(filtered.taxes));
 
   // ── THE invariant: the timeline is the only store ────────────────────────
   // Empty the timeline and the surface must empty with it. If anything survives,
@@ -258,6 +272,7 @@ const CLICK_LABEL = function (rx) {
   const emptied = await page.evaluate(() => {
     const p = _props[0];
     const keep = p.timeline.slice();
+    PropertyCabinetView.openDrawer('building');
     p.timeline = [];
     PropertyOS.renderPropertyPage(p);
     const body = document.getElementById('propertyOsBody');
@@ -265,15 +280,17 @@ const CLICK_LABEL = function (rx) {
     const roof = [].slice.call(body.querySelectorAll('.pos-sys-cell')).find(c => /Roof/.test(c.textContent));
     p.timeline = keep;                   // put it back
     PropertyOS.renderPropertyPage(p);
-    return { recs, roofAfter: roof ? roof.textContent.replace(/\s+/g, ' ').trim() : null,
-             recsRestored: document.querySelectorAll('#propertyOsBody .pos-rec').length };
+    const recsRestored = document.querySelectorAll('#propertyOsBody .pos-rec').length;
+    PropertyCabinetView.openDrawer('history');
+    const histRows = document.querySelectorAll('#propertyOsBody .pcv-arow').length;
+    return { recs, roofAfter: roof ? roof.textContent.replace(/\s+/g, ' ').trim() : null, recsRestored, histRows };
   });
   check('clearing the timeline empties the records surface — no second store',
         emptied.recs === 0, emptied.recs + ' record(s) survived an empty timeline');
   check('and empties the Building System counts too',
         !/[1-9] record/.test(emptied.roofAfter || ''), emptied.roofAfter);
-  check('restoring the timeline restores the surface', emptied.recsRestored === 2,
-        String(emptied.recsRestored));
+  check('restoring the timeline restores the surface', emptied.recsRestored === 1 && emptied.histRows === 2,
+        emptied.recsRestored + ' building card(s), ' + emptied.histRows + ' history rows');
 
   // ── one subject per record ───────────────────────────────────────────────
   const exclusive = await page.evaluate(async () => {
@@ -360,7 +377,7 @@ const CLICK_LABEL = function (rx) {
 
   // History that cannot be read is not preserved.
   const historyUi = await page.evaluate(() => {
-    PropertyOS.setRecordFilter('all', null);
+    PropertyCabinetView.openDrawer('building');
     const body = document.getElementById('propertyOsBody');
     const det = body.querySelector('.pos-revs');
     if (!det) return { present: false };
@@ -479,15 +496,19 @@ const CLICK_LABEL = function (rx) {
     const body = document.getElementById('propertyOsBody');
     return {
       recs: body.querySelectorAll('.pos-rec').length,
+      pointers: [].slice.call(body.querySelectorAll('.pcv-arow')).map(r => r.textContent.replace(/\s+/g, ' ')),
       note: (body.querySelector('.pos-filter-note') || {}).textContent || '',
       invRows: body.querySelectorAll('.pos-sys-invs .pos-ri-row').length,
       text: (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim(),
     };
   });
-  check('clicking Roof shows the whole roof story, not only system-tagged records',
-        roofView.recs === 5, roofView.recs + ' records');
-  check('including records never tagged to Roof but linked into the job',
-        /Insurance claim/.test(roofView.text) && /Roof photos/.test(roofView.text));
+  check('clicking Roof shows the whole roof story — its own four records as cards',
+        roofView.recs === 4, roofView.recs + ' records');
+  check('including the photos never tagged to Roof but linked into the job',
+        /Roof photos/.test(roofView.text));
+  check('and the insurance claim linked into it, as a pointer into its own drawer (one home)',
+        roofView.pointers.length === 1 && /Insurance claim/.test(roofView.pointers[0]) && /Insurance/.test(roofView.pointers[0]),
+        roofView.pointers.join(' | '));
   check('and the roof invoices, with their total',
         roofView.invRows === 1 && /\$84,500/.test(roofView.note), roofView.note.trim().slice(0, 90));
 
@@ -698,24 +719,31 @@ const CLICK_LABEL = function (rx) {
     document.getElementById('totalSqft').value = '32000';
     PropertyOS.renderPropertyPage(p);
 
-    const body = document.getElementById('propertyOsBody');
-    const cards = [].slice.call(body.querySelectorAll('.pos-rec'));
-    const empties = [].slice.call(body.querySelectorAll('.pos-ri-empty')).map(e => e.textContent.trim());
+    // V2: each record is in its own drawer. Walk the drawers that hold them.
+    const empties = [];
     const byCat = {};
-    cards.forEach(c => {
-      const cat = (c.querySelector('.pos-rec-cat') || {}).textContent || '';
-      const em  = (c.querySelector('.pos-ri-empty') || {}).textContent || '';
-      const btns = [].slice.call(c.querySelectorAll('.pos-ri-add')).map(b => b.textContent.trim());
-      byCat[cat.trim()] = { empty: em.trim(), btns: btns };
+    let relBlockDisplay = null;
+    ['taxes', 'insurance', 'building', 'history'].forEach(k => {
+      PropertyCabinetView.openDrawer(k);
+      const body = document.getElementById('propertyOsBody');
+      [].slice.call(body.querySelectorAll('.pos-rec')).forEach(c => {
+        const cat = (c.querySelector('.pos-rec-cat') || {}).textContent || '';
+        const em  = (c.querySelector('.pos-ri-empty') || {}).textContent || '';
+        const btns = [].slice.call(c.querySelectorAll('.pos-ri-add')).map(b => b.textContent.trim());
+        if (em.trim()) empties.push(em.trim());
+        byCat[cat.trim()] = { empty: em.trim(), btns: btns };
+        if (!relBlockDisplay && c.querySelector('.pos-ri')) relBlockDisplay = getComputedStyle(c.querySelector('.pos-ri')).display;
+      });
     });
+    PropertyCabinetView.closeDrawer();
     const setup = document.getElementById('cardSetup');
-    const sum = document.getElementById('posSetupSummary');
+    const head = document.querySelector('#propertyOsBody .pcv-head');
     return {
       empties, byCat,
       uniqueEmpties: new Set(empties).size,
-      relBlockDisplay: getComputedStyle(body.querySelector('.pos-ri')).display,
+      relBlockDisplay,
       setupHidden: getComputedStyle(setup).display === 'none',
-      summaryText: sum ? (sum.innerText || '').replace(/\s+/g, ' ').trim() : null,
+      summaryText: head ? (head.innerText || '').replace(/\s+/g, ' ').trim() : null,
     };
   });
 
@@ -748,9 +776,9 @@ const CLICK_LABEL = function (rx) {
   // 4 · setup collapses once configured, without losing the only edit path
   check('the first-run setup card is hidden once the property is configured',
         polish.setupHidden, polish.setupHidden ? 'hidden' : 'still showing');
-  check('and is replaced by a summary that still offers Edit',
-        /Maple Plaza/.test(polish.summaryText || '') && /32,000 sq ft/.test(polish.summaryText || '')
-          && /Edit/.test(polish.summaryText || ''), polish.summaryText);
+  check('and the cabinet header names the property, its size, and still offers Edit',
+        /Maple Plaza/.test(polish.summaryText || '') && /32,000/.test(polish.summaryText || '')
+          && /Edit property/.test(polish.summaryText || ''), polish.summaryText);
 
   // The hidden-once-configured check passes vacuously if something ELSE is
   // hiding the card. Prove the mechanism by clearing the configuration: an
@@ -811,6 +839,7 @@ const CLICK_LABEL = function (rx) {
     // And a link whose invoice is gone entirely must SAY so.
     p.invoices = p.invoices.filter(i => i.vendorName !== 'Apex Roofing');
     PropertyOS.renderPropertyPage(p);
+    PropertyCabinetView.openDrawer('building');
     const g = PropertyOS.relatedGroup(p, job.id);
     const body = document.getElementById('propertyOsBody');
     return { before, after, storedKey: (p.timeline[0].relatedTo || [])[0],
@@ -853,6 +882,7 @@ const CLICK_LABEL = function (rx) {
     const p = _props[0];
     p.invoices = [{ vendorName: 'String Amount Co', amount: '84,500.00', invoiceDate: '2026-05-02' }];
     PropertyOS.renderPropertyPage(p);
+    PropertyCabinetView.openDrawer('invoices');
     const txt = (document.getElementById('propertyOsBody').innerText || '');
     return { hasNaN: /NaN/.test(txt), parsed: /84,500\.00/.test(txt) };
   });
@@ -871,8 +901,8 @@ const CLICK_LABEL = function (rx) {
       { vendorName: 'Not CAM',      amount: 300,  invoiceDate: '2026-05-01', camEligible: false },
     ];
     PropertyOS.renderPropertyPage(p);
-    const sec = [].slice.call(document.querySelectorAll('#propertyOsBody .pos-sec'))
-      .find(x => /FINANCIALS/i.test(x.textContent));
+    PropertyCabinetView.openDrawer('financials');
+    const sec = document.querySelector('#propertyOsBody .pcv-dbody');
     return { text: (sec ? sec.innerText : '').replace(/\s+/g, ' ').trim() };
   });
   check('Financials excludes other years and tenant-direct invoices',

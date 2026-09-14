@@ -273,7 +273,9 @@ window.TenantSpace = (function () {
     return {
       noIdentity: noIdentity,
       disputes: disputes,
-      space: { id: tenantId, name: t.tenant_name || 'Space' },
+      // V2: a vacant space is a space, not a tenant; the file says so.
+      space: { id: tenantId, name: t.tenant_name || 'Space',
+               suite: (t.suite || t.unitNumber || '') || null, vacant: t.vacant === true },
       lease: lease, leaseDocs: leaseDocs, summary: summary,
       camYear: (camRec && camRec.camYear) || null, camResult: camResult,
       counts: { disputes: disputes.length, openDisputes: _openDisputes(disputes),
@@ -410,6 +412,9 @@ window.TenantSpace = (function () {
           (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms are on file but the document is not \u2014 upload the executed lease so every CAM figure can cite the clause it came from.</div>') +
         '</div>'
       : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
+    // A vacant space has no lease to show; its area is a fact of the space,
+    // shown in the list and the header, not a lease term.
+    if (rec.space.vacant) leaseHtml = _empty('Vacant \u2014 no lease on file. The space keeps its area and its records; a lease uploaded for it becomes the tenant file.');
 
     var timelineHtml = rec.events.length
       ? '<div class="ts-timeline">' + rec.events.slice(0, 12).map(function (e) {
@@ -483,7 +488,6 @@ window.TenantSpace = (function () {
           '</div>' +
           '<div class="ts-cam-links">' +
             '<button type="button" class="ts-cam-link" id="tsViewRecon">View Full Reconciliation &#x2192;</button>' +
-            '<button type="button" class="ts-cam-link" id="tsTenantStmt">Tenant Statement &#x2192;</button>' +
           '</div>' +
         '</div>';
     }
@@ -492,27 +496,13 @@ window.TenantSpace = (function () {
       : '';
     var camHtml = (camResultHtml || camEventsHtml) ? (camResultHtml + camEventsHtml) : '';
 
-    // ── Financial activity: CAM allocation + this space's invoices ───────────
-    var finHtml = (camHtml || invHtml !== _empty('No vendor invoices yet. Add the bills for work done in this suite so the cost history sits with the space it belongs to.'))
-      ? (camHtml || '') + (rec.invoices.length ? '<div class="ts-lbl">Invoices</div>' + invHtml : '')
-      : '';
-    if (!finHtml) finHtml = _empty('No CAM activity yet. Once a reconciliation runs, this space\u2019s allocation, variance and statement appear here.');
-
-    // ── Maintenance: work performed on this space + its warranties ───────────
-    var maintEvents = rec.events.filter(function (e) {
-      return /^(maintenance|repair|vendor|inspection|capital_improvement)$/.test(e.category || '');
-    });
-    var maintCount = maintEvents.length + rec.counts.warranties;
-    var maintHtml = '';
-    if (maintEvents.length) {
-      maintHtml += '<div class="ts-timeline">' + maintEvents.slice(0, 8).map(function (e) {
-        var resp = (e.responsibility && e.responsibility !== 'na') ? ' <span class="ts-tl-b">' + _esc(e.responsibility) + '</span>' : '';
-        return '<div class="ts-tl-row"><span class="ts-tl-when">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
-          '<span class="ts-tl-title">' + _esc(e.title) + '</span>' + resp + '</div>';
-      }).join('') + '</div>';
-    }
-    if (rec.warranties.length) maintHtml += '<div class="ts-lbl">Warranties</div>' + warrHtml;
-    if (!maintHtml) maintHtml = _empty('No maintenance recorded yet. Record repairs, inspections, vendor work and warranties here \u2014 with cost, vendor and the invoice attached.');
+    // ── Statements: generated in Reports; reachable from the tenant ───────────
+    var stmtHtml = rec.camResult
+      ? '<div class="ts-stmt"><div class="ts-stmt-t">' + _esc((rec.camYear || '') + ' CAM statement') + '</div>' +
+          '<div class="ts-stmt-d">Generated from this space\u2019s reconciliation result \u2014 the figures above are what it will show.</div>' +
+          '<div class="ts-cam-links"><button type="button" class="ts-cam-link" id="tsTenantStmt">Tenant Statement &#x2192;</button></div></div>'
+      : _empty('No statement yet. A tenant statement is generated from a completed CAM reconciliation \u2014 run one in CAM and it becomes available here.');
+    if (!camHtml) camHtml = _empty('No CAM activity yet. Once a reconciliation runs, this space\u2019s allocation, variance and status appear here.');
 
     // ── Disputes (surface only — the workflow lives in CAM) ─────────────────
     var _DSTAT = { open: 'Open', accepted: 'Accepted', rejected: 'Rejected', docs_requested: 'Docs requested' };
@@ -564,10 +554,10 @@ window.TenantSpace = (function () {
         '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span></button>';
     };
     var refDocsHtml = refDocs.length ? '<div class="ts-docs">' + refDocs.map(_refRow).join('') + '</div>' : '';
-    var docNotesHtml = (rec.documents.length ? docHtml : '') + refDocsHtml +
-      (rec.notes.length ? '<div class="ts-lbl">Notes</div>' + notesHtml : '');
-    if (!docNotesHtml) docNotesHtml = _empty('No documents or notes yet. Upload repair invoices, warranty certificates, inspection reports and correspondence \u2014 or write a note about what was agreed.');
-    if (refDocs.length) docNotesHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file \u2014 they disappear as soon as you add anything real.</div>';
+    // V2: Tenant Documents and Notes are their own sections of the file.
+    var tenantDocsHtml = (rec.documents.length ? docHtml : '') + refDocsHtml;
+    if (!tenantDocsHtml) tenantDocsHtml = _empty('No documents yet. Lease amendments, estoppels, certificates of insurance, CAM backup, notices and correspondence \u2014 anything about this tenant that is not the lease itself.');
+    if (refDocs.length) tenantDocsHtml += '<div class="ts-ref-note">Sample records show the documents this space would keep on file \u2014 they disappear as soon as you add anything real.</div>';
 
     // Merge reference photos into the Photos section.
     if (refPhotos.length) {
@@ -575,7 +565,7 @@ window.TenantSpace = (function () {
         '<div class="ts-docs">' + refPhotos.map(_refRow).join('') + '</div>';
     }
     // Counts must match what is actually on screen.
-    var docCount   = rec.counts.documents + rec.counts.notes + refDocs.length;
+    var docCount   = rec.counts.documents + refDocs.length;
     var photoCount = rec.counts.photos + refPhotos.length;
 
     var _draftable = _citableRecord(rec);
@@ -603,7 +593,9 @@ window.TenantSpace = (function () {
           // this names it from what the caller was given and invents nothing;
           // a property with no name falls back to the original line rather
           // than showing an empty subtitle.
-          '<div class="ts-head-main"><div class="ts-space-name">\u{1F4CD}&nbsp;' + _esc(rec.space.name) + '</div>' +
+          '<div class="ts-head-main"><div class="ts-space-name">\u{1F4CD}&nbsp;' +
+              (rec.space.vacant ? 'Vacant' + (rec.space.suite ? ' \u2014 Suite ' + _esc(rec.space.suite) : '') + ' <span class="ts-vacant-badge">Vacant</span>'
+                                : _esc(rec.space.name) + (rec.space.suite ? ' <span class="ts-suite">Suite ' + _esc(rec.space.suite) + '</span>' : '')) + '</div>' +
             '<div class="ts-space-sub">' +
               (property && property.name
                 ? _esc(property.name)
@@ -622,14 +614,20 @@ window.TenantSpace = (function () {
             _esc(rec.space.name || 'this suite') + '.</div>' +
         '</div>' +
         '<div id="tsAddPanel" class="ts-add-panel" style="display:none"></div>' +
+        // THE TENANT FILE (Property Workspace V2, Phase 1). Ten sections, each a
+        // view of this space's own record: nothing here is stored twice, and
+        // maintenance, repairs and inspections read in History with their type.
         '<div class="ts-body">' +
-          _section('Lease', null, leaseHtml) +
-          _section('Financial activity', rec.counts.cam + rec.counts.invoices, finHtml) +
+          _section('Lease & Terms', null, leaseHtml) +
+          _section('Tenant Documents', docCount, tenantDocsHtml) +
+          _section('CAM', rec.counts.cam, camHtml) +
+          _section('Invoices', rec.counts.invoices, invHtml) +
+          _section('Statements', null, stmtHtml) +
           _section('Disputes', (rec.counts.disputes || 0), disputesHtml) +
-          _section('Maintenance', maintCount, maintHtml) +
           _section('Photos', photoCount, photosHtml) +
-          _section('Documents', docCount, docNotesHtml) +
-          _section('Timeline', rec.counts.events, timelineHtml) +
+          _section('Warranties', rec.counts.warranties, warrHtml) +
+          _section('Notes', rec.counts.notes, notesHtml) +
+          _section('History', rec.counts.events, timelineHtml) +
         '</div>' +
         // The counterpart to Add Activity, and deliberately quieter than it.
         // Add Activity WRITES to the verified record; this READS from it. One
@@ -718,15 +716,103 @@ window.TenantSpace = (function () {
   function closeSpace() { var o = _t('tsOverlay'); if (o) o.remove(); _openRec = null; }
   function record() { return _openRec; }
 
-  // Top-level Spaces list — first-class, subject-first navigation for the
-  // property's tenant spaces. Each card opens the full Space view.
-  function renderList(property) {
+  // ── The Spaces list ───────────────────────────────────────────────────────
+  // Property Workspace V2 (Phase 1): one row per PHYSICAL space, occupied or
+  // vacant, searchable and sortable, so a 4-suite strip and a 60-suite center
+  // read the same way. Every row is assembled from the same record the Space
+  // file opens (assemble), so the list and the file cannot disagree; the
+  // vacancy rule is PropertyCabinet's (vacant === true on the tenant row) and
+  // is restated here only so the list still renders where that module is not
+  // loaded.
+  var _list = { q: '', sort: 'suite', dir: 1 };
+
+  function _isVacantRow(t) {
+    var PC = (typeof window !== 'undefined') && window.PropertyCabinet;
+    return PC && PC.isVacant ? PC.isVacant(t) : !!(t && t.vacant === true);
+  }
+  function _numish(v) {
+    if (v == null || v === '') return null;
+    var n = typeof v === 'number' ? v : Number(String(v).replace(/[$,\s]/g, ''));
+    return isFinite(n) ? n : null;
+  }
+  // "Suite 12" sorts after "Suite 9": a numeric collation, so 9 < 12 < 100.
+  function _cmpSuite(a, b) {
+    return String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  /**
+   * The rows the list renders, after search and sort. Pure over the property
+   * and the list state, and exported so the filter and the ordering can be
+   * asserted directly rather than scraped from markup.
+   */
+  function listRows(property, state) {
+    var st = state || _list;
+    var q = String(st.q || '').trim().toLowerCase();
+    var rows = (property.tenants || [])
+      .filter(function (t) { return t && (t.tenant_name || t.id || t.suite || t.unitNumber); })
+      .map(function (t) {
+        var rec = assemble(property, t.id);
+        var vacant = _isVacantRow(t);
+        return {
+          id: t.id != null ? t.id : null,
+          suite: (t.suite || t.unitNumber || '') || null,
+          tenant: vacant ? null : (t.tenant_name || null),
+          sqft: rec.lease.sqft != null ? _numish(rec.lease.sqft) : null,
+          leaseEnd: vacant ? null : (t.end_date || null),
+          leaseType: vacant ? null : (t.lease_type || null),
+          vacant: vacant,
+          status: vacant ? 'vacant' : 'occupied',
+          noIdentity: !!rec.noIdentity,
+          counts: rec.counts,
+        };
+      });
+    if (q) {
+      rows = rows.filter(function (r) {
+        return String(r.suite || '').toLowerCase().indexOf(q) >= 0 ||
+               String(r.tenant || '').toLowerCase().indexOf(q) >= 0 ||
+               (r.vacant && 'vacant'.indexOf(q) >= 0);
+      });
+    }
+    var key = st.sort || 'suite', dir = st.dir === -1 ? -1 : 1;
+    rows.sort(function (a, b) {
+      var c = 0;
+      if (key === 'suite') c = _cmpSuite(a.suite, b.suite);
+      else if (key === 'tenant') c = String(a.tenant || '\uffff').localeCompare(String(b.tenant || '\uffff'));
+      else if (key === 'sqft') c = (a.sqft == null ? -1 : a.sqft) - (b.sqft == null ? -1 : b.sqft);
+      else if (key === 'leaseEnd') c = String(a.leaseEnd || '9999').localeCompare(String(b.leaseEnd || '9999'));
+      else if (key === 'status') c = (a.vacant ? 1 : 0) - (b.vacant ? 1 : 0);
+      if (c === 0) c = _cmpSuite(a.suite, b.suite);
+      return c * dir;
+    });
+    return rows;
+  }
+
+  function setListQuery(v) {
+    _list.q = String(v || '');
+    renderList(null, { keepFocus: true });
+  }
+  function sortList(key) {
+    if (_list.sort === key) _list.dir = -_list.dir; else { _list.sort = key; _list.dir = 1; }
+    renderList();
+  }
+
+  function _countsText(c) {
+    var bits = [];
+    if (c.events) bits.push(c.events + ' event' + (c.events !== 1 ? 's' : ''));
+    if (c.warranties) bits.push(c.warranties + ' warrant' + (c.warranties !== 1 ? 'ies' : 'y'));
+    if (c.invoices) bits.push(c.invoices + ' invoice' + (c.invoices !== 1 ? 's' : ''));
+    if (c.photos) bits.push(c.photos + ' photo' + (c.photos !== 1 ? 's' : ''));
+    if (c.openDisputes) bits.push(c.openDisputes + ' open dispute' + (c.openDisputes !== 1 ? 's' : ''));
+    return bits.join(' · ');
+  }
+
+  function renderList(property, opts) {
     property = property || (window.currentProperty && window.currentProperty());
     var host = _t('spacesList');
     if (!host || !property) return;
     injectStyles();
-    var tenants = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
-    if (!tenants.length) {
+    var all = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id || t.suite || t.unitNumber); });
+    if (!all.length) {
       // POINT AT THE BUTTON THAT IS ON THIS SCREEN.
       //
       // This said "Add tenants under Documents → Add One Tenant". There is no
@@ -741,64 +827,65 @@ window.TenantSpace = (function () {
         'and each tenant will appear here as a space.</div>';
       return;
     }
-    host.innerHTML = '<div class="tsl-grid">' + tenants.map(function (t) {
-      var rec = assemble(property, t.id);
-      var meta = [];
-      if (t.lease_type) meta.push(t.lease_type);
-      // M8c — the SAME area this card's own record already computed, rather than
-      // a second reading of the tenant. This carried the identical defect the
-      // lease projection did: `||` hid a genuine 0 (so a signage or parking
-      // licence showed no area at all, reading as "unknown" rather than "none"),
-      // and `|| t.sqft` was dead here for the same reason it was dead there.
-      // `rec` is assembled one line above, so this is the value the space view
-      // itself will show — the card and the space cannot disagree.
-      //
-      // This line needs NO identity guard of its own, and that is now a fact
-      // about assemble() rather than an oversight. It used to leak: assemble()
-      // resolved its tenant with `x.id === tenantId`, `null === null` is true,
-      // and two id-less tenants on one property both assembled against
-      // whichever came first — a 111 sqft tenant rendered "9999 sqft" under its
-      // own name. The fix is at that boundary, where every consumer benefits;
-      // guarding it here instead would have changed the shape M8c/M8d pinned
-      // (test-m8d E12) while leaving PropertyRecord, AIWorkspace and the MCP
-      // projection still reading the leaked record.
-      //
-      // So `rec.lease.sqft` is null for an id-less space because there was no
-      // tenant to read it from — see assemble(), and
-      // test-space-identity-isolation.js, which owns that rule.
-      if (rec.lease.sqft != null) meta.push(rec.lease.sqft + ' sqft');
-      if (t.end_date) meta.push('to ' + t.end_date);
-      var counts = [];
-      if (rec.counts.events) counts.push(rec.counts.events + ' event' + (rec.counts.events !== 1 ? 's' : ''));
-      if (rec.counts.warranties) counts.push(rec.counts.warranties + ' warranty');
-      if (rec.counts.invoices) counts.push(rec.counts.invoices + ' invoice' + (rec.counts.invoices !== 1 ? 's' : ''));
-      if (rec.counts.photos) counts.push(rec.counts.photos + ' photo' + (rec.counts.photos !== 1 ? 's' : ''));
-      return '<div class="tsl-card">' +
-        '<div class="tsl-name">\u{1F4CD}&nbsp;' + _esc(t.tenant_name || 'Space') + '</div>' +
-        (meta.length ? '<div class="tsl-meta">' + _esc(meta.join(' · ')) + '</div>' : '') +
-        (counts.length ? '<div class="tsl-counts">' + _esc(counts.join(' · ')) + '</div>' : '<div class="tsl-counts tsl-counts--empty">No records yet</div>') +
-        // A BUTTON THAT CANNOT DO WHAT IT SAYS IS WORSE THAN NO BUTTON.
-        //
-        // This rendered unconditionally. The list admits a tenant with a name
-        // OR an id (see the filter above), so a named tenant with no id got a
-        // full gold "Open space →" — and _esc(undefined) is '', so the click
-        // called openSpace(''), which hits its own no-identity guard and
-        // returns. Nothing opened, nothing was said, and the card kept
-        // inviting the click. The manager's only reading is that the app is
-        // broken.
-        //
-        // The condition is not re-derived here: `rec` was assembled one line
-        // up and assemble() already decides this exact question and publishes
-        // it as noIdentity — the same flag _citableRecord, PropertyRecord and
-        // AIWorkspace branch on. One definition of "this space cannot be
-        // opened", so the card and the space view cannot disagree.
-        (rec.noIdentity
-          ? '<div class="tsl-noopen" title="MainStreet has no stored record id for this space, so there is nothing to open yet.">' +
-              'Can’t open yet — no saved record' +
-            '</div>'
-          : '<button class="tsl-open" onclick="if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(t.id) + '\');}">Open space →</button>') +
-      '</div>';
-    }).join('') + '</div>';
+    var rows = listRows(property, _list);
+    var vacant = 0, leased = 0;
+    all.forEach(function (t) {
+      if (_isVacantRow(t)) vacant++; else leased += (_numish(t.leased_sqft) || 0);
+    });
+    var th = function (key, label, cls) {
+      var on = _list.sort === key;
+      return '<th class="' + (cls || '') + '"><button type="button" class="tsl-sort' + (on ? ' tsl-sort--on' : '') + '" onclick="TenantSpace.sortList(\'' + key + '\')">' +
+        _esc(label) + (on ? '<span class="tsl-sort-dir">' + (_list.dir === 1 ? '\u2191' : '\u2193') + '</span>' : '') + '</button></th>';
+    };
+    var summary = all.length + ' space' + (all.length !== 1 ? 's' : '') + ' · ' + (all.length - vacant) + ' occupied · ' + vacant + ' vacant' +
+      (leased ? ' · ' + Math.round(leased).toLocaleString('en-US') + ' sq ft leased' : '');
+
+    var body = rows.map(function (r) {
+      var open = !r.noIdentity;
+      var countsTxt = _countsText(r.counts);
+      return '<tr class="tsl-row' + (r.vacant ? ' tsl-row--vacant' : '') + (open ? ' tsl-row--open' : '') + '"' +
+        (r.id != null ? ' data-space-id="' + _esc(r.id) + '"' : '') +
+        (open ? ' onclick="if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(r.id) + '\');}"' : '') + '>' +
+        '<td class="tsl-suite">' + (r.suite ? _esc(r.suite) : '<span class="tsl-dim">—</span>') + '</td>' +
+        '<td class="tsl-tenant">' + (r.vacant
+          ? '<span class="tsl-vacant">Vacant</span>'
+          : '<span class="tsl-name">' + _esc(r.tenant || 'Space') + '</span>' + (r.leaseType ? '<span class="tsl-type">' + _esc(r.leaseType) + '</span>' : '')) + '</td>' +
+        '<td class="tsl-sqft">' + (r.sqft != null ? _esc(Math.round(r.sqft).toLocaleString('en-US')) : '<span class="tsl-dim">—</span>') + '</td>' +
+        '<td class="tsl-end">' + (r.leaseEnd ? _esc(_fmtDate(r.leaseEnd)) : '<span class="tsl-dim">—</span>') + '</td>' +
+        '<td class="tsl-status"><span class="tsl-badge tsl-badge--' + r.status + '">' + (r.vacant ? 'Vacant' : 'Occupied') + '</span></td>' +
+        '<td class="tsl-recs">' + (countsTxt ? '<span class="tsl-counts">' + _esc(countsTxt) + '</span>' : '<span class="tsl-counts tsl-counts--empty">No records yet</span>') + '</td>' +
+        '<td class="tsl-act">' +
+        // A BUTTON THAT CANNOT DO WHAT IT SAYS IS WORSE THAN NO BUTTON. The
+        // condition is not re-derived here: assemble() already decides it and
+        // publishes it as noIdentity — the same flag _citableRecord,
+        // PropertyRecord and AIWorkspace branch on.
+        (open
+          ? '<button class="tsl-open" onclick="event.stopPropagation(); if(window.TenantSpace){TenantSpace.openSpace(\'' + _esc(r.id) + '\');}">Open \u2192</button>'
+          : '<div class="tsl-noopen" title="MainStreet has no stored record id for this space, so there is nothing to open yet.">Can’t open yet — no saved record</div>') +
+        '</td></tr>';
+    }).join('');
+
+    host.innerHTML =
+      '<div class="tsl-bar">' +
+        '<input type="search" class="tsl-search" id="tslSearch" placeholder="Search suite or tenant" value="' + _esc(_list.q) + '"' +
+          ' oninput="TenantSpace.setListQuery(this.value)" aria-label="Search spaces">' +
+        '<span class="tsl-summary">' + _esc(summary) + '</span>' +
+      '</div>' +
+      (rows.length
+        ? '<div class="tsl-wrap"><table class="tsl-table"><thead><tr>' +
+            th('suite', 'Suite', 'tsl-suite') + th('tenant', 'Tenant', 'tsl-tenant') + th('sqft', 'Sq ft', 'tsl-sqft') +
+            th('leaseEnd', 'Lease end', 'tsl-end') + th('status', 'Status', 'tsl-status') +
+            '<th class="tsl-recs">Records</th><th class="tsl-act"></th>' +
+          '</tr></thead><tbody>' + body + '</tbody></table></div>'
+        : '<div class="ts-empty tsl-nomatch">No spaces match \u201C' + _esc(_list.q) + '\u201D.</div>');
+
+    // Typing re-renders the list; give the search box its caret back.
+    if (opts && opts.keepFocus) {
+      try {
+        var el = _t('tslSearch');
+        if (el && el.focus) { var n = el.value.length; el.focus(); if (el.setSelectionRange) el.setSelectionRange(n, n); }
+      } catch (_e) {}
+    }
   }
 
   function injectStyles() {
@@ -954,23 +1041,49 @@ window.TenantSpace = (function () {
       '.ts-note-d{font-size:0.78rem;color:var(--text-3,#94A3B8);margin-top:3px;}',
       '.ts-note-w{font-size:0.7rem;color:var(--text-4,#64748B);margin-top:4px;}',
       // Spaces list (top-level tab)
-      '.tsl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}',
-      '.tsl-card{background:var(--theme-card,#0F1217);border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:5px;}',
-      '.tsl-name{font-size:0.95rem;font-weight:800;color:var(--text-1,#E2E8F0);}',
-      '.tsl-meta{font-size:0.78rem;color:var(--text-3,#94A3B8);}',
+      // ── The Spaces list (V2): a table that reads the same at 4 rows and 60 ──
+      '.tsl-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;}',
+      '.tsl-search{flex:1 1 220px;min-width:0;padding:9px 11px;border-radius:8px;border:1px solid rgba(var(--line-rgb,255,255,255),0.16);background:var(--theme-panel,#0A0D12);color:var(--text-1,#E2E8F0);font:0.84rem inherit;}',
+      '.tsl-search:focus{outline:none;border-color:' + gold + ';}',
+      '.tsl-summary{font-size:0.76rem;color:var(--text-4,#64748B);}',
+      '.tsl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:12px;}',
+      '.tsl-table{width:100%;border-collapse:collapse;font-size:0.84rem;}',
+      '.tsl-table th{text-align:left;font-size:0.66rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-4,#64748B);padding:10px 12px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.08);background:rgba(var(--line-rgb,255,255,255),0.02);white-space:nowrap;}',
+      '.tsl-table td{padding:11px 12px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);vertical-align:middle;}',
+      '.tsl-table tr:last-child td{border-bottom:none;}',
+      '.tsl-sort{background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;display:inline-flex;gap:4px;align-items:center;}',
+      '.tsl-sort:hover,.tsl-sort--on{color:var(--text-2,#CBD5E1);}',
+      '.tsl-row--open{cursor:pointer;}',
+      '.tsl-row--open:hover td{background:rgba(201,151,58,0.05);}',
+      '.tsl-row--vacant td{color:var(--text-3,#94A3B8);}',
+      '.tsl-suite{font-weight:700;color:var(--text-1,#E2E8F0);white-space:nowrap;}',
+      '.tsl-name{font-weight:700;color:var(--text-1,#E2E8F0);display:block;}',
+      '.tsl-type{display:block;font-size:0.7rem;color:var(--text-4,#64748B);margin-top:1px;}',
+      '.tsl-vacant{font-weight:600;font-style:italic;color:var(--text-3,#94A3B8);}',
+      '.tsl-sqft,.tsl-end{white-space:nowrap;color:var(--text-2,#CBD5E1);}',
+      '.tsl-dim{color:var(--text-4,#64748B);}',
+      '.tsl-badge{display:inline-block;font-size:0.64rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border-radius:6px;padding:3px 7px;border:1px solid rgba(var(--line-rgb,255,255,255),0.14);color:var(--text-3,#94A3B8);white-space:nowrap;}',
+      '.tsl-badge--occupied{color:#4ade80;border-color:rgba(74,222,128,0.35);background:rgba(22,101,52,0.12);}',
+      '.tsl-badge--vacant{color:var(--text-3,#94A3B8);border-style:dashed;}',
       '.tsl-counts{font-size:0.74rem;color:var(--text-4,#64748B);}',
       '.tsl-counts--empty{font-style:italic;}',
-      '.tsl-open{margin-top:8px;min-height:40px;border-radius:9px;font:800 0.82rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.tsl-act{text-align:right;white-space:nowrap;}',
+      '.tsl-open{min-height:34px;border-radius:8px;padding:0 12px;font:700 0.76rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
       '.tsl-open:hover{filter:brightness(1.08);}',
-      // Occupies the button's slot so the card keeps its shape, and reads as a
-      // state rather than a control: no pointer cursor, no fill, no hover.
-      '.tsl-noopen{margin-top:8px;min-height:40px;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 8px;border-radius:9px;font:600 0.76rem/1.25 inherit;color:var(--text-3,#94A3B8);background:transparent;border:1px dashed rgba(var(--line-rgb,255,255,255),0.18);cursor:default;}',
+      '.tsl-nomatch{margin-top:6px;}',
+      // Not a button: the visual weight of one would say "this can be clicked".
+      '.tsl-noopen{display:inline-flex;align-items:center;text-align:left;padding:6px 8px;border-radius:8px;font:600 0.7rem/1.25 inherit;color:var(--text-3,#94A3B8);background:transparent;border:1px dashed rgba(var(--line-rgb,255,255,255),0.18);cursor:default;max-width:180px;white-space:normal;}',
+      '.ts-suite{font-size:0.72rem;font-weight:600;color:var(--text-4,#64748B);margin-left:6px;}',
+      '.ts-vacant-badge{font-size:0.62rem;font-weight:800;text-transform:uppercase;letter-spacing:0.04em;border:1px dashed rgba(var(--line-rgb,255,255,255),0.3);border-radius:6px;padding:2px 6px;margin-left:8px;color:var(--text-3,#94A3B8);vertical-align:middle;}',
+      '.ts-stmt{background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:10px;padding:11px 13px;}',
+      '.ts-stmt-t{font-size:0.86rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
+      '.ts-stmt-d{font-size:0.76rem;color:var(--text-3,#94A3B8);margin-top:3px;line-height:1.45;}',
       '@media (max-width:480px){',
       '  .ts-overlay{padding:10px 8px;}',
       '  .ts-tl-when{width:74px;}',
       '  .ts-doc-name{max-width:150px;}',
       '  .ts-photo img{width:64px;height:64px;}',
-      '  .tsl-grid{grid-template-columns:1fr;}',
+      '  .tsl-table th.tsl-recs,.tsl-table td.tsl-recs,.tsl-table th.tsl-end,.tsl-table td.tsl-end{display:none;}',
       '}',
     ].join('\n');
     var s = document.createElement('style'); s.id = 'ts-styles'; s.textContent = css;
@@ -1510,6 +1623,8 @@ window.TenantSpace = (function () {
   }
 
   return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
+           // V2 Spaces list: the rows as data, and the search/sort controls.
+           listRows: listRows, setListQuery: setListQuery, sortList: sortList,
            addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); },
            openActivity: openActivity,
            // Whether a statement may issue is one verdict with one source. This

@@ -8143,6 +8143,10 @@
 <!-- One place to open any record: real files, sample previews, and timeline entries. -->
 <script src="doc-viewer.js"></script>
 <script src="tenant-space.js"></script>
+<!-- Property Workspace V2 (Phase 1) — the filing cabinet as a surface: landing page, drawers,
+     addressing. Renders over property-cabinet.js through PropertyOS; must load after
+     property-os.js, property-workspace.js and tenant-space.js, which it reuses. -->
+<script src="property-cabinet-view.js"></script>
 <!-- Property Operating System — "Act on this space" (grounded AI actions; Reply is action #1). Reads TenantSpace.record(); must load after it. -->
 <script src="space-actions.js"></script>
 <!-- The canonical property-scoped read model. Composes CamPool, TimelineMerge,

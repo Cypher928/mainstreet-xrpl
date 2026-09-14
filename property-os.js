@@ -134,10 +134,15 @@ window.PropertyOS = (function () {
     pane.className = 'workspace-tab-pane';
     pane.id = 'wsPane-property';
     pane.style.display = 'none';
+    // V2: the cabinet view draws its own header and cards inside the pane, so
+    // the wrapping card loses its chrome and its "Property" heading. The id
+    // stays — it is a navigation anchor for attention items.
+    var cabinet = !!window.PropertyCabinetView;
     pane.innerHTML =
-      '<div class="card" id="propertySection">' +
-        '<div class="sec-head"><div class="sec-num" style="background:#0ea5e9;">\u{1F3E2}</div>' +
-          '<div><h2>Property</h2><p>Everything that belongs to the building as a whole.</p></div></div>' +
+      '<div class="card' + (cabinet ? ' pos-pane--cabinet' : '') + '" id="propertySection">' +
+        (cabinet ? '' :
+          '<div class="sec-head"><div class="sec-num" style="background:#0ea5e9;">\u{1F3E2}</div>' +
+          '<div><h2>Property</h2><p>Everything that belongs to the building as a whole.</p></div></div>') +
         '<div id="propertyOsBody"></div>' +
       '</div>';
     overview.parentNode.insertBefore(pane, overview.nextSibling);
@@ -401,7 +406,10 @@ window.PropertyOS = (function () {
     var yearEl = _d('camYearSelect') || _d('camYear');
     var year = yearEl ? (yearEl.options && yearEl.options[yearEl.selectedIndex]
       ? yearEl.options[yearEl.selectedIndex].text : yearEl.value) : null;
-    bar.style.display = '';
+    // V2: the cabinet header names the property and carries "Edit property",
+    // so the one-line summary bar would say the same thing twice. Its collapse
+    // logic below still runs — that is what keeps the setup card out of the way.
+    bar.style.display = window.PropertyCabinetView ? 'none' : '';
     bar.innerHTML =
       '<span class="pos-setup-name">' + _esc(name) + '</span>' +
       '<span class="pos-setup-meta">' + _esc(Math.round(sqft).toLocaleString('en-US')) + ' sq ft' +
@@ -446,10 +454,14 @@ window.PropertyOS = (function () {
   // from. Nothing here has its own array. docs/PROPERTY_WORKSPACE.md.
   var _filter = { cat: 'all', system: null };
   var _focusId = null;   // record to highlight after a jump from Documents
-  var _docIcon = function () { return '\u{1F4C4}'; };
 
   function setRecordFilter(cat, system) {
     _filter = { cat: cat || 'all', system: system || null };
+    // V2: a category or system filter is a drawer, opened in the cabinet.
+    if (window.PropertyCabinetView && typeof window.PropertyCabinetView.filter === 'function') {
+      window.PropertyCabinetView.filter(_filter.cat, _filter.system);
+      return;
+    }
     renderPropertyPage();
   }
 
@@ -517,6 +529,10 @@ window.PropertyOS = (function () {
     if (!ev) return false;
     _filter = { cat: 'all', system: null };
     _focusId = String(recordId);
+    // V2: the record opens in its own drawer, scrolled to and highlighted.
+    if (window.PropertyCabinetView && typeof window.PropertyCabinetView.openRecord === 'function') {
+      return window.PropertyCabinetView.openRecord(recordId);
+    }
     renderPropertyPage(property);
     setTimeout(function () {
       var el = document.querySelector('.pos-rec[data-rec-id="' + String(recordId).replace(/"/g, '') + '"]');
@@ -991,32 +1007,133 @@ window.PropertyOS = (function () {
   }
   function _empty(m) { return '<div class="pos-empty">' + _esc(m) + '</div>'; }
 
-  function renderPropertyPage(property, opts) {
-    property = property || (window.currentProperty && window.currentProperty());
-    var body = _d('propertyOsBody');
-    if (!body || !property) return;
-    injectStyles();
-    // PW-1 — stamp ids and migrate positional links BEFORE anything reads them.
-    try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
-    // Collapse the first-run setup card once the building is configured.
-    try { renderSetupSummary(property, opts); } catch (_) {}
-    // And the lease intake block, once every lease in it has been reviewed.
-    // Same guard, same reason — see renderLeaseSummary.
-    try { renderLeaseSummary(property, opts); } catch (_) {}
+  // ── Shared renderers ────────────────────────────────────────────────────────
+  // Property Workspace V2 (Phase 1): the record card, the invoice row, the
+  // systems grid, the financial snapshot, the information block and the
+  // documents list are the pieces the cabinet drawers are assembled from
+  // (property-cabinet-view.js). They live HERE so Edit / Attach / Link / the
+  // revision history on a record is one implementation whichever surface shows
+  // it — a drawer and the legacy page cannot disagree about what a record can do.
+  function docIcon(k) {
+    return k === 'photo' ? '\u{1F5BC}\u{FE0F}' : (k === 'invoice' ? '\u{1F9FE}'
+      : (k === 'warranty' ? '\u{1F6E1}\u{FE0F}' : (k === 'plan' ? '\u{1F4D0}' : '\u{1F4C4}')));
+  }
 
-    var PR = window.PropertyReference;   // declared early: the documents section uses it
-    var invs = invoices(property);
+  function _docChip(a) {
+    // SEC-1 — attachments added here go through uploadInvoiceFile (see
+    // _uploadAttachments), so a.url can be a stored object needing a signed URL.
+    return window.docLinkHtml
+      ? window.docLinkHtml(a.url, docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>',
+                           { className: 'pos-doc' })
+      : '<span class="pos-doc">' + _esc(a.name) + '</span>';
+  }
+
+  /** One property record, with its provenance, related items, history and files. */
+  function recordCardHtml(property, e, opts) {
+    var PT = window.PropertyTimeline;
+    var focusId = (opts && opts.focusId != null) ? String(opts.focusId) : _focusId;
+    var d = (PT && PT.describe) ? PT.describe(e) : { label: e.type, icon: null };
+    var subj = e.subject && e.subject.type === 'system'
+      ? (systemLabel(e.subject.id) || e.subject.id) : 'Property-wide';
+    var by = (e.metadata && e.metadata.recordedBy) || e.actor || null;
+    var atts = (e.attachments || []).filter(function (a) { return a && a.url; });
+    return '<div class="pos-rec' + (focusId && String(e.id) === focusId ? ' pos-rec--focus' : '') +
+      '" data-rec-id="' + _esc(e.id) + '">' +
+      '<div class="pos-rec-top">' +
+        '<span class="pos-rec-t">' + _esc(e.title || d.label || e.type) + '</span>' +
+        '<span class="pos-rec-w">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
+      '</div>' +
+      '<div class="pos-rec-meta">' +
+        '<span class="pos-rec-cat">' + (d.icon || '') + ' ' + _esc(d.label || e.category || e.type) + '</span>' +
+        '<span class="pos-rec-subj">' + _esc(subj) + '</span>' +
+        (by ? '<span class="pos-rec-by">Recorded by ' + _esc(by) + '</span>' : '') +
+      '</div>' +
+      (e.description ? '<div class="pos-rec-note">' + _esc(e.description) + '</div>' : '') +
+      _relatedHtml(property, e) +
+      _revHtml(e) +
+      (atts.length ? '<div class="pos-rec-att">' + atts.map(_docChip).join('') + '</div>' : '') +
+    '</div>';
+  }
+
+  /** One row of the invoice register, with its relations editable in place. */
+  function invoiceRowHtml(property, inv) {
     var spaces = (property.tenants || []).filter(function (t) { return t && (t.tenant_name || t.id); });
-    var tl = (property.timeline || []);
+    var spaceOpts = '<option value="">Property only</option>' + spaces.map(function (t) {
+      var label = (window.PropertyCabinet && PropertyCabinet.isVacant(t)) ? ('Vacant' + (t.suite ? ' — ' + t.suite : '')) : (t.tenant_name || t.id);
+      return '<option value="' + _esc(t.id) + '"' + (inv.spaceId === t.id ? ' selected' : '') + '>' + _esc(label) + '</option>';
+    }).join('');
+    var sysOpts = '<option value="">No system</option>' + BUILDING_SYSTEMS.map(function (s) {
+      return '<option value="' + s.key + '"' + (inv.system === s.key ? ' selected' : '') + '>' + _esc(s.label) + '</option>';
+    }).join('');
+    return '<div class="pos-inv" data-inv-id="' + _esc(inv.id) + '">' +
+      '<div class="pos-inv-top">' +
+        '<span class="pos-inv-vendor">' + _esc(inv.vendorName) + '</span>' +
+        '<span class="pos-inv-amt">' + _money(inv.amount) + '</span>' +
+      '</div>' +
+      '<div class="pos-inv-meta">' + _esc([inv.category, inv.invoiceDate ? _fmtDate(inv.invoiceDate) : null].filter(Boolean).join(' · ') || '—') +
+        (inv.fileUrl ? ' · ' : '') +
+        (inv.fileUrl ? (window.docLinkHtml
+          ? window.docLinkHtml(inv.fileUrl, docIcon('invoice') + '&nbsp;<span class="pos-doc-n">' + _esc(inv.fileName || 'invoice') + '</span>', { className: 'pos-doc pos-doc--inline' })
+          : '') : '') +
+      '</div>' +
+      '<div class="pos-inv-rel">' +
+        '<label class="pos-rel"><span>Space</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'spaceId\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + spaceOpts + '</select></label>' +
+        '<label class="pos-rel"><span>System</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'system\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + sysOpts + '</select></label>' +
+        '<label class="pos-rel pos-rel--chk"><input type="checkbox"' + (inv.camEligible ? ' checked' : '') + ' onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'camEligible\',this.checked)" data-inv-id="' + _esc(inv.id) + '"><span>CAM eligible</span></label>' +
+      '</div>' +
+    '</div>';
+  }
 
-    // Financial snapshot — property-wide money, read from the record.
-    // PW-4 — the panel used to sum EVERY invoice on the property under a header
-    // the app elsewhere labels with a CAM year. Three separate ways to be wrong:
-    // invoices from other years were included, space-scoped (tenant-direct)
-    // invoices inflated the property pool, and "84,500.00" coerced to 0.
-    //
-    // Scope is now explicit and stated on screen, because a total whose basis
-    // is invisible is a total a manager cannot check.
+  /** The building-systems grid: each cell counts its records + tagged invoices. */
+  function systemsGridHtml(property, selected) {
+    var invs = invoices(property);
+    var tl = property.timeline || [];
+    return '<div class="pos-sys">' + BUILDING_SYSTEMS.map(function (s) {
+      var n = invs.filter(function (i) { return i.system === s.key; }).length;
+      var ev = tl.filter(function (e) { return e && e.subject && e.subject.type === 'system' && e.subject.id === s.key; }).length;
+      var tot = n + ev;
+      return '<div class="pos-sys-cell' + (tot ? ' pos-sys-cell--on' : '') +
+        (selected === s.key ? ' pos-sys-cell--sel' : '') + '" role="button" tabindex="0"' +
+        ' data-sys="' + _esc(s.key) + '"' +
+        ' onclick="PropertyOS.setRecordFilter(\'all\', this.dataset.sys)"' +
+        ' title="Show only records for this system"><span class="pos-sys-ic">' + s.icon + '</span>' +
+        '<span class="pos-sys-l">' + _esc(s.label) + '</span>' +
+        '<span class="pos-sys-n">' + (tot ? tot + ' record' + (tot !== 1 ? 's' : '') : '—') + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  /** "Showing Roof — n records, m invoices ($x)" plus the roof's invoices. */
+  function systemStoryHtml(property, systemKey, cat) {
+    if (!systemKey) return '';
+    var story = systemStory(property, systemKey);
+    var sysInvTotal = story.invoices.reduce(function (t, i) { return t + i.amount; }, 0);
+    return '<div class="pos-filter-note">Showing <b>' +
+      _esc(systemLabel(systemKey) || systemKey) + '</b> — ' +
+      story.events.length + ' record' + (story.events.length !== 1 ? 's' : '') +
+      (story.invoices.length ? ', ' + story.invoices.length + ' invoice' +
+        (story.invoices.length !== 1 ? 's' : '') + ' (' + _esc(_money(sysInvTotal)) + ')' : '') +
+      ' <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
+      _esc(cat || 'all') + '\', null)">Clear</button></div>' +
+      (story.invoices.length
+        ? '<div class="pos-ri-list pos-sys-invs">' + story.invoices.map(function (i) {
+            return '<div class="pos-ri-row"><span class="pos-ri-ic">\u{1F9FE}</span>' +
+              '<span class="pos-ri-t">' + _esc(i.vendorName) + '</span>' +
+              '<span class="pos-ri-m">Invoice · ' + _esc(_money(i.amount)) + '</span>' +
+              '<span class="pos-ri-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span></div>';
+          }).join('') + '</div>'
+        : '');
+  }
+
+  // Financial snapshot — property-wide money, read from the record.
+  // PW-4 — the panel used to sum EVERY invoice on the property under a header
+  // the app elsewhere labels with a CAM year. Three separate ways to be wrong:
+  // invoices from other years were included, space-scoped (tenant-direct)
+  // invoices inflated the property pool, and "84,500.00" coerced to 0.
+  //
+  // Scope is now explicit and stated on screen, because a total whose basis
+  // is invisible is a total a manager cannot check.
+  function financialsHtml(property) {
+    var invs = invoices(property);
     var camYear = (window.currentCamYear && window.currentCamYear()) ||
                   (window._camYear != null ? window._camYear : null);
     var invYear = function (i) {
@@ -1045,110 +1162,114 @@ window.PropertyOS = (function () {
     var excludedYear = camYear != null ? invs.length - inYear.length : 0;
     if (excludedYear > 0) scopeBits.push(excludedYear + ' from other years excluded');
 
-    var finHtml = invs.length
+    return invs.length
       ? '<div class="pos-fin">' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(total) + '</div><div class="pos-fin-l">Total invoiced</div></div>' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(camPool) + '</div><div class="pos-fin-l">CAM-eligible</div></div>' +
           '<div class="pos-fin-cell"><div class="pos-fin-v">' + _money(nonCam) + '</div><div class="pos-fin-l">Not CAM</div></div>' +
         '</div>' +
-        '<div class="pos-fin-scope">' + scopeBits.join(' \u00b7 ') + '</div>'
+        '<div class="pos-fin-scope">' + scopeBits.join(' · ') + '</div>'
       : _empty('No invoices on file for this property yet.');
+  }
 
-    // Invoice register — uploaded once to the property, related outward.
-    var spaceOpts = function (sel) {
-      return '<option value="">Property only</option>' + spaces.map(function (t) {
-        return '<option value="' + _esc(t.id) + '"' + (sel === t.id ? ' selected' : '') + '>' + _esc(t.tenant_name || t.id) + '</option>';
+  // ── Property Information — reference facts, not operational alerts ────────
+  function infoHtml(property) {
+    var PR = window.PropertyReference;
+    if (!PR) return '';
+    var info = PR.infoFor(property);
+    if (!info) return _empty('No property information recorded yet. Address, year built, insurance, roof and HVAC details appear here once added.');
+    return '<div class="pos-info">' + PR.GROUPS.map(function (g) {
+      var rows = PR.FIELDS.filter(function (f) { return f.group === g; }).map(function (f) {
+        return '<div class="pos-info-row"><span class="pos-info-k">' + _esc(f.label) + '</span>' +
+          '<span class="pos-info-v">' + _esc(PR.formatValue(f, info[f.key], property)) + '</span></div>';
       }).join('');
-    };
-    var sysOpts = function (sel) {
-      return '<option value="">No system</option>' + BUILDING_SYSTEMS.map(function (s) {
-        return '<option value="' + s.key + '"' + (sel === s.key ? ' selected' : '') + '>' + _esc(s.label) + '</option>';
-      }).join('');
-    };
-    var regHtml = invs.length
-      ? '<div class="pos-reg">' + invs.slice(0, 40).map(function (inv) {
-          return '<div class="pos-inv">' +
-            '<div class="pos-inv-top">' +
-              '<span class="pos-inv-vendor">' + _esc(inv.vendorName) + '</span>' +
-              '<span class="pos-inv-amt">' + _money(inv.amount) + '</span>' +
-            '</div>' +
-            '<div class="pos-inv-meta">' + _esc([inv.category, inv.invoiceDate ? _fmtDate(inv.invoiceDate) : null].filter(Boolean).join(' · ') || '—') + '</div>' +
-            '<div class="pos-inv-rel">' +
-              '<label class="pos-rel"><span>Space</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'spaceId\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + spaceOpts(inv.spaceId) + '</select></label>' +
-              '<label class="pos-rel"><span>System</span><select onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'system\',this.value)" data-inv-id="' + _esc(inv.id) + '">' + sysOpts(inv.system) + '</select></label>' +
-              '<label class="pos-rel pos-rel--chk"><input type="checkbox"' + (inv.camEligible ? ' checked' : '') + ' onchange="PropertyOS.setInvoiceRelation(this.dataset.invId,\'camEligible\',this.checked)" data-inv-id="' + _esc(inv.id) + '"><span>CAM eligible</span></label>' +
-            '</div>' +
-          '</div>';
-        }).join('') + '</div>' +
-        (invs.length > 40 ? '<div class="pos-empty">Showing 40 of ' + invs.length + '</div>' : '') +
-        '<div class="pos-note">Uploaded once to the property. CAM references these — it doesn’t own them.</div>'
-      : _empty('Invoices uploaded to this property will appear here, ready to relate to a space, a building system, or CAM.');
-
-    // Building systems — the shared physical assets, with what's attached to each.
-    var sysHtml = '<div class="pos-sys">' + BUILDING_SYSTEMS.map(function (s) {
-      var n = invs.filter(function (i) { return i.system === s.key; }).length;
-      var ev = tl.filter(function (e) { return e && e.subject && e.subject.type === 'system' && e.subject.id === s.key; }).length;
-      var tot = n + ev;
-      return '<div class="pos-sys-cell' + (tot ? ' pos-sys-cell--on' : '') +
-        (_filter.system === s.key ? ' pos-sys-cell--sel' : '') + '" role="button" tabindex="0"' +
-        ' data-sys="' + _esc(s.key) + '"' +
-        ' onclick="PropertyOS.setRecordFilter(\'all\', this.dataset.sys)"' +
-        ' title="Show only records for this system"><span class="pos-sys-ic">' + s.icon + '</span>' +
-        '<span class="pos-sys-l">' + _esc(s.label) + '</span>' +
-        '<span class="pos-sys-n">' + (tot ? tot + ' record' + (tot !== 1 ? 's' : '') : '—') + '</span></div>';
+      return '<div class="pos-info-grp"><div class="pos-info-grp-t">' + _esc(g) + '</div>' + rows + '</div>';
     }).join('') + '</div>';
+  }
 
-    // The flat document scrape that used to live here is gone. It built a
-    // second list of files with no idea which record each came from, which is
-    // exactly the "another flat document repository" this workspace must not
-    // be. propertyDocuments() derives the same files FROM the records.
-    _docIcon = function (k) {
-      return k === 'photo' ? '\u{1F5BC}\u{FE0F}' : (k === 'invoice' ? '\u{1F9FE}'
-        : (k === 'warranty' ? '\u{1F6E1}\u{FE0F}' : (k === 'plan' ? '\u{1F4D0}' : '\u{1F4C4}')));
-    };
-    // Documents is a VIEW of records, not a repository. Every row names the
-    // record its file sits on and opens THAT record — a file chip that opens
-    // nothing, or opens the section you were already looking at, is a broken
-    // promise. Files arrive here by being attached to a record; there is no
-    // other way in, which is the point.
-    var recDocs = propertyDocuments(property);
-    var docHtml = recDocs.length
-      ? '<div class="pos-docs-list">' + recDocs.slice(0, 40).map(function (a) {
+  // Documents is a VIEW of records, not a repository. Every row names the
+  // record its file sits on and opens THAT record — a file chip that opens
+  // nothing, or opens the section you were already looking at, is a broken
+  // promise. Files arrive here by being attached to a record; there is no
+  // other way in, which is the point.
+  function documentsHtml(property, docs, opts) {
+    var list = Array.isArray(docs) ? docs : propertyDocuments(property);
+    var cap = (opts && opts.cap) || 40;
+    var html = list.length
+      ? '<div class="pos-docs-list">' + list.slice(0, cap).map(function (a) {
           var on = a.recordId
             ? '<button type="button" class="pos-doc-on" data-rec="' + _esc(a.recordId) + '"' +
               ' onclick="PropertyOS.openRecord(this.dataset.rec)"' +
               ' title="Open the record this document is filed on">on: ' + _esc(a.recordTitle) + '</button>'
             : '<span class="pos-doc-on pos-doc-on--inv">on: ' + _esc(a.recordTitle) + ' (invoice register)</span>';
-          return '<div class="pos-doc-row">' +
-            // SEC-1 — attachments added here go through uploadInvoiceFile
-            // (see _uploadAttachments below), so a.url can be a stored object.
-            (window.docLinkHtml
-              ? window.docLinkHtml(a.url, _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>',
-                                   { className: 'pos-doc' })
-              : '<span class="pos-doc">' + _esc(a.name) + '</span>') +
-            on +
+          return '<div class="pos-doc-row">' + _docChip(a) + on +
             (a.system ? '<span class="pos-doc-sys">' + _esc(systemLabel(a.system) || a.system) + '</span>' : '') +
             (a.when ? '<span class="pos-doc-w">' + _esc(_fmtDate(a.when)) + '</span>' : '') +
           '</div>';
         }).join('') + '</div>' +
-        (recDocs.length > 40 ? '<div class="pos-empty">Showing 40 of ' + recDocs.length + '</div>' : '') +
-        '<div class="pos-note">Every document is filed on a record. Attach one from the record it belongs to \u2014 that is what keeps the roof warranty with the roof job.</div>'
-      : _empty('No documents yet. Insurance policies, tax bills, surveys, plans and warranties are attached to the record they belong to \u2014 add a record, then attach its files.');
+        (list.length > cap ? '<div class="pos-empty">Showing ' + cap + ' of ' + list.length + '</div>' : '') +
+        ((opts && opts.note === false) ? '' :
+          '<div class="pos-note">Every document is filed on a record. Attach one from the record it belongs to — that is what keeps the roof warranty with the roof job.</div>')
+      : _empty((opts && opts.emptyCopy) || 'No documents yet. Insurance policies, tax bills, surveys, plans and warranties are attached to the record they belong to — add a record, then attach its files.');
+    return html;
+  }
 
-    // Reference samples exist only on the seeded demo property. Kept visibly
-    // apart so a preview can never be mistaken for a record on file.
+  // Reference samples exist only on the seeded demo property. Kept visibly
+  // apart so a preview can never be mistaken for a record on file.
+  function sampleDocumentsHtml(property) {
+    var PR = window.PropertyReference;
     var sampleDocs = PR ? PR.propertyDocumentsFor(property) : [];
-    if (sampleDocs.length) {
-      docHtml += '<div class="pos-sample-head">Reference samples \u2014 examples of what a building keeps on file. Not records on this property.</div>' +
-        '<div class="pos-docs">' + sampleDocs.slice(0, 20).map(function (a) {
-          return '<div class="pos-doc pos-doc--ref">' + _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
-            (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') + '</div>';
-        }).join('') + '</div>';
-    }
+    if (!sampleDocs.length) return '';
+    return '<div class="pos-sample-head">Reference samples — examples of what a building keeps on file. Not records on this property.</div>' +
+      '<div class="pos-docs">' + sampleDocs.slice(0, 20).map(function (a) {
+        return '<div class="pos-doc pos-doc--ref">' + docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
+          (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') + '</div>';
+      }).join('') + '</div>';
+  }
 
-    // Property-wide timeline — what affects the building as a whole.
-    var propEvents = tl.filter(function (e) { return !e.subject || e.subject.type === 'property' || e.subject.type === 'system'; })
-      .sort(function (a, b) { return (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0); });
+  function addRecordButtonHtml() {
+    return '<button type="button" class="pos-add" onclick="PropertyOS.addRecord()">➕ Add Record</button>';
+  }
+
+  function renderPropertyPage(property, opts) {
+    property = property || (window.currentProperty && window.currentProperty());
+    var body = _d('propertyOsBody');
+    if (!body || !property) return;
+    injectStyles();
+    // PW-1 — stamp ids and migrate positional links BEFORE anything reads them.
+    try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
+    // Collapse the first-run setup card once the building is configured.
+    try { renderSetupSummary(property, opts); } catch (_) {}
+    // And the lease intake block, once every lease in it has been reviewed.
+    // Same guard, same reason — see renderLeaseSummary.
+    try { renderLeaseSummary(property, opts); } catch (_) {}
+
+    // Property Workspace V2: the filing cabinet owns the Property page. The
+    // legacy flat page below is the fallback only when the view module is not
+    // loaded, so nothing is ever rendered from two places at once.
+    if (window.PropertyCabinetView && typeof window.PropertyCabinetView.render === 'function') {
+      window.PropertyCabinetView.render(property, opts);
+      return;
+    }
+    _renderLegacyPage(property, body);
+  }
+
+  function _renderLegacyPage(property, body) {
+    var invs = invoices(property);
+    var tl = (property.timeline || []);
+    var finHtml = financialsHtml(property);
+
+    var regHtml = invs.length
+      ? '<div class="pos-reg">' + invs.slice(0, 40).map(function (inv) { return invoiceRowHtml(property, inv); }).join('') + '</div>' +
+        (invs.length > 40 ? '<div class="pos-empty">Showing 40 of ' + invs.length + '</div>' : '') +
+        '<div class="pos-note">Uploaded once to the property. CAM references these — it doesn’t own them.</div>'
+      : _empty('Invoices uploaded to this property will appear here, ready to relate to a space, a building system, or CAM.');
+
+    var sysHtml = systemsGridHtml(property, _filter.system);
+    var recDocs = propertyDocuments(property);
+    var docHtml = documentsHtml(property, recDocs) + sampleDocumentsHtml(property);
+
+    var propEvents = propertyRecords(property);
     var tlHtml = propEvents.length
       ? '<div class="pos-tl">' + propEvents.slice(0, 10).map(function (e) {
           var d = (window.PropertyTimeline && PropertyTimeline.describe) ? PropertyTimeline.describe(e) : { label: e.type };
@@ -1158,31 +1279,12 @@ window.PropertyOS = (function () {
         }).join('') + '</div>' + (propEvents.length > 10 ? '<div class="pos-empty">+ ' + (propEvents.length - 10) + ' earlier — full history on Overview</div>' : '')
       : _empty('Roof replacements, insurance renewals, tax appeals and capital improvements appear here.');
 
-    // ── Property Information — reference facts, not operational alerts ──────
-    var infoHtml = '';
-    if (PR) {
-      var info = PR.infoFor(property);
-      if (info) {
-        infoHtml = PR.GROUPS.map(function (g) {
-          var rows = PR.FIELDS.filter(function (f) { return f.group === g; }).map(function (f) {
-            return '<div class="pos-info-row"><span class="pos-info-k">' + _esc(f.label) + '</span>' +
-              '<span class="pos-info-v">' + _esc(PR.formatValue(f, info[f.key], property)) + '</span></div>';
-          }).join('');
-          return '<div class="pos-info-grp"><div class="pos-info-grp-t">' + _esc(g) + '</div>' + rows + '</div>';
-        }).join('');
-        infoHtml = '<div class="pos-info">' + infoHtml + '</div>';
-      } else {
-        infoHtml = _empty('No property information recorded yet. Address, year built, insurance, roof and HVAC details appear here once added.');
-      }
-    }
+    var info = infoHtml(property);
 
-    // ── Property Records — the operating surface ──────────────────────────
-    var allRecs  = propertyRecords(property);
+    var allRecs  = propEvents;
     var shown    = _applyFilter(allRecs, property);
     var PT       = window.PropertyTimeline;
     var catKeys  = (PT && PT.propertyCategories) || [];
-    // Only offer a chip for a category that exists here or is a building-level
-    // one — a filter that always returns nothing teaches people not to use it.
     var present  = {};
     allRecs.forEach(function (e) { if (e.category) present[e.category] = (present[e.category] || 0) + 1; });
     var chipKeys = catKeys.filter(function (k) { return present[k]; });
@@ -1201,72 +1303,18 @@ window.PropertyOS = (function () {
         return chip(k, d.label || k, present[k] || 0, _filter.cat === k);
       }).join('') + '</div>';
 
-    // Clicking a Building System must END the search, not start one: everything
-    // about the Roof, in one place. That is the records whose subject IS the
-    // system, PLUS the invoices tagged to it, PLUS anything linked into those
-    // stories — an invoice attached to the roof job belongs under Roof even if
-    // only the job carries the tag.
-    var sysFilterHtml = '';
-    if (_filter.system) {
-      var story = systemStory(property, _filter.system);
-      var sysInvTotal = story.invoices.reduce(function (t, i) { return t + i.amount; }, 0);
-      sysFilterHtml = '<div class="pos-filter-note">Showing <b>' +
-        _esc(systemLabel(_filter.system) || _filter.system) + '</b> \u2014 ' +
-        story.events.length + ' record' + (story.events.length !== 1 ? 's' : '') +
-        (story.invoices.length ? ', ' + story.invoices.length + ' invoice' +
-          (story.invoices.length !== 1 ? 's' : '') + ' (' + _esc(_money(sysInvTotal)) + ')' : '') +
-        ' <button type="button" class="pos-clear" onclick="PropertyOS.setRecordFilter(\'' +
-        _esc(_filter.cat) + '\', null)">Clear</button></div>' +
-        (story.invoices.length
-          ? '<div class="pos-ri-list pos-sys-invs">' + story.invoices.map(function (i) {
-              return '<div class="pos-ri-row"><span class="pos-ri-ic">\u{1F9FE}</span>' +
-                '<span class="pos-ri-t">' + _esc(i.vendorName) + '</span>' +
-                '<span class="pos-ri-m">Invoice \u00b7 ' + _esc(_money(i.amount)) + '</span>' +
-                '<span class="pos-ri-w">' + _esc(i.invoiceDate ? _fmtDate(i.invoiceDate) : '') + '</span></div>';
-            }).join('') + '</div>'
-          : '');
-    }
+    var sysFilterHtml = systemStoryHtml(property, _filter.system, _filter.cat);
 
     var recHtml = shown.length
-      ? '<div class="pos-recs">' + shown.slice(0, 40).map(function (e) {
-          var d = (PT && PT.describe) ? PT.describe(e) : { label: e.type, icon: null };
-          var subj = e.subject && e.subject.type === 'system'
-            ? (systemLabel(e.subject.id) || e.subject.id) : 'Property-wide';
-          var by = (e.metadata && e.metadata.recordedBy) || e.actor || null;
-          var atts = (e.attachments || []).filter(function (a) { return a && a.url; });
-          return '<div class="pos-rec' + (_focusId && String(e.id) === _focusId ? ' pos-rec--focus' : '') +
-            '" data-rec-id="' + _esc(e.id) + '">' +
-            '<div class="pos-rec-top">' +
-              '<span class="pos-rec-t">' + _esc(e.title || d.label || e.type) + '</span>' +
-              '<span class="pos-rec-w">' + _esc(_fmtDate(e.timestamp)) + '</span>' +
-            '</div>' +
-            '<div class="pos-rec-meta">' +
-              '<span class="pos-rec-cat">' + (d.icon || '') + ' ' + _esc(d.label || e.category || e.type) + '</span>' +
-              '<span class="pos-rec-subj">' + _esc(subj) + '</span>' +
-              (by ? '<span class="pos-rec-by">Recorded by ' + _esc(by) + '</span>' : '') +
-            '</div>' +
-            (e.description ? '<div class="pos-rec-note">' + _esc(e.description) + '</div>' : '') +
-            _relatedHtml(property, e) +
-            _revHtml(e) +
-            (atts.length ? '<div class="pos-rec-att">' + atts.map(function (a) {
-              // SEC-1 — same as above: a stored object needs a signed URL.
-              return window.docLinkHtml
-                ? window.docLinkHtml(a.url, _docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>',
-                                     { className: 'pos-doc' })
-                : '<span class="pos-doc">' + _esc(a.name) + '</span>';
-            }).join('') + '</div>' : '') +
-          '</div>';
-        }).join('') + '</div>' +
+      ? '<div class="pos-recs">' + shown.slice(0, 40).map(function (e) { return recordCardHtml(property, e); }).join('') + '</div>' +
         (shown.length > 40 ? '<div class="pos-empty">Showing 40 of ' + shown.length + '</div>' : '')
       : _empty(allRecs.length
           ? 'Nothing recorded under this filter yet. Choose another category, or add a record.'
           : 'Nothing recorded for this building yet. Tax bills, insurance policies, surveys, site and building plans, environmental reports, capital improvements, photos and system warranties all live here — each one a dated entry on the property timeline.');
 
-    var addBtn = '<button type="button" class="pos-add" onclick="PropertyOS.addRecord()">\u2795 Add Record</button>';
-
     body.innerHTML =
-      (infoHtml ? _sec('Property information', null, infoHtml) : '') +
-      _sec('Property records', allRecs.length, addBtn + chipsHtml + sysFilterHtml + recHtml) +
+      (info ? _sec('Property information', null, info) : '') +
+      _sec('Property records', allRecs.length, addRecordButtonHtml() + chipsHtml + sysFilterHtml + recHtml) +
       _sec('Building systems', null, sysHtml) +
       _sec('Financials', null, finHtml) +
       _sec('Invoice register', invs.length, regHtml) +
@@ -1297,6 +1345,9 @@ window.PropertyOS = (function () {
     var gold = '#C9973A';
     var css = [
       '.pos-sec{padding:14px 0;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.06);}',
+      // V2: the pane card is a transparent host; the cabinet view draws its own cards.
+      '#propertySection.pos-pane--cabinet{background:transparent;border:none;box-shadow:none;padding:0;}',
+      '.pos-doc--inline{display:inline-flex;padding:2px 8px;font-size:0.72rem;vertical-align:middle;}',
       // ── Property Records ──
       '.pos-setup-sum{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:11px 13px;margin-bottom:14px;border:1px solid rgba(var(--line-rgb,255,255,255),0.09);background:rgba(var(--line-rgb,255,255,255),0.03);border-radius:10px;}',
       '.pos-setup-name{font-size:0.92rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
@@ -1472,5 +1523,11 @@ window.PropertyOS = (function () {
     linkRecord: linkRecord, unlinkRecord: unlinkRecord, openLinkPicker: openLinkPicker,
     invoices: invoices, setInvoiceRelation: setInvoiceRelation,
     init: init, renderPropertyPage: renderPropertyPage,
+    // V2 shared renderers — see the note above recordCardHtml.
+    recordCardHtml: recordCardHtml, invoiceRowHtml: invoiceRowHtml,
+    systemsGridHtml: systemsGridHtml, systemStoryHtml: systemStoryHtml,
+    financialsHtml: financialsHtml, infoHtml: infoHtml,
+    documentsHtml: documentsHtml, sampleDocumentsHtml: sampleDocumentsHtml,
+    addRecordButtonHtml: addRecordButtonHtml, docIcon: docIcon,
   };
 })();
