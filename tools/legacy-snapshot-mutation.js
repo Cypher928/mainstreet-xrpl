@@ -51,8 +51,7 @@ const EXPORT_G   = `  if (_resultsStale) {
     showToast('⚠️ Results may be stale — lease or invoice data changed since last run. Re-run reconciliation before exporting.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
     return;
   }`;
-const STMT_G     = `  if (_resultsStale) {
-    showToast('⚠️ Results may be stale — lease or invoice data changed since the last run. Re-run the reconciliation before generating a tenant statement.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+const STMT_G     = `    showToast('⚠️ Results may be stale — ' + _staleResultsReason() + '. Re-run the reconciliation before generating a tenant statement; billing readiness is checked on the run.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
     return;
   }`;
 const DEMO_STAMP = `    inputsFingerprint: (() => {

@@ -5850,6 +5850,15 @@ function camSnapshotInputsFingerprint(rec) {
 // actions; they are not the same sentence to put in front of a manager.
 let _resultsUnverified = false;
 
+// The one sentence for WHY the results are not current, for the refusals a
+// manager reaches from a button. Same distinction the banner below draws
+// (_resultsUnverified), so the two cannot disagree about which reason applies.
+function _staleResultsReason() {
+  return _resultsUnverified
+    ? 'this saved reconciliation cannot be checked against the current lease and invoice data, so it is not treated as current'
+    : 'lease or invoice data changed since the last run';
+}
+
 function _updateStaleResultsBanner() {
   const el = document.getElementById('staleResultsBanner');
   if (!el) return;
@@ -20566,8 +20575,18 @@ function generateTenantStatement(tenantName, opts = {}) {
     showToast(`⚠️ Results are from ${lastResultsYear} — re-run the reconciliation for ${getCamYear()} before generating a tenant statement.`, { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
     return;
   }
+  // ONE FLAG, TWO REASONS — SAY WHICH. _resultsStale is set when the inputs
+  // changed after the run AND when a saved reconciliation carries nothing it
+  // can be checked against (_resultsUnverified). This toast said "lease or
+  // invoice data changed since the last run" for both, which on the second is
+  // a claim about an edit that never happened. The banner already tells the
+  // two apart; the refusal a manager reaches from "Why it can't bill" now
+  // says the same thing the banner says. The guard itself is unchanged: a
+  // statement is not produced from results that are not current, whichever
+  // reason applies. Once the run is current, this path is not taken and the
+  // billing gate below answers the question with the actual blocker.
   if (_resultsStale) {
-    showToast('⚠️ Results may be stale — lease or invoice data changed since the last run. Re-run the reconciliation before generating a tenant statement.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    showToast('⚠️ Results may be stale — ' + _staleResultsReason() + '. Re-run the reconciliation before generating a tenant statement; billing readiness is checked on the run.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
     return;
   }
 

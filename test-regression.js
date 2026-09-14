@@ -205,6 +205,15 @@ const SUITES = [
   // the header image a labelled illustration, the reference samples still
   // samples. Also proves a keyDate survives the writer → save → reload path.
   { label: 'Demo showroom — populated cabinet (e2e)', cmd: 'node test-e2e-demo-showroom.js' },
+  // "WHY IT CAN'T BILL" TELLS THE TRUTH IN BOTH STATES: a current, blocked
+  // tenant gets the billing gate's own blocker; stale results are refused with
+  // the reason that applies — inputs changed, or a saved run that cannot be
+  // checked — never the other one. The stale guard itself is unchanged.
+  { label: 'Billing refusal tells the truth (e2e)',   cmd: 'node test-e2e-billing-refusal-truth.js' },
+  // THE PRODUCT IS PROPERTY INTELLIGENCE. The tab title, share cards,
+  // structured data and login tagline carry the positioning; CAM copy stays
+  // where CAM is the workflow.
+  { label: 'Product identity (e2e)',                  cmd: 'node test-e2e-product-identity.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally
