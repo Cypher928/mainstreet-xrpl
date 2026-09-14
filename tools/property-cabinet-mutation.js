@@ -29,6 +29,8 @@
  *   P17  parseAddress loses the year
  *   P18  a manual record is read from its type, not its category
  *   P19  the merge discards a local-only info when the server has none
+ *   P20–P28  the invoice filing system: folder order, scope, year, month order,
+ *            chronology, totals, addressing, Undated placement, vendor casing
  *
  * A FAILING BASELINE IS NOT A PASS. The unmutated copy is asserted before any
  * mutant runs and the harness exits non-zero if it fails.
@@ -97,6 +99,28 @@ const MUTANTS = [
     from: PARSE_YEAR, to: '      if (false) out.year = parts[2];' },
   { id: 'P18', file: 'property-cabinet.js', why: 'a manual record is read from its type, not its category — the cabinet and the timeline disagree',
     from: MANUAL_KEY, to: '    if (ev.manual) return stripped;' },
+  // Invoices as a filing system.
+  { id: 'P20', file: 'property-cabinet.js', why: 'vendor folders are not alphabetical',
+    from: "      .sort(function (a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); })\n      .map(function (k) {",
+    to:   "      .sort(function () { return 0; })\n      .map(function (k) {" },
+  { id: 'P21', file: 'property-cabinet.js', why: 'a Space’s invoice is filed in the property’s folders',
+    from: "    if (spaceId) return String(i.spaceId || '') === String(spaceId);\n    return !i.spaceId;",
+    to:   "    if (spaceId) return String(i.spaceId || '') === String(spaceId);\n    return true;" },
+  { id: 'P22', file: 'property-cabinet.js', why: 'opening a year shows every year',
+    from: "      if (y && yk !== y) return;", to: "      if (false) return;" },
+  { id: 'P23', file: 'property-cabinet.js', why: 'months are not in calendar order',
+    from: "        return a < b ? -1 : a > b ? 1 : 0;", to: "        return a < b ? 1 : a > b ? -1 : 0;" },
+  { id: 'P24', file: 'property-cabinet.js', why: 'bills within a month are not chronological',
+    from: "        m.items.sort(function (a, b) { return _invTime(a) - _invTime(b); });   // chronological",
+    to:   "        m.items.sort(function (a, b) { return _invTime(b) - _invTime(a); });" },
+  { id: 'P25', file: 'property-cabinet.js', why: 'a folder total ignores the amounts',
+    from: "      f.count++; f.total += amt;", to: "      f.count++; f.total += 0;" },
+  { id: 'P26', file: 'property-cabinet.js', why: 'an invoice address loses its vendor',
+    from: "        if (parts[2] && parts[2] !== '-') out.vendor = parts[2];", to: "        if (false) out.vendor = parts[2];" },
+  { id: 'P27', file: 'property-cabinet.js', why: 'Undated sorts first among the years',
+    from: "        if (f.years.undated) years.push(f.years.undated);", to: "        if (f.years.undated) years.unshift(f.years.undated);" },
+  { id: 'P28', file: 'property-cabinet.js', why: 'a vendor’s casing splits it into two folders',
+    from: "      var v = _invVendor(i), k = v.toLowerCase();", to: "      var v = _invVendor(i), k = v;" },
   { id: 'P19', file: 'script.js', why: 'the merge discards a local-only info when the server has none',
     from: MERGE_INFO, to: "    info:              (dbData.info && typeof dbData.info === 'object') ? dbData.info : null," },
 ];

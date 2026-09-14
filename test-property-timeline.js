@@ -544,7 +544,8 @@ srv.listen(PORT, '127.0.0.1', async () => {
         count: before,
         sys: after[0].system, cam: after[0].camEligible, space: after[1].spaceId, tId: t.id,
         // V2: the register is the Invoices drawer; the systems grid is Building & Systems.
-        register: (function () { PropertyCabinetView.openDrawer('invoices'); return !!document.querySelector('#wsPane-property .pos-reg'); })(),
+        // The drawer opens on vendor folders (the filing system); the flat register is behind Search & filter.
+        register: (function () { PropertyCabinetView.openDrawer('invoices'); return !!document.querySelector('#wsPane-property .pcv-folder[data-vendor], #wsPane-property .pos-reg'); })(),
         systems: (function () { PropertyCabinetView.openDrawer('building'); var n = document.querySelectorAll('#wsPane-property .pos-sys-cell').length; PropertyCabinetView.closeDrawer(); return n; })(),
       };
     });

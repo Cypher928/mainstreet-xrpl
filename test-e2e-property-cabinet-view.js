@@ -343,9 +343,10 @@ function buildProperty() {
   is(Dfilt.cleared === 4 && Dfilt.drawer === 'building', true, 'Clear keeps the drawer open and shows all four building records');
 
   // ══ E · Invoices: paged and filtered, never dumped ═════════════════════════
-  sec('E · Invoices — a page at a time');
+  sec('E · Invoices — Search & filter is still a page at a time');
   const E = await page.evaluate(() => {
     PropertyCabinetView.openDrawer('invoices');
+    PropertyCabinetView.setInvoiceMode('search');   // the flat list lives behind Search & filter now
     const read = () => ({
       rows: document.querySelectorAll('#propertyOsBody .pos-inv').length,
       ids: Array.from(document.querySelectorAll('#propertyOsBody .pos-inv')).map(r => r.dataset.invId),

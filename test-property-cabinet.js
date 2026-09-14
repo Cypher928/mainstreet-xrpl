@@ -306,5 +306,51 @@ is(TN.normalizeTenant({ tenant_name: 'X', suite: '110', vacant: true }).suite, '
 const twice = TN.normalizeTenant(TN.normalizeTenant({ tenant_name: 'V', vacant: true }));
 is(twice.vacant, true, 'a second pass (every load re-normalises) keeps it');
 
+
+// ═══ K · Invoices as a filing system ══════════════════════════════════════
+sec('K · Invoices — Vendor → Year → Month → Invoice, as views over the register');
+const KP = { invoices: [
+  inv({ id: 'k1', vendorName: 'Green Valley Landscape', category: 'landscaping', amount: 1000, invoiceDate: '2025-03-15' }),
+  inv({ id: 'k2', vendorName: 'Green Valley Landscape', category: 'landscaping', amount: 1200, invoiceDate: '2025-03-01' }),
+  inv({ id: 'k3', vendorName: 'Green Valley Landscape', category: 'landscaping', amount: 1500, invoiceDate: '2025-12-20' }),
+  inv({ id: 'k4', vendorName: 'Green Valley Landscape', category: 'repairs',     amount: 700,  invoiceDate: '2024-06-10' }),
+  inv({ id: 'k5', vendorName: 'green valley landscape', category: 'landscaping', amount: 50,   invoiceDate: null }),
+  inv({ id: 'k6', vendorName: 'Austin Energy', category: 'utilities', amount: 300, invoiceDate: '2025-01-31' }),
+  inv({ id: 'k7', vendorName: 'Austin Energy', category: 'utilities', amount: 310, invoiceDate: '2025-01-05' }),
+  inv({ id: 'k8', vendorName: 'Tenant Direct Co', category: 'repairs', amount: 900, invoiceDate: '2025-02-02', spaceId: 't1' }),
+  inv({ id: 'k9', vendorName: '', category: 'other', amount: 10, invoiceDate: '2025-05-05' }),
+] };
+const KF = PC.invoiceFolders(KP);
+is(KF.map(f => f.vendor), ['Austin Energy', 'Green Valley Landscape', 'Unknown vendor'], 'one folder per vendor, alphabetical; a tenant-direct invoice is its Space’s');
+const gv = KF[1];
+is([gv.count, gv.total, gv.category, gv.categories, gv.undated], [5, 4450, 'landscaping', ['landscaping', 'repairs'], 1],
+   'a vendor folder counts, totals, names its dominant category, and counts its undated');
+is(gv.years, [{ year: '2025', count: 3, total: 3700 }, { year: '2024', count: 1, total: 700 }, { year: 'undated', count: 1, total: 50 }],
+   'years newest first, Undated last, each with its own count and total');
+is(KF[0].years, [{ year: '2025', count: 2, total: 610 }], 'Austin Energy: one year, two bills');
+is(KF.reduce((s, f) => s + f.count, 0), 8, 'the folder counts sum to the property register (8 of 9 — one is a Space’s)');
+is(PC.invoiceFolders(KP, { spaceId: 't1' }).map(f => f.vendor + ':' + f.count), ['Tenant Direct Co:1'], 'a Space’s folders are its tenant-direct invoices only');
+is(PC.invoiceFolders({ invoices: [] }), [], 'no invoices, no folders');
+const gv25 = PC.invoiceFolder(KP, 'Green Valley Landscape', '2025');
+is([gv25.count, gv25.total], [3, 3700], 'opening 2025 finds its three bills');
+is(gv25.months.map(m => [m.key, m.label, m.count, m.total]), [['2025-03', 'March', 2, 2200], ['2025-12', 'December', 1, 1500]], 'grouped by month, in calendar order');
+is(gv25.months[0].items.map(i => i.id), ['k2', 'k1'], 'and chronological within the month (the 1st before the 15th)');
+is(gv25.months[0].items[0], KP.invoices[1], 'an item IS the register’s own row, not a copy');
+is(PC.invoiceFolder(KP, 'GREEN VALLEY LANDSCAPE', '2025').count, 3, 'the vendor is matched case-insensitively');
+is(PC.invoiceFolder(KP, 'Green Valley Landscape', null).months.map(m => m.label), ['June 2024', 'March 2025', 'December 2025', 'Undated'],
+   'all years: months carry their year, in calendar order, Undated last');
+is(PC.invoiceFolder(KP, 'Green Valley Landscape', 'undated').months.map(m => [m.key, m.items.map(i => i.id)]), [['undated', ['k5']]], 'the Undated folder holds the undated bill');
+is(PC.invoiceFolder(KP, 'Nobody', '2025'), { vendor: 'Nobody', year: '2025', count: 0, total: 0, months: [] }, 'an unknown vendor is an empty folder, not an error');
+is(PC.invoiceFolder(KP, 'Tenant Direct Co', '2025').count, 0, 'a Space’s invoice is not in the property’s folders');
+is(PC.invoiceFolder(KP, 'Tenant Direct Co', '2025', { spaceId: 't1' }).count, 1, '…unless the Space is asked for');
+const KA = { tab: 'property', drawer: 'invoices', vendor: 'Green Valley Landscape', year: '2025', recordId: 'k1' };
+is(PC.address(KA), '#property/invoices/Green%20Valley%20Landscape/2025/k1', 'an invoice address carries vendor, year and id');
+is(PC.parseAddress(PC.address(KA)), KA, 'and round-trips');
+is(PC.address({ tab: 'property', drawer: 'invoices', vendor: 'Austin Energy' }), '#property/invoices/Austin%20Energy', 'a vendor folder address');
+is(PC.parseAddress('#property/invoices/-/2025'), { tab: 'property', drawer: 'invoices', year: '2025' }, 'a year with no vendor');
+is(PC.parseAddress('#property/invoices/-/-/k1'), { tab: 'property', drawer: 'invoices', recordId: 'k1' }, 'an invoice with neither');
+is(PC.parseAddress('#property/invoices'), { tab: 'property', drawer: 'invoices' }, 'the drawer alone');
+is(PC.address({ tab: 'property', drawer: 'taxes', year: '2025', recordId: 'tl-abc' }), '#property/taxes/2025/tl-abc', 'other drawers keep their two-level address');
+
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

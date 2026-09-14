@@ -90,7 +90,10 @@ window.PropertyCabinetView = (function () {
   function _fresh(propId) {
     return { propId: propId, applied: false, drawer: null,
              year: null, cat: 'all', system: null, recordId: null, show: PAGE_RECORDS,
-             q: '', vendor: '', category: '', spaceId: '', page: 1, hshow: PAGE_HISTORY };
+             q: '', vendor: '', category: '', spaceId: '', page: 1, hshow: PAGE_HISTORY,
+             // Invoices as a filing system: 'folders' (Vendor → Year → Month) is the
+             // default; 'search' is the flat, filtered, paged list.
+             mode: 'folders', fVendor: null, fYear: null };
   }
   var _state = _fresh(null);
   function state() { return JSON.parse(JSON.stringify(_state)); }
@@ -102,6 +105,7 @@ window.PropertyCabinetView = (function () {
     _state.year = null; _state.cat = 'all'; _state.system = null; _state.recordId = null;
     _state.show = PAGE_RECORDS; _state.q = ''; _state.vendor = ''; _state.category = '';
     _state.spaceId = ''; _state.page = 1; _state.hshow = PAGE_HISTORY;
+    _state.mode = 'folders'; _state.fVendor = null; _state.fYear = null;
   }
 
   // ── Derived data the tiles and drawers read ────────────────────────────────
@@ -352,10 +356,19 @@ window.PropertyCabinetView = (function () {
   }
 
   // ── Drawers ────────────────────────────────────────────────────────────────
-  function _crumb(label) {
+  // The trail: Property, then each filing level, the current one last. A
+  // segment with an onclick is a step back up; the last is where you are.
+  function _crumb(label, segments) {
+    var segs = Array.isArray(segments) ? segments : [{ label: label }];
     return '<nav class="pcv-crumb" aria-label="Breadcrumb">' +
       '<button type="button" class="pcv-back" onclick="PropertyCabinetView.closeDrawer()">' + _icon('back') + 'Property</button>' +
-      '<span class="pcv-crumb-sep">/</span><span class="pcv-crumb-cur">' + _esc(label) + '</span></nav>';
+      segs.map(function (sg, i) {
+        var last = i === segs.length - 1;
+        return '<span class="pcv-crumb-sep">/</span>' +
+          (last || !sg.onclick
+            ? '<span class="pcv-crumb-cur">' + _esc(sg.label) + '</span>'
+            : '<button type="button" class="pcv-crumb-up" onclick="' + sg.onclick + '">' + _esc(sg.label) + '</button>');
+      }).join('') + '</nav>';
   }
   function _drawerHead(d, sub, actions) {
     return '<header class="pcv-dhead">' + _icon(d.key) +
@@ -513,8 +526,20 @@ window.PropertyCabinetView = (function () {
         (key === 'history' ? _historyListHtml(property, idx) : '') +
         // Reference samples exist only on the seeded demo property, and only
         // here: the building's own document set, visibly apart from records.
-        (key === 'building' && POS() && POS().sampleDocumentsHtml ? POS().sampleDocumentsHtml(property) : '') +
+        (key === 'building' && POS() && POS().sampleDocumentsHtml ? _samplesBox(POS().sampleDocumentsHtml(property)) : '') +
       '</div></div>';
+  }
+
+  // The seeded demo's reference samples. They are NOT records on this property
+  // and must never read as if they were: they sit in their own closed box,
+  // under a heading that says so, after the records — and the Records count
+  // above never includes them.
+  function _samplesBox(html) {
+    if (!html) return '';
+    return '<details class="pcv-samples">' +
+      '<summary><span class="pcv-samples-tag">Reference samples</span> Examples of what a building keeps on file — ' +
+        '<b>not records on this property</b> (demo only)</summary>' +
+      '<div class="pcv-samples-body">' + html + '</div></details>';
   }
 
   // History: every property record, as rows pointing back to their home drawer.
@@ -530,6 +555,108 @@ window.PropertyCabinetView = (function () {
 
   function _invoicesDrawerHtml(property, idx) {
     var d = PC().drawer('invoices');
+    var inv = idx.invoices;
+    var years = _years(inv.byYear);
+    var sub = inv.total ? _plural(inv.total, 'property invoice') + (years.length ? ' · ' + years[years.length - 1] + '–' + years[0] : '') : 'Nothing filed yet';
+    var body = _state.mode === 'search' ? _invoiceSearchHtml(property, idx) : _invoiceFoldersHtml(property, idx);
+    var crumb = [{ label: d.label, onclick: (_state.fVendor || _state.mode === 'search') ? "PropertyCabinetView.openInvoiceFolder(null, null)" : null }];
+    if (_state.mode === 'search') crumb.push({ label: 'Search & filter' });
+    if (_state.fVendor) crumb.push({ label: _state.fVendor, onclick: _state.fYear ? "PropertyCabinetView.openInvoiceFolder(this.dataset.vendor, null)" : null });
+    if (_state.fYear) crumb.push({ label: _state.fYear === 'undated' ? 'Undated' : _state.fYear });
+    var crumbHtml = _crumb(d.label, crumb).replace('onclick="PropertyCabinetView.openInvoiceFolder(this.dataset.vendor, null)"',
+      'data-vendor="' + _esc(_state.fVendor || '') + '" onclick="PropertyCabinetView.openInvoiceFolder(this.dataset.vendor, null)"');
+    return '<div class="pcv pcv--drawer" data-drawer="invoices" data-mode="' + _state.mode + '">' + crumbHtml +
+      _drawerHead(d, _esc(sub), '') +
+      '<div class="pcv-dbody">' + body +
+        '<div class="pos-note">Uploaded once to the property. CAM references these — it doesn’t own them.</div>' +
+      '</div></div>';
+  }
+
+  // ── Invoices: the filing cabinet ──────────────────────────────────────────
+  //
+  //   Invoices → Vendor → Year → Month → Invoice
+  //
+  // Each level is PropertyCabinet.invoiceFolders / invoiceFolder over the
+  // register; the leaf renders the register's own row (PropertyOS.invoiceRowHtml)
+  // so the file chip, the relations and the identity are the ones the rest of
+  // the product uses. Search & filter (the flat, paged list) is one click away.
+  function _folderRow(attrs, icon, title, meta, count) {
+    return '<button type="button" class="pcv-folder"' + attrs + '>' +
+      _icon(icon) +
+      '<span class="pcv-folder-body"><span class="pcv-folder-t">' + _esc(title) + '</span>' +
+        '<span class="pcv-folder-m">' + _esc(meta) + '</span></span>' +
+      (count != null ? '<span class="pcv-count">' + count + '</span>' : '') +
+      '<span class="pcv-tile-go">' + _icon('go') + '</span></button>';
+  }
+  function _modeLink() {
+    return _state.mode === 'search'
+      ? '<button type="button" class="pcv-link" onclick="PropertyCabinetView.setInvoiceMode(\'folders\')">Browse by vendor ' + _icon('go') + '</button>'
+      : '<button type="button" class="pcv-link" onclick="PropertyCabinetView.setInvoiceMode(\'search\')">Search &amp; filter ' + _icon('go') + '</button>';
+  }
+
+  function _invoiceFoldersHtml(property, idx) {
+    var inv = idx.invoices;
+    var bySpace = Object.keys(inv.bySpace).reduce(function (s, k) { return s + inv.bySpace[k]; }, 0);
+    // Level 2 — a vendor's year: months, each month its bills, chronological.
+    if (_state.fVendor && _state.fYear) {
+      var f = PC().invoiceFolder(property, _state.fVendor, _state.fYear);
+      var norm = {};
+      (POS() && POS().invoices ? POS().invoices(property) : []).forEach(function (i) { if (i.id != null) norm[String(i.id)] = i; });
+      var months = f.months.map(function (m) {
+        return '<section class="pcv-month" data-month="' + _esc(m.key) + '">' +
+          '<div class="pcv-month-head"><span class="pcv-month-t">' + _esc(m.label) + '</span>' +
+            '<span class="pcv-month-m">' + _plural(m.count, 'invoice') + ' · ' + _esc(_money(m.total)) + '</span></div>' +
+          '<div class="pos-reg">' + m.items.map(function (raw) {
+            var i = raw && raw.id != null ? norm[String(raw.id)] : null;
+            if (!i) return '';
+            var row = POS().invoiceRowHtml(property, i);
+            return _state.recordId && String(i.id) === String(_state.recordId)
+              ? row.replace('class="pos-inv"', 'class="pos-inv pos-inv--focus"') : row;
+          }).join('') + '</div></section>';
+      }).join('');
+      return '<div class="pcv-folder-head"><div><div class="pcv-folder-title">' + _esc(_state.fVendor) + '</div>' +
+          '<div class="pcv-folder-sub">' + _esc(_state.fYear === 'undated' ? 'Undated' : _state.fYear) + ' · ' + _plural(f.count, 'invoice') + ' · ' + _esc(_money(f.total)) + '</div></div>' +
+          _modeLink() + '</div>' +
+        (f.months.length ? '<div class="pcv-months">' + months + '</div>'
+          : '<div class="pcv-empty">No invoices from ' + _esc(_state.fVendor) + ' in ' + _esc(_state.fYear) + '.</div>');
+    }
+    // Level 1 — a vendor: its years.
+    if (_state.fVendor) {
+      var vf = PC().invoiceFolders(property).filter(function (x) { return x.vendor.toLowerCase() === String(_state.fVendor).toLowerCase(); })[0];
+      if (!vf) return '<div class="pcv-empty">No invoices from ' + _esc(_state.fVendor) + ' on this property.</div>';
+      return '<div class="pcv-folder-head"><div><div class="pcv-folder-title">' + _esc(vf.vendor) + '</div>' +
+          '<div class="pcv-folder-sub">' + _esc(vf.categories.join(' · ')) + ' · ' + _plural(vf.count, 'invoice') + ' · ' + _esc(_money(vf.total)) + '</div></div>' +
+          _modeLink() + '</div>' +
+        '<div class="pcv-folders">' + vf.years.map(function (y) {
+          return _folderRow(' data-vendor="' + _esc(vf.vendor) + '" data-year="' + _esc(y.year) + '" onclick="PropertyCabinetView.openInvoiceFolder(this.dataset.vendor, this.dataset.year)"',
+            'dates', y.year === 'undated' ? 'Undated' : y.year, _plural(y.count, 'invoice') + ' · ' + _money(y.total), y.count);
+        }).join('') + '</div>';
+    }
+    // Level 0 — the cabinet: one folder per vendor.
+    var folders = PC().invoiceFolders(property);
+    var head = '<div class="pcv-folder-head">' +
+      '<input type="search" class="pcv-search" id="pcvInvSearch" placeholder="Search all invoices — vendor, category or file" value=""' +
+        ' oninput="PropertyCabinetView.setQuery(this.value)" aria-label="Search invoices">' +
+      _modeLink() + '</div>';
+    if (!folders.length) {
+      return head + '<div class="pcv-empty">' + (bySpace
+        ? 'No property invoices yet. ' + _plural(bySpace, 'tenant-direct invoice') + ' are filed under their Space — Search & filter can show them.'
+        : 'No invoices on this property yet. Invoices are uploaded once to the property (CAM references them); each vendor becomes a folder here, with a folder for every year.') + '</div>';
+    }
+    return head +
+      '<div class="pcv-summary">' + _plural(folders.length, 'vendor') + ' · ' + _plural(inv.total, 'invoice') +
+        (bySpace ? ' · ' + _plural(bySpace, 'tenant-direct invoice') + ' filed under Spaces' : '') + '</div>' +
+      '<div class="pcv-folders">' + folders.map(function (f) {
+        var yrs = f.years.map(function (y) { return y.year === 'undated' ? 'undated' : y.year; });
+        return _folderRow(' data-vendor="' + _esc(f.vendor) + '" onclick="PropertyCabinetView.openInvoiceFolder(this.dataset.vendor, null)"',
+          'invoices', f.vendor,
+          [f.category, _plural(f.count, 'invoice'), yrs.slice(0, 4).join(' · ') + (yrs.length > 4 ? ' · +' + (yrs.length - 4) : ''), _money(f.total)].filter(Boolean).join(' · '),
+          f.count);
+      }).join('') + '</div>';
+  }
+
+  // Search & filter — the flat list, a page at a time, with its filters.
+  function _invoiceSearchHtml(property, idx) {
     var inv = idx.invoices;
     var q = PC().invoiceQuery(property, { q: _state.q, year: _state.year, vendor: _state.vendor,
       category: _state.category, spaceId: _state.spaceId || null, page: _state.page, pageSize: PAGE_INVOICES });
@@ -557,6 +684,7 @@ window.PropertyCabinetView = (function () {
             spaces.map(function (s) { return opt(s.id, 'Tenant-direct — ' + (s.tenant || ('Vacant' + (s.suite ? ' ' + s.suite : ''))) + ' (' + inv.bySpace[String(s.id)] + ')', _state.spaceId === String(s.id)); }).join('') +
           '</select>'
         : '') +
+      _modeLink() +
     '</div>';
 
     var from = q.total ? (q.page - 1) * q.pageSize + 1 : 0;
@@ -582,12 +710,7 @@ window.PropertyCabinetView = (function () {
           '<button type="button" class="pcv-btn pcv-btn--quiet" ' + (q.page >= q.pages ? 'disabled' : '') + ' onclick="PropertyCabinetView.setPage(' + (q.page + 1) + ')">Next' + _icon('go') + '</button>' +
         '</div>'
       : '';
-    var sub = inv.total ? _plural(inv.total, 'property invoice') + (years.length ? ' · ' + years[years.length - 1] + '–' + years[0] : '') : 'Nothing filed yet';
-    return '<div class="pcv pcv--drawer" data-drawer="invoices">' + _crumb(d.label) +
-      _drawerHead(d, _esc(sub), '') +
-      '<div class="pcv-dbody">' + toolbar + summary + list + pager +
-        '<div class="pos-note">Uploaded once to the property. CAM references these — it doesn’t own them.</div>' +
-      '</div></div>';
+    return toolbar + summary + list + pager;
   }
 
   function _datesDrawerHtml(property, idx) {
@@ -642,7 +765,9 @@ window.PropertyCabinetView = (function () {
       _state.applied = true;
       var a = PC().parseAddress(location.hash);
       if (a && a.tab === 'property' && a.drawer) {
-        _state.drawer = a.drawer; _state.year = a.year || null; _state.recordId = a.recordId || null;
+        _state.drawer = a.drawer; _state.recordId = a.recordId || null;
+        if (a.drawer === 'invoices') { _state.fVendor = a.vendor || null; _state.fYear = a.year || null; }
+        else _state.year = a.year || null;
       }
     }
     // The setup card is a live form with listeners: park it outside the body
@@ -669,7 +794,7 @@ window.PropertyCabinetView = (function () {
     // The attention items, from the one authority that ranks them.
     try { if (window.PropertyWorkspace && window.PropertyWorkspace.renderAttention && _d('pcvAttention')) window.PropertyWorkspace.renderAttention(property); } catch (_e) {}
     if (_state.recordId) {
-      var el = document.querySelector('#propertyOsBody .pos-rec--focus');
+      var el = document.querySelector('#propertyOsBody .pos-rec--focus, #propertyOsBody .pos-inv--focus');
       if (el && el.scrollIntoView) setTimeout(function () { try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_e) {} }, 40);
     }
   }
@@ -677,8 +802,11 @@ window.PropertyCabinetView = (function () {
   function _rerender() { var p = _prop(); if (p) render(p, { allowCollapse: false }); }
 
   function _writeHash() {
+    var isInv = _state.drawer === 'invoices';
     var addr = PC().address({ tab: 'property', drawer: _state.drawer || null,
-      year: _state.drawer ? _state.year : null, recordId: _state.drawer ? _state.recordId : null });
+      vendor: isInv ? _state.fVendor : null,
+      year: !_state.drawer ? null : (isInv ? _state.fYear : _state.year),
+      recordId: _state.drawer ? _state.recordId : null });
     try { history.replaceState(null, '', location.pathname + location.search + (addr || '#property')); } catch (_e) {}
   }
 
@@ -694,6 +822,13 @@ window.PropertyCabinetView = (function () {
       if (opts.recordId !== undefined) _state.recordId = opts.recordId;
       if (opts.system !== undefined) _state.system = opts.system;
       if (opts.cat !== undefined) _state.cat = opts.cat || 'all';
+      if (key === 'invoices') {
+        // A folder address (vendor / year) opens the filing view at that level;
+        // the flat filter's year is not the folder year.
+        if (opts.vendor !== undefined) _state.fVendor = opts.vendor || null;
+        if (opts.year !== undefined) { _state.fYear = opts.year || null; _state.year = null; }
+        _state.mode = 'folders';
+      }
     }
     try { if (window.switchWorkspaceTab) window.switchWorkspaceTab('property'); } catch (_e) {}
     _writeHash();
@@ -743,6 +878,37 @@ window.PropertyCabinetView = (function () {
     openDrawer('history');
   }
 
+  /** Open a folder of the invoice cabinet: a vendor, or a vendor's year. Nulls walk back up. */
+  function openInvoiceFolder(vendor, year) {
+    var p = _prop(); if (!p) return;
+    _resetFor(p);
+    if (_state.drawer !== 'invoices') { openDrawer('invoices', { vendor: vendor || null, year: year || null, recordId: null }); return; }
+    _state.mode = 'folders'; _state.fVendor = vendor || null; _state.fYear = vendor ? (year || null) : null;
+    _state.recordId = null; _state.q = ''; _state.page = 1;
+    _writeHash(); _rerender();
+    var pane = _d('wsPane-property');
+    if (pane) { try { window.scrollTo({ top: Math.max(0, window.pageYOffset + pane.getBoundingClientRect().top - 12), behavior: 'smooth' }); } catch (_e) {} }
+  }
+  function setInvoiceMode(mode) {
+    _state.mode = mode === 'search' ? 'search' : 'folders';
+    if (_state.mode === 'folders') { _state.q = ''; _state.year = null; _state.vendor = ''; _state.category = ''; _state.spaceId = ''; _state.page = 1; }
+    _state.recordId = null; _writeHash(); _rerender();
+  }
+  /** Open one invoice where it is filed: its vendor's folder, its year, highlighted. */
+  function openInvoice(invoiceId) {
+    var p = _prop(); if (!p || invoiceId == null) return false;
+    var raw = (p.invoices || []).find(function (x) { return x && String(x.id) === String(invoiceId); });
+    if (!raw) return false;
+    if (raw.spaceId) return false;                      // filed under its Space
+    // The folder is named by the register's first spelling of the vendor; a
+    // bill whose row spells it differently still files under that folder.
+    var raw_v = String(raw.vendorName || raw.vendor || '').trim() || PC().UNKNOWN_VENDOR;
+    var folder = PC().invoiceFolders(p).filter(function (f) { return f.vendor.toLowerCase() === raw_v.toLowerCase(); })[0];
+    var vendor = folder ? folder.vendor : raw_v;
+    var y = PC().invoiceYear(raw);
+    return openDrawer('invoices', { vendor: vendor, year: y == null ? 'undated' : String(y), recordId: String(raw.id) });
+  }
+
   function setYear(y) { _state.year = y || null; _state.show = PAGE_RECORDS; _state.page = 1; _state.recordId = null; _writeHash(); _rerender(); }
   function setCategory(c) { _state.cat = c || 'all'; _state.show = PAGE_RECORDS; _state.recordId = null; _rerender(); }
   function showMore() { _state.show += PAGE_RECORDS; _rerender(); }
@@ -758,6 +924,8 @@ window.PropertyCabinetView = (function () {
   var _qTimer = null;
   function setQuery(v) {
     _state.q = v || ''; _state.page = 1;
+    // Typing at the top of the cabinet IS searching: the flat list takes over.
+    if (_state.drawer === 'invoices' && _state.mode !== 'search' && _state.q) { _state.mode = 'search'; _state.fVendor = null; _state.fYear = null; }
     // Debounced so typing does not re-render every keystroke; the input keeps
     // its own value across the re-render because the markup echoes _state.q.
     clearTimeout(_qTimer);
@@ -790,7 +958,7 @@ window.PropertyCabinetView = (function () {
     if (a.tab === 'property') {
       if (!p) return a;
       _resetFor(p); _state.applied = true;
-      if (a.drawer) openDrawer(a.drawer, { year: a.year || null, recordId: a.recordId || null });
+      if (a.drawer) openDrawer(a.drawer, { year: a.year || null, recordId: a.recordId || null, vendor: a.vendor || null });
       else { goTab('property'); if (_state.drawer) closeDrawer(); }
       return a;
     }
@@ -910,6 +1078,31 @@ window.PropertyCabinetView = (function () {
       '.pcv-summary{font-size:0.76rem;color:var(--text-4,#64748B);}',
       '.pcv-pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:4px;}',
       '.pcv-pager-at{font-size:0.76rem;color:var(--text-3,#94A3B8);}',
+      // invoice cabinet
+      '.pcv-folder-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
+      '.pcv-folder-head .pcv-search{flex:1 1 240px;}',
+      '.pcv-folder-title{font-family:"Cormorant Garamond",Georgia,serif;font-size:1.35rem;font-weight:700;color:var(--text-1,#E2E8F0);line-height:1.1;}',
+      '.pcv-folder-sub{font-size:0.78rem;color:var(--text-3,#94A3B8);margin-top:2px;}',
+      '.pcv-folders{display:flex;flex-direction:column;gap:6px;}',
+      '.pcv-folder{display:flex;align-items:center;gap:11px;text-align:left;width:100%;background:var(--theme-panel,#0A0D12);border:1px solid ' + line + '0.08);border-radius:11px;padding:11px 12px;cursor:pointer;color:inherit;font:inherit;min-width:0;}',
+      '.pcv-folder:hover{border-color:rgba(201,151,58,0.45);}',
+      '.pcv-folder .pcv-ic{width:20px;height:20px;}',
+      '.pcv-folder-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
+      '.pcv-folder-t{font-size:0.88rem;font-weight:700;color:var(--text-1,#E2E8F0);overflow-wrap:anywhere;}',
+      '.pcv-folder-m{font-size:0.74rem;color:var(--text-3,#94A3B8);}',
+      '.pcv-months{display:flex;flex-direction:column;gap:14px;}',
+      '.pcv-month-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;border-bottom:1px solid ' + line + '0.08);padding-bottom:5px;}',
+      '.pcv-month-t{font-family:"Cormorant Garamond",Georgia,serif;font-size:1.15rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
+      '.pcv-month-m{font-size:0.74rem;color:var(--text-4,#64748B);margin-left:auto;}',
+      '.pos-inv--focus{border-color:rgba(201,151,58,0.55)!important;box-shadow:0 0 0 2px rgba(201,151,58,0.14);}',
+      '.pcv-crumb-up{background:none;border:none;padding:0;font:600 0.78rem/1 inherit;color:' + gold + ';cursor:pointer;}',
+      '.pcv-crumb-up:hover{text-decoration:underline;}',
+      // reference samples: a closed box that says what it is
+      '.pcv-samples{margin-top:10px;border:1px dashed ' + line + '0.22);border-radius:10px;padding:8px 12px;}',
+      '.pcv-samples>summary{cursor:pointer;font-size:0.76rem;color:var(--text-3,#94A3B8);list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+      '.pcv-samples>summary::-webkit-details-marker{display:none;}',
+      '.pcv-samples-tag{font-size:0.62rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-4,#64748B);border:1px solid ' + line + '0.2);border-radius:5px;padding:2px 6px;}',
+      '.pcv-samples-body{margin-top:8px;}',
       // dates
       '.pcv-dates{display:flex;flex-direction:column;}',
       '.pcv-date{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid ' + line + '0.06);padding:8px 2px;font-size:0.82rem;min-width:0;}',
@@ -942,6 +1135,7 @@ window.PropertyCabinetView = (function () {
     openDrawer: openDrawer, closeDrawer: closeDrawer, openRecord: openRecord, openSpace: openSpace, goTab: goTab,
     filter: filter, setYear: setYear, setCategory: setCategory, showMore: showMore, showMoreHistory: showMoreHistory,
     setPage: setPage, setInvoiceFilter: setInvoiceFilter, setQuery: setQuery,
+    openInvoiceFolder: openInvoiceFolder, setInvoiceMode: setInvoiceMode, openInvoice: openInvoice,
     toggleSetup: toggleSetup, applyAddress: applyAddress,
     PAGE_RECORDS: PAGE_RECORDS, PAGE_INVOICES: PAGE_INVOICES, PAGE_HISTORY: PAGE_HISTORY, RECENT: RECENT,
   };

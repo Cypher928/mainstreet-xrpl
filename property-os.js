@@ -1220,10 +1220,12 @@ window.PropertyOS = (function () {
     var PR = window.PropertyReference;
     var sampleDocs = PR ? PR.propertyDocumentsFor(property) : [];
     if (!sampleDocs.length) return '';
-    return '<div class="pos-sample-head">Reference samples — examples of what a building keeps on file. Not records on this property.</div>' +
+    return '<div class="pos-sample-head">Reference samples — examples of what a building keeps on file. ' +
+        '<b>Not records on this property</b>; nothing here is filed, counted or stored.</div>' +
       '<div class="pos-docs">' + sampleDocs.slice(0, 20).map(function (a) {
         return '<div class="pos-doc pos-doc--ref">' + docIcon(a.kind) + '&nbsp;<span class="pos-doc-n">' + _esc(a.name) + '</span>' +
-          (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') + '</div>';
+          (a.category ? '<span class="pos-doc-cat">' + _esc(a.category) + '</span>' : '') +
+          '<span class="pos-doc-sample">sample</span></div>';
       }).join('') + '</div>';
   }
 
@@ -1485,7 +1487,8 @@ window.PropertyOS = (function () {
       '.pos-doc:hover{border-color:' + gold + ';}',
       '.pos-doc-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
       '.pos-doc-w{margin-left:auto;font-size:0.7rem;color:var(--text-4,#64748B);flex:none;}',
-      '.pos-doc--ref{cursor:default;}',
+      '.pos-doc--ref{cursor:default;opacity:0.85;}',
+      '.pos-doc-sample{font-size:0.6rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--c-fbbf24,#fbbf24);border:1px dashed rgba(251,191,36,0.5);border-radius:5px;padding:1px 6px;margin-left:8px;flex:none;}',
       '.pos-doc-cat{font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-4,#64748B);background:rgba(var(--line-rgb,255,255,255),0.06);border-radius:5px;padding:1px 6px;margin-left:8px;flex:none;}',
       // Property information — reference facts, calm and scannable
       '.pos-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;}',

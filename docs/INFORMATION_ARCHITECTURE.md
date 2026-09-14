@@ -208,6 +208,21 @@ remains as the fallback when the view module is absent). **Not done in Phase
 1, by decision:** CAM inputs and coverage still read `property.tenants`, not
 `activeTenants()` — a change to what CAM is *handed*, approved separately.
 
+**Phase 1a — Invoices as a filing system (shipped).** The Invoices drawer
+opens on **Vendor → Year → Month → Invoice**: `PropertyCabinet.invoiceFolders`
+(one folder per vendor, alphabetical, case-insensitive, with category, count,
+total and years — newest first, Undated last) and `invoiceFolder` (a vendor's
+year by month, calendar order, chronological within the month). Every level is
+a view over `property.invoices`; the leaf renders `PropertyOS.invoiceRowHtml`,
+so identity, relations and the file chip (through `docLinkHtml`, signed on
+open) are the register's own. `#property/invoices/<vendor>/<year>/<id>` is the
+one drawer address that carries a vendor. Search & filter — the flat, paged
+list — is one click away, and typing at the top of the cabinet is searching.
+The filing principle is applied here only: *if a manager naturally thinks of
+something as a folder, organize it that way.* Taxes → Year, Insurance → Year,
+Agreements → Type/Vendor, Financing → Loan, Building & Systems → System are
+candidates, not approvals.
+
 **Phase 2 — move things to where they belong.** Invoice/GL upload re-parented to
 Property → Invoices (CAM references). Reserve & Loan documents surfaced in
 Financing. Disputes: property roll-up + Space section. Authored `keyDate`.
@@ -240,4 +255,6 @@ its own `info` or an honest empty state.
 - The hidden `Estoppels` pane is dead markup behind a commented-out tab; left
   alone in Phase 1 because it is outside the Property/Spaces surfaces.
 - The seeded demo's **reference samples** (site plan, survey, roof warranty…)
-  surface in Building & Systems only, visibly apart from records.
+  surface in Building & Systems only, in a closed box headed "Reference
+  samples — not records on this property (demo only)", every row tagged
+  *sample*, after the records; the Records count never includes them.

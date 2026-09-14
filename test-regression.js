@@ -194,6 +194,11 @@ const SUITES = [
   // register to a page at a time, and deep links to what they name.
   { label: 'Property cabinet view (V2 Phase 1, e2e)', cmd: 'node test-e2e-property-cabinet-view.js' },
   { label: 'Spaces list & tenant file (V2 Phase 1, e2e)', cmd: 'node test-e2e-spaces-list.js' },
+  // INVOICES AS A FILING SYSTEM. Vendor → Year → Month → Invoice as views over
+  // the one register: folders by default, the flat list behind Search & filter,
+  // the leaf the register's own row. Also pins the Building & Systems reference
+  // samples as unmistakably not records.
+  { label: 'Invoice filing system (e2e)',            cmd: 'node test-e2e-invoice-folders.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

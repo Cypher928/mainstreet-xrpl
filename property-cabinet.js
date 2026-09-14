@@ -357,6 +357,118 @@
     };
   }
 
+  // ── Invoices as a filing system ────────────────────────────────────────────
+  //
+  //   Property → Invoices → Vendor → Year → Month → Invoice
+  //
+  // Every level is a VIEW over property.invoices. A folder is a grouping key
+  // and the invoices that carry it — never a copy, never a second store — and
+  // the register's own `id` is the only identity used. An invoice is in
+  // exactly one vendor folder and, within it, exactly one year (or Undated),
+  // so the folder counts sum to the register. The scope rule is invoiceQuery's:
+  // a space-scoped invoice is its Space's unless `spaceId` asks for it.
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'];
+  var UNKNOWN_VENDOR = 'Unknown vendor';
+
+  function _round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+  function _invAmount(i) { return _num(i && i.amount) || 0; }
+  function _invVendor(i) { return String((i && (i.vendorName || i.vendor)) || '').trim() || UNKNOWN_VENDOR; }
+  function _invInScope(i, spaceId) {
+    if (!i) return false;
+    if (spaceId) return String(i.spaceId || '') === String(spaceId);
+    return !i.spaceId;
+  }
+  function _invYearKey(i) { var y = invoiceYear(i); return y == null ? 'undated' : String(y); }
+  function _invMonthKey(i) {
+    var d = new Date(i.invoiceDate || i.date || '');
+    if (!(i.invoiceDate || i.date) || isNaN(d.getTime())) return 'undated';
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+  function _invTime(i) { var t = new Date(i.invoiceDate || i.date || 0).getTime(); return isNaN(t) ? 0 : t; }
+
+  /**
+   * The top of the cabinet: one folder per vendor, alphabetical, each carrying
+   * its dominant category, its count and total, and its years (newest first,
+   * Undated last). `opts.spaceId` scopes to a Space's tenant-direct invoices.
+   */
+  function invoiceFolders(property, opts) {
+    opts = opts || {};
+    var spaceId = opts.spaceId != null && opts.spaceId !== '' ? String(opts.spaceId) : null;
+    var byVendor = {};
+    ((property && property.invoices) || []).forEach(function (i) {
+      if (!_invInScope(i, spaceId)) return;
+      // One folder per vendor however extraction cased the name — the same
+      // case-insensitive identity invoiceQuery's vendor filter already uses.
+      // The first spelling seen names the folder.
+      var v = _invVendor(i), k = v.toLowerCase();
+      var f = byVendor[k] || (byVendor[k] = { vendor: v, count: 0, total: 0, years: {}, categories: {}, undated: 0 });
+      var amt = _invAmount(i);
+      f.count++; f.total += amt;
+      var y = _invYearKey(i);
+      if (y === 'undated') f.undated++;
+      var yy = f.years[y] || (f.years[y] = { year: y, count: 0, total: 0 });
+      yy.count++; yy.total += amt;
+      var c = String(i.category || 'other').trim().toLowerCase();
+      f.categories[c] = (f.categories[c] || 0) + 1;
+    });
+    return Object.keys(byVendor)
+      .sort(function (a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); })
+      .map(function (k) {
+        var f = byVendor[k];
+        var cats = Object.keys(f.categories).sort(function (a, b) {
+          return (f.categories[b] - f.categories[a]) || a.localeCompare(b);
+        });
+        var years = Object.keys(f.years).filter(function (y) { return y !== 'undated'; })
+          .sort(function (a, b) { return Number(b) - Number(a); })
+          .map(function (y) { return f.years[y]; });
+        if (f.years.undated) years.push(f.years.undated);
+        return {
+          vendor: f.vendor, category: cats[0] || 'other', categories: cats,
+          count: f.count, total: _round2(f.total), undated: f.undated,
+          years: years.map(function (y) { return { year: y.year, count: y.count, total: _round2(y.total) }; }),
+        };
+      });
+  }
+
+  /**
+   * One folder opened: a vendor's invoices for a year (or every year when
+   * `year` is null), grouped by month in calendar order, each month's
+   * invoices chronological. `year === 'undated'` is the vendor's undated
+   * folder. Items are the register's own rows.
+   */
+  function invoiceFolder(property, vendor, year, opts) {
+    opts = opts || {};
+    var spaceId = opts.spaceId != null && opts.spaceId !== '' ? String(opts.spaceId) : null;
+    var v = String(vendor || '').trim().toLowerCase();
+    var y = year != null && year !== '' ? String(year) : null;
+    var byMonth = {};
+    var count = 0, total = 0;
+    ((property && property.invoices) || []).forEach(function (i) {
+      if (!_invInScope(i, spaceId)) return;
+      if (_invVendor(i).toLowerCase() !== v) return;
+      var yk = _invYearKey(i);
+      if (y && yk !== y) return;
+      var mk = _invMonthKey(i);
+      var m = byMonth[mk] || (byMonth[mk] = { key: mk, count: 0, total: 0, items: [] });
+      m.count++; m.total += _invAmount(i); m.items.push(i);
+      count++; total += _invAmount(i);
+    });
+    var months = Object.keys(byMonth)
+      .sort(function (a, b) {                      // calendar order; Undated last
+        if (a === 'undated') return 1;
+        if (b === 'undated') return -1;
+        return a < b ? -1 : a > b ? 1 : 0;
+      })
+      .map(function (k) {
+        var m = byMonth[k];
+        m.items.sort(function (a, b) { return _invTime(a) - _invTime(b); });   // chronological
+        var label = k === 'undated' ? 'Undated' : MONTHS[Number(k.slice(5, 7)) - 1] + (y ? '' : ' ' + k.slice(0, 4));
+        return { key: k, label: label, count: m.count, total: _round2(m.total), items: m.items };
+      });
+    return { vendor: vendor, year: y, count: count, total: _round2(total), months: months };
+  }
+
   // ── Important Dates ────────────────────────────────────────────────────────
   //
   // DERIVED, NEVER AUTHORED HERE. Every date points at the record it came from,
@@ -435,18 +547,30 @@
   // Pure format/parse only — nothing here touches location.hash. Phase 1 wires
   // it to the tab switcher.
   //
-  //   #property/taxes/2025/tl-abc   { tab:'property', drawer:'taxes', year:'2025', recordId:'tl-abc' }
-  //   #spaces/mp-t1                 { tab:'spaces', spaceId:'mp-t1' }
+  //   #property/taxes/2025/tl-abc            { tab:'property', drawer:'taxes', year:'2025', recordId:'tl-abc' }
+  //   #property/invoices/Green%20Valley/2025/inv-7
+  //                                          { tab:'property', drawer:'invoices', vendor:'Green Valley', year:'2025', recordId:'inv-7' }
+  //   #spaces/mp-t1                          { tab:'spaces', spaceId:'mp-t1' }
+  //
+  // The Invoices drawer is the one whose address carries a VENDOR, because its
+  // filing is Vendor → Year → Invoice; '-' holds an empty level open.
+  var _has = function (v) { return v != null && v !== ''; };
   function address(a) {
     if (!a || !a.tab) return '';
     var parts = [a.tab];
     if (a.tab === 'spaces' && a.spaceId != null) parts.push(encodeURIComponent(String(a.spaceId)));
     if (a.tab === 'property' && a.drawer) {
       parts.push(a.drawer);
-      if (a.year != null && a.year !== '') parts.push(String(a.year));
-      if (a.recordId != null && a.recordId !== '') {
-        if (a.year == null || a.year === '') parts.push('-');
-        parts.push(encodeURIComponent(String(a.recordId)));
+      if (a.drawer === 'invoices') {
+        if (_has(a.vendor) || _has(a.year) || _has(a.recordId)) parts.push(_has(a.vendor) ? encodeURIComponent(String(a.vendor)) : '-');
+        if (_has(a.year) || _has(a.recordId)) parts.push(_has(a.year) ? String(a.year) : '-');
+        if (_has(a.recordId)) parts.push(encodeURIComponent(String(a.recordId)));
+      } else {
+        if (_has(a.year)) parts.push(String(a.year));
+        if (_has(a.recordId)) {
+          if (!_has(a.year)) parts.push('-');
+          parts.push(encodeURIComponent(String(a.recordId)));
+        }
       }
     }
     return '#' + parts.join('/');
@@ -463,8 +587,14 @@
     if (tab === 'property' && parts[1]) {
       if (!BY_KEY[parts[1]]) return { tab: tab };            // unknown drawer → the tab itself
       out.drawer = parts[1];
-      if (parts[2] && parts[2] !== '-') out.year = parts[2];
-      if (parts[3]) out.recordId = parts[3];
+      if (out.drawer === 'invoices') {
+        if (parts[2] && parts[2] !== '-') out.vendor = parts[2];
+        if (parts[3] && parts[3] !== '-') out.year = parts[3];
+        if (parts[4]) out.recordId = parts[4];
+      } else {
+        if (parts[2] && parts[2] !== '-') out.year = parts[2];
+        if (parts[3]) out.recordId = parts[3];
+      }
     }
     return out;
   }
@@ -477,6 +607,7 @@
     yearOf: yearOf, recordYear: recordYear, invoiceYear: invoiceYear,
     isVacant: isVacant, activeTenants: activeTenants, spaces: spaces,
     buildIndex: buildIndex, invoiceQuery: invoiceQuery, importantDates: importantDates,
+    invoiceFolders: invoiceFolders, invoiceFolder: invoiceFolder, MONTHS: MONTHS, UNKNOWN_VENDOR: UNKNOWN_VENDOR,
     address: address, parseAddress: parseAddress,
   };
 });

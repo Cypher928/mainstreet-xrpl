@@ -361,8 +361,11 @@ const SNAPSHOT = () => {
     PropertyOS.init();
     switchWorkspaceTab('property');            // the tab a manager taps
     PropertyOS.renderPropertyPage(currentProperty());
-    // V2: the register is the Invoices drawer of the cabinet — the tile a manager taps next.
+    // V2: the register is the Invoices drawer of the cabinet — the tile a manager
+    // taps next — and the eligibility controls are on the flat list behind
+    // Search & filter (the folders open on vendors, not on rows).
     PropertyCabinetView.openDrawer('invoices');
+    PropertyCabinetView.setInvoiceMode('search');
   });
   const boxSel = `input[data-inv-id="${ROOF_ID}"]`;
   const boxThere = await page.evaluate((s) => {

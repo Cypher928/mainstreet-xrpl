@@ -13284,10 +13284,13 @@ function openVarianceDetails() {
 // Property Workspace V2: the invoice register is the Invoices DRAWER of the
 // cabinet, so the register targets name it; the selector is what to flash
 // once the drawer is open.
+// The remediation needs the register as a LIST the manager can scan for the
+// out-of-year or ineligible bills, so it lands on Search & filter rather than
+// on the vendor folders.
 const _VARIANCE_FIX_TARGET = {
-  out_of_year:  { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
-  not_eligible: { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
-  residual:     { tab: 'property', drawer: 'invoices', sel: '.pos-reg' },
+  out_of_year:  { tab: 'property', drawer: 'invoices', mode: 'search', sel: '.pos-reg' },
+  not_eligible: { tab: 'property', drawer: 'invoices', mode: 'search', sel: '.pos-reg' },
+  residual:     { tab: 'property', drawer: 'invoices', mode: 'search', sel: '.pos-reg' },
   uncovered:    { tab: 'spaces',   sel: null },
   claim:        { tab: 'spaces',   sel: null },
   caps:         { tab: 'spaces',   sel: null },
@@ -13302,7 +13305,10 @@ function openVarianceFix(key) {
   }
   if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab(target.tab);
   if (target.drawer && window.PropertyCabinetView && typeof window.PropertyCabinetView.openDrawer === 'function') {
-    try { window.PropertyCabinetView.openDrawer(target.drawer); } catch (_) {}
+    try {
+      window.PropertyCabinetView.openDrawer(target.drawer);
+      if (target.mode && typeof window.PropertyCabinetView.setInvoiceMode === 'function') window.PropertyCabinetView.setInvoiceMode(target.mode);
+    } catch (_) {}
   }
   if (target.tab === 'spaces') {
     if (typeof switchLeaseTab === 'function') switchLeaseTab('bulk');
