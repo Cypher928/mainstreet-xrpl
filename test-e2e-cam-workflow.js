@@ -17,7 +17,11 @@
 //   G · an edit after the run: stale protection, on the page and in the gate
 //   H · a run for a year with no invoices is refused, and the page says so
 //   I · reload: the restored path renders the same four steps and amounts
-//   J · at phone width: stacked, no horizontal page scroll, one full-width button
+//   J · at phone width: stacked, no horizontal page scroll, one full-width button;
+//       the collapsed register puts Calculate much closer than the expanded one
+//   K · the register: collapsed by default behind its summary row; expanded in
+//       place with every row action working; Property → Invoices still opens
+//   L · a held tenant's action is not dressed as a cleared one
 //
 // Run: node test-e2e-cam-workflow.js
 // ============================================================================
@@ -187,6 +191,42 @@ const DB = `
   is(S.facts[`Dated in ${S.auth.year}`].split(' ')[0], String(S.auth.scope.in), 'dated-in-year uses camYearScopeOf, the engine’s predicate');
   yes(/Ready for 2025/.test(S.steps[0].status) && S.auth.ready, 'the step reads Ready because _camPrepState (the modal’s own predicate) says so');
 
+  // ══ B2 · the register is collapsed by default ══════════════════════════════
+  sec('B2 · the invoice register is collapsed behind one summary row');
+  const R0 = await page.evaluate(() => {
+    const inv = document.getElementById('invResults');
+    const meta = document.getElementById('camRegisterMeta').textContent.replace(/\s+/g, ' ').trim();
+    const btn = document.getElementById('camRegisterToggle');
+    const invAll = invoiceData.filter(Boolean);
+    return { hidden: getComputedStyle(inv).display === 'none', rows: inv.querySelectorAll('.bulk-tenant-row').length, meta,
+             toggle: btn.textContent.trim(), expanded: btn.getAttribute('aria-expanded'),
+             want: `${invAll.length} invoices · ${fmt(window.CamPool.grossTotal(invAll))} · ${invAll.filter(i => i.fileUrl || i.fileName).length} with a source document`,
+             uploadVisible: getComputedStyle(document.getElementById('invZone')).display !== 'none' && document.getElementById('invZone').getBoundingClientRect().height > 40,
+             fileInput: !!document.getElementById('invFileInput') };
+  });
+  yes(R0.hidden && R0.rows > 0, 'the register is rendered but hidden by default', JSON.stringify(R0));
+  is(R0.meta, R0.want, 'the summary row carries the register’s own counts: invoices · gross · with a source document');
+  yes(/View invoices/.test(R0.toggle) && R0.expanded === 'false', 'with a "View invoices" control', R0.toggle);
+  yes(R0.uploadVisible && R0.fileInput, 'the upload controls are not collapsed — the drop zone is right there');
+  // The register holds every invoice, eligible or not, so its dollar figure is
+  // the gross — not the CAM pool. On the demo the two coincide; hold one
+  // invoice out of CAM (in memory only) so they differ, and check which one
+  // the summary row shows. Then put it back and re-render.
+  const R1 = await page.evaluate(() => {
+    const invAll = invoiceData.filter(Boolean);
+    const was = invAll[0].camEligible;
+    invAll[0].camEligible = false;
+    renderCamWorkflow();
+    const meta = document.getElementById('camRegisterMeta').textContent.replace(/\s+/g, ' ').trim();
+    const out = { meta, gross: fmt(window.CamPool.grossTotal(invAll)), pool: fmt(window.CamPool.total(invAll)) };
+    if (was === undefined) delete invAll[0].camEligible; else invAll[0].camEligible = was;
+    renderCamWorkflow();
+    out.restored = document.getElementById('camRegisterMeta').textContent.replace(/\s+/g, ' ').trim();
+    return out;
+  });
+  yes(R1.gross !== R1.pool && R1.meta.includes(R1.gross) && !R1.meta.includes(R1.pool), 'the figure is the gross of every invoice in the register, not the CAM pool', JSON.stringify(R1));
+  is(R1.restored, R0.want, 'and the row reads as before once the invoice is back in CAM');
+
   // ══ C · Calculate ══════════════════════════════════════════════════════════
   sec('C · Calculate shows the year, the pool, the roster and readiness — from the authorities');
   is(S.cells['CAM year'], String(S.auth.year), 'the CAM year is getCamYear()');
@@ -294,6 +334,87 @@ const DB = `
   yes(I.placed.narrative && I.placed.audit, 'the panels mount in AI Audit Review on the restored path too');
   yes(/Calculated/.test(I.steps[1].status) && /billable/.test(I.steps[2].status), 'the statuses read from the restored run', JSON.stringify(I.steps));
 
+  // ══ K · the register expands in place, everything still works ════════════
+  sec('K · View invoices expands the existing register in place; its actions work; the filing link opens Property → Invoices');
+  const K = await page.evaluate(async () => {
+    const T = el => el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+    const inv = document.getElementById('invResults');
+    const n0 = invoiceData.filter(Boolean).length;
+    document.getElementById('camRegisterToggle').click();
+    const shown = getComputedStyle(inv).display !== 'none' && inv.getBoundingClientRect().height > 100;
+    const rows = Array.from(inv.querySelectorAll('.bulk-tenant-row'));
+    // The handler is the call after `event.stopPropagation();` — e.g. "viewInvoice(0)".
+    const actions = rows.map(r => Array.from(r.querySelectorAll('.inv-action-btns button')).map(b => [T(b), (/;\s*(\w+)\(/.exec(b.getAttribute('onclick') || '') || [])[1] || null]));
+    const first = rows[0];
+    first.querySelector('.bulk-tenant-summary').click();          // toggleInvDetail
+    const detail = first.querySelector('.bulk-tenant-detail');
+    const detailOpen = detail && detail.style.display === 'block';
+    const field = document.getElementById('ifield-0-vendorName');
+    const editable = !!field && !field.disabled && field.offsetParent !== null;
+    // Remove the LAST invoice through its own button (the dialog is accepted).
+    const lastIdx = n0 - 1;
+    const removeBtn = rows[lastIdx].querySelector('.bulk-t-remove');
+    const stale0 = _resultsStale;
+    removeBtn.click();
+    await new Promise(r => setTimeout(r, 600));
+    const n1 = invoiceData.filter(Boolean).length;
+    const persisted = (currentProperty().invoices || []).length;
+    const meta = T(document.getElementById('camRegisterMeta'));
+    const toggle = T(document.getElementById('camRegisterToggle'));
+    document.getElementById('camRegisterToggle').click();
+    const hiddenAgain = getComputedStyle(inv).display === 'none';
+    return { shown, rowCount: rows.length, n0, n1, persisted, actions: actions[0], everyRowHasFour: actions.every(a => a.length === 4), detailOpen, editable, meta, toggle, hiddenAgain, stale0, stale: _resultsStale };
+  });
+  yes(K.shown && K.rowCount === K.n0, `View invoices shows the register with all ${K.n0} rows`, JSON.stringify(K));
+  is(K.actions.map(a => a[0]), ['View', 'Explain', 'Dispute', 'Remove'], 'each row keeps View · Explain · Dispute · Remove');
+  is(K.actions.map(a => a[1]), ['viewInvoice', 'explainCharge', 'disputeCharge', 'removeInvItem'], '…on their existing handlers');
+  yes(K.everyRowHasFour, 'on every row');
+  yes(K.detailOpen && K.editable, 'a row opens its editable detail in place');
+  is(K.n1, K.n0 - 1, 'Remove still removes the invoice from the register');
+  yes(new RegExp('^' + K.n1 + ' invoices').test(K.meta), 'and the summary row follows the register', K.meta);
+  is(K.persisted, K.n1, '…and the removal is written to the property, as before');
+  // removeInvItem never touched the stale flag (only upload, tenant edits,
+  // amendments and bulk-clear do) — this slice leaves that exactly as it was.
+  is(K.stale, K.stale0, '…and the stale flag is exactly what it was before the removal (removal never set it)');
+  yes(/Hide invoices/.test(K.toggle), 'the control reads "Hide invoices" while open', K.toggle);
+  yes(K.hiddenAgain, 'and hides the register again');
+  // A re-render of the register (every edit, every removal) keeps whatever
+  // state it is in — open stays open, closed stays closed.
+  const K2 = await page.evaluate(() => {
+    const inv = document.getElementById('invResults');
+    const shown = () => getComputedStyle(inv).display !== 'none';
+    setCamRegisterOpen(true);
+    renderInvResults();
+    const openSurvives = shown() && /Hide invoices/.test(document.getElementById('camRegisterToggle').textContent);
+    setCamRegisterOpen(false);
+    renderInvResults();
+    const closedSurvives = !shown() && /View invoices/.test(document.getElementById('camRegisterToggle').textContent);
+    return { openSurvives, closedSurvives };
+  });
+  yes(K2.openSurvives && K2.closedSurvives, 'a re-render of the register keeps it open when open and closed when closed', JSON.stringify(K2));
+  const link = await page.evaluate(async () => {
+    Array.from(document.querySelectorAll('#camRegisterHead .cam-link')).find(b => /Property/.test(b.textContent)).click();
+    await new Promise(r => setTimeout(r, 400));
+    const st = PropertyCabinetView.state();
+    return { tab: _activeWorkspaceTab, drawer: st.drawer, folders: document.querySelectorAll('#propertyOsBody .pcv-folder').length };
+  });
+  yes(link.tab === 'property' && link.drawer === 'invoices' && link.folders > 0, 'Filed under Property › Invoices opens the property’s Invoices drawer on its vendor folders', JSON.stringify(link));
+  await page.evaluate(() => switchWorkspaceTab('cam'));
+
+  // ══ L · a held tenant's action is not green ═══════════════════════════════
+  sec('L · "Why it can’t bill" is not dressed as a cleared state');
+  const L = await page.evaluate(() => {
+    const held = document.querySelector('#resultsBody .tenant-stmt-card-btn--held');
+    const probe = document.createElement('button'); probe.className = 'tenant-stmt-card-btn'; probe.textContent = 'x';
+    document.getElementById('resultsBody').appendChild(probe);
+    const rgb = el => { const m = /rgba?\(([^)]+)\)/.exec(getComputedStyle(el).color); return m ? m[1].split(',').slice(0, 3).map(Number) : null; };
+    const out = { label: held && held.textContent.trim(), held: rgb(held), billable: rgb(probe) };
+    probe.remove(); return out;
+  });
+  yes(L.label === '⛔ Why it can’t bill', 'the action and its wording are unchanged', L.label);
+  yes(L.held && !(L.held[1] > L.held[0] && L.held[1] > L.held[2]), 'its text colour is not green-dominant', JSON.stringify(L.held));
+  yes(L.billable && L.billable[1] > L.billable[0] && L.billable[1] > L.billable[2] && JSON.stringify(L.billable) !== JSON.stringify(L.held), 'while the billable action keeps its green — the two states no longer look alike', JSON.stringify(L));
+
   // ══ J · phone ══════════════════════════════════════════════════════════════
   sec('J · at phone width: stacked steps, no sideways page scroll, one full-width button');
   const mctx = await browser.newContext({ viewport: { width: 400, height: 860 } });
@@ -321,6 +442,17 @@ const DB = `
   yes(Math.abs(J.btnW - J.bodyW) <= 2, 'the Calculate button spans its step', `${J.btnW} vs ${J.bodyW}`);
   yes(J.cells.length === 4 && J.cells.every(w => w >= 140), 'the four context cells sit two per row at readable widths', JSON.stringify(J.cells));
   yes(J.tableScrollsInside, 'the summary table scrolls inside its own wrap, not the page');
+  const JR = await mp.evaluate(() => {
+    const top = () => document.getElementById('runBtn').getBoundingClientRect().top - document.getElementById('wsPane-cam').getBoundingClientRect().top;
+    const collapsed = Math.round(top());
+    document.getElementById('camRegisterToggle').click();
+    const expanded = Math.round(top());
+    const sw = document.scrollingElement.scrollWidth;
+    document.getElementById('camRegisterToggle').click();
+    return { collapsed, expanded, sw, iw: window.innerWidth, screens: Math.round(collapsed / window.innerHeight * 10) / 10 };
+  });
+  yes(JR.collapsed < JR.expanded * 0.5, `the collapsed register puts Calculate at ${JR.collapsed}px instead of ${JR.expanded}px (${JR.screens} screens down)`, JSON.stringify(JR));
+  is(JR.sw <= JR.iw + 1, true, 'the expanded register does not scroll sideways either');
   is(merrs, [], 'no uncaught errors at phone width');
   await mctx.close();
 

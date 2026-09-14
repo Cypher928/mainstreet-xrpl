@@ -319,6 +319,19 @@ async function browserStage() {
     });
     await p.waitForTimeout(1500);
 
+    // The register is collapsed behind its summary row by default (an upload
+    // opens it; seeding invoiceData directly does not), so take the step the
+    // user takes: "View invoices", by its visible label.
+    const opened = await p.evaluate(() => {
+      const t = [...document.querySelectorAll('button')].find(x => /^View invoices/.test((x.textContent || '').trim()));
+      if (!t) return { found: false };
+      t.click();
+      const reg = document.getElementById('invResults');
+      return { found: true, shown: !!reg && getComputedStyle(reg).display !== 'none' };
+    });
+    await p.waitForTimeout(300);
+    assert('the register opens from its "View invoices" control', opened.found && opened.shown, JSON.stringify(opened));
+
     // Click by visible label, and confirm it is the control the user would hit —
     // an element that is present but covered is not clickable, and its own
     // bounding box cannot tell you that.

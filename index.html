@@ -888,6 +888,18 @@
     }
     .cam-register-title { font-size: 0.86rem; font-weight: 700; color: var(--text-2); }
     .cam-register-meta { font-size: 0.76rem; color: var(--text-4); flex: 1 1 auto; }
+    .cam-register-toggle {
+      background: rgba(201,151,58,0.10); color: var(--c-e4b15c);
+      border: 1px solid rgba(201,151,58,0.38); border-radius: 8px;
+      padding: 6px 12px; font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: background 0.15s, border-color 0.15s;
+    }
+    .cam-register-toggle:hover { background: rgba(201,151,58,0.18); border-color: rgba(201,151,58,0.6); }
+    .cam-register-toggle:focus-visible { outline: 2px solid #C9973A; outline-offset: 2px; }
+    @media (max-width: 560px) {
+      .cam-register-head { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .cam-register-toggle { width: 100%; }
+    }
 
     /* Calculate: the context, then the one button, then when it last ran. */
     .cam-calc-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -3244,7 +3256,13 @@
     .rcs-bill-roster--all  { color: var(--c-6ee7b7, #6ee7b7); background: rgba(52,211,153,0.10); }
     .rcs-bill-roster--some { color: var(--c-fbbf24, #fbbf24); background: rgba(251,191,36,0.10); }
     .rcs-bill-roster--none { color: var(--c-fca5a5, #fca5a5); background: rgba(248,113,113,0.10); }
-    .tenant-stmt-card-btn--held { opacity: 0.92; }
+    /* A held tenant's action ("Why it can't bill", "Confirm to bill") is not a
+       cleared state and must not wear the billable button's green. Amber: the
+       same warning vocabulary the stale banner and the readiness chips use. */
+    .tenant-stmt-card-btn--held {
+      background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.40); color: var(--c-fbbf24);
+    }
+    .tenant-stmt-card-btn--held:hover { background: rgba(245,158,11,0.18); border-color: #f59e0b; }
     .rcs-panel--ok    { border-color: rgba(74,222,128,0.2); }
     .rcs-panel--warn  { border-color: rgba(251,191,36,0.25); }
     .rcs-panel--alert { border-color: rgba(248,113,113,0.3); }
@@ -7765,12 +7783,17 @@
            verifiable here. It is also filed, read-only, under Property → Invoices.
            Kept after the upload zones and under its own strip so the page reads
            as preparation, not as a list. -->
+      <!-- Collapsed by default: one summary row carries the register's own
+           counts; "View invoices" expands the existing register in place, every
+           row action intact. An upload or import opens it so what just arrived
+           can be reviewed. -->
       <div class="cam-register-head" id="camRegisterHead">
         <span class="cam-register-title">Invoice register</span>
         <span class="cam-register-meta" id="camRegisterMeta"></span>
+        <button type="button" class="cam-register-toggle" id="camRegisterToggle" aria-expanded="false" aria-controls="invResults" onclick="toggleCamRegister()">View invoices &rsaquo;</button>
         <button type="button" class="cam-link" onclick="switchWorkspaceTab('property'); if (window.PropertyCabinetView) PropertyCabinetView.openDrawer('invoices');">Filed under Property &rsaquo; Invoices</button>
       </div>
-      <div id="invResults"></div>
+      <div id="invResults" style="display:none;"></div>
     </div>
 
     <!-- Panel B: Yardi Import -->

@@ -4727,6 +4727,7 @@ async function importGLToInvoices() {
     }));
   });
 
+  setCamRegisterOpen(true);   // a GL import lands in the register; show it
   renderInvResults();
 
   const property = currentProperty();
@@ -9489,6 +9490,7 @@ async function handleBatchInvoices(fileList) {
   const res  = document.getElementById('invResults');
   res.innerHTML = '';
   prog.style.display = 'block';
+  setCamRegisterOpen(true);   // what is about to arrive is what the manager reviews next
 
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
@@ -10372,6 +10374,7 @@ async function confirmYardiImport() {
 
   // Switch to file-upload tab so user sees the imported results
   switchInvTab('files');
+  setCamRegisterOpen(true);
   renderInvResults();
 
   const property = currentProperty();
@@ -10625,7 +10628,7 @@ function _renderCamWorkflow() {
     : chip('warn', `Still needed: ${prep.missing.length}`));
   stepDone('camStepPrepare', prep.ready);
   set('camRegisterMeta', invAll.length
-    ? `${invAll.length} invoice${invAll.length === 1 ? '' : 's'} · ${withDoc} with a source document · ${fmt(pool)} recoverable`
+    ? `${invAll.length} invoice${invAll.length === 1 ? '' : 's'} · ${fmt(gross)} · ${withDoc} with a source document`
     : 'No invoices loaded yet.');
 
   // ── 2 · Calculate — the year, the pool, the tenants, the readiness ────────
@@ -10723,6 +10726,29 @@ function _camOpenAuditBucket(key) {
   try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
 }
 window._camOpenAuditBucket = _camOpenAuditBucket;
+
+// THE REGISTER IS COLLAPSED BY DEFAULT. On a property with 26 invoices the
+// expanded register put the Calculate button several screens down on a phone,
+// which defeated the four-step page. One summary row (renderCamWorkflow fills
+// it from the register's own counts) stands in for it; "View invoices"
+// expands the existing register in place, every row action intact. An upload
+// or an import opens it so what just arrived can be reviewed; opening another
+// property closes it again (resetWorkflow). Display only — the register's
+// data, rows and actions are exactly what they were.
+let _camRegisterOpen = false;
+function setCamRegisterOpen(open) {
+  _camRegisterOpen = !!open;
+  const el = document.getElementById('invResults');
+  if (el) el.style.display = _camRegisterOpen ? '' : 'none';
+  const btn = document.getElementById('camRegisterToggle');
+  if (btn) {
+    btn.innerHTML = _camRegisterOpen ? 'Hide invoices &#x2039;' : 'View invoices &rsaquo;';
+    btn.setAttribute('aria-expanded', _camRegisterOpen ? 'true' : 'false');
+  }
+}
+function toggleCamRegister() { setCamRegisterOpen(!_camRegisterOpen); }
+window.setCamRegisterOpen = setCamRegisterOpen;
+window.toggleCamRegister  = toggleCamRegister;
 
 function _camPrepState() {
   const totalSqft = parseFloat((document.getElementById('totalSqft') || {}).value);
@@ -25843,6 +25869,7 @@ function resetWorkflow() {
 
   renderTenantSlots();
   invoiceData.splice(0, invoiceData.length);
+  setCamRegisterOpen(false);   // a fresh property opens on the summary row
   renderInvResults(); // shows the "no invoices yet" empty state
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';
