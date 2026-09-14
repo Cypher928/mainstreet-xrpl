@@ -218,6 +218,11 @@ const SUITES = [
   // hidden on the Property and Spaces tabs and shown, unchanged, everywhere
   // else; the CAM results heading keeps its year.
   { label: 'Property header carries no CAM year (e2e)', cmd: 'node test-e2e-property-header.js' },
+  // THE CAM PAGE AS A WORKFLOW. Prepare → Calculate → Tenant Results → AI
+  // Audit Review over the existing machinery; every figure and verdict on it
+  // is the authority's own; the same modal, the same runAllocation, the same
+  // amounts, gates, findings, stale protection, year scope and persistence.
+  { label: 'CAM workflow layout (e2e)',                cmd: 'node test-e2e-cam-workflow.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

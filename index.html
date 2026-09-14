@@ -814,6 +814,150 @@
     /* ── Dispute section ──────────────────────────────────────────────── */
     #disputeSection { display: none; }
 
+    /* ── The CAM workflow: four numbered steps ─────────────────────────────
+       Prepare → Calculate → Tenant Results → AI Audit Review. One heading and
+       one status per step; the existing cards, panels and #runBtn sit inside.
+       Calm, dense where useful, and the same layout on a phone — stacked, not
+       squeezed. */
+    .cam-flow { display: flex; flex-direction: column; gap: 18px; }
+    .cam-step {
+      background: var(--theme-card);
+      border: 1px solid rgba(var(--line-rgb), 0.07);
+      border-radius: 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      padding: 22px 26px 24px;
+    }
+    .cam-step-head { display: flex; align-items: flex-start; gap: 14px; }
+    .cam-step-num {
+      flex: none; width: 30px; height: 30px; border-radius: 50%;
+      background: rgba(201,151,58,0.14); border: 1px solid rgba(201,151,58,0.45);
+      color: var(--c-e4b15c); font-weight: 800; font-size: 0.86rem;
+      display: flex; align-items: center; justify-content: center; margin-top: 1px;
+    }
+    .cam-step--done .cam-step-num { background: rgba(34,197,94,0.14); border-color: rgba(34,197,94,0.45); color: var(--c-4ade80); }
+    .cam-step-title { flex: 1 1 auto; min-width: 0; }
+    .cam-step-title h2 {
+      font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.45rem; font-weight: 700;
+      color: var(--text-1); line-height: 1.15; margin: 0;
+    }
+    .cam-step-sub { font-size: 0.82rem; color: var(--text-4); line-height: 1.45; margin: 3px 0 0; }
+    .cam-step-status { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
+    .cam-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 0.74rem; font-weight: 700; letter-spacing: 0.01em; line-height: 1.2;
+      border: 1px solid rgba(var(--line-rgb), 0.16); color: var(--text-3); background: rgba(var(--line-rgb), 0.05);
+      white-space: nowrap;
+    }
+    .cam-chip--ok    { background: rgba(34,197,94,0.12);  border-color: rgba(34,197,94,0.35);  color: var(--c-4ade80); }
+    .cam-chip--warn  { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.38); color: var(--c-fbbf24); }
+    .cam-chip--bad   { background: rgba(239,68,68,0.12);  border-color: rgba(239,68,68,0.35);  color: var(--c-f87171); }
+    .cam-chip--muted { color: var(--text-4); }
+    .cam-step-body { margin-top: 16px; }
+
+    /* Fact strips: label over value, wrapping. Used by Prepare and Calculate. */
+    .cam-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 14px; }
+    .cam-fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .cam-fact-l { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-4); font-family: 'DM Mono', monospace; }
+    .cam-fact-v { font-size: 0.92rem; font-weight: 700; color: var(--text-1); }
+    .cam-fact-v small { font-weight: 500; color: var(--text-4); font-size: 0.76rem; }
+    .cam-fact--warn .cam-fact-v { color: var(--c-fbbf24); }
+    .cam-fact--bad  .cam-fact-v { color: var(--c-f87171); }
+    .cam-fact--ok   .cam-fact-v { color: var(--c-4ade80); }
+    .cam-fact-note { flex-basis: 100%; font-size: 0.78rem; color: var(--text-3); line-height: 1.5; }
+    .cam-link {
+      background: none; border: none; padding: 0; font: inherit; font-size: 0.76rem; font-weight: 600;
+      color: var(--c-c9973a); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+    }
+    .cam-link:hover { color: var(--c-e4b15c); }
+
+    /* Prepare: the two upload cards side by side on a wide screen, compact. */
+    .cam-prep-grid { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: start; }
+    .cam-step #glResults .ptf-empty-state { padding: 18px 16px; }
+    .cam-step #glResults .ptf-empty-icon { font-size: 1.6rem; margin-bottom: 6px; }
+    .cam-step .card {
+      padding: 18px 20px 20px; border-radius: 12px; box-shadow: none;
+      background: rgba(var(--shade-a-rgb), 0.35);
+    }
+    .cam-step .card .sec-head { margin-bottom: 14px; gap: 10px; }
+    .cam-step .card .sec-head h2 { font-size: 0.95rem; }
+    .cam-step .card .sec-num { width: 24px; height: 24px; font-size: 0.7rem; margin-top: 1px; }
+    .cam-register-head {
+      display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+      margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid rgba(var(--line-rgb), 0.08);
+    }
+    .cam-register-title { font-size: 0.86rem; font-weight: 700; color: var(--text-2); }
+    .cam-register-meta { font-size: 0.76rem; color: var(--text-4); flex: 1 1 auto; }
+
+    /* Calculate: the context, then the one button, then when it last ran. */
+    .cam-calc-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .cam-calc-cell {
+      background: var(--theme-panel); border: 1px solid rgba(var(--line-rgb), 0.07);
+      border-radius: 10px; padding: 11px 13px; min-width: 0;
+    }
+    .cam-calc-cell .cam-fact-v { font-size: 1.05rem; }
+    .cam-calc-cell--ok   { border-color: rgba(34,197,94,0.35);  background: rgba(34,197,94,0.07); }
+    .cam-calc-cell--warn { border-color: rgba(245,158,11,0.38); background: rgba(245,158,11,0.07); }
+    .cam-calc-cell--bad  { border-color: rgba(239,68,68,0.35);  background: rgba(239,68,68,0.07); }
+    .cam-calc-last { font-size: 0.78rem; color: var(--text-4); margin-top: 10px; line-height: 1.5; }
+    .cam-none {
+      padding: 14px 16px; border-radius: 10px; border: 1px dashed rgba(var(--line-rgb), 0.2);
+      color: var(--text-3); font-size: 0.84rem; line-height: 1.5;
+    }
+    /* Tenant Results: the results card's own head is the step head. */
+    .cam-step .cam-results-card { background: transparent; border: none; padding: 0; box-shadow: none; }
+    .cam-step .cam-results-card .sec-head.cam-step-head { margin-bottom: 0; gap: 14px; }
+    .cam-step .cam-results-card .cam-step-head h2 { font-size: 1.45rem; margin: 0; }
+    .cam-step #previousRunsSection { margin-top: 14px; }
+
+    /* AI Audit Review: the four buckets first, then the panels. */
+    .cam-audit-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .cam-audit-bucket {
+      display: flex; align-items: center; gap: 12px; text-align: left;
+      background: var(--theme-panel); border: 1px solid rgba(var(--line-rgb), 0.07);
+      border-radius: 10px; padding: 11px 13px; cursor: pointer; font: inherit; color: inherit; min-width: 0;
+    }
+    .cam-audit-bucket:hover { border-color: rgba(201,151,58,0.4); }
+    .cam-audit-n {
+      flex: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 0.95rem; border: 1px solid rgba(var(--line-rgb), 0.16); color: var(--text-3);
+    }
+    .cam-audit-bucket--red .cam-audit-n    { background: rgba(239,68,68,0.14);  border-color: rgba(239,68,68,0.4);  color: var(--c-f87171); }
+    .cam-audit-bucket--yellow .cam-audit-n { background: rgba(245,158,11,0.14); border-color: rgba(245,158,11,0.4); color: var(--c-fbbf24); }
+    .cam-audit-bucket--blue .cam-audit-n   { background: rgba(96,165,250,0.14); border-color: rgba(96,165,250,0.4); color: var(--c-60a5fa, #60a5fa); }
+    .cam-audit-bucket--green .cam-audit-n  { background: rgba(34,197,94,0.14);  border-color: rgba(34,197,94,0.4);  color: var(--c-4ade80); }
+    .cam-audit-bucket--zero .cam-audit-n   { opacity: 0.55; }
+    .cam-audit-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .cam-audit-l { font-size: 0.8rem; font-weight: 700; color: var(--text-2); line-height: 1.2; }
+    .cam-audit-s { font-size: 0.72rem; color: var(--text-4); line-height: 1.3; }
+    .cam-step #camAuditReview .an-panel { margin-top: 14px; }
+    .cam-step #camAuditReview .ap-panel { margin-top: 14px; }
+    .cam-step #camAuditReview .ht-panel { margin-top: 14px; }
+
+    @media (max-width: 900px) {
+      .cam-calc-context, .cam-audit-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      /* The summary panel's head carries several badges; on a phone they wrap
+         instead of pushing the page wider than the screen. */
+      .rcs-panel-head { flex-wrap: wrap; }
+      .rcs-panel-head > * { white-space: normal; }
+    }
+    @media (max-width: 768px) {
+      .cam-flow { gap: 12px; }
+      .cam-step { padding: 16px 14px 18px; border-radius: 13px; }
+      .cam-step-head { flex-wrap: wrap; gap: 10px 12px; }
+      .cam-step-num { width: 26px; height: 26px; font-size: 0.78rem; }
+      .cam-step-title { flex-basis: calc(100% - 38px); }
+      .cam-step-title h2 { font-size: 1.25rem; }
+      .cam-step-status { max-width: 100%; justify-content: flex-start; padding-left: 38px; }
+      .cam-step .card { padding: 14px 12px 16px; }
+      .cam-facts { gap: 8px 16px; }
+      .cam-calc-cell .cam-fact-v { font-size: 0.98rem; }
+      .cam-audit-bucket { padding: 10px 11px; }
+    }
+    @media (max-width: 480px) {
+      .cam-calc-context, .cam-audit-strip { grid-template-columns: 1fr 1fr; gap: 8px; }
+    }
+
     .dispute-tenant-label {
       font-size: 0.73rem; font-weight: 700; color: var(--text-3);
       text-transform: uppercase; letter-spacing: 0.05em;
@@ -5126,6 +5270,10 @@
     .ap-body--open { display: block; }
     .ap-section { margin-bottom: 14px; }
     .ap-section:last-child { margin-bottom: 0; }
+    .ap-section-sub { display: block; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text-4); margin-top: 2px; }
+    .ap-flag-amount { font-family: 'DM Mono', monospace; font-size: 0.8rem; font-weight: 700; color: var(--text-2); margin: 4px 0 2px; }
+    .ap-flag-amount-kind { font-family: inherit; font-weight: 500; color: var(--text-4); font-size: 0.72rem; }
+    .ap-empty { font-size: 0.82rem; color: var(--text-4); }
     .ap-section-title {
       font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em;
       text-transform: uppercase; margin-bottom: 7px;
@@ -6540,6 +6688,15 @@
       #resultsBody { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
       #resultsBody > .summary-bar,
       #resultsBody > .reconciliation-summary,
+      /* The summary panel, the variance banner, the Needs Review rollup and the
+         refusal are the reconciliation's own account of itself: full width,
+         above the cards, never squeezed into one column beside a card. */
+      #resultsBody > .rcs-panel,
+      #resultsBody > .rcs-variance-banner,
+      #resultsBody > .needs-review-rollup,
+      #resultsBody > .sqft-mismatch-banner,
+      #resultsBody > .pro-rata-note,
+      #resultsBody > .cam-refusal,
       #resultsBody > p,
       #resultsBody > .err-banner,
       #resultsBody > .cam-sqft-warning,
@@ -7513,8 +7670,28 @@
 
   <!-- ══════════════════════════ TAB: CAM ══════════════════════════════ -->
   <div class="workspace-tab-pane" id="wsPane-cam" style="display:none;">
+  <!-- ═══ THE CAM WORKFLOW, READ TOP TO BOTTOM ═══════════════════════════════
+       Prepare → Calculate → Tenant Results → AI Audit Review. Four numbered
+       steps, each a section with one heading and one status. Everything inside
+       them is the existing machinery under its existing ids — the upload cards,
+       #runBtn, #results/#resultsBody, the audit panels — reorganised, not
+       rewritten. renderCamWorkflow() (script.js) fills the status chips and the
+       fact strips from the same authorities the sections themselves read. -->
+  <div class="cam-flow" id="camFlow">
 
-  <!-- ── GL Excel Upload ───────────────────────────────────────────── -->
+  <!-- ── 1 · PREPARE ──────────────────────────────────────────────────── -->
+  <section class="cam-step" id="camStepPrepare" aria-labelledby="camStepPrepareTitle">
+    <div class="cam-step-head">
+      <div class="cam-step-num">1</div>
+      <div class="cam-step-title">
+        <h2 id="camStepPrepareTitle">Prepare</h2>
+        <p class="cam-step-sub" id="camPrepSub">Load and check the data this year&#x27;s reconciliation will run on.</p>
+      </div>
+      <div class="cam-step-status" id="camPrepStatus"></div>
+    </div>
+    <div class="cam-step-body">
+      <div class="cam-facts" id="camPrepFacts"></div>
+      <div class="cam-prep-grid">
   <div class="card" id="cardGL">
     <div class="sec-head">
       <div class="sec-num" style="background:#22c55e;font-size:0.62rem;letter-spacing:-0.02em;">GL</div>
@@ -7545,7 +7722,6 @@
     <div id="glImportBar"></div>
   </div>
 
-  <!-- ── Invoice Upload ────────────────────────────────────────────── -->
   <div class="card" id="cardInvoices">
     <div class="sec-head">
       <div class="sec-num">&#x1F9FE;</div>
@@ -7585,6 +7761,15 @@
         <span style="font-size:0.74rem;color:var(--text-3);">ZIP files — extract first, then select all</span>
       </div>
       <div id="invProgress" style="display:none;"></div>
+      <!-- The register: every invoice loaded for this property, editable and
+           verifiable here. It is also filed, read-only, under Property → Invoices.
+           Kept after the upload zones and under its own strip so the page reads
+           as preparation, not as a list. -->
+      <div class="cam-register-head" id="camRegisterHead">
+        <span class="cam-register-title">Invoice register</span>
+        <span class="cam-register-meta" id="camRegisterMeta"></span>
+        <button type="button" class="cam-link" onclick="switchWorkspaceTab('property'); if (window.PropertyCabinetView) PropertyCabinetView.openDrawer('invoices');">Filed under Property &rsaquo; Invoices</button>
+      </div>
       <div id="invResults"></div>
     </div>
 
@@ -7611,31 +7796,78 @@
       <div id="yardiPreview"></div>
     </div>
   </div>
-
-  <!-- ── Run Allocation ────────────────────────────────────────────── -->
-  <button id="runBtn" onclick="showAllocationModal()">Calculate CAM Charges</button>
-
-  <!-- Results -->
-  <div class="card" id="results">
-    <div class="sec-head">
-      <div class="sec-num green">&#x1F4CA;</div>
-      <div>
-        <h2 id="resultsTitle">Allocation Results</h2>
-        <p>Review calculated charges for each tenant</p>
       </div>
     </div>
-    <div id="camSaveWarningBanner" style="display:none;background:var(--bgc-450a0a);color:var(--c-fca5a5);border:1px solid #7f1d1d;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;"></div>
-    <div id="staleResultsBanner" style="display:none;background:var(--bgc-1c1400);color:var(--c-fbbf24);border:1px solid #78350f;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;">&#x26A0; Fields were edited since the last run — re-run CAM allocation to update results.</div>
-    <div id="resultsBody"></div>
-  </div>
+  </section>
 
-  <!-- ── Previous Runs ───────────────────────────────────────────── -->
-  <div id="previousRunsSection" style="display:none;">
-    <div class="prev-runs-head">
-      <div class="prev-runs-title">&#x1F4C5; Previous Runs</div>
+  <!-- ── 2 · CALCULATE ────────────────────────────────────────────────── -->
+  <section class="cam-step" id="camStepCalculate" aria-labelledby="camStepCalculateTitle">
+    <div class="cam-step-head">
+      <div class="cam-step-num">2</div>
+      <div class="cam-step-title">
+        <h2 id="camStepCalculateTitle">Calculate</h2>
+        <p class="cam-step-sub" id="camCalcSub">Run the reconciliation to allocate recoverable expenses to tenants.</p>
+      </div>
+      <div class="cam-step-status" id="camCalcStatus"></div>
     </div>
-    <div id="previousRunsList"></div>
-  </div>
+    <div class="cam-step-body">
+      <div class="cam-calc-context" id="camCalcContext"></div>
+      <!-- The one primary action on this page. Same id, same handler. -->
+      <button id="runBtn" onclick="showAllocationModal()">Calculate CAM Charges</button>
+      <div class="cam-calc-last" id="camCalcLast"></div>
+    </div>
+  </section>
+
+  <!-- ── 3 · TENANT RESULTS ───────────────────────────────────────────── -->
+  <section class="cam-step" id="camStepResults" aria-labelledby="camStepResultsTitle">
+    <div class="cam-none" id="camResultsNone" style="display:none;"></div>
+    <!-- The results card keeps its id and its body. Its own heading IS the
+         step's heading: one head, carrying the step number, "Tenant Results"
+         and the run's title (resultsTitle keeps its id — the run, the restore
+         and the refusal all write it). -->
+    <div class="card cam-results-card" id="results">
+      <div class="sec-head cam-step-head">
+        <div class="cam-step-num">3</div>
+        <div class="cam-step-title">
+          <h2 id="camStepResultsTitle">Tenant Results</h2>
+          <p class="cam-step-sub" id="resultsTitle">Allocation Results</p>
+        </div>
+        <div class="cam-step-status" id="camResultsStatus"></div>
+      </div>
+      <div class="cam-step-body">
+        <div id="camSaveWarningBanner" style="display:none;background:var(--bgc-450a0a);color:var(--c-fca5a5);border:1px solid #7f1d1d;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;"></div>
+        <div id="staleResultsBanner" style="display:none;background:var(--bgc-1c1400);color:var(--c-fbbf24);border:1px solid #78350f;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.875rem;font-weight:600;line-height:1.4;">&#x26A0; Fields were edited since the last run — re-run CAM allocation to update results.</div>
+        <div id="resultsBody"></div>
+      </div>
+    </div>
+
+    <!-- ── Previous Runs ───────────────────────────────────────────── -->
+    <div id="previousRunsSection" style="display:none;">
+      <div class="prev-runs-head">
+        <div class="prev-runs-title">&#x1F4C5; Previous Runs</div>
+      </div>
+      <div id="previousRunsList"></div>
+    </div>
+  </section>
+
+  <!-- ── 4 · AI AUDIT REVIEW ──────────────────────────────────────────── -->
+  <section class="cam-step" id="camStepAudit" aria-labelledby="camStepAuditTitle">
+    <div class="cam-step-head">
+      <div class="cam-step-num">4</div>
+      <div class="cam-step-title">
+        <h2 id="camStepAuditTitle">AI Audit Review</h2>
+        <p class="cam-step-sub" id="camAuditSub">What the review found, grouped by what it affects.</p>
+      </div>
+      <div class="cam-step-status" id="camAuditStatus"></div>
+    </div>
+    <div class="cam-step-body">
+      <div class="cam-audit-strip" id="camAuditStrip"></div>
+      <!-- Mount for the narrative, the findings panel and the trends panel
+           (renderNarrativePanel / renderAuditPanel / renderHistoricalTrendsPanel). -->
+      <div id="camAuditReview"></div>
+      <div class="cam-none" id="camAuditNone" style="display:none;"></div>
+    </div>
+  </section>
 
   <!-- ── Tenant Disputes ──────────────────────────────────────────── -->
   <div class="card" id="disputeSection">
@@ -7654,6 +7886,7 @@
     </div>
   </div>
 
+  </div><!-- /camFlow -->
   </div><!-- /wsPane-cam -->
 
   <!-- ══════════════════════════ TAB: Reports ════════════════════════════ -->

@@ -306,7 +306,9 @@ const seedProp = (id, name, excludeOne) => `(async () => {
   sec('3 · the exposure panel names the gross figure for what it is');
   const panel = await p.evaluate(() => {
     const T = e => e ? (e.innerText||'').replace(/\s+/g,' ').trim() : null;
-    const txt = T(document.getElementById('results')) || '';
+    // The narrative panel mounts in the CAM page's AI Audit Review step now
+    // (#camAuditReview); read the whole CAM pane, which holds both.
+    const txt = T(document.getElementById('wsPane-cam') || document.getElementById('results')) || '';
     const ex = window.AuditExposure
       ? window.AuditExposure.deriveExposure(buildAuditSummary(), lastTotal || 0) : null;
     return {

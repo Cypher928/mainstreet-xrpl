@@ -3867,6 +3867,7 @@ function switchWorkspaceTab(tab) {
     const el = document.getElementById(id);
     if (el) el.style.display = _inPropertyWs ? 'none' : '';
   });
+  if (tab === 'cam' && typeof renderCamWorkflow === 'function') renderCamWorkflow();
 }
 
 // ─── Phase A (mobile nav): tab switching + KPI-tile shortcuts ────────────────
@@ -5885,6 +5886,7 @@ function _updateStaleResultsBanner() {
         + 'invoice data, so it is not treated as current — re-run CAM allocation to confirm it.'
       : '⚠ Fields were edited since the last run — re-run CAM allocation to update results.';
   }
+  if (typeof renderCamWorkflow === 'function') renderCamWorkflow();
 }
 
 function handleFieldBlur(index, field, value, el) {
@@ -9639,6 +9641,7 @@ function renderInvResults() {
     el.innerHTML = _workspaceEmptyStateHtml('&#x1F9FE;',
       'No invoices have been uploaded yet.',
       'Upload invoices in the CAM tab before running a reconciliation.');
+    renderCamWorkflow();
     return;
   }
 
@@ -9773,6 +9776,7 @@ function renderInvResults() {
 
   // Advance onboarding step bar when the first invoice is added
   _obSyncState();
+  renderCamWorkflow();
 }
 
 // Returns a clickable confidence badge that opens + highlights weak fields on click.
@@ -10567,20 +10571,174 @@ function camYearIncludes(inv, year) { return camYearScopeOf(inv, year) !== 'out'
 window.camYearScopeOf  = camYearScopeOf;
 window.camYearIncludes = camYearIncludes;
 
-function showAllocationModal() {
-  const totalSqft = parseFloat(document.getElementById('totalSqft').value);
-  // Canonical tenant fields are snake_case — normalizeTenant() produces
-  // tenant_name / leased_sqft, and that is what every tenant in the app
-  // actually carries. This filter read t.tenantName / t.leasedSqft, which no
-  // tenant has ever had, so it matched ZERO tenants on every property
-  // including the demo. The effect was silent: the guard below fell through to
-  // runAllocation() and the confirmation step — "You are about to allocate $X
-  // across N tenants" — never appeared for anybody. camelCase is still accepted
-  // in case an older record carries it.
+// WHAT A RUN NEEDS, DECIDED ONCE. showAllocationModal refuses on exactly this
+// and the CAM page's Prepare/Calculate steps report exactly this, so the
+// button and the status above it cannot disagree about readiness. Canonical
+// tenant fields are snake_case — normalizeTenant() produces tenant_name /
+// leased_sqft, and that is what every tenant in the app carries; camelCase is
+// still accepted in case an older record carries it.
+// ── THE CAM WORKFLOW, DECORATED ─────────────────────────────────────────────
+//
+// The CAM page is four numbered steps — Prepare, Calculate, Tenant Results,
+// AI Audit Review — and this fills each step's status chip and fact strip.
+// It DECIDES nothing: every figure and verdict is read from the authority
+// that already owns it (the register, CamPool, camYearScopeOf, the last run,
+// the stale flag, the billing verdict, the audit buckets) and printed. It is
+// safe to call at any time and never throws into a caller.
+function renderCamWorkflow() {
+  try { _renderCamWorkflow(); } catch (e) { console.warn('[renderCamWorkflow]', e && e.message); }
+}
+window.renderCamWorkflow = renderCamWorkflow;
+
+function _renderCamWorkflow() {
+  const $ = id => document.getElementById(id);
+  if (!$('camFlow')) return;
+  const set = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+  const show = (id, on) => { const el = $(id); if (el) el.style.display = on ? '' : 'none'; };
+  const chip = (cls, text) => `<span class="cam-chip cam-chip--${cls}">${text}</span>`;
+  const fact = (l, v, cls) => `<div class="cam-fact${cls ? ' cam-fact--' + cls : ''}"><span class="cam-fact-l">${l}</span><span class="cam-fact-v">${v}</span></div>`;
+  const cell = (l, v, cls, title) => `<div class="cam-calc-cell${cls ? ' cam-calc-cell--' + cls : ''}"${title ? ` title="${esc(title)}"` : ''}><div class="cam-fact-l">${l}</div><div class="cam-fact-v">${v}</div></div>`;
+  const n = (v) => Number(v).toLocaleString('en-US');
+  const year = getCamYear();
+  const stepDone = (id, on) => { const el = $(id); if (el) el.classList.toggle('cam-step--done', !!on); };
+
+  // ── 1 · Prepare — the register, the leases, the year ──────────────────────
+  const prep = _camPrepState();
+  const invAll = (invoiceData || []).filter(Boolean);
+  const scope = { in: 0, out: 0, undated: 0 };
+  invAll.forEach(i => { scope[camYearScopeOf(i, year)] += 1; });
+  // Same predicate the source-document detector applies (buildAuditSummary).
+  const withDoc = invAll.filter(i => i.fileUrl || i.fileName).length;
+  const gross = window.CamPool ? window.CamPool.grossTotal(invAll) : invAll.reduce((t, i) => t + (parseFloat(i.amount) || 0), 0);
+  const pool  = window.CamPool ? window.CamPool.total(invAll) : gross;
+  set('camPrepSub', `Load and check the data the ${esc(String(year))} reconciliation will run on.`);
+  const prepFacts = [
+    fact('Property size', prep.totalSqft > 0 ? `${n(prep.totalSqft)} sqft` : '—', prep.totalSqft > 0 ? '' : 'bad'),
+    fact('Leases ready', `${prep.tenants.length}<small> with a name and leased sqft</small>`, prep.tenants.length ? '' : 'bad'),
+    fact('Invoices loaded', invAll.length ? `${invAll.length}<small> · ${fmt(gross)} invoiced</small>` : '0', invAll.length ? '' : 'bad'),
+    invAll.length ? fact(`Dated in ${esc(String(year))}`, `${scope.in}${scope.out ? `<small> · ${scope.out} outside the year</small>` : ''}${scope.undated ? `<small> · ${scope.undated} undated (kept)</small>` : ''}`, scope.out ? 'warn' : '') : '',
+    invAll.length ? fact('With a source document', `${withDoc} of ${invAll.length}`, withDoc < invAll.length ? 'warn' : 'ok') : '',
+  ].join('');
+  set('camPrepFacts', prepFacts);
+  set('camPrepStatus', prep.ready
+    ? chip('ok', `&#x2713; Ready for ${esc(String(year))}`)
+    : chip('warn', `Still needed: ${prep.missing.length}`));
+  stepDone('camStepPrepare', prep.ready);
+  set('camRegisterMeta', invAll.length
+    ? `${invAll.length} invoice${invAll.length === 1 ? '' : 's'} · ${withDoc} with a source document · ${fmt(pool)} recoverable`
+    : 'No invoices loaded yet.');
+
+  // ── 2 · Calculate — the year, the pool, the tenants, the readiness ────────
+  // A refused run leaves the previous results in memory (runAllocation returns
+  // before it assigns lastResults) and puts the refusal on screen. The screen
+  // is what the manager is reading, so the chips read the refusal from it.
+  const bodyEl0 = $('resultsBody');
+  const refused = !!(bodyEl0 && bodyEl0.querySelector('.cam-refusal'));
+  const hasResults = !refused && Array.isArray(lastResults) && lastResults.length > 0;
+  const stale = hasResults && _resultsStale;
+  const cp = currentProperty && currentProperty();
+  const lastTs = (camRuns && camRuns[0] && camRuns[0].timestamp) || (cp && cp.camReconciliation && cp.camReconciliation.savedAt) || null;
+  set('camCalcSub', `Run the ${esc(String(year))} reconciliation to allocate recoverable expenses to tenants.`);
+  set('camCalcContext', [
+    cell('CAM year', esc(String(year)), '', 'The year in force. Set on the Property tab (Edit property).'),
+    cell('Recoverable pool', invAll.length ? fmt(pool) : '—', '', invAll.length
+      ? `${fmt(pool)} of ${fmt(gross)} invoiced is CAM-eligible on the register; the year filter is applied at calculation.`
+      : 'No invoices loaded.'),
+    cell('Tenants', String(prep.tenants.length), prep.tenants.length ? '' : 'bad', 'Leases with a tenant name and leased square footage.'),
+    prep.ready
+      ? cell('Readiness', stale ? 'Re-run needed' : (hasResults ? '&#x2713; Calculated' : '&#x2713; Ready'), stale ? 'warn' : 'ok',
+             stale ? _staleResultsReason() : 'All required data is in place.')
+      : cell('Readiness', 'Not ready', 'bad', 'Still needed: ' + prep.missing.join('; ')),
+  ].join(''));
+  set('camCalcStatus', !prep.ready ? chip('warn', 'Not ready')
+    : refused ? chip('bad', 'Not reconciled')
+    : stale ? chip('warn', 'Re-run needed')
+    : hasResults ? chip('ok', '&#x2713; Calculated')
+    : chip('muted', 'Ready to calculate'));
+  stepDone('camStepCalculate', hasResults && !stale);
+  set('camCalcLast', refused
+    ? `The ${esc(String(year))} run was refused — see Tenant Results for the reason. Change the CAM year or the invoices, then calculate again.`
+    : hasResults
+    ? `Last calculated ${lastTs ? esc(_fmtRunTs(lastTs)) : '—'} for ${esc(String(lastResultsYear || year))}.` +
+      (stale ? ` <strong>Results may be stale</strong> — ${esc(_staleResultsReason())}. Re-run before issuing a statement.` : '')
+    : (prep.ready ? `Nothing calculated for ${esc(String(year))} yet.` : `Still needed before this can run: ${esc(prep.missing.join('; '))}.`));
+
+  // ── 3 · Tenant Results — the run on screen ────────────────────────────────
+  const resultsEl = $('results');
+  const resultsVisible = !!resultsEl && resultsEl.style.display !== 'none';
+  const verdict = (hasResults && typeof _lastBillingVerdict !== 'undefined' && _lastBillingVerdict
+                   && _lastBillingVerdict.tenantCount === lastResults.length) ? _lastBillingVerdict : null;
+  set('camResultsStatus', hasResults
+    ? (verdict
+        ? (verdict.readiness && verdict.readiness.canBill
+            ? chip('ok', `&#x2713; ${verdict.billableNames.length} of ${verdict.tenantCount} billable`)
+            : chip('warn', `${verdict.billableNames.length} of ${verdict.tenantCount} billable`))
+        : chip('ok', `${lastResults.length} tenant${lastResults.length === 1 ? '' : 's'}`))
+    : refused ? chip('bad', 'Not reconciled') : chip('muted', 'Awaiting calculation'));
+  stepDone('camStepResults', hasResults);
+  const noneMsg = refused ? '' : `Calculate CAM to see each tenant's ${esc(String(year))} charge, its share and whether it can be billed.`;
+  set('camResultsNone', noneMsg);
+  show('camResultsNone', !hasResults && !resultsVisible && !!noneMsg);
+
+  // ── 4 · AI Audit Review — the findings, by what they affect ───────────────
+  if (!hasResults) {
+    set('camAuditStrip', '');
+    set('camAuditStatus', chip('muted', 'Awaiting calculation'));
+    set('camAuditNone', 'The AI review runs with the calculation: what it finds is listed here, grouped by what it affects.');
+    show('camAuditNone', true);
+    stepDone('camStepAudit', false);
+    return;
+  }
+  const b = _camAuditBuckets();
+  const bucket = (key, color, count, label, sub) =>
+    `<button type="button" class="cam-audit-bucket cam-audit-bucket--${color}${count ? '' : ' cam-audit-bucket--zero'}" data-bucket="${key}" data-count="${count}"
+        onclick="_camOpenAuditBucket('${key}')" title="Open the ${esc(label.toLowerCase())} in the review below">
+      <span class="cam-audit-n">${count}</span>
+      <span class="cam-audit-t"><span class="cam-audit-l">${esc(label)}</span><span class="cam-audit-s">${esc(sub)}</span></span>
+    </button>`;
+  set('camAuditStrip', [
+    bucket('blocking', 'red',    b.blocking.length, 'Critical / blocking', b.blocking.length ? 'Holding statements' : 'Nothing holds billing'),
+    bucket('property', 'yellow', b.property.length, 'Property-wide',       b.property.length ? 'Review recommended' : 'None'),
+    bucket('tenant',   'blue',   b.tenant.length,   'Tenant-specific',     b.tenant.length ? 'Review recommended' : 'None'),
+    bucket('advisory', 'green',  b.advisory.length, 'Advisory',            b.advisory.length ? 'For your information' : 'None'),
+  ].join(''));
+  const toReview = b.property.length + b.tenant.length;
+  set('camAuditStatus', b.blocking.length
+    ? chip('bad', `${b.blocking.length} blocking`)
+    : toReview ? chip('warn', `${toReview} to review`) : chip('ok', '&#x2713; No exceptions'));
+  show('camAuditNone', false);
+  stepDone('camStepAudit', b.blocking.length === 0);
+}
+
+// A bucket in the strip opens the review panel on that group.
+function _camOpenAuditBucket(key) {
+  const panel = document.getElementById('auditPanel');
+  if (!panel) return;
+  const body = document.getElementById('apBody');
+  if (body && !body.classList.contains('ap-body--open')) {
+    body.classList.add('ap-body--open');
+    const ch = panel.querySelector('.ap-chevron'); if (ch) ch.classList.add('ap-chevron--open');
+  }
+  const target = panel.querySelector(`.ap-section[data-bucket="${key}"]`) || panel;
+  try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+}
+window._camOpenAuditBucket = _camOpenAuditBucket;
+
+function _camPrepState() {
+  const totalSqft = parseFloat((document.getElementById('totalSqft') || {}).value);
   const tName = t => t && (t.tenant_name ?? t.tenantName);
   const tSqft = t => t && (t.leased_sqft ?? t.leasedSqft);
   const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);
   const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
+  const missing = [];
+  if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
+  if (!tenants.length)              missing.push('at least one lease with a tenant name and leased sqft (Spaces tab)');
+  if (!invoices.length)             missing.push('this year\u2019s CAM invoices (CAM tab)');
+  return { totalSqft, tenants, invoices, missing, ready: missing.length === 0 };
+}
+
+function showAllocationModal() {
+  const { totalSqft, tenants, invoices, missing } = _camPrepState();
 
   // If data isn't ready, SAY SO WHERE THE USER IS STANDING.
   //
@@ -10592,11 +10750,7 @@ function showAllocationModal() {
   //
   // The old wording pointed at "Section 1" and "Section 2", which stopped
   // existing when the workspace became tabbed.
-  if (!totalSqft || totalSqft <= 0 || !tenants.length || !invoices.length) {
-    const missing = [];
-    if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
-    if (!tenants.length)              missing.push('at least one lease with a tenant name and leased sqft (Spaces tab)');
-    if (!invoices.length)             missing.push('this year\u2019s CAM invoices (CAM tab)');
+  if (missing.length) {
     showToast('Not ready to reconcile yet \u2014 still needed: ' + missing.join('; ') + '.',
               { color: '#1e3a5f', textColor: '#dbeafe', duration: 7000 });
     // Take them to the first thing that is missing rather than leaving them to
@@ -11719,6 +11873,7 @@ async function runAllocation() {
     // The manager is still at Calculate. Marking it done was the step bar's own
     // conclusion, drawn from the fact that the function had got this far.
     updateStepBar('calculate');
+    renderCamWorkflow();
     const _refProp = currentProperty();
     if (_refProp) {
       // Stored verbatim so the restored view renders from the engine's words and
@@ -11954,6 +12109,7 @@ async function runAllocation() {
   renderNarrativePanel();
   renderAuditPanel();
   renderHistoricalTrendsPanel();
+  renderCamWorkflow();
   renderActivityTimeline();
 
   renderDisputeSection();
@@ -14745,6 +14901,7 @@ function setCamYear(y, opts) {
   // reconciliation restores a prior year) so it can't disagree with the breadcrumb.
   const _cys = document.getElementById('camYearSelect');
   if (_cys && _cys.value !== String(_camYear)) _cys.value = String(_camYear);
+  if (typeof renderCamWorkflow === 'function') renderCamWorkflow();
 }
 function initCamYearSelect() {
   const sel = document.getElementById('camYearSelect');
@@ -17592,7 +17749,7 @@ function renderNarrativePanel() {
   const prev = document.getElementById('narrativePanel');
   if (prev) prev.remove();
 
-  const section = document.getElementById('results');
+  const section = _camAuditMount();
   if (!section || !lastResults.length) return;
 
   const n = buildAuditNarrative();
@@ -17682,11 +17839,18 @@ function renderNarrativePanel() {
 
   // Insert before auditPanel so narrative sits above the flag detail panel
   const auditPanel = document.getElementById('auditPanel');
-  if (auditPanel) {
+  if (auditPanel && auditPanel.parentNode === section) {
     section.insertBefore(panel, auditPanel);
   } else {
     section.appendChild(panel);
   }
+}
+
+// Where the review panels live: the AI Audit Review step of the CAM workflow.
+// #results is the fallback so a page without the step (the legacy layout, a
+// test harness) behaves exactly as it always did.
+function _camAuditMount() {
+  return document.getElementById('camAuditReview') || document.getElementById('results');
 }
 
 // ── A FINDING THAT ASKS FOR A DECISION OFFERS THE CONTROL FOR IT ───────────
@@ -17767,31 +17931,85 @@ async function confirmPartialBasisFromAudit(tenantId, basis, btn) {
 }
 window.confirmPartialBasisFromAudit = confirmPartialBasisFromAudit;
 
-// Builds and injects the AI Audit Panel into the results section.
+// ── THE FINDINGS, GROUPED BY WHAT THEY AFFECT ───────────────────────────────
+//
+// buildAuditSummary() is the authority on findings and AuditExposure is the
+// authority on which of them hold billing and which tenant each is about.
+// This reads both and sorts the SAME records into the four groups a manager
+// acts on, in the order they act on them:
+//
+//   blocking   the findings the billing gate is holding statements on
+//              (readiness.blockers — matched by title, as _statementReadinessBlock does)
+//   property   the rest of the red/yellow findings with no tenant marker
+//   tenant     the rest of the red/yellow findings about one tenant (findingScope)
+//   advisory   the green findings
+//
+// No finding is invented, dropped, re-scored or re-worded; each keeps the
+// severity colour the detector gave it. Without AuditExposure the blocking
+// group is empty and everything falls into property/tenant — reported, not
+// guessed.
+function _camAuditBuckets() {
+  const summary = buildAuditSummary();
+  const AXs = window.AuditExposure;
+  // THE VERDICT ALREADY REACHED, NOT A FOURTH ONE. _buildReconciliationSummaryHtml
+  // asks billingReadiness for the run on screen and records it in
+  // _lastBillingVerdict; the property-level callers are counted
+  // (test-billing-readiness.js) precisely so no surface decides billability on
+  // its own. This reads that record. No verdict yet means no blocking group.
+  const verdict = (typeof _lastBillingVerdict !== 'undefined' && _lastBillingVerdict
+                   && _lastBillingVerdict.tenantCount === lastResults.length) ? _lastBillingVerdict : null;
+  const readiness = verdict ? verdict.readiness : null;
+  const blockerTitles = new Set();
+  (readiness && readiness.blockers || []).forEach(b => { if (b && b.title) blockerTitles.add(b.title); });
+  const scopeOf = f => { try { return (AXs && AXs.findingScope) ? AXs.findingScope(f) : { tenant: null }; } catch (_) { return { tenant: null }; } };
+  const blocking = [], property = [], tenant = [];
+  (summary.red || []).map(f => ({ f, color: 'red' }))
+    .concat((summary.yellow || []).map(f => ({ f, color: 'yellow' })))
+    .forEach(x => {
+      if (blockerTitles.has(x.f.title))      blocking.push(x);
+      else if ((scopeOf(x.f) || {}).tenant)  tenant.push(x);
+      else                                   property.push(x);
+    });
+  const advisory = (summary.green || []).map(f => ({ f, color: 'green' }));
+  return { blocking, property, tenant, advisory, readiness, summary };
+}
+
+// Builds and injects the AI Audit panel into the AI Audit Review step.
 // Safe to call multiple times — removes any prior panel first.
 function renderAuditPanel() {
   const prev = document.getElementById('auditPanel');
   if (prev) prev.remove();
 
-  const section = document.getElementById('results');
+  const section = _camAuditMount();
   if (!section || !lastResults.length) return;
 
-  const { red, yellow, green } = buildAuditSummary();
+  const b = _camAuditBuckets();
 
   const badge = (n, color) => n > 0
     ? `<span class="ap-badge ap-badge--${color}">${n}</span>`
     : '';
 
-  const flagSection = (flags, color, label) => {
-    if (!flags.length) return '';
-    return `<div class="ap-section">
-      <div class="ap-section-title ap-${color}">${esc(label)} (${flags.length})</div>
-      ${flags.map(f => `<div class="ap-flag ap-flag--${color}">
+  // The finding's own record, printed as it was recorded: title, detail,
+  // conditions, a quantified amount when it carries one, and the control it
+  // asks for (_auditFlagActionHtml).
+  const flagHtml = (x) => {
+    const f = x.f;
+    const amt = f && f.impact && Number.isFinite(Number(f.impact.amount)) && Number(f.impact.amount) > 0
+      ? `<div class="ap-flag-amount">${fmt(Number(f.impact.amount))}${f.impact.kind ? ` <span class="ap-flag-amount-kind">${esc(String(f.impact.kind).replace(/_/g, ' '))}</span>` : ''}</div>`
+      : '';
+    return `<div class="ap-flag ap-flag--${x.color}">
         <div class="ap-flag-title">${esc(f.title)}</div>
         ${f.detail ? `<div class="ap-flag-detail">${esc(f.detail)}</div>` : ''}
+        ${amt}
         ${f.conditions?.length ? `<ul class="ap-flag-conditions">${f.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
         ${_auditFlagActionHtml(f)}
-      </div>`).join('')}
+      </div>`;
+  };
+  const group = (key, items, color, label, sub) => {
+    if (!items.length) return '';
+    return `<div class="ap-section" data-bucket="${key}">
+      <div class="ap-section-title ap-${color}">${esc(label)} (${items.length})${sub ? `<span class="ap-section-sub">${esc(sub)}</span>` : ''}</div>
+      ${items.map(flagHtml).join('')}
     </div>`;
   };
 
@@ -17804,22 +18022,26 @@ function renderAuditPanel() {
       this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open');
     ">
       <div class="ap-header-left">
-        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Summary <span class="ap-scope">&mdash; reconciliation &amp; invoice evidence</span></span>
+        <span class="ap-title">&#x1F50D;&nbsp; AI Audit Review <span class="ap-scope">&mdash; reconciliation &amp; invoice evidence</span></span>
       </div>
       <div class="ap-header-right">
-        ${badge(red.length, 'red')}
-        ${badge(yellow.length, 'yellow')}
-        ${badge(green.length, 'green')}
+        ${badge(b.blocking.length, 'red')}
+        ${badge(b.property.length + b.tenant.length, 'yellow')}
+        ${badge(b.advisory.length, 'green')}
         <span class="ap-chevron">&#x25BC;</span>
       </div>
     </div>
     <div id="apBody" class="ap-body ap-body--open">
-      ${flagSection(red,    'red',    'Red Flags')}
-      ${flagSection(yellow, 'yellow', 'Yellow Flags')}
-      ${flagSection(green,  'green',  'Green Flags')}
+      ${group('blocking', b.blocking, 'red',    'Critical / blocking',      'Statements are held until these are resolved.')}
+      ${group('property', b.property, 'yellow', 'Property-wide findings',   'About the reconciliation as a whole.')}
+      ${group('tenant',   b.tenant,   'yellow', 'Tenant-specific findings', 'About one tenant; others are unaffected.')}
+      ${group('advisory', b.advisory, 'green',  'Advisory',                 'For your information.')}
+      ${(b.blocking.length + b.property.length + b.tenant.length + b.advisory.length) === 0
+        ? '<div class="ap-empty">The review recorded no findings on this reconciliation.</div>' : ''}
     </div>`;
 
   section.appendChild(panel);
+  renderCamWorkflow();
 }
 
 // ─── Historical Trends ────────────────────────────────────────────────────────
@@ -18007,7 +18229,7 @@ function renderHistoricalTrendsPanel() {
   const prev = document.getElementById('trendsPanel');
   if (prev) prev.remove();
 
-  const section = document.getElementById('results');
+  const section = _camAuditMount();
   if (!section || !lastResults.length) return;
 
   const data = buildHistoricalTrends();
@@ -25610,6 +25832,7 @@ function resetWorkflow() {
     var el = document.getElementById(id);
     if (el) el.remove();
   });
+  renderCamWorkflow();
   document.getElementById('disputeSection').style.display = '';
   document.getElementById('disputeInvoiceList').innerHTML = '';
   document.getElementById('openDisputesWrap').style.display = 'none';
@@ -29010,6 +29233,7 @@ function restoreResultsDisplay(snapshot) {
 
   body.innerHTML = html;
   section.style.display = 'block';
+  renderCamWorkflow();
 
   // Confirm the explain buttons rendered with onclick and are not pointer-blocked
   const firstBtn = body.querySelector('.explain-btn');

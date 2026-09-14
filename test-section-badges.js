@@ -218,8 +218,14 @@ const AFFECTED = [
       const affectedBadges = {};
       for (const c of AFFECTED) {
         const el = document.getElementById(c.id);
-        const b = el ? el.querySelector('.sec-num') : null;
-        affectedBadges[c.id] = b ? (b.textContent || '').trim() : null;
+        // The results card is step 3 of the CAM page's numbered workflow
+        // (Prepare → Calculate → Tenant Results → AI Audit Review): its badge is
+        // that step's number, in the step vocabulary (.cam-step-num), not a
+        // .sec-num ordinal. The step number is reported as "step 3" so the
+        // ordinal rule below still holds for every .sec-num in the app.
+        const b = el ? (el.querySelector('.sec-num') || el.querySelector('.cam-step-num')) : null;
+        const txt = b ? (b.textContent || '').trim() : null;
+        affectedBadges[c.id] = (b && b.classList.contains('cam-step-num')) ? 'step ' + txt : txt;
       }
       return { byTab, all, affectedBadges };
     }, AFFECTED);
