@@ -25067,6 +25067,13 @@ async function selectProperty(id) {
     // watched being refused.
     property.camRefusal        = data.camRefusal ?? null;
     property.camYear           = data.camYear ?? property.camYear ?? null;
+    // Property reference facts — address, year built, insurance carrier and
+    // expiry, roof, HVAC. PropertyReference.infoFor() has always read
+    // `property.info`, and nothing ever put it there for a real property: it
+    // was not in the save payload, not in the load projection, and not
+    // applied here, so Property Information was demo-only by omission. Same
+    // four-site shape as camRefusal above (Property Workspace V2, decision 5).
+    property.info              = (data.info && typeof data.info === 'object') ? data.info : (property.info ?? null);
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
@@ -27098,6 +27105,10 @@ async function saveProperty(property) {
       // feature doesn't yet need cross-property querying.
       escrowReserves:    stripped.escrowReserves     || [],
       drawRequests:      stripped.drawRequests       || [],
+      // Verified property facts (Property Information). Absent from this
+      // payload since the field was introduced, so every save rewrote
+      // properties.data without it and the facts could only ever be the demo's.
+      info:              (stripped.info && typeof stripped.info === 'object') ? stripped.info : null,
     };
 
     console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
@@ -27522,6 +27533,7 @@ async function loadPropertyData(id) {
         tenants:           d.tenants?.length ? d.tenants.map(normalizeTenant) : null,
         escrowReserves:    d.escrowReserves    || [],
         drawRequests:      d.drawRequests      || [],
+        info:              (d.info && typeof d.info === 'object') ? d.info : null,
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -27683,6 +27695,10 @@ async function loadPropertyData(id) {
     // changes must not be lost if a stale local snapshot has fewer tenants).
     escrowReserves:    dbData.escrowReserves?.length ? dbData.escrowReserves : (base.escrowReserves || []),
     drawRequests:      dbData.drawRequests?.length   ? dbData.drawRequests   : (base.drawRequests   || []),
+    // Supabase wins when it has facts; a local copy is kept only when the
+    // server has none, so a stale snapshot cannot overwrite an edit made on
+    // another device.
+    info:              (dbData.info && typeof dbData.info === 'object') ? dbData.info : (base.info ?? null),
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects

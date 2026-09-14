@@ -177,6 +177,16 @@ const SUITES = [
   // the register. Fixture amounts differ in and out of year so a build that
   // reports the gross figure cannot pass by coincidence.
   { label: 'CAM scope disclosure',                cmd: 'node test-e2e-cam-scope-disclosure.js' },
+  // PROPERTY WORKSPACE V2, PHASE 0. The filing cabinet already existed as data
+  // — every property record carries a category from the timeline registry —
+  // and property-cabinet.js is the one map from that to a drawer, plus the
+  // index, invoice paging, Important Dates, vacancy and addressing every V2
+  // surface will read. The pure suite checks the map against the REAL registry
+  // (loaded, not grepped); the e2e proves property.info and vacant: true
+  // survive a save and a real reload — the first was demo-only by omission for
+  // the life of the product.
+  { label: 'Property cabinet (V2 Phase 0)',       cmd: 'node test-property-cabinet.js' },
+  { label: 'Property foundations persistence (e2e)', cmd: 'node test-e2e-property-foundations.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

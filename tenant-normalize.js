@@ -176,6 +176,14 @@
       base_rent:           d.base_rent           ?? null,
       security_deposit:    d.security_deposit    ?? null,
       amendments:          Array.isArray(d.amendments) ? d.amendments : [],
+      // ALLOW-LIST, SAME REASON AGAIN. A vacant space is a row on this array
+      // with `vacant: true` — it keeps its suite and area so the space exists
+      // whether or not anyone occupies it (Property Workspace V2, decision 4:
+      // one tenants array, no second spaces[] source of truth). Without this
+      // line the flag is written to storage and dropped on the next load, and
+      // the vacancy silently becomes a tenant called whatever the row was
+      // named. Strictly boolean: anything but `true` is not vacant.
+      vacant:              d.vacant === true,
       property_name:       (() => {
         const v = d.property_name ?? d.propertyName ?? null;
         return (typeof v === 'string' && v.trim()) ? v.trim() : null;

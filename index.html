@@ -8125,6 +8125,10 @@
 <script src="script.js"></script>
 <!-- Property Timeline v1 (Phase 2): manager logbook layer — add-entry modal, attachments, event-type registry. Reuses the timeline engine in script.js; must load after it. -->
 <script src="property-timeline.js"></script>
+<!-- Property Workspace V2 — the filing cabinet as data: drawer registry, index,
+     invoice paging, Important Dates, vacancy, addressing. Pure; nothing renders
+     from it until Phase 1. Loaded before property-os.js, which will read it. -->
+<script src="property-cabinet.js"></script>
 <!-- Property Operating System — advisor surface ("What needs your attention"). Reuses Selectors + navigation; must load after script.js/property-timeline.js. -->
 <script src="property-workspace.js"></script>
 <!-- Property Operating System — Tenant Space view ("everything about Suite 210"). Reuses subject-scoped records; must load after property-timeline.js. -->
