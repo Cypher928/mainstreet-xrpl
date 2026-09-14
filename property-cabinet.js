@@ -479,9 +479,10 @@
   //   reserve_expiration   escrowReserves[].deadlines  → Financing drawer
   //   <keyDateKind>        timeline event `keyDate`    → the record's drawer
   //
-  // The last is read now and written later: appendPropertyTimelineEvent is an
-  // allow-list and does not yet keep `keyDate`, so no event carries one today.
-  // Reading it costs nothing and gives Phase 2 a target that does not move.
+  // appendPropertyTimelineEvent keeps `keyDate` (as YYYY-MM-DD only) and
+  // `keyDateKind` (one of these kinds only), so a record's date survives a
+  // save and a reload; the demo seed writes them, and authoring one in the
+  // entry modal is Phase 2.
   var KEY_DATE_KINDS = ['renewal', 'deadline', 'maturity', 'expiry', 'inspection', 'permit'];
 
   function _iso(d) { return d.toISOString().slice(0, 10); }

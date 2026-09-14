@@ -121,10 +121,15 @@ is not shown.
 | `reserve_expiration` | `escrowReserves[].deadlines.reserveExpirationDate` | Financing |
 | `renewal · deadline · maturity · expiry · inspection · permit` | timeline event `keyDate` + `keyDateKind` | the record's drawer |
 
-The last row is **read now and written later**: `appendPropertyTimelineEvent`
-is an allow-list writer and does not yet keep `keyDate`. Authoring it (in the
-add/edit entry modal) is Phase 2 and requires extending that writer — a
-persistence change, called out rather than slipped in.
+The last row is read by the cabinet and **kept by the writer**:
+`appendPropertyTimelineEvent` keeps `keyDate` only as a readable `YYYY-MM-DD`
+(a date with a time on it is cut to the day; anything unreadable becomes
+`null`, never a guess) and `keyDateKind` only when it is one of the six kinds
+above. The whole timeline event is persisted as written and read back as
+stored, so a key date survives save → reload (`test-e2e-demo-showroom.js`
+proves it on a property the demo seeder never touches). What is still Phase 2
+is *authoring* a key date in the add/edit entry modal; today only code writes
+one (the demo seed does).
 
 ### Addressing
 
@@ -242,6 +247,15 @@ center) carries realistic values throughout. **Demo values are never shown for a
 real property.** `PropertyReference.isDemo()` gates them; a real property shows
 its own `info` or an honest empty state.
 
+Seed v8 fills the cabinet (see `docs/DEMO_SHOWROOM.md`): 49 records seeded as
+ordinary manual timeline events — Real Estate Taxes 9 · Insurance 4 · Mortgage
+& Financing 4 · Property Financials 5 · Agreements 5 · Building & Systems 17 ·
+History 5 — linked to the register's bills by stable id, seven of them carrying
+a `keyDate`, twelve carrying a labelled fictional PDF. The register's 26 rows
+carry the ids `inv-0…inv-25` the reconciliation summary and the disputes
+already used. The **reference samples** (site plan, survey, roof warranty…)
+are still samples: they are not among the records and never counted.
+
 ## Known gaps against this IA
 - **Team Workspace / Team access** are named and not implemented.
 - **Tab order** renders `Overview · Property · Spaces · CAM · Reports · Reserves`;
@@ -250,8 +264,22 @@ its own `info` or an honest empty state.
   workflow stays in CAM, and a property-level roll-up is Phase 2.
 - **Statements** is a Space section that links to the generator in Reports; a
   statement history per space is not yet recorded.
-- **Property image**: no property carries an image field today, so the header
-  shows none rather than inventing one.
+- **Property image**: the header shows `info.imageUrl` (with
+  `info.imageCaption`) when a property carries one — the demo's is an
+  architectural rendering captioned "demonstration illustration, not a
+  photograph". No property image model exists beyond that field; a real
+  property without one shows no image rather than an invented one.
+- **The demo re-seeds after any save** (pre-existing, found while populating
+  it): the in-memory demo object never carries `_demoV`, an app save writes the
+  row without it, and the next load fails the idempotency check and re-seeds —
+  so a record a user adds to Cascade Commons does not survive a reload. Real
+  properties are unaffected. Not changed here; called out.
+- **Invoice relations do not persist** (pre-existing): `_stripBlobs` keeps
+  `id`, `camEligible` and the match fields on an invoice but not `system` or
+  `spaceId`, so a Space/System relation set in the register is lost on reload.
+  The demo therefore links its bills to systems from the record side
+  (`relatedTo`, which is persisted) rather than tagging invoices. Not changed
+  here; called out.
 - The hidden `Estoppels` pane is dead markup behind a commented-out tab; left
   alone in Phase 1 because it is outside the Property/Spaces surfaces.
 - The seeded demo's **reference samples** (site plan, survey, roof warranty…)

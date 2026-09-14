@@ -21172,13 +21172,13 @@ async function ensureDemoProperty() {
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 7 && row?.data?.settlement?.txHash) {
-      console.log('[ensureDemoProperty] already seeded v7 (with settlement) — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 8 && row?.data?.settlement?.txHash) {
+      console.log('[ensureDemoProperty] already seeded v8 (with settlement) — skip');
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v7…');
+  console.log('[ensureDemoProperty] seeding Cascade Commons v8…');
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
@@ -21187,7 +21187,9 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  const DEMO_VERSION = 7;
+  // v8: the filing cabinet is populated — the register carries stable ids and
+  // the timeline carries the building's own records (see demoCabinetRecords).
+  const DEMO_VERSION = 8;
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -21494,7 +21496,234 @@ async function ensureDemoProperty() {
     tlEntry(0, 'derived_metrics_rebuilt', 'info',
       'CAM reconciliation run',
       `Reconciliation completed for ${fullResults.length} tenants against $${totalExpenses.toLocaleString()} in expenses.`),
+    // The building's own records — what a manager would find in a well-kept
+    // filing cabinet. Seeded as ordinary manual timeline events (the one
+    // record type the cabinet files), so they are records, not a second store.
+    ...demoCabinetRecords(),
   ];
+
+  // ── The filing cabinet's contents ─────────────────────────────────────────
+  // Every entry is the shape appendPropertyTimelineEvent() writes: a manual
+  // event with a category (which is what files it in a drawer), a subject
+  // (the property, or one of its building systems), an author, and — where the
+  // record carries a date the building has to meet — a keyDate the Important
+  // Dates view derives from. Links to the invoice register go through
+  // `relatedTo` by the register's stable id, so the Roof story reaches its
+  // bills and a bill reaches its story.
+  //
+  // Everything here is FICTIONAL and internally consistent with the facts the
+  // rest of the demo already states (PropertyReference.demoInfo, the tenant
+  // roster, the 2025 invoice register, the disputes): the same insurance
+  // policy number and expiry, the same vendors, the same roof, the same six
+  // rooftop units, the same parcel. The lender is invented; no real bank is
+  // attached to invented loan terms. Every attached document is a demonstration
+  // document that says so on its face (assets/demo/records/, built by
+  // tools/build-demo-records.js).
+  //
+  // Reference samples (PropertyReference.demoPropertyDocuments) are NOT here:
+  // they remain samples in their own labelled box and are never records.
+  function demoCabinetRecords() {
+    const PM = 'Christy Alvarez';
+    const DOC = 'assets/demo/records/';
+    const rec = (slug, when, category, title, description, x) => {
+      x = x || {};
+      const links = (x.invoices || []).map(i => ({ kind: 'invoice', id: 'inv-' + i }))
+        .concat((x.records || []).map(r => ({ kind: 'event', id: 'demo-rec-' + r })));
+      return {
+        id:                  'demo-rec-' + slug,
+        timestamp:           when + 'T16:00:00.000Z',
+        type:                'manual_' + category,
+        category,
+        manual:              true,
+        severity:            'info',
+        propertyId:          DEMO_PROPERTY_ID,
+        tenantId:            null,
+        actor:               x.actor || PM,
+        source:              null,
+        title, description,
+        metadata:            { recordedBy: x.actor || PM },
+        // 'na' as the writer defaults: a stated responsibility on a
+        // maintenance/repair record is what raises "confirm cost
+        // responsibility" in What Needs Your Attention, and settled history
+        // must not add a standing nag to the showroom.
+        responsibility:      x.responsibility || 'na',
+        leaseRef:            null,
+        keyDate:             x.keyDate || null,
+        keyDateKind:         x.keyDate ? (x.keyDateKind || 'deadline') : null,
+        attachments:         (x.docs || []).map(d => ({
+          name: d[0], url: /^assets\//.test(d[1]) ? d[1] : DOC + d[1], kind: d[2] || 'pdf',
+        })),
+        subject:             x.system
+          ? { type: 'system', id: x.system, label: null }
+          : { type: 'property', id: DEMO_PROPERTY_ID, label: null },
+        relatedTo:           links,
+        relatedEvidenceIds:  [],
+        relatedDisputeIds:   x.disputes || [],
+        relatedInvoiceIds:   (x.invoices || []).map(i => 'inv-' + i),
+        derivedStateVersion: null,
+      };
+    };
+    const TAX = 'real_estate_taxes', INS = 'insurance', LOAN = 'mortgage_financing';
+    return [
+      // ── Real Estate Taxes (parcel TRAVIS-02-4417-0209) ──────────────────────
+      rec('tax-2023-notice', '2023-04-14', TAX, '2023 notice of appraised value',
+        'Appraised value $6,140,000 (land $1,610,000; improvements $4,530,000). No protest filed — within 2% of the prior year.'),
+      rec('tax-2023-bill', '2023-10-20', TAX, '2023 property tax bill',
+        'Total levy $128,940 across county, city, school and community college jurisdictions. Due January 31, 2024; escrowed with the lender.'),
+      rec('tax-2024-notice', '2024-04-15', TAX, '2024 notice of appraised value',
+        'Appraised value $6,485,000 — up 5.6%. Protest recommended by tax consultant on comparable-sales grounds.'),
+      rec('tax-2024-protest', '2024-05-10', TAX, '2024 value protest filed and settled',
+        'Protest filed May 10; informal hearing June 18. Value reduced to $6,290,000 on comparable strip-center sales. Estimated saving $4,100.'),
+      rec('tax-2024-bill', '2024-10-18', TAX, '2024 property tax bill',
+        'Total levy $132,090 on the protested value of $6,290,000. Due January 31, 2025; escrowed with the lender.'),
+      rec('tax-2024-paid', '2025-01-28', TAX, '2024 taxes paid — receipt on file',
+        'Paid in full from the lender escrow account on January 28, 2025. Receipt no. 2024-TX-0917742.'),
+      rec('tax-2025-notice', '2025-04-15', TAX, '2025 notice of appraised value',
+        'Appraised value $6,520,000. Reviewed with the tax consultant; no protest — value within the settled 2024 range plus market movement.'),
+      rec('tax-2025-bill', '2025-10-17', TAX, '2025 property tax bill',
+        'Total levy $136,920. Due January 31, 2026; escrowed with the lender. Passed through to tenants as Real Property Taxes per the leases.',
+        { docs: [['2025 Property Tax Statement (demonstration).pdf', 'tax-bill-2025.pdf']] }),
+      rec('tax-2026-notice', '2026-04-15', TAX, '2026 notice of appraised value — protest settled',
+        'Notice at $6,875,000; protested June 9 and settled at $6,640,000. The 2026 bill is expected in October and is due January 31, 2027.',
+        { keyDate: '2027-01-31', keyDateKind: 'deadline',
+          docs: [['2026 Notice of Appraised Value (demonstration).pdf', 'tax-appraisal-notice-2026.pdf']] }),
+
+      // ── Insurance (Travelers Commercial Property, policy TRV-CP-8843017-25) ─
+      rec('ins-2024-renewal', '2024-09-25', INS, 'Property policy renewed — 2024–25 term',
+        'Travelers Commercial Property renewed for October 1, 2024 – September 30, 2025. Building limit $7,400,000, wind/hail deductible 2%. Annual premium invoiced through Meridian Property Insurance in January.',
+        { invoices: [0] }),
+      rec('ins-2024-hail-claim', '2024-05-30', INS, 'Hail claim — May 28, 2024 storm',
+        'Claim filed for hail damage to the TPO roof and two rooftop unit condenser coils. Adjuster inspection June 6; roof found serviceable (see roof inspection), coil replacement approved. Settled $18,750 net of deductible.',
+        { records: ['roof-2024-hail-inspection'],
+          docs: [['Hail Claim Settlement Letter (demonstration).pdf', 'insurance-claim-2024-hail.pdf']] }),
+      rec('ins-2025-renewal', '2025-09-24', INS, 'Property policy renewed — 2025–26 term (TRV-CP-8843017-25)',
+        'Travelers Commercial Property policy TRV-CP-8843017-25 bound for October 1, 2025 – September 30, 2026. Building limit $7,600,000, business income 12 months, wind/hail deductible 2%. Expiration is tracked from Property information.',
+        { docs: [['Policy Declarations TRV-CP-8843017-25 (demonstration).pdf', 'insurance-policy-2025-26.pdf']] }),
+      rec('ins-2025-lender-coi', '2025-10-02', INS, 'Certificate of insurance issued to lender',
+        'Evidence of property insurance naming the lender as mortgagee and loss payee, delivered per loan agreement §5.2 for the 2025–26 term.'),
+
+      // ── Mortgage & Financing (fictional lender) ────────────────────────────
+      rec('loan-2019-note', '2019-11-01', LOAN, 'Acquisition loan closed — Pecan Valley Commercial Capital, LLC',
+        'Fictional lender. Principal $4,150,000; 10-year term maturing November 1, 2029; 25-year amortization; fixed 4.35%. Monthly payment $22,720 plus tax and insurance escrow. Guaranty: Cascade Commons Holdings, LLC.',
+        { keyDate: '2029-11-01', keyDateKind: 'maturity',
+          docs: [['Loan Summary & Note Terms (demonstration).pdf', 'loan-note-summary.pdf']] }),
+      rec('loan-2022-amendment', '2022-06-15', LOAN, 'First loan amendment — rate modification',
+        'Fixed rate reduced to 4.10% for the remaining term in exchange for a 0.25% modification fee; maturity and amortization unchanged. Executed June 15, 2022.'),
+      rec('loan-2025-escrow', '2025-11-12', LOAN, '2025 annual escrow analysis',
+        'Lender escrow analysis for taxes and insurance. Monthly escrow set at $14,910 for 2026 (taxes $11,410; insurance $3,500). Surplus of $1,260 refunded.',
+        { docs: [['Annual Escrow Analysis 2025 (demonstration).pdf', 'escrow-analysis-2025.pdf']] }),
+      rec('loan-2026-reporting', '2026-03-28', LOAN, 'Annual financial reporting delivered to lender',
+        '2025 operating statement, rent roll and CAM reconciliation delivered per loan agreement §7.1 (due within 90 days of year end). Lender acknowledged receipt March 30, 2026.'),
+
+      // ── Property Financials ────────────────────────────────────────────────
+      rec('fin-2024-cam-close', '2025-02-14', 'cam', '2024 CAM reconciliation closed',
+        '2024 operating expenses $176,240 reconciled and billed; true-up statements issued February 14, 2025. No disputes. Basis for the 2025 cap calculations.',
+        { docs: [['2024 CAM Reconciliation Close-out (demonstration).pdf', 'cam-closeout-2024.pdf']] }),
+      rec('fin-2025-budget', '2024-12-05', 'cam', '2025 operating budget approved',
+        'Owner approved a 2025 operating expense budget of $181,500. Actual 2025 expenses on the register came to $188,300, the overrun being October repair work orders.'),
+      rec('fin-2026-q1-distribution', '2026-04-15', 'payment', 'Q1 2026 owner distribution',
+        'Distribution of $58,400 to Cascade Commons Holdings, LLC after debt service, reserves and escrow. Wired April 15, 2026.'),
+      rec('fin-2026-q2-distribution', '2026-07-15', 'payment', 'Q2 2026 owner distribution',
+        'Distribution of $61,150 to Cascade Commons Holdings, LLC. Includes recovery of the 2025 CAM true-up collected in June.'),
+      rec('fin-2026-budget-draft', '2025-12-03', 'cam', '2026 operating budget — draft',
+        'Draft 2026 budget of $194,800 circulated to the owner for approval. Assumes a 4% utility increase, the renewed HVAC maintenance agreement and a parking-lot seal coat reserve.',
+        { docs: [['2026 Operating Budget — Draft (demonstration).pdf', 'budget-2026-draft.pdf']] }),
+
+      // ── Agreements (vendors on the register) ───────────────────────────────
+      rec('agr-management', '2019-12-01', 'vendor', 'Property management agreement — Cascade Property Management',
+        'Management fee 4% of collected revenue, billed quarterly. Term through December 31, 2026 with annual renewals thereafter; 60-day termination notice.',
+        { keyDate: '2026-12-31', keyDateKind: 'renewal', invoices: [4, 12, 17, 23],
+          docs: [['Property Management Agreement (demonstration).pdf', 'management-agreement.pdf']] }),
+      rec('agr-landscaping', '2024-12-15', 'vendor', 'Landscape maintenance agreement — Green Valley Landscape',
+        'Annual grounds and irrigation maintenance, billed by season. Calendar-year term; renews automatically unless cancelled by November 30.',
+        { invoices: [1, 8, 14] }),
+      rec('agr-hvac-pm', '2025-03-20', 'vendor', 'HVAC preventive maintenance agreement — ComfortFirst HVAC',
+        'Semi-annual service on six Carrier 48TC rooftop units (filters, belts, coil cleaning, refrigerant check). Two-year term to March 31, 2027; emergency calls billed separately.',
+        { keyDate: '2027-03-31', keyDateKind: 'renewal', invoices: [6, 18] }),
+      rec('agr-security', '2023-01-05', 'vendor', 'Patrol and monitoring agreement — WatchPoint Security',
+        'Nightly drive-through patrol and camera monitoring, billed quarterly. Month-to-month after the initial year.',
+        { invoices: [5, 13, 19, 24] }),
+      rec('agr-janitorial', '2023-01-05', 'vendor', 'Common-area janitorial agreement — CleanSpace Commercial',
+        'Three-times-weekly common-area cleaning, quarterly pressure washing. Billed quarterly; annual term with CPI adjustment.',
+        { invoices: [3, 11, 16, 22] }),
+
+      // ── Building & Systems ─────────────────────────────────────────────────
+      rec('roof-2019-replacement', '2019-08-30', 'capital_improvement', 'Roof replaced — 60-mil TPO membrane',
+        'Full tear-off and replacement of the original 2003 built-up roof with a mechanically fastened 60-mil TPO system as part of the 2019 renovation. Contractor: Hill Country Roofing Co. (fictional).',
+        { system: 'roof', records: ['hist-2019-renovation'] }),
+      rec('roof-2019-warranty', '2019-08-30', 'warranty', 'Roof warranty — 20-year manufacturer system warranty',
+        'Twenty-year no-dollar-limit system warranty on the TPO membrane, effective August 30, 2019 and expiring August 30, 2039. Annual inspections required to keep it in force.',
+        { system: 'roof', keyDate: '2039-08-30', keyDateKind: 'expiry',
+          docs: [['Roof System Warranty Certificate (demonstration).pdf', 'roof-warranty-2019.pdf']] }),
+      rec('roof-2024-hail-inspection', '2024-06-06', 'inspection', 'Roof inspection after May 28 hail storm',
+        'Adjuster and roofing contractor inspection. Membrane intact, no punctures; minor granule loss on walkway pads only. Roof remains under warranty; claim limited to HVAC condenser coils.',
+        { system: 'roof' }),
+      rec('roof-2025-repair', '2025-10-24', 'repair', 'Roof drain and flashing repair',
+        'Two clogged roof drains cleared and a lifted flashing seam at RTU-4 re-welded after October storms. Included in the October repair work orders.',
+        { system: 'roof', invoices: [20] }),
+
+      rec('hvac-2024-rtu-replacement', '2024-08-16', 'capital_improvement', 'Rooftop units RTU-5 and RTU-6 replaced',
+        'Two original 2003 units serving Suites 140 and 150 replaced with Carrier 48TC 7.5-ton units, completing the fleet of six (2019–2024). Contractor: ComfortFirst HVAC.',
+        { system: 'hvac', docs: [['RTU Replacement Proposal & Completion (demonstration).pdf', 'hvac-rtu-replacement-2024.pdf']] }),
+      rec('hvac-2025-spring-pm', '2025-04-15', 'maintenance', 'Spring HVAC preventive maintenance — six rooftop units',
+        'Semi-annual service under the ComfortFirst agreement: filters, belts, condenser coil cleaning, refrigerant charge verified on all six units.',
+        { system: 'hvac', invoices: [6], records: ['agr-hvac-pm'] }),
+      rec('hvac-2025-fall-pm', '2025-10-15', 'maintenance', 'Fall HVAC preventive maintenance — six rooftop units',
+        'Heating-season service: heat exchangers inspected, gas pressures checked, economizers calibrated. RTU-3 blower bearing noted for monitoring.',
+        { system: 'hvac', invoices: [18], records: ['agr-hvac-pm'] }),
+      rec('hvac-2025-emergency', '2025-11-20', 'repair', 'Emergency repair — RTU-3 blower motor',
+        'After-hours call: RTU-3 (serving the common corridor and Suite 110) blower motor failed. Motor and bearing replaced same day. Summit Coffee questioned the unit served; the service ticket names RTU-3.',
+        { system: 'hvac', invoices: [25], disputes: [2] }),
+
+      rec('parking-2019-restripe', '2019-09-20', 'maintenance', 'Parking lot resurfaced and restriped — 132 spaces',
+        'Overlay, seal and restripe of the parking field during the 2019 renovation; six ADA spaces relocated to the main entry.',
+        { system: 'parking' }),
+      rec('parking-2025-sealcoat', '2025-04-22', 'maintenance', 'Parking lot seal coat and crack fill',
+        'Surface seal coat, crack fill and restripe by PavePro Inc — routine maintenance, not a capital improvement. The work order settled the FitZone dispute over this invoice.',
+        { system: 'parking', invoices: [7], disputes: [0] }),
+
+      rec('fire-2025-inspection', '2025-10-20', 'inspection', 'Annual fire sprinkler and alarm inspection',
+        'Wet-pipe sprinkler system and monitored alarm inspected and tagged. All devices passed; two corroded sprinkler heads in the loading corridor replaced. Next annual inspection due October 20, 2026.',
+        { system: 'fire', keyDate: '2026-10-20', keyDateKind: 'inspection',
+          docs: [['Fire Protection Inspection Report (demonstration).pdf', 'fire-inspection-2025.pdf']] }),
+
+      rec('land-2025-irrigation', '2025-05-01', 'repair', 'Irrigation controller and zone valve replacement',
+        'Failed controller and three zone valves replaced by Green Valley Landscape ahead of the summer season; included with the spring service billing.',
+        { system: 'landscaping', invoices: [8] }),
+
+      rec('elec-2024-led-retrofit', '2024-11-05', 'capital_improvement', 'Parking and canopy lighting LED retrofit',
+        'Forty-two pole and canopy fixtures converted to LED with photocell control; projected 60% reduction in common-area lighting load. Contractor: BrightPath Electrical.',
+        { system: 'electrical' }),
+      rec('elec-2025-signage-service', '2025-05-15', 'maintenance', 'Pylon sign and exterior lighting service',
+        'Pylon sign ballasts replaced, two canopy fixtures re-aimed and a tripped lighting contactor replaced by BrightPath Electrical.',
+        { system: 'electrical', invoices: [9] }),
+
+      rec('plumb-2026-backflow', '2026-02-12', 'inspection', 'Annual backflow preventer test',
+        'Both domestic and irrigation backflow assemblies tested and certified to the water utility. Next test due February 15, 2027.',
+        { system: 'plumbing', keyDate: '2027-02-15', keyDateKind: 'inspection' }),
+
+      rec('photo-2025-north', '2025-05-15', 'building_photo', 'Building exterior — north elevation (illustration)',
+        'Demonstration illustration of the north elevation and tenant frontage, taken for the 2025 marketing package. Not a photograph.',
+        { docs: [['North Elevation — demonstration illustration.svg', 'assets/demo/cascade-commons-rendering.svg', 'photo']] }),
+      rec('photo-2025-parking', '2025-05-15', 'building_photo', 'Parking field after seal coat (illustration)',
+        'Demonstration illustration of the parking field and pylon sign after the April 2025 seal coat. Not a photograph.',
+        { docs: [['Parking Field — demonstration illustration.svg', 'parking-field-2025.svg', 'photo']] }),
+
+      // ── History (no other home — filed under History by the cabinet) ───────
+      rec('hist-2003-built', '2003-09-12', 'other', 'Certificate of occupancy issued — building completed',
+        'Original 26,000 sqft masonry and steel-joist retail center completed; certificate of occupancy issued by the City of Austin.',
+        { actor: 'System' }),
+      rec('hist-2019-acquisition', '2019-11-01', 'other', 'Acquired by Cascade Commons Holdings, LLC',
+        'Property acquired and financed; management engaged. Phase I environmental and ALTA survey completed during due diligence (see reference samples).',
+        { records: ['loan-2019-note'] }),
+      rec('hist-2019-renovation', '2019-12-20', 'other', '2019 renovation completed',
+        'Facade, roof, parking and common-area renovation completed: new TPO roof, resurfaced parking, updated storefront canopies and signage band.'),
+      rec('hist-2021-whm-opening', '2021-01-11', 'tenant', 'Whole Health Market opened — Suite 100',
+        'Anchor tenant opened after a ten-week build-out; 9,200 sqft on an NNN lease through December 31, 2028.'),
+      rec('hist-2024-harbor-opening', '2024-02-01', 'tenant', 'Harbor Nail & Beauty Studio opened — Suite 150',
+        'Final vacancy leased; 1,200 sqft on an NNN lease through January 31, 2027. The center reached its current 90% occupancy.'),
+    ];
+  }
 
   // ── Persist to Supabase ───────────────────────────────────────────────────
   // invoicesFull is intentionally omitted (matches _stripBlobs convention);
@@ -21514,7 +21743,12 @@ async function ensureDemoProperty() {
   const propertyData = {
     _demoVersion:      DEMO_VERSION,
     settlement:        DEMO_SETTLEMENT,
-    invoices:          demoInvoiceList.map(inv => ({
+    // The register's rows carry the SAME ids the reconciliation summary and the
+    // disputes already use ('inv-7' is the PavePro bill FitZone disputed), so a
+    // record's relatedTo link, a dispute's invoiceId and a variance row all
+    // resolve to one row. ensureInvoiceIds keeps a non-numeric id as it is.
+    invoices:          demoInvoiceList.map((inv, i) => ({
+      id: `inv-${i}`,
       vendorName: inv.vendorName, amount: inv.amount,
       category: inv.category, invoiceDate: inv.invoiceDate,
     })),
@@ -21523,7 +21757,7 @@ async function ensureDemoProperty() {
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            7,
+    _demoV:            8,
   };
 
   const { error: propErr } = await db.from('properties')
@@ -23849,6 +24083,15 @@ function appendPropertyTimelineEvent(property, event) {
     category:            event.category ?? null,
     responsibility:      (['landlord','tenant','shared','na'].includes(event.responsibility) ? event.responsibility : 'na'),
     leaseRef:            (typeof event.leaseRef === 'string' && event.leaseRef.trim()) ? event.leaseRef.trim() : null,
+    // A date the record carries into Important Dates (PropertyCabinet
+    // .importantDates reads it). Kept ONLY as a readable YYYY-MM-DD; anything
+    // else is null rather than a guess, and the kind is one of the cabinet's
+    // known kinds or null. Additive: events without one are unchanged.
+    keyDate:             (typeof event.keyDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(event.keyDate)
+                            && !isNaN(new Date(event.keyDate.slice(0, 10) + 'T12:00:00').getTime()))
+                           ? event.keyDate.slice(0, 10) : null,
+    keyDateKind:         (['renewal', 'deadline', 'maturity', 'expiry', 'inspection', 'permit'].includes(event.keyDateKind)
+                           ? event.keyDateKind : null),
     attachments:         Array.isArray(event.attachments)
       ? event.attachments.filter(a => a && a.url).map(a => ({
           name: String(a.name || 'attachment'),

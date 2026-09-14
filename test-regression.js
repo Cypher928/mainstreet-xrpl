@@ -199,6 +199,12 @@ const SUITES = [
   // the leaf the register's own row. Also pins the Building & Systems reference
   // samples as unmistakably not records.
   { label: 'Invoice filing system (e2e)',            cmd: 'node test-e2e-invoice-folders.js' },
+  // THE SHOWROOM. Cascade Commons v8 fills the cabinet with the building's own
+  // records — filed where they belong, linked to the register's bills, dated
+  // coherently, each document a labelled fictional PDF through docLinkHtml,
+  // the header image a labelled illustration, the reference samples still
+  // samples. Also proves a keyDate survives the writer → save → reload path.
+  { label: 'Demo showroom — populated cabinet (e2e)', cmd: 'node test-e2e-demo-showroom.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

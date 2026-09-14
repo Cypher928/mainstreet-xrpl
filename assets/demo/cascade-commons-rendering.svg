@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 560" width="1600" height="560" role="img" aria-label="Architectural rendering of Cascade Commons, a fictional neighborhood retail center — demonstration illustration">
+  <title>Cascade Commons — architectural rendering (demonstration illustration, fictional property)</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fbce6"/><stop offset="0.55" stop-color="#cfe3f3"/><stop offset="1" stop-color="#eef3f6"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.82" cy="0.12" r="0.35">
+      <stop offset="0" stop-color="#fff7dc" stop-opacity="0.9"/><stop offset="1" stop-color="#fff7dc" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9c8a9"/><stop offset="1" stop-color="#b9a582"/>
+    </linearGradient>
+    <linearGradient id="wallLight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ebdfc6"/><stop offset="1" stop-color="#cdbb98"/>
+    </linearGradient>
+    <linearGradient id="stone" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8f8377"/><stop offset="0.5" stop-color="#a99c8c"/><stop offset="1" stop-color="#857a6e"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#6f8fa8"/><stop offset="0.45" stop-color="#2f4a5e"/><stop offset="0.5" stop-color="#4f6d84"/><stop offset="1" stop-color="#1d2f3d"/>
+    </linearGradient>
+    <linearGradient id="awning" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a5b4a"/><stop offset="1" stop-color="#25402f"/>
+    </linearGradient>
+    <linearGradient id="lot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6c6f73"/><stop offset="1" stop-color="#3f4247"/>
+    </linearGradient>
+    <linearGradient id="curb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9d5cd"/><stop offset="1" stop-color="#a9a49b"/>
+    </linearGradient>
+    <linearGradient id="roofShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7d7365"/><stop offset="1" stop-color="#5e5649"/>
+    </linearGradient>
+    <linearGradient id="car" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8ecef"/><stop offset="1" stop-color="#9aa3ab"/>
+    </linearGradient>
+    <linearGradient id="carDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b6672"/><stop offset="1" stop-color="#2d343b"/>
+    </linearGradient>
+    <linearGradient id="tree" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6fa15c"/><stop offset="1" stop-color="#2f5a2b"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="6"/></filter>
+    <filter id="blur2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2"/></filter>
+    <pattern id="brick" width="26" height="12" patternUnits="userSpaceOnUse">
+      <rect width="26" height="12" fill="#b28a6a"/>
+      <rect x="0" y="0" width="12" height="5" fill="#a67d5e"/><rect x="13" y="0" width="13" height="5" fill="#ba9270"/>
+      <rect x="0" y="6" width="6" height="5" fill="#b78f6c"/><rect x="7" y="6" width="12" height="5" fill="#a47a5b"/><rect x="20" y="6" width="6" height="5" fill="#bc9573"/>
+    </pattern>
+  </defs>
+
+  <!-- sky -->
+  <rect width="1600" height="560" fill="url(#sky)"/>
+  <rect width="1600" height="560" fill="url(#sun)"/>
+  <g fill="#ffffff" opacity="0.55" filter="url(#soft)">
+    <ellipse cx="260" cy="90" rx="120" ry="26"/><ellipse cx="330" cy="70" rx="80" ry="22"/>
+    <ellipse cx="1180" cy="120" rx="150" ry="24"/><ellipse cx="1250" cy="100" rx="90" ry="20"/>
+  </g>
+
+  <!-- distant treeline -->
+  <g opacity="0.85">
+    <path d="M0 300 C120 270 220 292 330 280 C420 270 470 296 560 286 C680 274 760 300 860 288 C980 274 1080 300 1200 286 C1310 274 1400 296 1600 282 L1600 320 L0 320 Z" fill="#6e8f6a"/>
+    <path d="M0 312 C140 292 260 310 400 300 C560 288 700 316 860 302 C1000 290 1180 314 1340 300 C1440 292 1520 306 1600 300 L1600 330 L0 330 Z" fill="#4f7350"/>
+  </g>
+
+  <!-- building shadow on ground -->
+  <ellipse cx="800" cy="410" rx="660" ry="26" fill="#000" opacity="0.18" filter="url(#soft)"/>
+
+  <!-- ground / curb -->
+  <rect x="0" y="392" width="1600" height="168" fill="url(#lot)"/>
+  <rect x="0" y="392" width="1600" height="10" fill="url(#curb)"/>
+  <rect x="120" y="402" width="1360" height="18" fill="#c9c3b8"/>
+
+  <!-- main building mass -->
+  <g>
+    <!-- parapet / roofline -->
+    <rect x="150" y="168" width="1300" height="14" fill="url(#roofShade)"/>
+    <rect x="150" y="180" width="1300" height="10" fill="#4a4338"/>
+    <!-- wall -->
+    <rect x="150" y="190" width="1300" height="212" fill="url(#wall)"/>
+    <!-- stone base -->
+    <rect x="150" y="360" width="1300" height="42" fill="url(#stone)"/>
+    <!-- raised entry tower (center) -->
+    <rect x="700" y="122" width="200" height="60" fill="#5f5648"/>
+    <rect x="708" y="130" width="184" height="52" fill="url(#brick)"/>
+    <rect x="690" y="116" width="220" height="10" fill="#3e372f"/>
+    <!-- end towers -->
+    <rect x="150" y="150" width="120" height="40" fill="#5f5648"/><rect x="156" y="156" width="108" height="34" fill="url(#brick)"/>
+    <rect x="1330" y="150" width="120" height="40" fill="#5f5648"/><rect x="1336" y="156" width="108" height="34" fill="url(#brick)"/>
+    <!-- brick piers between bays -->
+    <g fill="url(#brick)">
+      <rect x="150" y="190" width="42" height="170"/><rect x="392" y="190" width="30" height="170"/>
+      <rect x="662" y="190" width="30" height="170"/><rect x="908" y="190" width="30" height="170"/>
+      <rect x="1178" y="190" width="30" height="170"/><rect x="1408" y="190" width="42" height="170"/>
+    </g>
+    <!-- storefront glass bays -->
+    <g>
+      <rect x="200" y="226" width="184" height="134" fill="url(#glass)"/>
+      <rect x="430" y="226" width="224" height="134" fill="url(#glass)"/>
+      <rect x="700" y="226" width="200" height="134" fill="url(#glass)"/>
+      <rect x="946" y="226" width="224" height="134" fill="url(#glass)"/>
+      <rect x="1216" y="226" width="184" height="134" fill="url(#glass)"/>
+    </g>
+    <!-- mullions -->
+    <g stroke="#0f1a22" stroke-width="3" opacity="0.7">
+      <path d="M262 226v134M324 226v134M200 292h184"/>
+      <path d="M505 226v134M580 226v134M430 292h224"/>
+      <path d="M767 226v134M833 226v134M700 292h200"/>
+      <path d="M1021 226v134M1096 226v134M946 292h224"/>
+      <path d="M1278 226v134M1340 226v134M1216 292h184"/>
+    </g>
+    <!-- glass reflections -->
+    <g fill="#ffffff" opacity="0.14">
+      <path d="M205 226 L245 226 L215 360 L200 360 Z"/><path d="M440 226 L500 226 L455 360 L430 360 Z"/>
+      <path d="M705 226 L760 226 L720 360 L700 360 Z"/><path d="M955 226 L1015 226 L970 360 L946 360 Z"/><path d="M1220 226 L1265 226 L1232 360 L1216 360 Z"/>
+    </g>
+    <!-- entry doors -->
+    <g fill="#182732" stroke="#c8b27a" stroke-width="2">
+      <rect x="276" y="286" width="34" height="74"/><rect x="530" y="286" width="24" height="74"/><rect x="556" y="286" width="24" height="74"/>
+      <rect x="782" y="286" width="18" height="74"/><rect x="802" y="286" width="18" height="74"/>
+      <rect x="1046" y="286" width="24" height="74"/><rect x="1072" y="286" width="24" height="74"/><rect x="1292" y="286" width="34" height="74"/>
+    </g>
+    <!-- awnings -->
+    <g fill="url(#awning)">
+      <path d="M196 226 L388 226 L400 246 L184 246 Z"/><path d="M426 226 L658 226 L672 246 L412 246 Z"/>
+      <path d="M942 226 L1174 226 L1188 246 L928 246 Z"/><path d="M1212 226 L1404 226 L1416 246 L1200 246 Z"/>
+    </g>
+    <path d="M700 226 L900 226 L914 246 L686 246 Z" fill="#8a6a2f"/>
+    <!-- awning shadows on glass -->
+    <g fill="#000" opacity="0.18"><rect x="200" y="246" width="184" height="16"/><rect x="430" y="246" width="224" height="16"/><rect x="700" y="246" width="200" height="16"/><rect x="946" y="246" width="224" height="16"/><rect x="1216" y="246" width="184" height="16"/></g>
+    <!-- signage band -->
+    <g font-family="Georgia, 'Times New Roman', serif" text-anchor="middle" fill="#2c261f">
+      <text x="292" y="212" font-size="17" font-weight="700" letter-spacing="1">WHOLE HEALTH MARKET</text>
+      <text x="542" y="212" font-size="15" font-weight="700" letter-spacing="1">SUMMIT COFFEE &amp; PROVISIONS</text>
+      <text x="1058" y="212" font-size="15" font-weight="700" letter-spacing="1">FITZONE ATHLETICS</text>
+      <text x="1308" y="212" font-size="14" font-weight="700" letter-spacing="1">HARBOR NAIL &amp; BEAUTY</text>
+      <text x="800" y="164" font-size="22" font-weight="700" letter-spacing="3" fill="#f3e9d3">CASCADE COMMONS</text>
+      <text x="800" y="212" font-size="15" font-weight="700" letter-spacing="1">PROACTIVE PHYSICAL THERAPY</text>
+    </g>
+    <!-- wall lights -->
+    <g fill="#f7e6b0" opacity="0.9"><circle cx="192" cy="216" r="3"/><circle cx="407" cy="216" r="3"/><circle cx="677" cy="216" r="3"/><circle cx="923" cy="216" r="3"/><circle cx="1193" cy="216" r="3"/><circle cx="1408" cy="216" r="3"/></g>
+    <!-- rooftop units -->
+    <g fill="#9aa0a6" stroke="#6b7278" stroke-width="1.5">
+      <rect x="330" y="150" width="46" height="18" rx="2"/><rect x="560" y="150" width="46" height="18" rx="2"/><rect x="1010" y="150" width="46" height="18" rx="2"/><rect x="1240" y="150" width="46" height="18" rx="2"/>
+    </g>
+  </g>
+
+  <!-- sidewalk -->
+  <rect x="150" y="402" width="1300" height="18" fill="#d7d2c8"/>
+  <g stroke="#bdb7ac" stroke-width="1"><path d="M250 402v18M350 402v18M450 402v18M550 402v18M650 402v18M750 402v18M850 402v18M950 402v18M1050 402v18M1150 402v18M1250 402v18M1350 402v18"/></g>
+
+  <!-- parking stripes -->
+  <g stroke="#e8e3d5" stroke-width="3" opacity="0.85">
+    <path d="M200 450v52M270 450v52M340 450v52M410 450v52M480 450v52M550 450v52M620 450v52M690 450v52M760 450v52M830 450v52M900 450v52M970 450v52M1040 450v52M1110 450v52M1180 450v52M1250 450v52M1320 450v52M1390 450v52"/>
+  </g>
+  <rect x="0" y="524" width="1600" height="4" fill="#e8e3d5" opacity="0.55"/>
+
+  <!-- parked cars -->
+  <g>
+    <g transform="translate(286 452)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.25" filter="url(#blur2)"/><rect x="0" y="14" width="56" height="36" rx="8" fill="url(#car)"/><path d="M8 16 L16 4 L40 4 L48 16 Z" fill="#c9d3da"/><rect x="12" y="6" width="32" height="10" rx="3" fill="#33424f"/><circle cx="12" cy="50" r="6" fill="#1e2226"/><circle cx="44" cy="50" r="6" fill="#1e2226"/></g>
+    <g transform="translate(496 452)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.25" filter="url(#blur2)"/><rect x="0" y="14" width="56" height="36" rx="8" fill="url(#carDark)"/><path d="M8 16 L16 4 L40 4 L48 16 Z" fill="#5e6a75"/><rect x="12" y="6" width="32" height="10" rx="3" fill="#20303c"/><circle cx="12" cy="50" r="6" fill="#1e2226"/><circle cx="44" cy="50" r="6" fill="#1e2226"/></g>
+    <g transform="translate(846 452)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.25" filter="url(#blur2)"/><rect x="0" y="14" width="56" height="36" rx="8" fill="#8f3b3b"/><path d="M8 16 L16 4 L40 4 L48 16 Z" fill="#b25a5a"/><rect x="12" y="6" width="32" height="10" rx="3" fill="#2d2020"/><circle cx="12" cy="50" r="6" fill="#1e2226"/><circle cx="44" cy="50" r="6" fill="#1e2226"/></g>
+    <g transform="translate(1196 452)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.25" filter="url(#blur2)"/><rect x="0" y="14" width="56" height="36" rx="8" fill="url(#car)"/><path d="M8 16 L16 4 L40 4 L48 16 Z" fill="#c9d3da"/><rect x="12" y="6" width="32" height="10" rx="3" fill="#33424f"/><circle cx="12" cy="50" r="6" fill="#1e2226"/><circle cx="44" cy="50" r="6" fill="#1e2226"/></g>
+  </g>
+
+  <!-- trees in islands -->
+  <g>
+    <rect x="80" y="404" width="60" height="14" fill="#7c8a72"/><rect x="108" y="330" width="6" height="80" fill="#5a4636"/><ellipse cx="111" cy="316" rx="46" ry="42" fill="url(#tree)"/><ellipse cx="90" cy="330" rx="26" ry="24" fill="#4f8a47" opacity="0.9"/>
+    <rect x="1460" y="404" width="60" height="14" fill="#7c8a72"/><rect x="1488" y="330" width="6" height="80" fill="#5a4636"/><ellipse cx="1491" cy="316" rx="46" ry="42" fill="url(#tree)"/><ellipse cx="1512" cy="330" rx="26" ry="24" fill="#4f8a47" opacity="0.9"/>
+    <rect x="770" y="404" width="60" height="14" fill="#7c8a72"/><rect x="797" y="366" width="5" height="46" fill="#5a4636"/><ellipse cx="800" cy="356" rx="30" ry="26" fill="url(#tree)"/>
+  </g>
+
+  <!-- pylon sign -->
+  <g>
+    <rect x="1536" y="250" width="12" height="150" fill="#4a4338"/>
+    <rect x="1500" y="196" width="84" height="64" rx="4" fill="#2b3a44" stroke="#c8b27a" stroke-width="2"/>
+    <text x="1542" y="222" font-family="Georgia, serif" font-size="10" font-weight="700" fill="#f3e9d3" text-anchor="middle" letter-spacing="1">CASCADE</text>
+    <text x="1542" y="238" font-family="Georgia, serif" font-size="10" font-weight="700" fill="#f3e9d3" text-anchor="middle" letter-spacing="1">COMMONS</text>
+    <text x="1542" y="252" font-family="Arial, sans-serif" font-size="7" fill="#c8b27a" text-anchor="middle">4820 CASCADE PKWY</text>
+  </g>
+
+  <!-- label: unmistakably a rendering -->
+  <g>
+    <rect x="16" y="520" width="382" height="26" rx="6" fill="#0f1217" opacity="0.72"/>
+    <text x="28" y="538" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#f3e9d3" letter-spacing="0.4">Demonstration rendering — fictional property, not a photograph</text>
+  </g>
+</svg>

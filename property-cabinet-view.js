@@ -264,7 +264,14 @@ window.PropertyCabinetView = (function () {
     var cell = function (v, l) {
       return '<div class="pcv-snap-cell"><div class="pcv-snap-v">' + v + '</div><div class="pcv-snap-l">' + l + '</div></div>';
     };
-    return '<header class="pcv-head">' +
+    // A picture only when the property's own facts carry one; the caption is
+    // the facts' own, so a rendering is never shown as a photograph.
+    var image = info && info.imageUrl
+      ? '<figure class="pcv-hero"><img src="' + _esc(info.imageUrl) + '" alt="' + _esc(info.imageCaption || (property.name || 'Property') + ' — image') + '" loading="lazy">' +
+          (info.imageCaption ? '<figcaption>' + _esc(info.imageCaption) + '</figcaption>' : '') + '</figure>'
+      : '';
+    return '<header class="pcv-head' + (image ? ' pcv-head--image' : '') + '">' +
+      image +
       '<div class="pcv-head-main">' +
         '<h1 class="pcv-name">' + _esc(property.name || 'New Property') + '</h1>' +
         (address ? '<div class="pcv-addr">' + _esc(address) + '</div>' : '') +
@@ -983,6 +990,9 @@ window.PropertyCabinetView = (function () {
       // header
       '.pcv-head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:6px 2px 2px;}',
       '.pcv-head-main{flex:1 1 320px;min-width:0;}',
+      '.pcv-hero{flex:0 0 100%;margin:0 0 6px;border-radius:14px;overflow:hidden;border:1px solid ' + line + '0.08);background:var(--theme-panel,#0A0D12);}',
+      '.pcv-hero img{display:block;width:100%;max-height:300px;object-fit:cover;}',
+      '.pcv-hero figcaption{font-size:0.7rem;color:var(--text-4,#64748B);padding:6px 12px;border-top:1px solid ' + line + '0.06);}',
       '.pcv-head-side{flex:none;margin-left:auto;}',
       '.pcv-name{font-family:"Cormorant Garamond",Georgia,serif;font-size:2.1rem;font-weight:600;letter-spacing:-0.01em;line-height:1.05;color:var(--text-1,#E2E8F0);margin:0 0 4px;overflow-wrap:anywhere;}',
       '.pcv-addr{font-size:0.92rem;color:var(--text-3,#94A3B8);margin-bottom:14px;}',
