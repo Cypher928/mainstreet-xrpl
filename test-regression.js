@@ -214,6 +214,10 @@ const SUITES = [
   // structured data and login tagline carry the positioning; CAM copy stays
   // where CAM is the workflow.
   { label: 'Product identity (e2e)',                  cmd: 'node test-e2e-product-identity.js' },
+  // THE PROPERTY WORKSPACE IS NOT A CAM YEAR: the header's "2025 CAM" badge is
+  // hidden on the Property and Spaces tabs and shown, unchanged, everywhere
+  // else; the CAM results heading keeps its year.
+  { label: 'Property header carries no CAM year (e2e)', cmd: 'node test-e2e-property-header.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

@@ -3855,6 +3855,18 @@ function switchWorkspaceTab(tab) {
     if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
     if (btn)  btn.classList.toggle('active', t === tab);
   });
+  // THE PROPERTY WORKSPACE IS NOT A CAM YEAR. The header's "2025 CAM" badge
+  // (breadcrumb on desktop, the year line under the name on mobile) is the
+  // CAM year in force, and it is right beside a reconciliation. Beside the
+  // Taxes, Insurance or Building & Systems drawers it reads as if the cabinet
+  // were scoped to a year, which it is not. Hidden here, on the Property and
+  // Spaces tabs only; its text is still maintained by setCamYear, and every
+  // other tab shows it exactly as before.
+  const _inPropertyWs = (tab === 'property' || tab === 'spaces');
+  ['camYearBadge', 'wsMobileCamYear'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = _inPropertyWs ? 'none' : '';
+  });
 }
 
 // ─── Phase A (mobile nav): tab switching + KPI-tile shortcuts ────────────────
