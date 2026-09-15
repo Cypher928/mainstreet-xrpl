@@ -232,6 +232,8 @@ const SUITES = [
   { label: 'Vacancy: mark a space vacant (e2e)',        cmd: 'node test-e2e-vacancy.js' },
   { label: 'Lease amendment: document + evidence',      cmd: 'node test-lease-amendment.js' },
   { label: 'Lease amendment preserved (e2e)',           cmd: 'node test-e2e-lease-amendment.js' },
+  { label: 'Northgate demo data & documents',           cmd: 'node test-demo-northgate.js' },
+  { label: 'Northgate: a property that bills (e2e)',    cmd: 'node test-e2e-northgate-billable.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

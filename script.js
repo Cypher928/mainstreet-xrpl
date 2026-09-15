@@ -21713,6 +21713,8 @@ function generateTenantStatement(tenantName, opts = {}) {
 let DEMO_PROPERTY_ID    = null;
 let _DEMO_TENANT_IDS   = [];
 let DEMO_ACQ_REVIEW_ID = null;
+let NORTHGATE_PROPERTY_ID = null;
+let _NORTHGATE_SPACE_IDS  = [];
 
 // Derives stable demo UUIDs from the authenticated user's ID.
 // Called in _showApp() so the values are ready before any demo interaction.
@@ -21726,6 +21728,13 @@ function _initDemoIds(userId) {
     'dec00000-0000-4000-a00' + n + '-' + node
   );
   DEMO_ACQ_REVIEW_ID  = 'aca00000-0000-4000-b000-' + node;
+  // Northgate Exchange — the second seeded demo property, on its own prefix so
+  // it can never collide with Cascade's rows. Six space ids: five leases and
+  // the recorded vacancy.
+  NORTHGATE_PROPERTY_ID = 'ne000000-0000-4000-a000-' + node;
+  _NORTHGATE_SPACE_IDS  = [1, 2, 3, 4, 5, 6].map(n =>
+    'ne000000-0000-4000-a00' + n + '-' + node
+  );
 }
 
 // Deletes every property whose name matches "Riverside Commons*" and whose ID
@@ -22439,6 +22448,203 @@ async function ensureDemoProperty() {
   return DEMO_PROPERTY_ID;
 }
 
+// ─── Northgate Exchange — the demo property MainStreet can bill ──────────────
+//
+// Cascade Commons is the refusal scenario: none of its invoices carries a
+// source document, so a red property-wide finding holds every statement, and a
+// Modified Gross tenant is held on top of that. It stays exactly as it is.
+//
+// This is the other half of the same claim — a property whose evidence and
+// lease terms genuinely support billing. It is not built around the
+// safeguards; it satisfies them. Every invoice has a generated source document,
+// every lease is NNN and spans the whole CAM year, no lease states a provision
+// the engine does not apply, and the space no lease covers is recorded as
+// vacant so coverage is accounted for rather than unresolved. fieldEvidence is
+// empty here exactly as it is on Cascade: citations come from running a
+// document through extraction, and seeding them would be fabrication.
+//
+// The numbers live in demo-northgate.js, which is also what
+// tools/build-demo-northgate.js renders the lease and invoice PDFs from, so the
+// records and the paperwork cannot drift apart.
+async function ensureNorthgateDemo() {
+  const ND = window.DemoNorthgate;
+  if (!ND) { console.warn('[ensureNorthgateDemo] demo-northgate.js not loaded — skipped'); return null; }
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id || !NORTHGATE_PROPERTY_ID) return null;
+
+  // Idempotency. Same contract Cascade's _demoV carries: a stored row at the
+  // current version is left alone, so opening the property repeatedly — or
+  // reloading after editing it — never re-seeds over what is there.
+  try {
+    const { data: row, error } = await db.from('properties')
+      .select('data').eq('id', NORTHGATE_PROPERTY_ID).eq('user_id', user.id).single();
+    if (!error && row?.data?._ngV === ND.DEMO_VERSION && row?.data?.camReconciliation?.results?.length > 0) {
+      console.log('[ensureNorthgateDemo] already seeded v' + ND.DEMO_VERSION + ' — skip');
+      return NORTHGATE_PROPERTY_ID;
+    }
+  } catch (_) { /* not found — fall through to seed */ }
+
+  console.log('[ensureNorthgateDemo] seeding ' + ND.PROPERTY.name + ' v' + ND.DEMO_VERSION + '…');
+
+  const PROP_NAME = ND.PROPERTY.name;
+  const PROP_SQFT = ND.PROPERTY.totalSqft;
+  const CAM_YEAR  = ND.CAM_YEAR;
+
+  // ── Spaces: five leases, then the recorded vacancy ────────────────────────
+  const ngTenants = ND.TENANTS.map((t, i) => normalizeTenant({
+    id: _NORTHGATE_SPACE_IDS[i],
+    tenant_name: t.tenant_name,
+    suite: t.suite,
+    leased_sqft: String(t.leased_sqft),
+    start_date: t.start_date, end_date: t.end_date,
+    lease_type: t.lease_type,
+    cap: t.cap != null ? String(t.cap) : null,
+    capBaseAmount: t.capBaseAmount != null ? String(t.capBaseAmount) : null,
+    excluded_categories: t.excluded_categories,
+    audit_rights: t.audit_rights,
+    // Every field below is one the engine does NOT apply. Stating any of them
+    // raises a blocking "lease provisions not applied" finding by design, so
+    // the leases are silent on them and the documents match.
+    admin_fee_pct: null, admin_fee_basis: null, gross_up_pct: null,
+    expense_stop: null, base_year: null, pro_rata_method: null,
+    base_rent: t.base_rent, security_deposit: t.security_deposit,
+    // The document of record. The terms above appear verbatim in it —
+    // test-demo-northgate.js fails if any of them drifts.
+    leaseUrl: ND.leasePath(t), leaseFileName: 'Lease — ' + t.tenant_name + '.pdf',
+    _confidenceScore: 93, _confidence: 'high',
+  }));
+  // A vacant space is a row on this array with `vacant: true`, a suite and an
+  // area, and no tenant — the representation recordVacantSpace writes. It
+  // enters no lease and no allocation; what it does is account for the part of
+  // the building no lease covers.
+  const ngVacancy = normalizeTenant({
+    id: _NORTHGATE_SPACE_IDS[5],
+    tenant_name: '', suite: ND.VACANCY.suite, unitNumber: ND.VACANCY.suite,
+    leased_sqft: String(ND.VACANCY.leased_sqft), vacant: true,
+    lease_type: null, start_date: '', end_date: '', cap: null, capBaseAmount: null,
+  });
+  const ngSpaces = ngTenants.concat([ngVacancy]);
+
+  // ── The register, every line carrying its own source document ─────────────
+  const ngInvoices = ND.INVOICES.map((inv, i) => ({
+    id: 'ng-inv-' + i,
+    vendorName: inv.vendorName, amount: inv.amount,
+    category: inv.category, invoiceDate: inv.invoiceDate,
+    camEligible: true,
+    fileUrl: ND.invoicePath(inv), fileName: inv.n + '.pdf',
+  }));
+  const totalExpenses = ngInvoices.reduce((s, inv) => s + inv.amount, 0);
+
+  // ── The reconciliation, run through the same engine a live run uses ───────
+  const reconProp = new Property(PROP_NAME, PROP_SQFT);
+  reconProp.addLeases(ngTenants.map(t => {
+    const lease = new Lease(
+      t.tenant_name, '', parseSqft(t.leased_sqft),
+      t.start_date || '', t.end_date || '', _appliedExclusions(t),
+      t.cap ? parseFloat(t.cap) : null,
+      t.capBaseAmount ? parseFloat(t.capBaseAmount) : null,
+      false, null, t.lease_type || null
+    );
+    lease.id = t.id;
+    return lease;
+  }));
+  reconProp.addInvoices(ngInvoices.map(inv =>
+    new Invoice(null, inv.invoiceDate, inv.amount, inv.vendorName, inv.category)
+  ));
+
+  const prevActivePropId = activePropId;
+  const stub = { id: NORTHGATE_PROPERTY_ID, name: PROP_NAME, totalSqft: PROP_SQFT, tenants: ngSpaces };
+  const stubIdx = _props.findIndex(p => p.id === NORTHGATE_PROPERTY_ID);
+  if (stubIdx >= 0) Object.assign(_props[stubIdx], stub); else _props.push(stub);
+  activePropId = NORTHGATE_PROPERTY_ID;
+  let fullResults;
+  try { fullResults = runFullReconciliation(reconProp); }
+  finally { activePropId = prevActivePropId; }
+
+  const camReconciliation = {
+    propId:   NORTHGATE_PROPERTY_ID,
+    propName: PROP_NAME,
+    camYear:  CAM_YEAR,
+    savedAt:  new Date().toISOString(),
+    total:    totalExpenses,
+    results:  fullResults.map(r => ({ ...r })),
+    invoices: ngInvoices.map(inv => ({ id: inv.id, vendor: inv.vendorName, category: inv.category, amount: inv.amount })),
+    invoicesFull: ngInvoices,
+    tenants: ngTenants.map(t => ({
+      name: t.tenant_name, leasedSqft: parseSqft(t.leased_sqft), totalSqft: PROP_SQFT,
+      capPct: t.cap ? parseFloat(t.cap) : null, capBaseAmount: t.capBaseAmount ? parseFloat(t.capBaseAmount) : null,
+      excludedCategories: _appliedExclusions(t),
+    })),
+    // Struck from the exact rows seeded beside it, through the same function a
+    // live run uses, so the restore check treats this record like any other and
+    // it opens CURRENT rather than permanently unverifiable.
+    inputsFingerprint: (() => {
+      try { return camInputsFingerprint(ngSpaces, ngInvoices); } catch (_) { return null; }
+    })(),
+    engineInvoices:  ngInvoices.map(i => ({ ...i })),
+    reconciledKeys: (() => {
+      try {
+        const VB = window.VarianceBreakdown;
+        return VB ? ngInvoices.map(i => VB.invoiceKey(i)) : null;
+      } catch (_) { return null; }
+    })(),
+    camRuns: [{
+      propName: PROP_NAME, camYear: CAM_YEAR, timestamp: new Date().toISOString(),
+      totalExpenses, tenantCount: fullResults.length, invoiceCount: ngInvoices.length,
+      results: fullResults.map(r => ({ ...r })),
+    }],
+  };
+
+  const propertyData = {
+    _ngV:      ND.DEMO_VERSION,
+    _demoVersion: ND.DEMO_VERSION,
+    invoices:  ngInvoices,
+    disputes:  [],
+    timeline:  [],
+    camYear:   CAM_YEAR,
+    results:   null,
+    camReconciliation: { ...camReconciliation, invoicesFull: undefined },
+  };
+
+  const { error: propErr } = await db.from('properties')
+    .upsert({ id: NORTHGATE_PROPERTY_ID, user_id: user.id, name: PROP_NAME, sqft: PROP_SQFT, data: propertyData })
+    .select('id');
+  if (propErr) console.warn('[ensureNorthgateDemo] property upsert failed (demo runs in-memory):', propErr.message);
+
+  // The denormalised tenants table mirrors LEASES. The vacant row is a space,
+  // not a tenant, and writing it here would put a nameless row in a table every
+  // other reader treats as the tenant roster.
+  await db.from('tenants').delete().eq('property_id', NORTHGATE_PROPERTY_ID);
+  const { error: tenErr } = await db.from('tenants').insert(ngTenants.map(t => ({
+    id: t.id, property_id: NORTHGATE_PROPERTY_ID, name: t.tenant_name,
+    sqft: Number(t.leased_sqft) || null, cap: t.cap != null ? parseFloat(t.cap) : null,
+    start_date: t.start_date || null, end_date: t.end_date || null,
+    lease_type: t.lease_type || null, lease_url: t.leaseUrl || null,
+  }))).select('id');
+  if (tenErr) console.warn('[ensureNorthgateDemo] tenant insert warning:', tenErr.message);
+
+  const ngFull = {
+    id: NORTHGATE_PROPERTY_ID,
+    // The version marker travels with the live object as well as the row, so an
+    // ordinary save cannot strip it and cause the next open to re-seed over the
+    // manager's own edits. Same reason Cascade carries _demoV.
+    _ngV: ND.DEMO_VERSION, _demoVersion: ND.DEMO_VERSION,
+    name: PROP_NAME, totalSqft: PROP_SQFT,
+    tenants: ngSpaces, invoices: ngInvoices,
+    disputes: [], timeline: [], camYear: CAM_YEAR,
+    camReconciliation,
+  };
+  const finalIdx = _props.findIndex(p => p.id === NORTHGATE_PROPERTY_ID);
+  if (finalIdx >= 0) Object.assign(_props[finalIdx], ngFull); else _props.push(ngFull);
+  _lsSave(ngFull);
+
+  console.log('[ensureNorthgateDemo] seeded', {
+    totalExpenses, leases: fullResults.length, invoices: ngInvoices.length,
+    billed: fullResults.reduce((s, r) => s + (r.totalAllocated || 0), 0),
+  });
+  return NORTHGATE_PROPERTY_ID;
+}
+
 // Seeds a fully-analyzed demo acquisition review ("Harborview Retail Center")
 // so the Acquisition Due Diligence section is never empty for demo users.
 // Idempotent — skips if DEMO_ACQ_REVIEW_ID already exists in _acqReviews or DB.
@@ -22602,6 +22808,13 @@ async function loadDemo() {
     }
     // Seed the acquisition demo in parallel — failure is non-fatal
     ensureDemoAcqReview().catch(e => console.warn('[loadDemo] acq seed failed:', e.message));
+    // Northgate Exchange, the property MainStreet can bill, seeded beside
+    // Cascade so the two sit together in the portfolio: one shows a clean
+    // billable reconciliation, the other shows the refusal that protects it.
+    // Awaited so the card is present in the list this render draws; a failure
+    // is non-fatal and leaves Cascade exactly as it was.
+    try { await ensureNorthgateDemo(); }
+    catch (e) { console.warn('[loadDemo] Northgate seed failed:', e && e.message); }
     renderPortfolio(); // refresh card list so demo appears
     await selectProperty(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });

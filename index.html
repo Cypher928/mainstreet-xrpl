@@ -8379,6 +8379,10 @@
 <!-- tenant-normalize.js defines what a tenant record IS. script.js delegates to
      it with no local fallback, so it must load first. -->
 <script src="tenant-normalize.js"></script>
+<!-- Northgate Exchange demo data. Pure data, no behaviour: the seeder in
+     script.js and tools/build-demo-northgate.js both read it, so the seeded
+     records and the lease and invoice PDFs cannot state different terms. -->
+<script src="demo-northgate.js"></script>
 <!-- M7 canonical semantics. Both must load before script.js, tenant-space.js and
      property-workspace.js, which read them for the one definition of an open
      dispute and the one definition of leased area. -->
