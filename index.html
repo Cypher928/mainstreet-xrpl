@@ -2560,6 +2560,14 @@
       background: rgba(245,158,11,0.08); color: var(--c-fbbf24);
       border-left: 2px solid rgba(245,158,11,0.35);
     }
+    /* A clause that describes a value the field no longer holds. Amber, like
+       the uncited chip, because both say the same thing to a reader: there is
+       nothing on file that supports the number beside it. */
+    .fe-chip--superseded {
+      background: rgba(245,158,11,0.08); color: var(--c-fbbf24);
+      border-left: 2px solid rgba(245,158,11,0.35);
+    }
+    .fe-chip--superseded[title] { cursor: help; }
     .fe-chip-loc { font-weight: 700; margin-right: 5px; color: var(--c-818cf8); }
     .fe-chip-quote { font-style: italic; color: var(--text-3); }
     .fe-chip--cited { cursor: default; }

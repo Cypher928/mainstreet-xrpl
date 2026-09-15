@@ -243,6 +243,22 @@ window.TenantSpace = (function () {
     // Actual lease document(s) already on file for this space (not just terms).
     var leaseDocs = [];
     if (lease.url) leaseDocs.push({ name: lease.fileName || ((t.tenant_name || 'Tenant') + ' lease'), url: lease.url, kind: 'pdf' });
+    // AN AMENDMENT IS PART OF THE LEASE ON FILE. The original was listed here
+    // and every later document that changed it was not, so a space whose cap
+    // had been amended showed one document and gave no sign a second existed.
+    // Only amendments whose file was actually stored are listed: an entry with
+    // no url is a record that the document was NOT filed, and listing it would
+    // offer a link that opens nothing. The original is untouched and stays
+    // first, so the lease and what amended it read in the order they happened.
+    (t.amendments || []).forEach(function (a) {
+      if (!a || !a.fileUrl) return;
+      leaseDocs.push({
+        name: a.fileName || 'Amendment',
+        url:  a.fileUrl,
+        kind: 'pdf',
+        when: a.effectiveDate || a.uploadedAt || null,
+      });
+    });
     // Grounded summary — facts read from the record, not general knowledge.
     var bits = [];
     // M8d — `!= null`, not truthiness. `summary` is part of the canonical record

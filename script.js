@@ -5805,16 +5805,42 @@ function _onFieldKeydown(e) {
   }
 }
 
+// The amendment that governs a field's current value, or null.
+//
+// ONE LOOKUP, TWO READERS. The provenance chip and the citation chip both need
+// to know whether a later document replaced this field, and they must not be
+// able to disagree: a chip naming an amendment printed beside a chip quoting
+// the very clause that amendment replaced is the contradiction this exists to
+// remove.
+//
+// The ordering is the DISPLAY rule this chip has always used — latest effective
+// date wins. It is deliberately NOT reconciled here with applyAmendmentOverrides,
+// which writes the live value in upload order. Where those two disagree is a
+// real question, and answering it inside a rendering helper would settle it by
+// accident; it is a separate decision.
+function _governingAmendment(d, fieldKey) {
+  const ams = (d && Array.isArray(d.amendments)) ? d.amendments : [];
+  if (!ams.length) return null;
+  const sorted = [...ams].sort((a, b) =>
+    String((b && b.effectiveDate) || '').localeCompare(String((a && a.effectiveDate) || '')));
+  return sorted.find(a => a && Array.isArray(a.overriddenFields)
+                       && a.overriddenFields.includes(fieldKey)) || null;
+}
+
+// How an amendment is named on screen: its filename without the extension,
+// with its effective date when it has one.
+function _amendmentLabel(a) {
+  if (!a) return 'an amendment';
+  const name = a.fileName ? String(a.fileName).replace(/\.[^.]+$/, '') : (a.docType || 'Amendment');
+  return a.effectiveDate ? `${name} · ${a.effectiveDate}` : name;
+}
+
 // Shows which amendment (by filename + effective date) governs a given field.
 // Returns '' when no amendment overrides the field.
 function _amendmentProvenanceChip(d, fieldKey) {
-  if (!Array.isArray(d.amendments) || !d.amendments.length) return '';
-  const sorted = [...d.amendments].sort((a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || ''));
-  const gov = sorted.find(a => Array.isArray(a.overriddenFields) && a.overriddenFields.includes(fieldKey));
+  const gov = _governingAmendment(d, fieldKey);
   if (!gov) return '';
-  const label = gov.fileName ? gov.fileName.replace(/\.[^.]+$/, '') : (gov.docType || 'Amendment');
-  const date  = gov.effectiveDate ? ` · ${gov.effectiveDate}` : '';
-  return `<div class="fe-chip fe-chip--amendment" title="Value overridden by this document">&#x1F4C4; ${esc(label)}${esc(date)}</div>`;
+  return `<div class="fe-chip fe-chip--amendment" title="Value overridden by this document">&#x1F4C4; ${esc(_amendmentLabel(gov))}</div>`;
 }
 
 // One-click approval for all ready (high-confidence, unconfirmed) tenants.
@@ -8107,16 +8133,62 @@ function _citationChip(d, fieldKey) {
   if (!snaps || !snaps.length) return '';
   const val = d[fieldKey];
   if (val == null || val === '') return '';
-  const snap = snaps.find(s => !s.superseded) || snaps[0];
+
+  // WHICH SNAPSHOT DESCRIBES THE VALUE ON SCREEN, AND DOES IT.
+  //
+  // This asked neither question. It took `the first snapshot not flagged
+  // superseded` and printed its quote beside whatever the field currently says.
+  // After an amendment and a reload that is a fabrication, and a measurable
+  // one: applyAmendmentOverrides writes the amended value onto the tenant but
+  // never persists its evidence, tenant_field_evidence has no column for the
+  // amendment tag, and _stripBlobs drops the in-memory copy on the first save.
+  // So the only snapshot that survives is the ORIGINAL lease's — and the card
+  // rendered "CAM Cap: 3%" above a citation quoting the clause that says five.
+  //
+  // FieldProvenance already owns both questions. latestSnapshot picks the one
+  // describing the current value; fieldProvenance().evidenceStale is the M8d
+  // rule that a snapshot stating a DIFFERENT value cannot certify this one, and
+  // it is why that module refuses to report such a field as lease_confirmed.
+  // The chip was the last surface still deciding it alone. Asking the authority
+  // is the whole fix — no migration, no new state, no second rule to drift.
+  const FP   = window.FieldProvenance;
+  const snap = (FP && typeof FP.latestSnapshot === 'function')
+    ? FP.latestSnapshot(fieldKey, d)
+    : (snaps.find(s => !s.superseded) || snaps[0]);
   if (!snap) return '';
+
+  const stale = (FP && typeof FP.fieldProvenance === 'function')
+    ? !!FP.fieldProvenance(fieldKey, d).evidenceStale
+    : false;
+
+  if (stale) {
+    // NAME THE REPLACEMENT WHEN THERE IS ONE. An amendment governing this field
+    // is the ordinary cause and the manager can act on it; without one, all
+    // that can honestly be said is that the clause on file describes a
+    // different value. Neither branch prints the superseded wording as the
+    // chip's own claim — it travels in the tooltip, labelled as superseded, so
+    // the record is not lost and cannot be read as support.
+    const gov  = _governingAmendment(d, fieldKey);
+    const head = gov ? `Superseded by ${_amendmentLabel(gov)}` : 'Superseded clause on file';
+    const tip  = `The clause on file was captured for ${String(snap.value)}, not ${String(val)}`
+      + (gov ? `. ${_amendmentLabel(gov)} changed it` : '')
+      + `. It is not evidence for the value shown.`
+      + (snap.quote ? ` Superseded wording: “${snap.quote}”` : '');
+    return `<div class="fe-chip fe-chip--superseded" title="${esc(tip)}">&#x26A0;&#xFE0F; ${esc(head)} — the clause on file is not evidence for this value</div>`;
+  }
+
   if (snap.quote) {
     const locParts = [];
     if (snap.page)    locParts.push('p.​' + snap.page);
     if (snap.section) locParts.push(snap.section);
     const loc     = locParts.join(' · ');
     const preview  = snap.quote.length > 90 ? snap.quote.slice(0, 90) + '…' : snap.quote;
-    const fullTip  = snap.quote.length > 90 ? ` title=”${esc(snap.quote)}”` : '';
-    return `<div class=”fe-chip fe-chip--cited”${fullTip}>${loc ? `<span class=”fe-chip-loc”>${esc(loc)}</span>` : ''}<span class=”fe-chip-quote”>”${esc(preview)}”</span></div>`;
+    // STRAIGHT QUOTES. Every attribute delimiter in this branch was a curly ”,
+    // so the browser parsed `class=”fe-chip` as the whole value and the cited
+    // chip has never carried its classes or its tooltip. Rewriting the function
+    // around them would have preserved a defect in markup nobody could see.
+    const fullTip  = snap.quote.length > 90 ? ` title="${esc(snap.quote)}"` : '';
+    return `<div class="fe-chip fe-chip--cited"${fullTip}>${loc ? `<span class="fe-chip-loc">${esc(loc)}</span>` : ''}<span class="fe-chip-quote">&ldquo;${esc(preview)}&rdquo;</span></div>`;
   }
   return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote on file</div>`;
 }
@@ -8320,6 +8392,21 @@ function openAmendmentUpload(tenantId) {
 }
 
 // Orchestrates amendment PDF extraction + override application.
+//
+// THE AMENDMENT IS A DOCUMENT, NOT JUST A SET OF VALUES. This read the file,
+// took the numbers out of it and dropped the file on the floor: no storage
+// upload, no lease_documents row, no extracted text. So the document that
+// changed the lease could not be opened, could not be asked a question, and
+// did not appear in Lease Center beside the original it amended — while the
+// original lease, uploaded through Lease Intake, was preserved all three ways.
+// The manager was told the cap was now 3% by a document MainStreet no longer
+// had.
+//
+// The fix reuses the intake path exactly: uploadLeaseToStorage for the file,
+// saveLeaseDocument for the row and its text. Nothing new is modelled — the
+// amendment becomes an ordinary lease_documents row carrying this tenant's id,
+// which is what makes it retrievable, viewable and askable through the
+// machinery that already serves the original.
 async function handleAmendmentUpload(tenantId, file) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
@@ -8327,16 +8414,66 @@ async function handleAmendmentUpload(tenantId, file) {
   showToast('Reading amendment…', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 8000 });
 
   try {
-    const leaseText = await extractLeaseText(file);
+    const _prop     = currentProperty();
+    const _propId   = (_prop && _prop.id) || activePropId || null;
+
+    // The file goes to storage while its text is being read — neither waits on
+    // the other, the same shape processFile and the bulk pipeline both use.
+    const [amendmentUrl, leaseText] = await Promise.all([
+      uploadLeaseToStorage(file, _propId),
+      extractLeaseText(file),
+    ]);
+
     let extracted;
+    let _usedPdfDirect   = false;
+    let _visionTextPromise = null;
     if (leaseText && leaseText.length >= 50) {
       extracted = await callClaudeForLease(leaseText, file.name);
     } else {
+      // A SCANNED AMENDMENT MUST STILL BE ASKABLE. The vision path returns
+      // fields, not text, so lease_documents.extracted_text would be null and
+      // Ask-the-Lease would have nothing to read. Intake solves this with a
+      // second, text-transcription pass running alongside; the same call is
+      // made here for the same reason.
+      _usedPdfDirect     = true;
+      _visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
+        console.warn('[amendment] vision text pass failed:', e && e.message);
+        return null;
+      });
       extracted = await callClaudeWithPdfDirect(file);
     }
     if (!extracted) throw new Error('Could not extract amendment fields');
 
     const amendmentId = 'amd-' + Date.now();
+
+    // The document record, written through the one path that writes them.
+    // `tenantId` is this tenant's, so the row is addressable as theirs, and the
+    // id that comes back is what Ask-the-Lease is keyed on.
+    const _amendmentText = _usedPdfDirect ? (await _visionTextPromise) : leaseText;
+    let _amendmentDocId = null;
+    if (_propId) {
+      const _saved = await saveLeaseDocument({
+        propertyId:      _propId,
+        tenantId:        tenantId || null,
+        tenantName:      (tenantData[idx] && tenantData[idx].tenant_name) || null,
+        fileName:        file.name,
+        fileUrl:         amendmentUrl,
+        extractedText:   _amendmentText,
+        // Honest about what was captured: a row with no text layer is not a
+        // failure (the fields were read) but it is not whole either.
+        parsingStatus:   _amendmentText ? 'success' : 'partial',
+        extractionModel: extracted._extractionModel ?? null,
+        usedPdfDirect:   _usedPdfDirect,
+      }).catch(e => { console.warn('[saveLeaseDocument:amendment] failed:', e?.message); return null; });
+      _amendmentDocId = (_saved && _saved.ok && Array.isArray(_saved.data) && _saved.data[0] && _saved.data[0].id) || null;
+    }
+    // Say so rather than implying the document was filed. The amendment still
+    // applies — the values were read — but the source is not on file, and a
+    // manager who later opens the lease has to know that before relying on it.
+    if (!amendmentUrl || !_amendmentDocId) {
+      showToast('⚠️ The amendment was read and applied, but the document itself could not be filed — it will not open from Lease Center. Re-upload it to attach the source.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 10000 });
+    }
 
     // Warn if amendment effective date is earlier than existing lease date (out-of-order upload)
     const existingTenant = tenantData.find(t => t && t.id === tenantId);
@@ -8355,7 +8492,8 @@ async function handleAmendmentUpload(tenantId, file) {
       }
     }
 
-    applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name);
+    applyAmendmentOverrides(tenantId, extracted, amendmentId, file.name,
+                            { fileUrl: amendmentUrl || null, leaseDocumentId: _amendmentDocId });
     // Phase 15: multi-document reasoning after amendment applied
     if (window.LeaseIntelligence) {
       const _liTenant = tenantData.find(t => t && t.id === tenantId);
@@ -8374,7 +8512,10 @@ async function handleAmendmentUpload(tenantId, file) {
     { const _prop = currentProperty();
       if (_prop) appendPropertyTimelineEvent(_prop, { type: 'amendment_uploaded', severity: 'info',
         tenantId, actor: 'User', title: `Amendment uploaded — ${file.name}`,
-        metadata: { fileName: file.name, amendmentId } }); }
+        metadata: { fileName: file.name, amendmentId, leaseDocumentId: _amendmentDocId || '' },
+        // The stored document travels with the event, so the property history
+        // opens the amendment the same way it opens any other filed document.
+        attachments: amendmentUrl ? [{ name: file.name, url: amendmentUrl, kind: 'pdf' }] : [] }); }
   } catch (err) {
     showToast('Amendment upload failed: ' + err.message, { color: '#7f1d1d', textColor: '#fca5a5', duration: 5000 });
   }
@@ -8386,7 +8527,7 @@ async function handleAmendmentUpload(tenantId, file) {
 //   - updates the tenant's live field value
 //   - records the override in tenant.amendments[]
 // Original snapshots are never mutated.
-function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
+function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMeta) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
@@ -8458,6 +8599,14 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName) {
     amendmentId,
     uploadedAt:      now,
     fileName:        fileName || null,
+    // WHERE THE DOCUMENT IS, not merely what it was called. `fileName` is a
+    // string and was the only trace the amendment left; these two are the
+    // stored file and its lease_documents row, so the amendment can be opened
+    // and asked about after a reload instead of being a remembered filename.
+    // Both are null when filing failed, which the upload path reports rather
+    // than hiding — an absent url reads as "not on file", never as "no url yet".
+    fileUrl:         (docMeta && docMeta.fileUrl) || null,
+    leaseDocumentId: (docMeta && docMeta.leaseDocumentId) || null,
     effectiveDate:   amNorm.start_date || null,
     extractedFields: COMPARABLE_FIELDS.reduce((acc, fk) => {
       if (amNorm[fk] != null && amNorm[fk] !== '') acc[fk] = amNorm[fk];
