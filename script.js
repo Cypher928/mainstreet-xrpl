@@ -5866,16 +5866,28 @@ let _resultsUnverified = false;
 // The one sentence for WHY the results are not current, for the refusals a
 // manager reaches from a button. Same distinction the banner below draws
 // (_resultsUnverified), so the two cannot disagree about which reason applies.
+// THE RESULTS ARE FOR ANOTHER YEAR THAN THE ONE SELECTED. Derived, never
+// stored: getCamYear() is the year the manager chose, lastResultsYear the year
+// the results on screen were run for. Nothing about the inputs changed, so
+// this is not _resultsStale — switching the year back makes the results
+// current again with no run. The banner, the Calculate step and the reason
+// below read it; the CSV export and the statement already refuse on it.
+function _camYearMismatch() {
+  return !!(typeof lastResults !== 'undefined' && lastResults.length
+            && typeof lastResultsYear !== 'undefined' && lastResultsYear
+            && getCamYear() !== lastResultsYear);
+}
 function _staleResultsReason() {
-  return _resultsUnverified
-    ? 'this saved reconciliation cannot be checked against the current lease and invoice data, so it is not treated as current'
-    : 'lease or invoice data changed since the last run';
+  if (_resultsUnverified) return 'this saved reconciliation cannot be checked against the current lease and invoice data, so it is not treated as current';
+  if (!_resultsStale && _camYearMismatch()) return `these results are for ${lastResultsYear}, not ${getCamYear()} — switch the CAM year back to ${lastResultsYear}, or re-run for ${getCamYear()}`;
+  return 'lease or invoice data changed since the last run';
 }
 
 function _updateStaleResultsBanner() {
   const el = document.getElementById('staleResultsBanner');
   if (!el) return;
-  el.style.display = _resultsStale ? 'block' : 'none';
+  const yearOff = !_resultsStale && _camYearMismatch();
+  el.style.display = (_resultsStale || yearOff) ? 'block' : 'none';
   // "Fields were edited since the last run" is the wrong sentence for a saved
   // reconciliation that cannot be checked at all — nothing was necessarily
   // edited, and saying so would be its own false claim. Same block, different
@@ -5885,6 +5897,8 @@ function _updateStaleResultsBanner() {
       ? '⚠ This saved reconciliation cannot be checked against the current lease and '
         + 'invoice data, so it is not treated as current — re-run CAM allocation to confirm it.'
       : '⚠ Fields were edited since the last run — re-run CAM allocation to update results.';
+  } else if (yearOff) {
+    el.textContent = `⚠ These results are for ${lastResultsYear}, not ${getCamYear()} — switch the CAM year back to ${lastResultsYear}, or re-run CAM allocation for ${getCamYear()}.`;
   }
   if (typeof renderCamWorkflow === 'function') renderCamWorkflow();
 }
@@ -10630,6 +10644,18 @@ function _renderCamWorkflow() {
   const gross = window.CamPool ? window.CamPool.grossTotal(invAll) : invAll.reduce((t, i) => t + (parseFloat(i.amount) || 0), 0);
   const pool  = window.CamPool ? window.CamPool.total(invAll) : gross;
   set('camPrepSub', `Load and check the data the ${esc(String(year))} reconciliation will run on.`);
+  // WHEN THE YEAR AND THE FOLDER DISAGREE, SAY WHICH YEAR THE FOLDER IS. A
+  // manager with 2024 invoices under a 2026 selector read "Dated in 2026: 0"
+  // and a refusal; this names the year the invoices actually carry, beside
+  // the control that changes it. Silent when the selected year has invoices.
+  set('camYearHint', (() => {
+    if (scope.in > 0 || !invAll.length) return '';
+    const byYear = {};
+    invAll.forEach(i => { const d = new Date(i.invoiceDate || i.date || ''); if (!isNaN(d)) byYear[d.getFullYear()] = (byYear[d.getFullYear()] || 0) + 1; });
+    const years = Object.keys(byYear).sort((a, b) => byYear[b] - byYear[a]);
+    if (!years.length) return '';
+    return `${byYear[years[0]]} of ${invAll.length} invoice${invAll.length === 1 ? '' : 's'} ${byYear[years[0]] === 1 ? 'is' : 'are'} dated ${esc(years[0])}${years.length > 1 ? ` (${years.slice(1).map(y => `${byYear[y]} in ${esc(y)}`).join(', ')})` : ''} — none in ${esc(String(year))}.`;
+  })());
   const prepFacts = [
     fact('Property size', prep.totalSqft > 0 ? `${n(prep.totalSqft)} sqft` : '—', prep.totalSqft > 0 ? '' : 'bad'),
     fact('Leases ready', `${prep.tenants.length}<small> with a name and leased sqft</small>`, prep.tenants.length ? '' : 'bad'),
@@ -10653,7 +10679,7 @@ function _renderCamWorkflow() {
   const bodyEl0 = $('resultsBody');
   const refused = !!(bodyEl0 && bodyEl0.querySelector('.cam-refusal'));
   const hasResults = !refused && Array.isArray(lastResults) && lastResults.length > 0;
-  const stale = hasResults && _resultsStale;
+  const stale = hasResults && (_resultsStale || _camYearMismatch());
   const cp = currentProperty && currentProperty();
   const lastTs = (camRuns && camRuns[0] && camRuns[0].timestamp) || (cp && cp.camReconciliation && cp.camReconciliation.savedAt) || null;
   set('camCalcSub', `Run the ${esc(String(year))} reconciliation to allocate recoverable expenses to tenants.`);
@@ -12868,6 +12894,7 @@ function _camRefusalHtml(scope) {
     <div class="cam-refusal-detail">${esc(n.detail)}</div>
     <div class="cam-refusal-consequence">${esc(n.consequence)}</div>
     <div class="cam-refusal-action">${esc(n.action)}</div>
+    <button type="button" class="cam-refusal-year-btn" onclick="focusCamYearSelect()">Change the CAM year &rsaquo;</button>
   </div>`;
 }
 
@@ -14940,29 +14967,52 @@ function setCamYear(y, opts) {
   if (_cyb) _cyb.textContent = _camYear + ' CAM';
   const _cybm = document.getElementById('wsMobileCamYear');
   if (_cybm) _cybm.textContent = _camYear + ' CAM';
-  // Keep the Property Setup dropdown in sync when the year changes (e.g. a loaded
-  // reconciliation restores a prior year) so it can't disagree with the breadcrumb.
-  const _cys = document.getElementById('camYearSelect');
-  if (_cys && _cys.value !== String(_camYear)) _cys.value = String(_camYear);
-  if (typeof renderCamWorkflow === 'function') renderCamWorkflow();
+  // Every selector that offers the year reads the one authority: the Property
+  // Setup dropdown and the one on the CAM tab's Prepare step. A loaded
+  // reconciliation that restores a prior year moves both.
+  document.querySelectorAll('.cam-year-select').forEach(sel => {
+    if (sel.value !== String(_camYear)) sel.value = String(_camYear);
+  });
+  // THE RESULTS ON SCREEN BELONG TO THE YEAR THEY WERE RUN FOR. Switching the
+  // year after a run left "✓ Calculated" beside 2024 figures under a 2025
+  // badge. That mismatch is DERIVED from the two authorities that already
+  // exist (getCamYear vs lastResultsYear) by _camYearMismatch(), not written
+  // into _resultsStale: nothing about the inputs changed, so switching back
+  // makes the results current again without a run. The banner and the
+  // Calculate step read it; the CSV export and the statement already refuse.
+  if (typeof _updateStaleResultsBanner === 'function') _updateStaleResultsBanner();
+  else if (typeof renderCamWorkflow === 'function') renderCamWorkflow();
 }
 function initCamYearSelect() {
-  const sel = document.getElementById('camYearSelect');
-  if (!sel) return;
+  const sels = document.querySelectorAll('.cam-year-select');
+  if (!sels.length) return;
   const cur = new Date().getFullYear();
-  sel.innerHTML = '';
-  for (let yr = cur - 3; yr <= cur + 1; yr++) {
-    const opt = document.createElement('option');
-    opt.value = yr;
-    opt.textContent = `${yr} CAM`;
-    if (yr === _camYear) opt.selected = true;
-    sel.appendChild(opt);
-  }
+  sels.forEach(sel => {
+    sel.innerHTML = '';
+    for (let yr = cur - 3; yr <= cur + 1; yr++) {
+      const opt = document.createElement('option');
+      opt.value = yr;
+      opt.textContent = `${yr} CAM`;
+      if (yr === _camYear) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  });
   const glLbl = document.getElementById('glUploadLabel');
   if (glLbl) glLbl.textContent = `Upload ${_camYear} GL Excel File (.xlsx only)`;
   const _cyb2 = document.getElementById('camYearBadge');
   if (_cyb2) _cyb2.textContent = _camYear + ' CAM';
 }
+// The refusal says "switch the CAM year"; this is the control it means. It
+// takes the manager to the Prepare step's selector rather than rendering a
+// second dropdown inside a panel that is rebuilt on every run.
+function focusCamYearSelect() {
+  if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('cam');
+  const sel = document.getElementById('camYearSelectCam') || document.getElementById('camYearSelect');
+  if (!sel) return;
+  try { sel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) { sel.scrollIntoView(); }
+  setTimeout(() => { try { sel.focus(); } catch (_) {} }, 350);
+}
+window.focusCamYearSelect = focusCamYearSelect;
 let sqftMismatch   = false;
 let isEditingField = false; // true while a text/number/date input has focus
 let isRunning      = false; // guard against concurrent runAllocation() calls

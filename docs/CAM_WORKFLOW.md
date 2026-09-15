@@ -72,6 +72,32 @@ type is not repeated here; the Gross / Modified Gross detector owns it. The
 arithmetic is untouched, and `test-unapplied-provisions.js` asserts that the
 engine reads none of these fields.
 
+## The year is chosen where it is reconciled
+
+The CAM year is one in-memory authority, `getCamYear()`, per user, stamped on
+the property and on each run and re-adopted when the property is opened. The
+selector that changes it lived only in Property Setup, while every message
+about the year ("Dated in 2025: 0", the refusal's "switch the CAM year") was
+on the CAM tab. The Prepare step now carries the same selector ("Reconciling
+· 2025 CAM"); both selects share the class `cam-year-select`, are populated by
+`initCamYearSelect()` and kept in step by `setCamYear()`. The refusal panel
+gains "Change the CAM year ›", which takes the manager to that selector
+(`focusCamYearSelect()`). When the selected year has no invoices, Prepare
+says which year the invoices do carry.
+
+Switching the year after a run no longer leaves "✓ Calculated" beside figures
+for another year. The mismatch is derived, not stored: `_camYearMismatch()`
+compares the chosen year with `lastResultsYear`, and the banner, the Calculate
+step and `_staleResultsReason()` read it ("These results are for 2024, not
+2025 — switch the CAM year back to 2024, or re-run for 2025"). Nothing about
+the inputs changed, so switching the year back makes the results current
+again with no run, while a genuine edit keeps `_resultsStale` set through a
+year round-trip. The CSV export and the statement already refused on the year
+mismatch and still do. Nothing about `camYearScopeOf`, the refusal
+condition, the undated rule or the run stamping changed.
+`test-e2e-cam-year-choice.js` walks Maple Plaza: 2024 invoices under a 2026
+year, the refusal, the switch, the 2024 run, mixed years, and the reload.
+
 ## The held tenant's action is not green
 
 On a tenant card the *Why it can't bill* action (`.tenant-stmt-card-btn--held`)

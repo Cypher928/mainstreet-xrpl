@@ -896,6 +896,21 @@
     }
     .cam-register-toggle:hover { background: rgba(201,151,58,0.18); border-color: rgba(201,151,58,0.6); }
     .cam-register-toggle:focus-visible { outline: 2px solid #C9973A; outline-offset: 2px; }
+
+    /* Prepare: the year being reconciled, chosen on the tab that talks about it. */
+    .cam-year-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-bottom: 12px; }
+    .cam-year-row label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-4); }
+    .cam-year-row .cam-year-select {
+      background: var(--bg-3, #0f172a); color: var(--text-1, #f1f5f9); border: 1px solid rgba(201,151,58,0.38);
+      border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.86rem; font-weight: 700; min-width: 120px;
+    }
+    .cam-year-row .cam-year-select:focus-visible { outline: 2px solid #C9973A; outline-offset: 2px; }
+    .cam-year-hint { font-size: 0.78rem; color: var(--c-fbbf24); }
+    .cam-refusal-year-btn {
+      display: inline-block; margin-top: 10px; background: rgba(201,151,58,0.10); color: var(--c-e4b15c);
+      border: 1px solid rgba(201,151,58,0.38); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+    }
+    .cam-refusal-year-btn:hover { background: rgba(201,151,58,0.18); }
     @media (max-width: 560px) {
       .cam-register-head { flex-direction: column; align-items: flex-start; gap: 6px; }
       .cam-register-toggle { width: 100%; }
@@ -7561,7 +7576,7 @@
       </div>
       <div class="field">
         <label>CAM Year</label>
-        <select id="camYearSelect" onchange="setCamYear(this.value)">
+        <select id="camYearSelect" class="cam-year-select" onchange="setCamYear(this.value)">
           <!-- Options populated by initCamYearSelect() on load -->
         </select>
       </div>
@@ -7708,6 +7723,17 @@
       <div class="cam-step-status" id="camPrepStatus"></div>
     </div>
     <div class="cam-step-body">
+      <!-- THE YEAR IS CHOSEN WHERE IT IS RECONCILED. The same selector has lived
+           in Property Setup since the year scope existed, and every message that
+           mentions the year ("Dated in 2025: 0", "Switch the CAM year") is on
+           this tab. A manager with a folder of 2024 invoices was told to switch
+           the year by a screen that had nowhere to switch it. Same control,
+           same setCamYear(); the two selects are kept in step. -->
+      <div class="cam-year-row">
+        <label for="camYearSelectCam">Reconciling</label>
+        <select id="camYearSelectCam" class="cam-year-select" onchange="setCamYear(this.value)"></select>
+        <span class="cam-year-hint" id="camYearHint"></span>
+      </div>
       <div class="cam-facts" id="camPrepFacts"></div>
       <div class="cam-prep-grid">
   <div class="card" id="cardGL">
