@@ -12961,7 +12961,11 @@ function _maybeShowWelcome(props) {
   const panel = document.getElementById('demoWelcomePanel');
   if (!panel) return;
   if (ob?.welcomeSeen) { panel.style.display = 'none'; return; }
-  const realProps = (props || []).filter(p => p.id !== DEMO_PROPERTY_ID);
+  // A SEEDED DEMO IS NOT A REAL PROPERTY. This filtered Cascade's id only, so
+  // opening the Northgate demo would have counted as the user acquiring a
+  // property of their own and dismissed this panel permanently. Both demos are
+  // excluded, through the one predicate the portfolio badges them with.
+  const realProps = (props || []).filter(p => !_isDemoPropertyId(p.id));
   if (realProps.length > 0) { _dismissDemoWelcome(); return; }
   panel.style.display = 'block';
 }
@@ -25285,6 +25289,26 @@ function _demoPropertyCardHtml(cfg) {
     </div>`;
 }
 
+// ─── Which properties are the seeded demos ───────────────────────────────────
+//
+// ONE PREDICATE, because three surfaces ask the question and must not disagree:
+// whether to offer the demo section, whether a card is badged DEMO, and whether
+// opening a card should re-check its seed. The ids are minted per user in
+// _initDemoIds; before that runs they are null, and `id === null` is false for
+// every real property, which is the safe answer.
+function _isDemoPropertyId(id) {
+  if (id == null) return false;
+  return id === DEMO_PROPERTY_ID || id === NORTHGATE_PROPERTY_ID;
+}
+
+// True once the CAM demo properties are in the portfolio. When they are, the
+// invitation below is not rendered — their own cards are already there, badged.
+function _demoPropertiesSeeded(props) {
+  const ids = (props || []).map(p => p && p.id);
+  return !!(DEMO_PROPERTY_ID && NORTHGATE_PROPERTY_ID
+            && ids.includes(DEMO_PROPERTY_ID) && ids.includes(NORTHGATE_PROPERTY_ID));
+}
+
 function _renderDemoPropertiesSection() {
   return `
     <div class="ptf-demo-section-title" style="grid-column:1 / -1;">&#x1F3AF; Demo Properties &mdash; explore with sample data</div>
@@ -25294,10 +25318,36 @@ function _renderDemoPropertiesSection() {
       onclick: 'loadDemo()', cta: 'Open Demo',
     })}
     ${_demoPropertyCardHtml({
+      name: 'Northgate Exchange', module: 'Clean CAM Billing Demo',
+      desc: '5 leases · 1 vacant suite · 16 documented invoices · a reconciliation that is ready to bill.',
+      onclick: '_openNorthgateDemo()', cta: 'Open Demo',
+    })}
+    ${_demoPropertyCardHtml({
       name: 'Harborview Retail Center', module: 'Acquisition Due Diligence Demo',
       desc: 'Lease risk analysis, CAM leakage detection, occupancy review, investment recommendation.',
       onclick: '_openAcqDemo()', cta: 'Open Demo',
     })}`;
+}
+
+// Seeds (if needed) and opens Northgate Exchange. Mirrors _openAcqDemo: the
+// existing seeders own idempotency, this only routes. No second demo mechanism.
+//
+// BOTH CAM DEMOS, WHICHEVER CARD WAS CLICKED. The pair is the demonstration —
+// Northgate is the property that bills and Cascade is the one that refuses, and
+// the second is what makes the first mean anything. loadDemo() already seeds
+// both and opens Cascade; this seeds both and opens Northgate. Both seeders are
+// idempotent, so clicking either card twice seeds nothing twice.
+async function _openNorthgateDemo() {
+  try {
+    await ensureDemoProperty().catch(e => console.warn('[_openNorthgateDemo] Cascade seed skipped:', e && e.message));
+    const id = await ensureNorthgateDemo();
+    renderPortfolio();
+    if (id) { await selectProperty(id); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    showToast('Could not open the Northgate demo — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+  } catch (e) {
+    console.error('[_openNorthgateDemo]', e);
+    showToast('Could not open the Northgate demo — please try again.', { color: '#92400e', textColor: '#fef3c7' });
+  }
 }
 
 // ─── Phase 21: AI Command Center (view glue — orchestration only) ────────────
@@ -25917,9 +25967,30 @@ function renderPortfolio(props) {
     ? sortedPairs.filter(({ p }) => (p.name || '').toLowerCase().includes(_portfolioQuery.toLowerCase()) || (p.address || '').toLowerCase().includes(_portfolioQuery.toLowerCase()))
     : sortedPairs;
 
+  // THE DEMO PROPERTIES WERE ONLY REACHABLE FROM AN EMPTY PORTFOLIO.
+  //
+  // Every route into loadDemo() sat inside the zero-properties branch — the
+  // "Open Demo" cards, the "Try Live Demo" button, and the welcome panel, which
+  // _maybeShowWelcome dismisses for good the moment a real property exists. So
+  // an account that had added one property could not reach either CAM demo at
+  // all: measured on the pilot preview, a manager with one property of their own
+  // had no control anywhere in the product that would seed or open them, and the
+  // only way in was to call loadDemo() from the browser console.
+  //
+  // The invitation is now offered beside the manager's own cards, and it stays
+  // opt-in: this renders the SAME cards the empty state renders, calling the
+  // same entry points. Nothing is seeded until the manager clicks one. Once the
+  // demos exist they are ordinary cards carrying a DEMO badge, so the
+  // invitation withdraws rather than duplicating them.
+  //
+  // Hidden while a search is active: the results belong to the query, and the
+  // demo cards are not results.
+  const _demoInvite = (!_portfolioQuery && !_demoPropertiesSeeded(props))
+    ? _renderDemoPropertiesSection() : '';
+
   document.getElementById('propertyCardsGrid').innerHTML = _displayPairs.length === 0
     ? `<div class="ptf-empty-state"><div class="ptf-empty-icon">&#x1F50D;</div><div class="ptf-empty-title">No properties match "${esc(_portfolioQuery)}"</div></div>`
-    : _displayPairs.map(({ p, m }) => {
+    : _demoInvite + _displayPairs.map(({ p, m }) => {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
     const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
@@ -25970,6 +26041,7 @@ function renderPortfolio(props) {
       <div class="ptf-card-top">
         <div class="ptf-prop-name">${esc(p.name || '—')}</div>
         <div class="ptf-card-badges">
+          ${_isDemoPropertyId(p.id) ? '<span class="ptf-demo-badge">DEMO</span>' : ''}
           ${rdBadge}
         </div>
       </div>
@@ -26076,6 +26148,14 @@ async function selectProperty(id) {
   if (DEMO_PROPERTY_ID && id === DEMO_PROPERTY_ID && typeof ensureDemoProperty === 'function') {
     try { await ensureDemoProperty(); }
     catch (e) { console.warn('[selectProperty] demo seed check failed — opening as stored:', e?.message); }
+  }
+  // Northgate arrives here the same three ways — its own portfolio card, the
+  // global search, an attention link — and gets the same guarantee for the same
+  // reason. The seeder is idempotent on _ngV, so this is one read when the row
+  // is current, and a failure must not stop the property from opening.
+  if (NORTHGATE_PROPERTY_ID && id === NORTHGATE_PROPERTY_ID && typeof ensureNorthgateDemo === 'function') {
+    try { await ensureNorthgateDemo(); }
+    catch (e) { console.warn('[selectProperty] Northgate seed check failed — opening as stored:', e?.message); }
   }
 
   // Save the property we're leaving — flush DOM values immediately (not debounced)

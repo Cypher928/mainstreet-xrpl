@@ -87,8 +87,38 @@ live object as well as the stored row, so an ordinary save cannot strip it. The
 denormalised `tenants` table receives the five leases only: the vacant row is a
 space, not a tenant.
 
-Both demo properties are seeded by `loadDemo()` and appear as ordinary cards in
-the portfolio. There is no Northgate-only button.
+## Reaching the demos from a portfolio that is not empty
+
+Every route into `loadDemo()` used to sit inside the zero-properties branch of
+`renderPortfolio`: the "Open Demo" cards, the "Try Live Demo" button, and the
+welcome panel, which `_maybeShowWelcome` dismisses permanently as soon as a real
+property exists. So an account that had added one property of its own could not
+reach either CAM demo at all. Measured on the pilot preview: a manager with one
+property had no control anywhere in the product that would seed or open them,
+and the only way in was the browser console. The seeders were correct. They were
+unreachable.
+
+The invitation is now offered beside the manager's own cards, and it stays
+**opt-in**:
+
+- `_renderDemoPropertiesSection()` renders the same three cards the empty state
+  renders, calling the same entry points. Nothing is seeded until a card is
+  clicked.
+- It is suppressed once `_demoPropertiesSeeded()` is true, so the invitation
+  withdraws rather than duplicating cards that are already there, and while a
+  search is active, because the demo cards are not search results.
+- `_isDemoPropertyId()` is the one predicate three surfaces share: whether to
+  offer the invitation, whether a card is badged `DEMO`, and whether opening a
+  card re-checks its seed. A seeded demo therefore also stops counting as a real
+  property for the welcome panel, which is what it always meant to do.
+- Either CAM card seeds both properties, because the pair is the demonstration:
+  Northgate bills and Cascade refuses, and the second is what makes the first
+  mean anything. `loadDemo()` opens Cascade, `_openNorthgateDemo()` opens
+  Northgate, and both seeders are idempotent.
+
+Once seeded they are ordinary portfolio cards carrying a `DEMO` badge, so they
+cannot be mistaken for the manager's own buildings. `test-e2e-demo-discoverability.js`
+pins all of it, including that arriving at the portfolio seeds nothing.
 
 ## Verification
 
