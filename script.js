@@ -4727,7 +4727,6 @@ async function importGLToInvoices() {
     }));
   });
 
-  setCamRegisterOpen(true);   // a GL import lands in the register; show it
   renderInvResults();
 
   const property = currentProperty();
@@ -9490,7 +9489,6 @@ async function handleBatchInvoices(fileList) {
   const res  = document.getElementById('invResults');
   res.innerHTML = '';
   prog.style.display = 'block';
-  setCamRegisterOpen(true);   // what is about to arrive is what the manager reviews next
 
   document.getElementById('invFileInput').value   = '';
   document.getElementById('invFolderInput').value = '';
@@ -10374,7 +10372,6 @@ async function confirmYardiImport() {
 
   // Switch to file-upload tab so user sees the imported results
   switchInvTab('files');
-  setCamRegisterOpen(true);
   renderInvResults();
 
   const property = currentProperty();
@@ -10732,9 +10729,11 @@ window._camOpenAuditBucket = _camOpenAuditBucket;
 // which defeated the four-step page. One summary row (renderCamWorkflow fills
 // it from the register's own counts) stands in for it; "View invoices"
 // expands the existing register in place, every row action intact. An upload
-// or an import opens it so what just arrived can be reviewed; opening another
-// property closes it again (resetWorkflow). Display only — the register's
-// data, rows and actions are exactly what they were.
+// or an import does NOT open it — a real property can carry hundreds of
+// invoices, and a batch landing would otherwise unfold every card and bring
+// the scrolling back; the summary row updates and the manager chooses to look.
+// Opening another property closes it (resetWorkflow). Display only — the
+// register's data, rows and actions are exactly what they were.
 let _camRegisterOpen = false;
 function setCamRegisterOpen(open) {
   _camRegisterOpen = !!open;

@@ -30,11 +30,13 @@ length, `CamPool.grossTotal`, and the source-document predicate the audit
 detector uses. *View invoices* (`toggleCamRegister()`) shows the existing
 register in place and reads *Hide invoices* while it is open; nothing about the
 rows is re-rendered differently. The state is display-only and changes in one
-place, `setCamRegisterOpen()`: the toggle, and the three paths that put new
-rows in the register — a batch upload, a Yardi import, a GL import — open it
-so what just arrived can be reviewed; `resetWorkflow()` (opening a property)
-closes it. A re-render of the register never changes it. The Property →
-Invoices drawer remains the permanent filing location.
+place, `setCamRegisterOpen()`: the toggle opens and closes it, and
+`resetWorkflow()` (opening a property) closes it. A batch upload, a Yardi
+import or a GL import leaves it collapsed and only updates the summary row —
+a real property can carry hundreds of invoices, and a batch landing must not
+unfold every card and bring the scrolling back; the manager chooses *View
+invoices*. A re-render of the register never changes its state. The Property
+→ Invoices drawer remains the permanent filing location.
 
 Removing an invoice from the register writes the removal to the property and
 re-renders, as it always did; `removeInvItem` never set the stale flag and

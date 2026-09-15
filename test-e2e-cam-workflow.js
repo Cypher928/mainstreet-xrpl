@@ -226,6 +226,33 @@ const DB = `
   });
   yes(R1.gross !== R1.pool && R1.meta.includes(R1.gross) && !R1.meta.includes(R1.pool), 'the figure is the gross of every invoice in the register, not the CAM pool', JSON.stringify(R1));
   is(R1.restored, R0.want, 'and the row reads as before once the invoice is back in CAM');
+  // A LOAD DOES NOT OPEN IT. A batch upload, a Yardi import and a GL import
+  // all end in renderInvResults(); a real property can carry hundreds of
+  // invoices, and a batch landing must not unfold every card. The summary row
+  // updates; the manager chooses "View invoices". Checked two ways: the three
+  // load paths carry no opener, and a render with new rows leaves it hidden.
+  const src = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const fnBody = name => { const i = src.indexOf(`function ${name}(`); return src.slice(i, src.indexOf('\n}\n', i)); };
+  const loaders = ['handleBatchInvoices', 'confirmYardiImport', 'importGLToInvoices'];
+  const openers = loaders.filter(f => /setCamRegisterOpen\(true\)|_camRegisterOpen\s*=\s*true|toggleCamRegister\(\)/.test(fnBody(f)));
+  is(openers, [], 'none of the three load paths (batch upload, Yardi import, GL import) opens the register');
+  yes(loaders.every(f => /renderInvResults\(\)/.test(fnBody(f))), 'each of them ends in the same renderInvResults() the check below exercises');
+  const R2 = await page.evaluate(() => {
+    const inv = document.getElementById('invResults');
+    const n0 = invoiceData.filter(Boolean).length;
+    invoiceData.push({ vendorName: 'Probe Vendor', category: 'other', amount: 1, invoiceDate: '2025-06-01' });
+    renderInvResults();
+    const out = { hidden: getComputedStyle(inv).display === 'none', rows: inv.querySelectorAll('.bulk-tenant-row').length, n0,
+                  meta: document.getElementById('camRegisterMeta').textContent.replace(/\s+/g, ' ').trim(),
+                  toggle: document.getElementById('camRegisterToggle').textContent.trim() };
+    invoiceData.pop();
+    renderInvResults();
+    out.after = document.getElementById('camRegisterMeta').textContent.replace(/\s+/g, ' ').trim();
+    return out;
+  });
+  yes(R2.hidden && R2.rows === R2.n0 + 1, 'new rows rendered into the register leave it collapsed', JSON.stringify(R2));
+  yes(new RegExp('^' + (R2.n0 + 1) + ' invoices').test(R2.meta) && /View invoices/.test(R2.toggle), 'while the summary row counts the new invoice and still offers View invoices', R2.meta);
+  is(R2.after, R0.want, 'and reads as before once it is gone');
 
   // ══ C · Calculate ══════════════════════════════════════════════════════════
   sec('C · Calculate shows the year, the pool, the roster and readiness — from the authorities');
