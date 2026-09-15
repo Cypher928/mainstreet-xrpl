@@ -9733,26 +9733,26 @@ function renderInvResults() {
             <div class="field" style="flex:2;">
               <label>Vendor ${confidenceBadge(conf.vendorName)}</label>
               <input id="ifield-${i}-vendorName" type="text" value="${esc(cleanHTML(d.vendorName))}"
-                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i});savePropertyData()"/>
+                oninput="invoiceData[${i}].vendorName=this.value;markFieldVerified(${i},'vendorName');refreshInvSummary(${i});_invoiceInputChanged();savePropertyData()"/>
               <span id="ibadgeWrap-${i}-vendorName">${vVendor}</span>
             </div>
             <div class="field">
               <label>Amount ($) ${confidenceBadge(conf.amount)}</label>
               <input id="ifield-${i}-amount" type="number" value="${esc(d.amount)}"
-                oninput="const _av=parseFloat(this.value);if(!isNaN(_av)&&_av<0){this.value=0;invoiceData[${i}].amount=0;}else{invoiceData[${i}].amount=isNaN(_av)?'':_av;}markFieldVerified(${i},'amount');refreshInvSummary(${i});savePropertyData()"/>
+                oninput="const _av=parseFloat(this.value);if(!isNaN(_av)&&_av<0){this.value=0;invoiceData[${i}].amount=0;}else{invoiceData[${i}].amount=isNaN(_av)?'':_av;}markFieldVerified(${i},'amount');refreshInvSummary(${i});_invoiceInputChanged();savePropertyData()"/>
               <span id="ibadgeWrap-${i}-amount">${vAmount}</span>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Category ${confidenceBadge(conf.category)}</label>
-              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i});savePropertyData()">${opts}</select>
+              <select id="ifield-${i}-category" onchange="invoiceData[${i}].category=this.value;markFieldVerified(${i},'category');refreshInvSummary(${i});_invoiceInputChanged();savePropertyData()">${opts}</select>
               <span id="ibadgeWrap-${i}-category">${vCategory}</span>
             </div>
             <div class="field">
               <label>Invoice Date ${confidenceBadge(conf.invoiceDate)}</label>
               <input id="ifield-${i}-invoiceDate" type="text" value="${esc(cleanHTML(d.invoiceDate))}"
-                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i});savePropertyData()"/>
+                oninput="invoiceData[${i}].invoiceDate=this.value;markFieldVerified(${i},'invoiceDate');recomputeSummaryBadge(${i});_invoiceInputChanged();savePropertyData()"/>
               <span id="ibadgeWrap-${i}-invoiceDate">${vDate}</span>
             </div>
           </div>
@@ -10078,6 +10078,22 @@ function refreshInvSummary(i) {
   if (amtEl)  amtEl.textContent  = d.amount !== '' ? fmt(parseFloat(d.amount) || 0) : '—';
 }
 
+// AN INVOICE CHANGE IS A CHANGE TO THE RECONCILIATION'S INPUTS. Removing a
+// row, clearing the register, editing a vendor, amount, category or date, or
+// taking an invoice out of CAM changes the pool every tenant is billed from,
+// and the results on screen were computed from the pool before the change.
+// Tenant edits already say so through _resultsStale; the register did not — so
+// the same removal was flagged after a reload (the saved fingerprint no longer
+// matched the register) and passed as current in the session it happened in,
+// with "✓ Calculated" beside it and the CSV export waved through. One marker,
+// the same line the tenant paths use; runAllocation clears it on the next run.
+function _invoiceInputChanged() {
+  if (!lastResults.length || _resultsStale) return;
+  _resultsStale = true;
+  _updateStaleResultsBanner();
+}
+window._invoiceInputChanged = _invoiceInputChanged;
+
 async function removeInvItem(i) {
   // NAME WHAT IS ABOUT TO GO. "Remove this invoice from the list?" is the same
   // sentence whichever row was clicked, on a register where rows repeat by
@@ -10097,6 +10113,7 @@ async function removeInvItem(i) {
     }
   } catch (e) { logError('removeInvItem:ensureInvoiceIds', e, {}); }
   invoiceData.splice(i, 1);
+  _invoiceInputChanged();
   // Explicitly sync before savePropertyData() — the empty-array guard in
   // savePropertyData() protects tenant-portal mode from wiping invoices,
   // but explicit user removes must persist even when the list becomes empty.
@@ -10108,6 +10125,7 @@ async function removeInvItem(i) {
 
 async function clearInvResults() {
   invoiceData.splice(0, invoiceData.length);
+  _invoiceInputChanged();
   document.getElementById('invResults').innerHTML = '';
   document.getElementById('invProgress').style.display = 'none';
   document.getElementById('invFileInput').value   = '';

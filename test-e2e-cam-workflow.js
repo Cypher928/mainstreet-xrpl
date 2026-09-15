@@ -400,9 +400,9 @@ const DB = `
   is(K.n1, K.n0 - 1, 'Remove still removes the invoice from the register');
   yes(new RegExp('^' + K.n1 + ' invoices').test(K.meta), 'and the summary row follows the register', K.meta);
   is(K.persisted, K.n1, '…and the removal is written to the property, as before');
-  // removeInvItem never touched the stale flag (only upload, tenant edits,
-  // amendments and bulk-clear do) — this slice leaves that exactly as it was.
-  is(K.stale, K.stale0, '…and the stale flag is exactly what it was before the removal (removal never set it)');
+  // The pool every tenant was billed from just shrank: the results on screen
+  // are stale until the next run, exactly as they are after a reload.
+  yes(K.stale0 === false && K.stale === true, '…and the results are marked stale — the pool changed under them', JSON.stringify({ before: K.stale0, after: K.stale }));
   yes(/Hide invoices/.test(K.toggle), 'the control reads "Hide invoices" while open', K.toggle);
   yes(K.hiddenAgain, 'and hides the register again');
   // A re-render of the register (every edit, every removal) keeps whatever

@@ -121,6 +121,9 @@ window.PropertyOS = (function () {
     }
     if (field === 'camEligible') inv.camEligible = !!value;
     else inv[field] = value || null;
+    // Taking an invoice out of CAM (or putting it back) changes the pool the
+    // last run billed from; the results on screen are stale until it re-runs.
+    if (field === 'camEligible' && window._invoiceInputChanged) { try { window._invoiceInputChanged(); } catch (_e) {} }
     try { if (window.savePropertyData) window.savePropertyData(); } catch (_e) {}
     renderPropertyPage(p);
   }

@@ -225,6 +225,7 @@ const SUITES = [
   // amounts, gates, findings, stale protection, year scope and persistence.
   { label: 'CAM workflow layout (e2e)',                cmd: 'node test-e2e-cam-workflow.js' },
   { label: 'Unapplied lease provisions (e2e)',         cmd: 'node test-e2e-unapplied-provisions.js' },
+  { label: 'Register change stales results (e2e)',     cmd: 'node test-e2e-invoice-input-stale.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

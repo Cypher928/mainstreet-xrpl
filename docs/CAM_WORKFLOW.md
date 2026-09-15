@@ -38,9 +38,16 @@ unfold every card and bring the scrolling back; the manager chooses *View
 invoices*. A re-render of the register never changes its state. The Property
 → Invoices drawer remains the permanent filing location.
 
-Removing an invoice from the register writes the removal to the property and
-re-renders, as it always did; `removeInvItem` never set the stale flag and
-still does not.
+Any register change that changes the reconciliation's inputs — removing a
+row, Clear All, editing a vendor, amount, category or date, or taking an
+invoice out of CAM in the Property → Invoices drawer — marks the existing
+results stale through `_invoiceInputChanged()`, the same `_resultsStale`
+behaviour the tenant edits use. The stale banner shows, Calculate reads
+"Re-run needed", the CSV export and the tenant statement refuse, and the next
+run clears it. Before this, the same removal was flagged only after a reload
+(the saved inputs fingerprint no longer matched) and passed as current in the
+session it happened in. `test-e2e-invoice-input-stale.js` proves the
+lifecycle for each path.
 
 ## Lease provisions the engine does not apply hold the statement
 
