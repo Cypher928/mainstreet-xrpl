@@ -11719,7 +11719,9 @@ async function runAllocation() {
   const validTenants = getValidTenants();
 
   // Clear any warnings left over from a previous run before recomputing them.
-  section.querySelectorAll('.cam-sqft-warning, .cam-skip-warning').forEach(el => el.remove());
+  // The cap warning too: it was prepended on every run and never removed, so
+  // two unresolved runs showed it twice and a resolved cap still sat under it.
+  section.querySelectorAll('.cam-sqft-warning, .cam-skip-warning, .cam-cap-incomplete-warning').forEach(el => el.remove());
 
   // Warn about tenants that exist but are excluded from CAM due to missing sqft
   const allNamedTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);

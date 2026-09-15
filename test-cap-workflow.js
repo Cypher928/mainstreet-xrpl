@@ -216,12 +216,24 @@ sec('B. deriveCapState names the cause');
     eq(s.enforceable, true);
   });
   t('B5 undeclared unit → honest weaker state, and it does NOT pretend percent', () => {
+    // The state used to ask for "cap type confirmation" before a base could
+    // be asked for. Nothing in the product lets a person declare a unit, and
+    // the engine enforces a 0–100 cap with a base as a percentage whether or
+    // not a unit is known — so the sentence sent the manager to a control
+    // that did not exist. It now says what is missing (the base), what will
+    // happen (applied as a percentage), and offers the field, while the
+    // state name keeps the unit visible as unconfirmed.
     const s = LI.deriveCapState(UNDECLARED);
     eq(s.state, 'unit_unconfirmed');
-    eq(s.actionable, false);
-    eq(s.field, null);
-    ok(/needs confirmation/i.test(s.title), `title was: ${s.title}`);
-    ok(/percentage or a dollar amount/i.test(s.why), `why was: ${s.why}`);
+    eq(s.enforceable, false);
+    eq(s.actionable, true, 'the base is what resolves it, so it must be offered');
+    eq(s.field, 'cap_base_amount');
+    eq(s.needed, 'Prior-Year CAM Base ($)');
+    ok(/prior-year base needed/i.test(s.title), `title was: ${s.title}`);
+    ok(/no prior-year CAM base/i.test(s.why) && /not being applied/i.test(s.why), `why must name the missing base: ${s.why}`);
+    ok(/percentage or a dollar amount/i.test(s.why), `why must stay honest about the unit: ${s.why}`);
+    ok(/applies it as a percentage/i.test(s.why), `why must say how it will be applied: ${s.why}`);
+    ok(!/Cap type needs confirmation|whether a base is required/i.test(s.why + s.title), `the old sentence is gone: ${s.why}`);
     ok(!/5\.25%/.test(s.why), `must not print a % sign on an undeclared cap: ${s.why}`);
   });
   t('B6 an out-of-range percentage is not silently enforced', () => {
@@ -313,12 +325,17 @@ sec('D. Explainability reads the same derivation as the banner');
     ok(/dollar/i.test(r.fieldSummaries.cap), r.fieldSummaries.cap);
   });
   t('D3 an undeclared cap is reported unenforced, and by its real cause', () => {
+    // The real cause is the missing base: the engine enforces a 0–100 cap
+    // with a usable base as a percentage whether or not a unit is declared,
+    // so "cap type needs confirmation" named a step that does not exist and
+    // hid the one that resolves it. The unit stays unconfirmed in the state;
+    // the summary names what the manager can act on.
     const r = LI.generateLeaseExplainability(UNDECLARED);
     ok(/not enforced/.test(r.overallSummary), r.overallSummary);
-    ok(/cap type needs confirmation/i.test(r.overallSummary),
-       `named the wrong cause: ${r.overallSummary}`);
-    ok(!/no base amount/.test(r.overallSummary),
-       `asserted a missing base on an undeclared unit: ${r.overallSummary}`);
+    ok(/no base amount/.test(r.overallSummary),
+       `must name the missing base as the cause: ${r.overallSummary}`);
+    ok(!/cap type needs confirmation/i.test(r.overallSummary),
+       `the old cause is back: ${r.overallSummary}`);
   });
   t('D3b the "%" is withheld only from a cap the lease states in DOLLARS', () => {
     // Under the system-wide convention (UNITS: lease.cap is a percent) an

@@ -98,6 +98,30 @@ condition, the undated rule or the run stamping changed.
 `test-e2e-cam-year-choice.js` walks Maple Plaza: 2024 invoices under a 2026
 year, the refusal, the switch, the 2024 run, mixed years, and the reload.
 
+## A cap with no base names the base, and offers it
+
+A tenant with a CAM cap on file, no prior-year base and no clause quote on
+record is in the `unit_unconfirmed` state. It used to read "Cap type needs
+confirmation before MainStreet can determine whether a base is required",
+with no button. Nothing in the product lets a person declare a cap unit, and
+the engine never reads one: a cap between 0 and 100 with a usable base is
+enforced as a percentage regardless. The state now says what is true — the
+cap is on file, the prior-year base is missing, the cap is not applied, and
+it will be applied as a percentage once the base is entered — and carries
+`actionable: true, field: 'cap_base_amount'`, so the "CAM cap unresolved"
+banner renders the same "Add cap base →" that `missing_base` has always
+rendered. That button is the existing `openReviewItemFix`, which opens the
+tenant's Lease Intake row and focuses Prior-Year CAM Base. The state name,
+the cap arithmetic, the ceiling, extraction and the dollar-cap state are
+unchanged.
+
+The banner is now cleared before each run alongside the other run warnings.
+It was prepended on every run and never removed, so two unresolved runs
+showed it twice and a resolved cap still sat under it.
+`test-e2e-cap-resolution.js` walks unresolved → Add cap base → Prior-Year CAM
+Base → re-run → cap applied → banner gone, and that repeated runs show one
+banner.
+
 ## The held tenant's action is not green
 
 On a tenant card the *Why it can't bill* action (`.tenant-stmt-card-btn--held`)

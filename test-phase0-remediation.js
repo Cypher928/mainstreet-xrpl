@@ -116,10 +116,21 @@ t('field summary does NOT say NOT ENFORCED once the cap is live', () => {
 //
 // The base-amount note is not gone; it is CONDITIONAL, and the second test
 // proves it still fires the moment the lease says "percent".
+//
+// SINCE THEN: the state an undeclared cap lands in names the missing base as
+// what resolves it (the engine enforces a 0–100 cap with a base as a percentage
+// whether or not a unit is declared, and nothing in the product lets a person
+// declare one — "cap type needs confirmation" sent the manager to a control
+// that did not exist). The note may now say the base is missing. What it still
+// must not do is assert the unit: no "%" after 5.25, and the sentence that the
+// clause does not say whether it is a percentage or a dollar amount stays.
 t('a review note reports the cap as unenforced without asserting its unit', () => {
   const r = LI.generateLeaseExplainability(CANVAS);
-  ok(r.reviewNotes.some(n => /NOT being enforced/.test(n) && /needs confirmation/i.test(n)),
-     `reviewNotes were: ${JSON.stringify(r.reviewNotes)}`);
+  const note = r.reviewNotes.find(n => /NOT being enforced/.test(n));
+  ok(note, `reviewNotes were: ${JSON.stringify(r.reviewNotes)}`);
+  ok(!/5\.25%/.test(note || ''), `the note asserts a unit nobody confirmed: ${note}`);
+  ok(/percentage or a dollar amount/i.test(note || ''), `the note must say the unit is not on record: ${note}`);
+  ok(/no prior-year CAM base/i.test(note || ''), `the note must name what is actually missing: ${note}`);
 });
 
 t('a review note DOES name the missing base once a clause states a percentage', () => {

@@ -63,9 +63,9 @@ const MUTANTS = [
   { id: 'M12', file: 'lease-intelligence.js', why: 'a dollar cap is told to add a base',
     from: "      return { state: 'dollar_cap', unit, enforceable: false, actionable: false,",
     to:   "      return { state: 'dollar_cap', unit, enforceable: false, actionable: true," },
-  { id: 'M13', file: 'lease-intelligence.js', why: 'an undeclared cap is treated as actionable',
-    from: "      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: false,",
-    to:   "      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: true," },
+  { id: 'M13', file: 'lease-intelligence.js', why: 'an undeclared cap stops offering the base that resolves it',
+    from: "      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: true,",
+    to:   "      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: false," },
   { id: 'M14', file: 'lease-intelligence.js', why: 'missing_base stops naming the field that fixes it',
     from: "             field: 'cap_base_amount' };",
     to:   "             field: null };" },
@@ -108,7 +108,7 @@ const MUTANTS = [
 
   // ── the explainability wiring ────────────────────────────────────────────
   { id: 'M27', file: 'lease-intelligence.js', why: 'the note always names a missing base again',
-    from: '        reviewNotes.push(_cs.actionable',
+    from: '        reviewNotes.push(_cs.actionable && _cs.unit === CAP_UNIT.PERCENT',
     to:   '        reviewNotes.push(true' },
   { id: 'M28', file: 'lease-intelligence.js', why: 'the summary prints % on a declared dollar cap',
     from: "    const _pctMark = _capSummaryState.unit === CAP_UNIT.DOLLAR ? '' : '%';",

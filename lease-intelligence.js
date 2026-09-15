@@ -544,13 +544,22 @@ window.LeaseIntelligence = (() => {
     }
 
     if (unit === CAP_UNIT.UNDECLARED) {
-      // The honest weaker state. We know a base is absent, but not whether a
-      // base is even the right thing to ask for — so we ask for neither.
-      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: false,
+      // The honest weaker state: no clause on record says what the number is
+      // a number OF. This used to ask the manager to "confirm the cap type"
+      // before a base could be asked for — but nothing in the product lets a
+      // person declare a unit, and the engine never reads one: a cap between
+      // 0 and 100 with a usable base is enforced as a percentage, unit or no
+      // unit. So the sentence sent the manager to a control that does not
+      // exist and hid the one that resolves it. Say what is true — the base is
+      // what is missing, and it will be applied as a percentage — and offer
+      // the same field missing_base offers. The state name is unchanged so
+      // the unit stays visible as unconfirmed on every surface that reads it.
+      return { state: 'unit_unconfirmed', unit, enforceable: false, actionable: true,
                capValue: pct, baseUsable: usable, engineWillCap: engineWillCap,
-               title: 'Cap type needs confirmation',
-               why: 'A CAM cap of ' + pct + ' is on file, but no clause on record says whether that is a percentage or a dollar amount. Cap type needs confirmation before MainStreet can determine whether a base is required.',
-               needed: null, field: null };
+               title: 'CAM cap on file — prior-year base needed',
+               why: 'A CAM cap of ' + pct + ' is on file, and MainStreet has no prior-year CAM base for this tenant, so the cap is not being applied. '
+                    + 'No clause on record says whether the cap is a percentage or a dollar amount; MainStreet applies it as a percentage of the prior-year base once that base is entered.',
+               needed: 'Prior-Year CAM Base ($)', field: 'cap_base_amount' };
     }
 
     // Percentage, in range, no usable base: the one state a manager fixes by
@@ -615,7 +624,12 @@ window.LeaseIntelligence = (() => {
       const _cs = deriveCapState(t);
       if (!_cs.enforceable) {
         fieldSummaries.cap += ' NOT ENFORCED — ' + _cs.why;
-        reviewNotes.push(_cs.actionable
+        // The "%" sentence only when the clause says percent. An undeclared
+        // cap is also actionable now — the base is what resolves it — but the
+        // note must not print a unit nobody confirmed; the state's own wording
+        // names the missing base and says the cap will be applied as a
+        // percentage once it is entered, without asserting what 5.25 is.
+        reviewNotes.push(_cs.actionable && _cs.unit === CAP_UNIT.PERCENT
           ? `CAM Cap of ${t.cap}% found in the lease but NOT being enforced. Enter the prior-year CAM base amount for this tenant to apply it.`
           : `CAM Cap of ${t.cap} found in the lease but NOT being enforced. ${_cs.why}`);
       }
