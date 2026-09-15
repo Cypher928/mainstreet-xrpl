@@ -332,8 +332,11 @@ function reconciliationSummary() {
   box.logError   = (where, e) => { throw e; };
   box._deriveCalcState = () => ({ cls: 'ok', label: 'Pro-rata' });
   box.buildHistoricalTrends = () => null;
+  // _confirmedVacancy is how the Tenant Allocation note states recorded vacant
+  // area beside the gap it explains; pulled in real so the report reads the
+  // property's vacant rows the way the page does.
   run(box, SUSPICIONS_SRC + fn('buildAuditSummary') + fn('buildAuditNarrative')
-         + fn('_rptHeader') + fn('_rptFooter') + fn('generateReconciliationSummary'),
+         + fn('_rptHeader') + fn('_rptFooter') + fn('_confirmedVacancy') + fn('generateReconciliationSummary'),
       'generateReconciliationSummary()');
   return captured;
 }

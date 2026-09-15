@@ -724,7 +724,54 @@ window.TenantSpace = (function () {
   // vacancy rule is PropertyCabinet's (vacant === true on the tenant row) and
   // is restated here only so the list still renders where that module is not
   // loaded.
-  var _list = { q: '', sort: 'suite', dir: 1 };
+  var _list = { q: '', sort: 'suite', dir: 1, vacantForm: false, vacantError: '' };
+
+  // ── Mark a space vacant ──────────────────────────────────────────────────
+  //
+  // The list already rendered a vacant row; nothing let a manager create one.
+  // The form below is the way in. It records through recordVacantSpace in
+  // the app shell — one writer, which also refuses a suite that is under a
+  // loaded lease and updates rather than duplicates a suite recorded twice —
+  // and this module only opens, closes and reports what that call said.
+  function openVacantForm()  { _list.vacantForm = true;  _list.vacantError = ''; renderList(null, { focusVacant: true }); }
+  function closeVacantForm() { _list.vacantForm = false; _list.vacantError = ''; renderList(); }
+  function submitVacantForm(ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    var suiteEl = _t('tslVacSuite'), sqftEl = _t('tslVacSqft');
+    var suite = suiteEl ? suiteEl.value : '', sqft = sqftEl ? sqftEl.value : '';
+    if (typeof window.recordVacantSpace !== 'function') {
+      _list.vacantError = 'MainStreet cannot record a vacancy on this page.'; renderList(null, { focusVacant: true }); return false;
+    }
+    var res = window.recordVacantSpace(suite, sqft);
+    if (!res || !res.ok) {
+      _list.vacantError = (res && res.error) || 'The vacancy could not be recorded.';
+      renderList(null, { focusVacant: true });
+      return false;
+    }
+    _list.vacantForm = false; _list.vacantError = '';
+    // recordVacantSpace re-renders the list itself; this is only for a caller
+    // that reached here with the list unmounted at the time.
+    renderList();
+    if (window.showToast) window.showToast((res.updated ? 'Updated' : 'Recorded') + ' Suite ' + String(suite).trim() + ' as vacant. It is not a tenant and will not be billed.',
+      { color: '#1e3a5f', textColor: '#dbeafe', duration: 5000 });
+    return false;
+  }
+
+  // How much of the building neither a loaded lease nor a recorded vacancy
+  // covers — the space the manager may want to mark vacant. Null when the
+  // property's total area is unknown, since a remainder cannot be measured.
+  function uncoveredArea(property) {
+    var total = _numish(property && property.totalSqft);
+    if (!(total > 0)) return null;
+    var covered = 0;
+    (property.tenants || []).forEach(function (t) {
+      if (!t) return;
+      // A row with no name and no vacancy flag is an intake placeholder, not a space.
+      if (!_isVacantRow(t) && !t.tenant_name) return;
+      covered += (_numish(t.leased_sqft) || 0);
+    });
+    return { total: total, covered: covered, remaining: Math.max(0, total - covered) };
+  }
 
   function _isVacantRow(t) {
     var PC = (typeof window !== 'undefined') && window.PropertyCabinet;
@@ -865,12 +912,32 @@ window.TenantSpace = (function () {
         '</td></tr>';
     }).join('');
 
+    var unc = uncoveredArea(property);
+    var uncHtml = (unc && unc.remaining > 0)
+      ? '<div class="tsl-uncovered" id="tslUncovered">' +
+          Math.round(unc.remaining).toLocaleString('en-US') + ' of ' + Math.round(unc.total).toLocaleString('en-US') +
+          ' sq ft is not under a loaded lease or recorded as vacant. If it is empty, mark it vacant: a vacant space is never billed and its share of CAM is the landlord’s.' +
+        '</div>'
+      : '';
+    var vacFormHtml = _list.vacantForm
+      ? '<form class="tsl-vacant-form" id="tslVacantForm" onsubmit="return TenantSpace.submitVacantForm(event)">' +
+          '<label class="tsl-vf-field">Suite / unit<input type="text" id="tslVacSuite" placeholder="e.g. 106" autocomplete="off"></label>' +
+          '<label class="tsl-vf-field">Vacant sq ft<input type="text" inputmode="numeric" id="tslVacSqft" placeholder="e.g. 2,600" autocomplete="off"></label>' +
+          '<button type="submit" class="tsl-vf-save">Save vacant space</button>' +
+          '<button type="button" class="tsl-vf-cancel" onclick="TenantSpace.closeVacantForm()">Cancel</button>' +
+          (_list.vacantError ? '<div class="tsl-vf-error" id="tslVacantError">' + _esc(_list.vacantError) + '</div>' : '') +
+          '<div class="tsl-vf-note">Recorded as a space, not a tenant: it enters no CAM allocation and no statement, and it does not change a saved reconciliation.</div>' +
+        '</form>'
+      : '';
+
     host.innerHTML =
       '<div class="tsl-bar">' +
         '<input type="search" class="tsl-search" id="tslSearch" placeholder="Search suite or tenant" value="' + _esc(_list.q) + '"' +
           ' oninput="TenantSpace.setListQuery(this.value)" aria-label="Search spaces">' +
         '<span class="tsl-summary">' + _esc(summary) + '</span>' +
+        '<button type="button" class="tsl-vacant-btn" id="tslVacantBtn" onclick="TenantSpace.openVacantForm()"' + (_list.vacantForm ? ' disabled' : '') + '>Mark space vacant</button>' +
       '</div>' +
+      uncHtml + vacFormHtml +
       (rows.length
         ? '<div class="tsl-wrap"><table class="tsl-table"><thead><tr>' +
             th('suite', 'Suite', 'tsl-suite') + th('tenant', 'Tenant', 'tsl-tenant') + th('sqft', 'Sq ft', 'tsl-sqft') +
@@ -885,6 +952,9 @@ window.TenantSpace = (function () {
         var el = _t('tslSearch');
         if (el && el.focus) { var n = el.value.length; el.focus(); if (el.setSelectionRange) el.setSelectionRange(n, n); }
       } catch (_e) {}
+    }
+    if (opts && opts.focusVacant) {
+      try { var vf = _t('tslVacSuite'); if (vf && vf.focus) vf.focus(); } catch (_e2) {}
     }
   }
 
@@ -1046,6 +1116,19 @@ window.TenantSpace = (function () {
       '.tsl-search{flex:1 1 220px;min-width:0;padding:9px 11px;border-radius:8px;border:1px solid rgba(var(--line-rgb,255,255,255),0.16);background:var(--theme-panel,#0A0D12);color:var(--text-1,#E2E8F0);font:0.84rem inherit;}',
       '.tsl-search:focus{outline:none;border-color:' + gold + ';}',
       '.tsl-summary{font-size:0.76rem;color:var(--text-4,#64748B);}',
+      // Mark space vacant: the control, the uncovered-area note, the inline form.
+      '.tsl-vacant-btn{min-height:36px;border-radius:8px;padding:0 12px;font:700 0.76rem/1 inherit;cursor:pointer;color:var(--text-2,#CBD5E1);background:transparent;border:1px dashed rgba(var(--line-rgb,255,255,255),0.28);white-space:nowrap;}',
+      '.tsl-vacant-btn:hover{border-color:' + gold + ';color:var(--text-1,#E2E8F0);}',
+      '.tsl-vacant-btn[disabled]{opacity:0.5;cursor:default;}',
+      '.tsl-uncovered{font-size:0.78rem;color:var(--text-3,#94A3B8);border:1px dashed rgba(var(--line-rgb,255,255,255),0.18);border-radius:10px;padding:9px 12px;margin-bottom:10px;line-height:1.45;}',
+      '.tsl-vacant-form{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:12px;padding:12px 14px;margin-bottom:10px;}',
+      '.tsl-vf-field{display:flex;flex-direction:column;gap:4px;font-size:0.68rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-4,#64748B);flex:1 1 140px;min-width:0;}',
+      '.tsl-vf-field input{padding:8px 10px;border-radius:8px;border:1px solid rgba(var(--line-rgb,255,255,255),0.16);background:var(--theme-bg,#07090C);color:var(--text-1,#E2E8F0);font:0.84rem inherit;min-width:0;}',
+      '.tsl-vf-field input:focus{outline:none;border-color:' + gold + ';}',
+      '.tsl-vf-save{min-height:36px;border-radius:8px;padding:0 12px;font:700 0.76rem/1 inherit;cursor:pointer;color:#07090C;background:' + gold + ';border:1px solid ' + gold + ';}',
+      '.tsl-vf-cancel{min-height:36px;border-radius:8px;padding:0 12px;font:700 0.76rem/1 inherit;cursor:pointer;color:var(--text-3,#94A3B8);background:transparent;border:1px solid rgba(var(--line-rgb,255,255,255),0.16);}',
+      '.tsl-vf-error{flex-basis:100%;font-size:0.78rem;color:#fca5a5;}',
+      '.tsl-vf-note{flex-basis:100%;font-size:0.72rem;color:var(--text-4,#64748B);line-height:1.4;}',
       '.tsl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid rgba(var(--line-rgb,255,255,255),0.08);border-radius:12px;}',
       '.tsl-table{width:100%;border-collapse:collapse;font-size:0.84rem;}',
       '.tsl-table th{text-align:left;font-size:0.66rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-4,#64748B);padding:10px 12px;border-bottom:1px solid rgba(var(--line-rgb,255,255,255),0.08);background:rgba(var(--line-rgb,255,255,255),0.02);white-space:nowrap;}',
@@ -1625,6 +1708,9 @@ window.TenantSpace = (function () {
   return { assemble: assemble, openSpace: openSpace, closeSpace: closeSpace, record: record, renderList: renderList,
            // V2 Spaces list: the rows as data, and the search/sort controls.
            listRows: listRows, setListQuery: setListQuery, sortList: sortList,
+           // Mark space vacant: the inline form and the uncovered-area measure.
+           openVacantForm: openVacantForm, closeVacantForm: closeVacantForm, submitVacantForm: submitVacantForm,
+           uncoveredArea: uncoveredArea,
            addActivity: _openAddPicker, activityTypes: function () { return ACTIVITY_TYPES.slice(); },
            openActivity: openActivity,
            // Whether a statement may issue is one verdict with one source. This

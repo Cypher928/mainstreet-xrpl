@@ -246,6 +246,15 @@
     const invoices = Array.isArray(a.invoices) ? a.invoices.filter(Boolean) : [];
     const pool     = Number(a.pool)   || 0;
     const billed   = Number(a.billed) || 0;
+    // RECORDED VACANCY, STATED BY THE CALLER. The share of the property the
+    // manager has recorded as vacant (vacant rows on the property, never a
+    // result), and whether the reconciliation engine's coverage finding
+    // regards the uncovered remainder as resolved by it. Both are read, not
+    // decided here: this module explains money, and the safeguard that says
+    // when a remainder counts as resolved belongs to the engine. Neither
+    // moves a dollar — the uncovered bucket is the same amount either way.
+    const vacantPct     = _round(Math.max(0, Number(a.vacantPct) || 0));
+    const vacantResolved = !!a.vacantResolved;
     // Membership by key rather than by object identity: the engine filters into a
     // local and the panel may be re-deriving from stored state, so the two lists
     // are not guaranteed to hold the same object references.
@@ -597,13 +606,22 @@
                             - claimShortfall - excludedByLease - unclaimed - roundingResidue - capTotal);
 
     const gapPct = _round(100 - proRataSum);
+    // The remainder that is neither leased nor recorded vacant.
+    const unresolvedPct = _round(Math.max(0, gapPct - vacantPct));
+    const _uncovLabel = vacantPct > 0
+      ? `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases (${vacantPct.toFixed(1)}% recorded vacant)`
+      : `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases`;
+    const _uncovDetail = vacantPct > 0
+      ? (vacantResolved
+          ? `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building and ${vacantPct.toFixed(1)}% is recorded as vacant space, so this share of every shared invoice is the landlord's: no tenant is billed for it, and no lease is missing.`
+          : `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building; ${vacantPct.toFixed(1)}% is recorded as vacant space, whose share is the landlord's and no tenant's, and the remaining ${unresolvedPct.toFixed(1)}% belongs to space that is either vacant but not yet recorded, or under a lease not yet uploaded.`)
+      : `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.`;
     const lines = [
       { key: 'out_of_year', label: 'Dated outside the CAM year', amount: outOfYear,
         detail: 'Invoices the reconciliation set aside because their date falls outside the CAM year being billed. They are still counted in the expense pool shown above.' },
       { key: 'not_eligible', label: 'Marked not CAM-eligible', amount: notEligible,
         detail: 'Invoices the manager unticked in the invoice register. They stay in the expense pool and are never allocated to any tenant.' },
-      { key: 'uncovered', label: `Outside the ${proRataSum.toFixed(1)}% of the property covered by loaded leases`, amount: uncovered,
-        detail: `Shared expenses are split by pro-rata share. The loaded leases hold ${proRataSum.toFixed(1)}% of the building, so ${gapPct.toFixed(1)}% of every shared invoice belongs to space that is either vacant or under a lease not yet uploaded.` },
+      { key: 'uncovered', label: _uncovLabel, amount: uncovered, detail: _uncovDetail },
       { key: 'not_occupied', label: 'Leased, but the lease did not run the whole period', amount: notOccupied,
         detail: `Expense belonging to space that IS under a loaded lease, for the part of the period that lease did not cover — a tenant who took occupancy or moved out mid-year. Two things land here: the apportioned-away part of every shared invoice, and any invoice matched directly to that tenant but dated outside their occupancy, or carrying no date to place it by. None of it is charged to anyone else; it remains unallocated to tenants in this reconciliation.` },
       // LEGACY ONLY. Pre-P6 records cannot separate an exclusion from a rounding
@@ -635,6 +653,8 @@
     return {
       pool: _round(pool), billed: _round(billed), difference,
       billedPct, proRataSum, gapPct, capTotal,
+      // Recorded vacancy, as the caller stated it, and the remainder after it.
+      vacantPct, unresolvedPct, vacantResolved,
       occupancyCoveredPct: _round(occCoveredRaw * 100),
       outOfYear, notEligible, uncovered, notOccupied, claimShortfall, residual,
       // P6. `claimShortfall` is retained and stays in the identity so a legacy
@@ -677,11 +697,17 @@
     if (Math.abs(bk.residual) > _resTol) {
       return { cta: 'Re-check the invoice register', key: 'residual' };
     }
-    const biggest = (bk.lines || []).filter(l => l.key !== 'residual')[0];
+    // An uncovered share the engine regards as resolved by recorded vacancy
+    // is the landlord's and asks for nothing; the CTA falls through to the
+    // next bucket rather than sending a manager after a lease that is not
+    // missing.
+    const biggest = (bk.lines || []).filter(l => l.key !== 'residual' && !(l.key === 'uncovered' && bk.vacantResolved))[0];
     if (!biggest) return null;
     if (biggest.key === 'out_of_year')  return { cta: 'Check the CAM year against the invoice dates', key: 'out_of_year' };
     if (biggest.key === 'not_eligible') return { cta: 'Review which invoices are CAM-eligible', key: 'not_eligible' };
-    if (biggest.key === 'uncovered')    return { cta: 'Upload the remaining leases, or confirm the space is vacant', key: 'uncovered' };
+    if (biggest.key === 'uncovered')    return { cta: bk.vacantPct > 0
+      ? 'Upload the remaining leases, or record the rest of the vacant space'
+      : 'Upload the remaining leases, or mark the space vacant', key: 'uncovered' };
     if (biggest.key === 'not_occupied') {
       // The remedy differs by cause, and sending someone to review lease dates
       // when the real problem is an invoice with no date on it is the kind of

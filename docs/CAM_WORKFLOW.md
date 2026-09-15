@@ -122,6 +122,44 @@ showed it twice and a resolved cap still sat under it.
 Base → re-run → cap applied → banner gone, and that repeated runs show one
 banner.
 
+## A space can be marked vacant, and a vacancy is never a tenant
+
+Every surface that said "confirm the space is vacant" pointed at nothing: no
+control created a vacancy. The Spaces list now carries **Mark space vacant**.
+It opens an inline form (suite + vacant sq ft) and records through
+`recordVacantSpace(suite, sqft)` in the app shell, the one writer. The record
+is the representation that already existed: a row on `property.tenants` with
+`vacant: true`, a suite and an area, no tenant name, and a minted record id.
+The Spaces list shows the row as *Vacant*; above the list, when the
+property's total area is known, a note states how much of the building is
+under neither a loaded lease nor a recorded vacancy.
+
+What a vacancy is not: it is not a lease, not a tenant and not a
+reconciliation input. `getValidTenants`, `_camPrepState`,
+`renderBulkResults` and `camInputsFingerprint` all skip `vacant === true`,
+so recording one enters no allocation, renders no intake card, and does not
+mark a saved reconciliation stale — in session or after a reload. Property
+readiness and the occupancy sum in `selectors.js` skip it too. Recording the
+same suite again updates its area rather than adding a second row; a suite
+under a loaded lease is refused and the lease named.
+
+What reads it: the engine's coverage finding subtracts confirmed vacancy from
+the uncovered remainder. When the remainder after recorded vacancy is within
+the same 2% safeguard, the finding is **green** (advisory, never blocking):
+"X% documented · Y% confirmed vacant", stating that the vacant share is the
+landlord's and no lease is missing. Otherwise it stays yellow and states the
+vacant and the still-unresolved shares. The variance breakdown is told the
+vacancy and the engine's verdict (`vacantPct`, `vacantResolved`) and repeats
+them in its uncovered line; its next step falls through past a resolved
+remainder. The summary banner note and the Prepare step ("Recorded vacant")
+say the same. No bucket amount, share or charge moves.
+
+`test-vacancy.js` pins the engine, breakdown and selector contracts;
+`test-e2e-vacancy.js` walks Mark space vacant → save → Spaces row → coverage
+green without a re-run → identical charges after one → no duplicates on
+re-render or re-record → refusals → reload with the saved reconciliation
+still current and the five tenants unchanged.
+
 ## The held tenant's action is not green
 
 On a tenant card the *Why it can't bill* action (`.tenant-stmt-card-btn--held`)

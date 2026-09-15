@@ -3629,8 +3629,12 @@ function _propertyMismatchBlockReason(t) {
 }
 
 function getValidTenants() {
+  // A VACANT SPACE IS NEVER A TENANT. A row with `vacant: true` keeps a suite
+  // and an area so the space exists; it must not enter the allocation even if
+  // it carries a name (fixtures label such rows "Vacant") and an area.
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
+    t.vacant !== true &&
     t.tenant_name &&
     // WAS Number(t.leased_sqft) > 0, which is NaN for "50,000" — so a lease with
     // a formatted area was dropped from CAM while every warning surface, which
@@ -3642,6 +3646,85 @@ function getValidTenants() {
     !_propertyMismatchBlockReason(t)
   );
 }
+
+// ─── RECORDED VACANCY ────────────────────────────────────────────────────────
+//
+// A vacant space is a row on property.tenants with `vacant: true`, a suite and
+// an area, and no tenant. That representation already existed (PropertyCabinet
+// .isVacant, the Spaces list, tenant-normalize's allow-list); what did not exist
+// was any way for a manager to CREATE one — every surface that said "confirm
+// the space is vacant" pointed at nothing. recordVacantSpace is that way in.
+//
+// What a vacancy is NOT: it is not a lease, not a tenant and not a
+// reconciliation input. getValidTenants, _camPrepState, renderBulkResults and
+// camInputsFingerprint all skip `vacant === true`, so recording one enters no
+// allocation, renders no intake card, and does not make a saved reconciliation
+// read as stale. It is explanatory state: the coverage finding and the
+// variance breakdown read it to say how much of the uncovered remainder the
+// landlord absorbs.
+function _confirmedVacancy(prop) {
+  const p = prop || currentProperty();
+  const rows = ((p && p.tenants) || []).filter(t => t && t.vacant === true);
+  const sqft = rows.reduce((s, t) => s + (parseSqft(t.leased_sqft) || 0), 0);
+  const bldg = Number(p && p.totalSqft) || 0;
+  const pct  = (bldg > 0 && sqft > 0) ? parseFloat(Math.min(100, (sqft / bldg) * 100).toFixed(2)) : 0;
+  return { count: rows.length, sqft, pct };
+}
+
+// Record a space as vacant. Returns { ok, error?, row?, updated? }; never throws.
+//   · suite is required — a vacancy with no address cannot be told apart from
+//     the next one, and the Spaces list keys on it;
+//   · sqft must be a positive area — it is what the coverage finding measures;
+//   · one vacancy per suite: recording the same suite again updates its area
+//     rather than adding a second row, so repeated saves cannot multiply;
+//   · a suite already under a loaded lease is refused — the lease is the
+//     record of that space, and marking it vacant on top would say two things.
+function recordVacantSpace(suite, sqft) {
+  const prop = currentProperty();
+  if (!prop) return { ok: false, error: 'Open a property first.' };
+  const s = String(suite == null ? '' : suite).trim();
+  const n = parseSqft(sqft);
+  if (!s)               return { ok: false, error: 'Enter the suite or unit number of the vacant space.' };
+  if (!(n > 0))         return { ok: false, error: 'Enter the vacant area in square feet (a number above 0).' };
+  const sameSuite = t => t && String(t.suite || t.unitNumber || '').trim().toLowerCase() === s.toLowerCase();
+  const leased = (prop.tenants || []).find(t => sameSuite(t) && t.vacant !== true && t.tenant_name);
+  if (leased) return { ok: false, error: `Suite ${s} is under a loaded lease (${leased.tenant_name}). Edit or remove that lease instead of marking the space vacant.` };
+
+  const existing = (prop.tenants || []).find(t => sameSuite(t) && t.vacant === true);
+  let row, updated = false;
+  if (existing) {
+    // The same space, recorded again: update the area on the row that exists,
+    // in both places it lives, rather than adding a second one.
+    [existing, ...tenantData.filter(t => t && t.id === existing.id && t !== existing)].forEach(t => { t.leased_sqft = n; });
+    row = existing; updated = true;
+  } else {
+    row = mintTenantIdentity({
+      tenant_name: '', suite: s, unitNumber: s, leased_sqft: n, vacant: true,
+      lease_type: null, start_date: '', end_date: '', cap: null, capBaseAmount: null,
+      flags: [], confidence: {}, fieldEvidence: {},
+      recordedVacantAt: new Date().toISOString(),
+    });
+    // tenantData is the live working buffer and prop.tenants is what is saved
+    // and read; every other writer keeps the two in step the same way.
+    if (!tenantData.some(t => t && t.id === row.id)) tenantData.push(row);
+    prop.tenants = [...tenantData];
+  }
+
+  savePropertyData().catch(e => console.warn('[recordVacantSpace] save failed:', e && e.message));
+  try { logActivity && logActivity('space_marked_vacant', `Suite ${s} recorded as vacant — ${Math.round(n).toLocaleString('en-US')} sqft`,
+    { severity: 'info', actor: 'Manager', relatedEntity: `Suite ${s}` }); } catch (_) {}
+
+  // Repaint what reads vacancy. None of these recalculates anything: the list
+  // shows the new row, the workflow's Prepare facts count it, and the audit
+  // panel re-derives the coverage finding from the property as it now is.
+  try { if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop); } catch (_) {}
+  try { if (typeof renderCamWorkflow === 'function') renderCamWorkflow(); } catch (_) {}
+  try { if (typeof renderAuditPanel === 'function' && lastResults.length) renderAuditPanel(); } catch (_) {}
+  try { if (typeof _refreshAdvisorSurfaces === 'function') _refreshAdvisorSurfaces(prop); } catch (_) {}
+  return { ok: true, row, updated };
+}
+window.recordVacantSpace = recordVacantSpace;
+window._confirmedVacancy = _confirmedVacancy;
 
 function renderFailedTenants(tenants) {
   const el = document.getElementById('bulkResults');
@@ -5797,7 +5880,9 @@ function _camInputExclusions(x) {
 
 function camInputsFingerprint(tenants, invoices) {
   const t = (tenants || [])
-    .filter(x => x && x.tenant_name)
+    // A recorded vacancy is not an input to the calculation, so recording one
+    // must not make the results read as stale (in-session or after a reload).
+    .filter(x => x && x.vacant !== true && x.tenant_name)
     .map(x => [
       String(x.tenant_name).trim(),
       String(parseSqft(x.leased_sqft) ?? ''),
@@ -8665,7 +8750,9 @@ function renderBulkResults() {
   // correctly address tenantData[i] even when resetWorkflow() left leading nulls.
   const tenantPairs = tenantData
     .map((t, i) => ({ d: t, i }))
-    .filter(({ d }) => d && typeof d === 'object');
+    // A recorded vacancy is a space, not a lease: it lives in Spaces, never
+    // as an intake card that reads as a tenant with everything missing.
+    .filter(({ d }) => d && typeof d === 'object' && d.vacant !== true);
   const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
 
@@ -9047,7 +9134,7 @@ function _renderExtractionNextStep(prop) {
   if (old) old.remove();
   const host = document.getElementById('bulkResults');
   if (!host || !prop) return;
-  const tenants = (prop.tenants || []).filter(Boolean);
+  const tenants = (prop.tenants || []).filter(t => t && t.vacant !== true);   // a recorded vacancy is not a lease to review
   if (!tenants.length) return;
 
   const items = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
@@ -10636,6 +10723,7 @@ function _renderCamWorkflow() {
 
   // ── 1 · Prepare — the register, the leases, the year ──────────────────────
   const prep = _camPrepState();
+  const cp0  = currentProperty && currentProperty();
   const invAll = (invoiceData || []).filter(Boolean);
   const scope = { in: 0, out: 0, undated: 0 };
   invAll.forEach(i => { scope[camYearScopeOf(i, year)] += 1; });
@@ -10659,6 +10747,14 @@ function _renderCamWorkflow() {
   const prepFacts = [
     fact('Property size', prep.totalSqft > 0 ? `${n(prep.totalSqft)} sqft` : '—', prep.totalSqft > 0 ? '' : 'bad'),
     fact('Leases ready', `${prep.tenants.length}<small> with a name and leased sqft</small>`, prep.tenants.length ? '' : 'bad'),
+    // Recorded vacancy is shown only when there is some: it is not an input
+    // the run needs, and an empty fact would read as something still missing.
+    (() => {
+      const v = _confirmedVacancy(cp0);
+      return v.count > 0
+        ? fact('Recorded vacant', `${v.count}<small> space${v.count === 1 ? '' : 's'} · ${n(Math.round(v.sqft))} sqft · landlord absorbs</small>`, '')
+        : '';
+    })(),
     fact('Invoices loaded', invAll.length ? `${invAll.length}<small> · ${fmt(gross)} invoiced</small>` : '0', invAll.length ? '' : 'bad'),
     invAll.length ? fact(`Dated in ${esc(String(year))}`, `${scope.in}${scope.out ? `<small> · ${scope.out} outside the year</small>` : ''}${scope.undated ? `<small> · ${scope.undated} undated (kept)</small>` : ''}`, scope.out ? 'warn' : '') : '',
     invAll.length ? fact('With a source document', `${withDoc} of ${invAll.length}`, withDoc < invAll.length ? 'warn' : 'ok') : '',
@@ -10797,7 +10893,7 @@ function _camPrepState() {
   const totalSqft = parseFloat((document.getElementById('totalSqft') || {}).value);
   const tName = t => t && (t.tenant_name ?? t.tenantName);
   const tSqft = t => t && (t.leased_sqft ?? t.leasedSqft);
-  const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);
+  const tenants   = tenantData.filter(t => t && t.vacant !== true && tName(t) && parseSqft(tSqft(t)) > 0);
   const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
   const missing = [];
   if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
@@ -13412,6 +13508,8 @@ function openVarianceDetails() {
           ? _lastReconciledInvoices : undefined,
         pool:     lastTotal || 0,
         billed:   lastResults.reduce((s, r) => s + (Number(r.totalAllocated) || 0), 0),
+        vacantPct:      _confirmedVacancy().pct,
+        vacantResolved: (_lastReconIssues || []).some(f => f && f.kind === 'coverage' && f.severity === 'green'),
       })
     : null);
   if (!bk) {
@@ -13451,7 +13549,7 @@ function openVarianceDetails() {
   const stepBtn = step ? {
     out_of_year:  `<button class="rpt-action-btn" onclick="openVarianceFix('out_of_year')">Open the invoice register</button>`,
     not_eligible: `<button class="rpt-action-btn" onclick="openVarianceFix('not_eligible')">Open the invoice register</button>`,
-    uncovered:    `<button class="rpt-action-btn" onclick="openVarianceFix('uncovered')">Open Spaces to upload the remaining leases</button>`,
+    uncovered:    `<button class="rpt-action-btn" onclick="openVarianceFix('uncovered')">Open Spaces to upload the remaining leases or mark the space vacant</button>`,
     claim:        `<button class="rpt-action-btn" onclick="openVarianceFix('claim')">Open Spaces to review exclusion schedules</button>`,
     caps:         `<button class="rpt-action-btn" onclick="openVarianceFix('caps')">Open Spaces to review the CAM caps</button>`,
     residual:     `<button class="rpt-action-btn" onclick="openVarianceFix('residual')">Open the invoice register</button>`,
@@ -14119,7 +14217,16 @@ function _varianceExplanationHtml(bk, ctx) {
     // is actually present, and neither ever described as the other.
     const _notes = [];
     if (_caps > 0) _notes.push(`The ${fmt(_caps)} reduced by a CAM cap is money the leases say those tenants do not owe.`);
-    if (_uncov > 0) _notes.push(`The ${fmt(_uncov)} outside the covered share is property expense with no paying tenant allocation. Whether that space is vacant or under a lease not yet uploaded has not been established — upload any remaining leases and re-run to settle it.`);
+    if (_uncov > 0) {
+      const _vacPct = Number(bk.vacantPct) || 0;
+      if (bk.vacantResolved && _vacPct > 0) {
+        _notes.push(`The ${fmt(_uncov)} outside the covered share is the landlord's: ${_vacPct.toFixed(1)}% of the property is recorded as vacant, no tenant is billed for that share, and no lease is missing from this reconciliation.`);
+      } else if (_vacPct > 0) {
+        _notes.push(`The ${fmt(_uncov)} outside the covered share is property expense with no paying tenant allocation. ${_vacPct.toFixed(1)}% of the property is recorded as vacant and the landlord absorbs that share; the remaining ${(Number(bk.unresolvedPct) || 0).toFixed(1)}% has not been established as vacant or leased — upload any remaining leases or mark the rest of the space vacant, then re-run to settle it.`);
+      } else {
+        _notes.push(`The ${fmt(_uncov)} outside the covered share is property expense with no paying tenant allocation. Whether that space is vacant or under a lease not yet uploaded has not been established — upload any remaining leases and re-run to settle it.`);
+      }
+    }
     if (_caps > 0 && _uncov > 0) _notes.push('These are different things and neither explains the other.');
     const _resid = _byKey('residual');
     const _residAmt = _resid ? Math.abs(Number(_resid.amount) || 0) : 0;
@@ -14302,6 +14409,11 @@ function _buildReconciliationSummaryHtml(results, invoices, propName, engineInvo
       return VB.derive({
         results, invoices: engineInvoices || [], reconciled: reconciledInvoices,
         pool: totalPool, billed: totalBilled,
+        // Recorded vacancy, and whether the engine's coverage finding (derived
+        // above into `issues`) treats the remainder as resolved by it. The
+        // engine decides; the breakdown only repeats the verdict in its words.
+        vacantPct:      _confirmedVacancy().pct,
+        vacantResolved: issues.some(f => f && f.kind === 'coverage' && f.severity === 'green'),
       });
     } catch (_) { return null; }
   })();
@@ -17551,7 +17663,9 @@ function buildAuditSummary() {
   // ── Structural reconciliation issues (caps, expired leases, pro-rata gaps, lease-type) ──
   {
     const reconIssues = _detectReconciliationIssues(lastResults, currentProperty());
-    reconIssues.forEach(f => (f.severity === 'red' ? red : yellow).push(f));
+    // A green engine finding (coverage resolved by recorded vacancy) is
+    // advisory, not a warning; it goes where the other greens go.
+    reconIssues.forEach(f => (f.severity === 'red' ? red : f.severity === 'green' ? green : yellow).push(f));
   }
 
   if (red.length === 0 && yellow.length === 0) {
@@ -19108,13 +19222,19 @@ function generateReconciliationSummary() {
       // states the shares and omits the dollar amount rather than inventing one.
       const _unbilledRaw = lastTotal - totalBilled;
       const _unbilled = isFinite(_unbilledRaw) ? _unbilledRaw : null;
+      // Recorded vacancy, stated beside the gap it explains. Read from the
+      // property, never from the results — a vacancy is not a result row.
+      const _vac = _confirmedVacancy(currentProperty());
+      const _vacNote = (_gap > 0.01 && _vac.pct > 0)
+        ? ` Of that, ${_vac.pct.toFixed(2)}% (${Math.round(_vac.sqft).toLocaleString()} sqft, ${_vac.count} space${_vac.count === 1 ? '' : 's'}) is recorded as vacant; the landlord absorbs that share.`
+        : '';
       return `
     <div class="rpt-scope-note">
       <strong>Pro-rata % is each lease's share of the building</strong> — leased sqft ÷ ${propSqft > 0 ? propSqft.toLocaleString() + ' total sqft' : 'total property sqft'} —
       not a share of the amount billed. CAM Billed is that share applied to the ${esc(fmt(lastTotal))} expense pool.
       ${_gap > 0.01
         ? `The shares total ${_prSum.toFixed(2)}% because the loaded leases cover that much of the property;
-           the remaining ${_gap.toFixed(2)}%${_unbilled != null ? ` (${esc(fmt(_unbilled))})` : ''} is space no loaded lease covers and is not billed to anyone.`
+           the remaining ${_gap.toFixed(2)}%${_unbilled != null ? ` (${esc(fmt(_unbilled))})` : ''} is space no loaded lease covers and is not billed to anyone.${esc(_vacNote)}`
         : `The shares total ${_prSum.toFixed(2)}% — the whole building is covered by loaded leases.`}
     </div>
     <table class="rpt-table">

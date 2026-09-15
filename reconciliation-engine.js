@@ -421,7 +421,37 @@ window.ReconciliationEngine = (() => {
     {
       const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
       const gap     = parseFloat((100 - totalPR).toFixed(2));
-      if (gap > 2) {
+      // CONFIRMED VACANCY IS EXPLANATORY STATE, NOT AN INPUT. A row on
+      // property.tenants with `vacant: true` keeps a suite and an area and is
+      // never a lease: it enters no result above and no allocation. What it
+      // does is answer the question this finding asks — "vacant space, or a
+      // lease not yet uploaded?" — for the area it covers. The remainder that
+      // is neither leased nor recorded vacant stays unresolved under the same
+      // 2% safeguard as before; nothing about the gap arithmetic changed.
+      const _bldg = Number(property && (property.totalSqft || property.totalSqFt))
+                 || (results[0] && Number(results[0].totalSqFt)) || 0;
+      const _vacantRows = tenants.filter(t => t.vacant === true);
+      const _vacantSqft = _vacantRows.reduce((s, t) => s + (_num(t.leased_sqft) || 0), 0);
+      const vacantPct   = (_bldg > 0 && _vacantSqft > 0)
+        ? parseFloat(Math.min(100, (_vacantSqft / _bldg) * 100).toFixed(2)) : 0;
+      const unresolved  = parseFloat((gap - vacantPct).toFixed(2));
+      if (gap > 2 && unresolved <= 2 && vacantPct > 0) {
+        flags.push({
+          severity: 'green',
+          kind:       'coverage',
+          disputable: false,
+          blocksBilling: false,
+          source:   'Sum of loaded-lease square footage plus recorded vacant space vs property total',
+          title:    `Property CAM coverage: ${totalPR.toFixed(1)}% documented · ${vacantPct.toFixed(1)}% confirmed vacant`,
+          detail:   `The leases currently loaded account for ${totalPR.toFixed(2)}% of the property's square footage, and ${Math.round(_vacantSqft).toLocaleString('en-US')} sqft (${vacantPct.toFixed(1)}%) is recorded as vacant. The vacant share of CAM is the landlord's: no tenant is billed for it, and no lease is missing from this reconciliation. The amounts billed to the tenants above are unaffected.`,
+          conditions: [
+            `Loaded leases cover: ${totalPR.toFixed(2)}% of the property`,
+            `Confirmed vacant: ${vacantPct.toFixed(2)}% (${Math.round(_vacantSqft).toLocaleString('en-US')} sqft, ${_vacantRows.length} space${_vacantRows.length !== 1 ? 's' : ''})`,
+            'The landlord absorbs the vacant share — it is not recoverable from any tenant',
+            'Tenant charges are unaffected — each tenant is billed only its own share',
+          ],
+        });
+      } else if (gap > 2) {
         flags.push({
           severity: 'yellow',
           // Presentation contract for the renderer:
@@ -440,11 +470,17 @@ window.ReconciliationEngine = (() => {
           // reader can act on.
           actions:  ['Upload remaining leases', 'Confirm vacant space', 'Re-run reconciliation'],
           source:   'Sum of loaded-lease square footage vs property total',
-          title:    `Property CAM coverage: ${totalPR.toFixed(1)}% documented · ${gap.toFixed(1)}% unresolved`,
+          title:    vacantPct > 0
+            ? `Property CAM coverage: ${totalPR.toFixed(1)}% documented · ${vacantPct.toFixed(1)}% confirmed vacant · ${unresolved.toFixed(1)}% unresolved`
+            : `Property CAM coverage: ${totalPR.toFixed(1)}% documented · ${gap.toFixed(1)}% unresolved`,
           detail:   `The leases currently loaded account for ${totalPR.toFixed(2)}% of the property's square footage, leaving ${gap.toFixed(1)}% unallocated. That remainder is either vacant space — whose share of CAM the landlord absorbs — or space under a lease that has not been uploaded yet, in which case that share is recoverable and is missing from this reconciliation. The amounts billed to the tenants above are unaffected: each is charged only its own share.`,
           conditions: [
             `Loaded leases cover: ${totalPR.toFixed(2)}% of the property`,
             `Unallocated: ${gap.toFixed(2)}%`,
+            ...(vacantPct > 0 ? [
+              `Confirmed vacant: ${vacantPct.toFixed(2)}% (${Math.round(_vacantSqft).toLocaleString('en-US')} sqft) — the landlord absorbs that share`,
+              `Unresolved after recorded vacancy: ${unresolved.toFixed(2)}%`,
+            ] : []),
             `${results.length} lease${results.length !== 1 ? 's' : ''} in this reconciliation`,
             'Cause not determined: vacant space, or a lease not yet uploaded',
             'Tenant charges are unaffected — each tenant is billed only its own share',
