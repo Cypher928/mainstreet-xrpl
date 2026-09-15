@@ -13,6 +13,7 @@ try { pw = require('playwright'); }
 catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 const http = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs   = require('fs');
 const path = require('path');
 
@@ -69,6 +70,7 @@ const SUPABASE_MOCK = `
 async function newPage(browser, { authed=false } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1400 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
   if (authed) await page.addInitScript('window.__TEST_AUTHED = true;');
   await page.route('**jsdelivr**', r => r.fulfill({ status:200, contentType:'application/javascript', body:'/* cdn blocked */' }));
   await page.route('**supabase**', r => r.fulfill({ status:200, contentType:'application/javascript', body:'/* blocked */' }));
@@ -216,10 +218,7 @@ async function loadDemoProperty(page) {
     await page.click('#loginTabSignUp').catch(()=>{});
     await page.waitForTimeout(200);
     await page.screenshot({ path: path.join(SHOTS,'E1-signup-form.png') });
-    await page.fill('#loginEmail', 'newjudge@example.com').catch(()=>{});
-    await page.fill('#loginPassword', 'judgepass123').catch(()=>{});
-    await page.click('#loginBtn').catch(()=>{});
-    const app = await page.waitForSelector('#appContent', { state:'visible', timeout:6000 }).catch(()=>null);
+    await _e2eSignIn(page, { email: "newjudge@example.com", errors: _e2eErrors });
     if (app) ok('signup → app shown'); else bad('signup → app shown');
     await page.screenshot({ path: path.join(SHOTS,'E2-signup-after.png') });
     ok('screenshots: E1-signup-form.png, E2-signup-after.png');

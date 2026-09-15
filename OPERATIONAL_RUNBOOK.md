@@ -87,10 +87,10 @@ row).
 grep -rnE "<<[A-Z_]+>>|to be added" README.md submission/   # expect no output
 ```
 
-**e) Flip the tagline back to present tense.** The hero + login taglines were softened to
-"AI-powered CAM reconciliation. **Settling** on the XRP Ledger." until the first real
-settlement. Once it lands, change both back to "**Settled** on the XRP Ledger." in
-`index.html` (2 occurrences), and restore the login pill to a present-tense form if desired.
+**e) Settlement tense.** The login tagline now reads "The verified memory for every
+commercial property." and no longer mentions settlement tense; the login pill under it
+("RLUSD settlement on XRPL — publicly verifiable on-chain") is the only settlement copy on
+that screen. Nothing to flip once the first real settlement lands.
 
 I can do (a)–(d) with you in one pass once you paste the values.
 

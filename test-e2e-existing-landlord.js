@@ -24,6 +24,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7835', 10);
@@ -211,6 +212,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -236,21 +238,14 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     const loginVisible = await page.$eval('#loginScreen', el => el.style.display !== 'none').catch(() => false);
     assert(loginVisible, 'STEP 1: login screen visible before sign-in');
 
-    await page.fill('#loginEmail', 'returning-landlord@e2e-test.local');
-    await page.fill('#loginPassword', 'ExistingPass123!');
-    await page.click('#loginBtn');
-
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "returning-landlord@e2e-test.local", errors: _e2eErrors });
 
     const appVisible = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisible, 'STEP 1: app content visible after sign-in');
 
     // ── STEP 2: Open existing property ─────────────────────────────────────────
     section('STEP 2: Open existing property');
-    await page.waitForFunction(() => window._props && window._props.length >= 0, { timeout: 1 }).catch(() => {});
+    await page.waitForFunction(() => window._props && window._props.length >= 0, null, { timeout: 45000 }).catch(() => {});
     await page.waitForSelector('.ptf-prop-card:not(.ptf-demo-card)', { timeout: 10000 });
 
     const realCardText = await page.$eval('.ptf-prop-card:not(.ptf-demo-card)', el => el.innerText).catch(() => '');
@@ -260,7 +255,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const el = document.getElementById('propertyName');
       return el && el.value === 'Existing Plaza';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const openedName = await page.$eval('#propertyName', el => el.value).catch(() => '');
     assert(openedName === 'Existing Plaza', 'STEP 2: property workspace opened with correct name', openedName);
@@ -278,7 +273,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
       buffer: Buffer.from(LEASE_TEXT_2, 'utf-8'),
     });
 
-    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeside Dental'), { timeout: 20000 }).catch(() => {});
+    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeside Dental'), null, { timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(800);
 
     const bulkResultsAfterUpload = await page.$eval('#bulkResults', el => el.innerText).catch(() => '');
@@ -299,7 +294,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const body = document.getElementById('resultsBody');
       return body && body.innerText.trim().length > 20;
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const camResultsText = await page.$eval('#resultsBody', el => el.innerText).catch(() => '');
     assert(camResultsText.includes('Anchor Bakery') && camResultsText.includes('Lakeside Dental'),
@@ -318,7 +313,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const reportBodyHtml = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
     assert(reportBodyHtml.includes('Anchor Bakery') && reportBodyHtml.includes('Lakeside Dental'),
@@ -333,7 +328,7 @@ CAM charges shall not increase more than 3% per annum. Pro rata share based on o
     await page.waitForFunction(() => {
       const overlay = document.getElementById('reportOverlay');
       return overlay && overlay.style.display !== 'none';
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
     const holesBodyHtml = await page.$eval('#rptBody', el => el.innerHTML).catch(() => '');
     assert(holesBodyHtml.length > 100, 'STEP 5: Coverage Gap Report rendered with content', holesBodyHtml.length + ' chars');
 

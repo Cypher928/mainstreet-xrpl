@@ -7,6 +7,20 @@
 
 (function (root) {
 
+  /**
+   * M7 — one definition of an open dispute, read at call time.
+   *
+   * Both uses below are over the manager's OWN properties and feed the daily
+   * briefing: the "Open CAM disputes" action card and the portfolio count
+   * beside it. Reading `status === 'open'` made the briefing say 1 where the
+   * property's own Overview panel said 2, about the same two disputes.
+   */
+  function _isOpenDispute(d) {
+    var DS = root && root.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  }
+
   // ─── Shared expiry threshold table ───────────────────────────────────────
   // Single source of truth — one edit changes thresholds for all alert,
   // revenue-at-risk, and pipeline calculations.
@@ -1189,7 +1203,7 @@
     // — Open CAM disputes (one entry per property) —
     for (var di = 0; di < safeProps.length; di++) {
       var dp       = safeProps[di];
-      var openDisps = (dp.disputes || []).filter(function(d) { return d.status === 'open'; });
+      var openDisps = (dp.disputes || []).filter(_isOpenDispute);
       if (openDisps.length === 0) continue;
       var exposure = openDisps.reduce(function(s, d) { return s + (parseFloat(d.tenantShare) || 0); }, 0);
       warningActions.push({
@@ -1263,7 +1277,7 @@
     var pipeline = computeRenewalPipeline(safeProps, ref);
     var pid      = computePortfolioIntelligence(safeProps, ref);
     var openDispTotal = safeProps.reduce(function(s, p) {
-      return s + (p.disputes || []).filter(function(d) { return d.status === 'open'; }).length;
+      return s + (p.disputes || []).filter(_isOpenDispute).length;
     }, 0);
     var acqPending = safeReviews.filter(function(r) { return r.status === 'complete'; }).length;
 

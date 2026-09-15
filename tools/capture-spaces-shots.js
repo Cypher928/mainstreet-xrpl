@@ -100,7 +100,7 @@ async function shootEl(handle, file, pad = 20) {
 
   // ── Spaces card grid ──────────────────────────────────────────────────────
   await page.evaluate(() => { if (typeof switchWorkspaceTab === 'function') switchWorkspaceTab('spaces'); });
-  await page.waitForSelector('.tsl-grid', { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector('.tsl-table', { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(600);
   await page.evaluate(CLEAN);
   const probe = await page.evaluate(() => ({
@@ -119,7 +119,7 @@ async function shootEl(handle, file, pad = 20) {
     });
     await page.waitForTimeout(400);
   }
-  const grid = await page.$('.tsl-grid');
+  const grid = await page.$('.tsl-table');
   if (grid) out.push(await shootEl(grid, 'ui-spaces.png'));
   else out.push({ error: 'spaces grid not found' });
 

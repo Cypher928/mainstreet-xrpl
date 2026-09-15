@@ -25,8 +25,11 @@
  * canAddProperty        | true     | false  | false    | true
  * isTenantPortalMode    | false    | true   | false    | false
  *
- * canViewProperty (tenant): true if propertyIds is empty OR propertyIds includes property.id
- * canViewTenant   (tenant): true if tenant.user_id === user.id OR tenant.id === user.id
+ * canViewProperty (tenant): true only if propertyIds includes property.id (empty ⇒ deny)
+ * canViewTenant   (tenant): true only if user.tenantIds includes tenant.id (empty ⇒ deny)
+ *
+ * Both tenant checks fail closed as of Phase A. user.tenantIds comes from
+ * tenant_users via AuthService.setTenantIds() — a database read, not a claim.
  *
  * Exposes: window.AccessControl
  */
@@ -72,10 +75,15 @@ window.AccessControl = (() => {
     if (!r) return false;
     if (r === 'landlord' || r === 'reviewer' || r === 'admin') return true;
     if (r === 'tenant') {
+      // Phase A: FAIL CLOSED. This previously read "empty list means no
+      // restriction has been configured yet — allow all" and returned true,
+      // which let a tenant with no configured propertyIds through to every
+      // property. That was harmless only while no tenant sessions existed and
+      // RLS ignored role entirely; with tenant_users live it is exactly the
+      // wrong default. An unknown scope is now denied, not granted.
       const ids = Array.isArray(user.propertyIds) ? user.propertyIds : [];
-      // Empty list means no restriction has been configured yet — allow all
-      if (ids.length === 0) return true;
-      return ids.includes(property ? property.id : undefined);
+      if (!property || ids.length === 0) return false;
+      return ids.includes(property.id);
     }
     return false;
   }
@@ -118,8 +126,18 @@ window.AccessControl = (() => {
     if (!r) return false;
     if (r === 'landlord' || r === 'reviewer' || r === 'admin') return true;
     if (r === 'tenant') {
+      // Phase A: this checked `tenant.user_id === user.id || tenant.id === user.id`.
+      // Neither test could ever pass. public.tenants has no user_id column, and a
+      // tenant record's id is a property-scoped UUID, never an auth user id — so
+      // the function silently returned false for every tenant while reading as
+      // though a real ownership check existed.
+      //
+      // The link is now tenant_users (migration 012), surfaced as
+      // AuthService.setTenantIds() from a database read that RLS already scopes
+      // to this user. Empty means "no membership known" and denies.
       if (!tenant) return false;
-      return tenant.user_id === user.id || tenant.id === user.id;
+      const ids = Array.isArray(user.tenantIds) ? user.tenantIds : [];
+      return ids.includes(tenant.id);
     }
     return false;
   }

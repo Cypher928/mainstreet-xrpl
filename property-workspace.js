@@ -36,15 +36,136 @@ window.PropertyWorkspace = (function () {
     return { severity: severity, icon: icon, title: title, why: why, nav: nav, action: action };
   }
 
+  function _money(n) { return '$' + Math.round(Number(n) || 0).toLocaleString(); }
+
+  // ── THE UNBILLED POOL IS READ, NOT INTERPRETED HERE ────────────────────────
+  //
+  // This panel used to compute `snap.total - allocated` and announce the result
+  // as "CAM underbilling — $99,523 unrecovered / Allocated charges fall short of
+  // the eligible expense pool". The subtraction was right and the sentence was
+  // false. On Cascade Commons $75,548.60 of that figure is allocation the engine
+  // computed and then WITHHELD because a lease cap was reached — money the
+  // leases say those tenants do not owe — and a further $5,144.60 is a category
+  // a lease excludes from CAM outright. Calling it "unrecovered underbilling"
+  // sent the manager to go collect money their own leases forbid collecting, and
+  // the CTA landed them on the CAM panel that says the opposite.
+  //
+  // VarianceBreakdown already decomposes exactly this number, and two other
+  // surfaces already read it: the CAM variance panel and Ask AI's
+  // variance_unbilled answer. This one now reads it too.
+  //
+  // IT IS READ FROM THE SCREEN'S OWN BREAKDOWN, NOT RE-DERIVED. The stamping
+  // comment on varianceBreakdownOnScreen says re-deriving elsewhere "would need
+  // those same two lists and would produce a figure that could drift from the
+  // banner", and that is measurable rather than theoretical: deriving from
+  // `camReconciliation` alone — whose `invoices` are stripped to
+  // {vendor, category, amount} with no id — leaves 11 invoices unmatched and
+  // reports residual -$46,515.36 with explained:false, against residual $0 and
+  // explained:true from the lists the render actually used. So a second
+  // derivation is not a fallback; it is a wrong answer.
+  //
+  // The scope guard is the one billingVerdictOnScreen already carries: a
+  // breakdown belonging to another building is refused rather than borrowed.
+  function _scopedVarianceBreakdown(p) {
+    try {
+      if (typeof window.varianceBreakdownOnScreen !== 'function') return null;
+      var w = window.varianceBreakdownOnScreen();
+      if (!w || !w.breakdown) return null;
+      if (!p || !p.id || !w.propertyId || w.propertyId !== p.id) return null;
+      return w.breakdown;
+    } catch (_e) { return null; }
+  }
+
+  /**
+   * How to describe money in the pool that was not billed to tenants.
+   *
+   * `difference` is the pool-minus-billed figure, which is a fact. What it MEANS
+   * is the breakdown's to say, so this states one of exactly three things:
+   *
+   *   accounted   the named causes add up — they are listed, largest first, in
+   *               the breakdown's own words. The total is never called
+   *               "unrecovered": most of it routinely is not.
+   *   partial     some of it is attributed and a remainder is not. The remainder
+   *               is named an unaccounted variance, and no cause is guessed for it.
+   *   unknown     no breakdown is on screen for this property. Then the only
+   *               claim made is the one the subtraction supports — this much was
+   *               not billed — and the reader is sent to the surface that can
+   *               explain it. No interpretation, and no "unrecovered".
+   *
+   * Pure and exported so the wording can be tested against a breakdown fixture
+   * without a reconciliation, including the cases the demo cannot produce.
+   */
+  function unbilledPoolNarrative(difference, breakdown) {
+    var amt = _money(difference);
+    if (!breakdown) {
+      return { state: 'unknown',
+        title: amt + ' of the expense pool was not billed to tenants',
+        why: 'What accounts for it has not been established for this reconciliation. '
+           + 'Open the reconciliation to see the breakdown.' };
+    }
+    // The residual line is the breakdown's own "not attributed" valve; it is not
+    // one of the named causes and must not be listed as one.
+    var named = (breakdown.lines || []).filter(function (l) {
+      return l && l.key !== 'residual' && Number(l.amount);
+    });
+    var residual = Number(breakdown.residual) || 0;
+    var settled = breakdown.explained === true && Math.abs(residual) < 0.01;
+
+    if (settled && named.length) {
+      var top = named[0];
+      var rest = named.length - 1;
+      return { state: 'accounted',
+        title: amt + ' of the expense pool was not billed — accounted for',
+        // The cause is quoted in the breakdown's own words, not re-worded — it
+        // is the same sentence the CAM panel shows, and lower-casing it turned
+        // "Reduced by a CAM cap" into "reduced by a cam cap".
+        why: 'Largest cause — ' + String(top.label || 'Unnamed cause')
+           + ' (' + _money(top.amount) + ')'
+           + (rest > 0 ? '. ' + rest + ' further named cause' + (rest === 1 ? '' : 's')
+                       + ' account' + (rest === 1 ? 's' : '') + ' for the rest.' : '.') };
+    }
+    // Not settled. Report the unattributed part as exactly that, and say how much
+    // IS attributed rather than implying none of it is.
+    var attributed = named.reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0);
+    var gap = Math.abs(residual) >= 0.01 ? Math.abs(residual) : Number(difference) || 0;
+    return { state: 'partial',
+      title: _money(gap) + ' of the expense pool is an unaccounted variance',
+      why: named.length
+        ? amt + ' was not billed; named causes account for ' + _money(attributed)
+          + '. The remainder is not attributed to any cause on record.'
+        : amt + ' was not billed and nothing on record accounts for it yet.' };
+  }
+
   // Collect prioritized attention items from state the app already computes.
-  function collectAttention(p) {
+  //
+  // `varianceBreakdown` is SUPPLIED BY THE CALLER, not fetched here. This
+  // function runs on the server too — PropertyRecord.assemble() calls it for the
+  // MCP attention projection — and varianceBreakdownOnScreen is a browser-only
+  // global that closes over render-time state. Reaching for it here would make a
+  // read-only server path depend on a browser, which is the thing the dependency
+  // inventory exists to prevent. So renderAttention (browser) passes the scoped
+  // breakdown in, the server passes nothing, and the wording degrades to "not
+  // established" rather than to a guess.
+  function collectAttention(p, varianceBreakdown) {
     if (!p) return [];
     var S = window.Selectors || {};
     var rd = (typeof S.derivePropertyReadiness === 'function') ? S.derivePropertyReadiness(p) : {};
     var meta = (typeof S.buildPropMeta === 'function') ? S.buildPropMeta(p) : {};
-    var openDisputes = (meta.openDisputes != null)
-      ? meta.openDisputes
-      : (Array.isArray(p.disputes) ? p.disputes.filter(function (d) { return d && d.status === 'open'; }).length : 0);
+    // M7 — ONE definition of open, shared with TenantSpace and get_disputes.
+    //
+    // This read `d.status === 'open'`, so a dispute in `docs_requested` — which
+    // the state machine says can still move, and which nobody has decided —
+    // was not counted. get_disputes counted it. The same property reported "1
+    // open dispute" here and openDisputeCount 2 there, both confidently.
+    //
+    // meta.openDisputes is no longer preferred: Selectors.buildPropMeta derives
+    // it with the narrow rule, so trusting it would reintroduce the divergence
+    // through the back door on any property where Selectors IS available.
+    var DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    var _disp = Array.isArray(p.disputes) ? p.disputes : [];
+    var openDisputes = (DS && typeof DS.tally === 'function')
+      ? DS.tally(_disp).open
+      : _disp.filter(function (d) { return d && (d.status === 'open' || d.status === 'docs_requested'); }).length;
 
     var items = [];
     // Critical — the record is out of date in a way that affects money/renewals.
@@ -87,22 +208,27 @@ window.PropertyWorkspace = (function () {
       var info = PR && PR.infoFor(p);
       if (info && info.insuranceExpires) {
         var days = Math.round((new Date(info.insuranceExpires + 'T12:00:00') - Date.now()) / 86400000);
+        // V2: the action names the Insurance DRAWER, so the click lands on the
+        // policy rather than on the generic Property tab. `anchors` stays as
+        // the fallback for a build without the cabinet view.
         if (days >= 0 && days <= 120) items.push(_mk(days <= 45 ? 'warning' : 'info', '\u{1F6E1}\u{FE0F}',
           'Insurance renewal in ' + days + ' days',
           (info.insuranceCarrier || 'Carrier') + ' policy expires ' + info.insuranceExpires + '.',
-          { tab: 'property', anchors: ['propertySection'] }, 'View policy'));
+          { tab: 'property', anchors: ['propertySection'], drawer: 'insurance' }, 'View policy'));
       }
-      // CAM underbilling: allocated materially below the eligible pool.
+      // The part of the pool that was not billed, INTERPRETED BY THE AUTHORITY
+      // THAT ALREADY EXPLAINS IT rather than by this line's own subtraction.
       var snap = p.camReconciliation;
       if (snap && Array.isArray(snap.results) && snap.results.length && snap.total) {
         var allocated = snap.results.reduce(function (s, r) {
           return s + (Number(r.allocatedAmount != null ? r.allocatedAmount : r.totalAllocated) || 0);
         }, 0);
         var under = Number(snap.total) - allocated;
-        if (under > Number(snap.total) * 0.05) items.push(_mk('warning', '\u{1F4B0}',
-          'CAM underbilling — ' + '$' + Math.round(under).toLocaleString() + ' unrecovered',
-          'Allocated charges fall short of the eligible expense pool.',
-          { tab: 'cam', anchors: ['results', 'cardInvoices'] }, 'Review allocation'));
+        if (under > Number(snap.total) * 0.05) {
+          var _n = unbilledPoolNarrative(under, varianceBreakdown || null);
+          items.push(_mk('warning', '\u{1F4B0}', _n.title, _n.why,
+            { tab: 'cam', anchors: ['results', 'cardInvoices'] }, 'Review allocation'));
+        }
       }
       // Audit window: tenants typically have a limited period to contest a
       // reconciliation. Surface it while there is still time to respond.
@@ -140,7 +266,15 @@ window.PropertyWorkspace = (function () {
     var it = _lastItems[idx];
     if (!it || !it.nav) return;
     try { if (window.switchWorkspaceTab) window.switchWorkspaceTab(it.nav.tab); } catch (_e) {}
+    // A drawer address is the precise destination; the anchor chain below is
+    // the fallback when the cabinet view is not loaded.
+    if (it.nav.drawer && window.PropertyCabinetView && window.PropertyCabinetView.openDrawer) {
+      try { if (window.PropertyCabinetView.openDrawer(it.nav.drawer)) return; } catch (_e) {}
+    }
     var el = null, any = null, an = it.nav.anchors || [];
+    // Same reason as _kpiTileNavigate: reveal a collapsed target before the
+    // visibility test below decides it is not there.
+    try { if (window.PropertyOS && window.PropertyOS.revealForAnchor) window.PropertyOS.revealForAnchor(an); } catch (_e) {}
     for (var i = 0; i < an.length; i++) {
       var c = document.getElementById(an[i]);
       if (c && !any) any = c;
@@ -163,8 +297,15 @@ window.PropertyWorkspace = (function () {
       actSlot.parentNode.insertBefore(slot, actSlot);
     }
 
-    var items = collectAttention(property);
+    // The browser half of the split: the scoped read happens HERE, on a path
+    // only a browser takes, and the result is handed to collectAttention.
+    var items = collectAttention(property, _scopedVarianceBreakdown(property));
     _lastItems = items;
+
+    // V2: the Property landing page mounts the SAME list. One computation, one
+    // index space, so PropertyWorkspace.act(i) means the same item on either
+    // surface; the cabinet mount is a second view, not a second authority.
+    _renderCabinetMount(items);
 
     if (!items.length) {
       slot.innerHTML =
@@ -201,6 +342,37 @@ window.PropertyWorkspace = (function () {
               ? '<button class="pw-attn-all" onclick="PropertyWorkspace.toggleAll()">Show top ' + MAX_SHOWN + ' &#x2191;</button>'
               : '')) +
       '</div>';
+  }
+
+  // The Property landing page's copy of the list: compact cards, the top three
+  // by default, "View all" for the rest. Each card is the same item, at the
+  // same index, with the same action.
+  var CABINET_SHOWN = 3;
+  function _renderCabinetMount(items) {
+    var host = document.getElementById('pcvAttention');
+    if (!host) return;
+    var count = document.getElementById('pcvAttentionCount');
+    if (count) count.textContent = items.length ? String(items.length) : '';
+    if (!items.length) {
+      host.innerHTML = '<div class="pcv-attn-clear"><span class="pcv-attn-check">✓</span>' +
+        '<span>You’re all caught up — nothing needs action on this property right now.</span></div>';
+      return;
+    }
+    var shown = _expanded ? items : items.slice(0, CABINET_SHOWN);
+    host.innerHTML = '<div class="pcv-attn">' + shown.map(function (it, i) {
+      return '<button type="button" class="pcv-attn-card pcv-attn-card--' + it.severity + '" data-attn="' + i + '"' +
+        ' onclick="if(window.PropertyWorkspace){PropertyWorkspace.act(' + i + ');}">' +
+        '<span class="pcv-attn-dot" aria-hidden="true"></span>' +
+        '<span class="pcv-attn-main">' +
+          '<span class="pcv-attn-t">' + _esc(it.title) + '</span>' +
+          '<span class="pcv-attn-w">' + _esc(it.why) + '</span>' +
+          '<span class="pcv-attn-a">' + _esc(it.action) + ' &#x2192;</span>' +
+        '</span></button>';
+    }).join('') + '</div>' +
+    (items.length > CABINET_SHOWN
+      ? '<button type="button" class="pcv-attn-all" onclick="PropertyWorkspace.toggleAll()">' +
+          (_expanded ? 'Show top ' + CABINET_SHOWN + ' &#x2191;' : 'View all ' + items.length + ' &#x2192;') + '</button>'
+      : '');
   }
 
   // "View all" — the widget stays prioritized by default; the full list is one
@@ -252,5 +424,9 @@ window.PropertyWorkspace = (function () {
     collectAttention: collectAttention,
     renderAttention: renderAttention,
     act: act, toggleAll: toggleAll,
+    // The unbilled-pool wording, exposed so it can be exercised against a
+    // breakdown fixture directly — including the unaccounted and no-breakdown
+    // cases, which the demo's fully-explained reconciliation cannot produce.
+    unbilledPoolNarrative: unbilledPoolNarrative,
   };
 })();

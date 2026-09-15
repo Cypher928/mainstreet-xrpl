@@ -1,0 +1,261 @@
+# Pilot live verification gate
+# ============================================================================
+# Runs the two remaining real-environment suites against the PILOT project:
+#
+#   test-rls-cross-user.js            two landlords, one boundary — proves a
+#                                     fresh account can read nothing, and that
+#                                     the API ownership gate refuses a property
+#                                     it does not own.
+#   test-pilot-evidence-roundtrip.js  D-2 through a real database: a manager's
+#                                     confirmation → tenant_field_evidence →
+#                                     reload → the answer still reads as the
+#                                     MANAGER's, never as the lease's.
+#   test-supabase-integration.js      the deployed pilot app's dual-write path,
+#                                     driven through a real browser.
+#
+# Every run builds its own two landlords, one property and one tenant, and
+# deletes them. No real customer data is read or written.
+#
+# WHY THE THREE SUITES DO NOT STOP EACH OTHER
+# A failing RLS suite must not hide the D-2 result, and a browser suite that
+# cannot reach the deployed app must not hide either of them. Each records its
+# own outcome and the verdict step fails the job if any of them failed — so a
+# red run always says which of the three was red.
+#
+# PILOT ONLY. Five independent guards below; any one of them fails the run.
+name: Pilot live verification gate
+
+on:
+  workflow_dispatch:
+  push:
+    paths: &live_surface
+      - 'migrations/**'
+      - 'script.js'
+      - 'lease-period.js'
+      - 'supabase-config.js'
+      - 'api/cam-reconciliations.js'
+      - 'test-rls-cross-user.js'
+      - 'test-supabase-integration.js'
+      - 'test-pilot-evidence-roundtrip.js'
+      - 'test-support/supabase-target.js'
+      - 'scripts/pilot-live-fixture.js'
+      - '.github/workflows/pilot-live-verification.yml'
+  pull_request:
+    paths: *live_surface
+
+# Read-only. This job needs the repository and nothing else; it must never be
+# able to write to it.
+permissions:
+  contents: read
+
+# Fixtures share one database with the b1 gate. Two concurrent runs would sweep
+# each other's world mid-flight and report failures that are artefacts of the
+# runner.
+concurrency:
+  group: pilot-live-verification
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Cross-user RLS + D-2 round trip (pilot)
+    runs-on: ubuntu-latest
+    # Secrets live in this environment. Production secrets are not in scope here
+    # and cannot be reached by this job.
+    environment: pilot
+
+    env:
+      PILOT_REF: bhmktujbxdbvdmpybmad
+      PRODUCTION_REF: zhsuhehgehbzkmzurzyf
+      PILOT_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PILOT_SUPABASE_SERVICE_ROLE_KEY }}
+
+      # SET HERE RATHER THAN LEFT UNSET. Unset already means pilot — that is the
+      # resolver's fail-safe direction — but "unset" can be filled in by a
+      # repository or environment variable that nobody reviewing this file would
+      # see. Pinning both makes the target a property of this workflow.
+      MS_TEST_SUPABASE_TARGET: pilot
+      MS_TEST_ALLOW_PRODUCTION: ''
+
+      # Skipping is not passing. Without this the cross-user groups print
+      # "SKIPPED" and exit 0 when a variable is missing.
+      MS_REQUIRE_ALL_GROUPS: '1'
+
+      # Hardcoded, not a repository variable — the same reasoning as the pilot
+      # ref in the fixture script: a gate that can be re-pointed by editing a
+      # setting is one bad edit from testing the wrong thing. This is the pilot
+      # deployment's alias. NOTE: pilot.mainstreetcam.com was deferred and never
+      # assigned; docs that name it are stale.
+      APP_URL: https://www.mainstreet-review.com
+      # The APP, not the site. vercel.json redirects "/" to /home (marketing) and
+      # rewrites /app to index.html, which is the only page carrying #loginScreen.
+      # APP_URL stays the bare origin because the API probes are built on it.
+      APP_ENTRY_URL: https://www.mainstreet-review.com/app
+      HEADLESS: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # GUARD 1 + 2 — what the configuration claims.
+      - name: Refuse to run against anything but pilot
+        run: |
+          set -euo pipefail
+          if [ -z "${PILOT_SUPABASE_SERVICE_ROLE_KEY}" ]; then
+            echo "::error::PILOT_SUPABASE_SERVICE_ROLE_KEY is not set for environment 'pilot'"
+            exit 1
+          fi
+
+          # Both writers pin their own target and abort if it is not pilot.
+          # Assert those pins are still in place rather than trusting them.
+          for f in scripts/pilot-live-fixture.js test-pilot-evidence-roundtrip.js; do
+            if ! grep -q "PILOT_REF *= *'${PILOT_REF}'" "$f"; then
+              echo "::error::$f is no longer pinned to the pilot project ref"
+              exit 1
+            fi
+          done
+
+          # THE FORCE MECHANISM MUST BE OFF, and this checks the VALUES rather
+          # than the text of this file. Grepping the workflow for the token
+          # would match the grep's own line and fail every run — a guard that
+          # protects nothing and trains people to ignore it. What actually
+          # matters is what the suites will read out of the environment.
+          if [ "${MS_TEST_SUPABASE_TARGET}" != "pilot" ]; then
+            echo "::error::MS_TEST_SUPABASE_TARGET is '${MS_TEST_SUPABASE_TARGET}', not 'pilot'"
+            exit 1
+          fi
+          if [ -n "${MS_TEST_ALLOW_PRODUCTION}" ]; then
+            echo "::error::MS_TEST_ALLOW_PRODUCTION is set — the production force mechanism must be off in this gate"
+            exit 1
+          fi
+
+          # The token must not be baked into the scripts either, where it would
+          # bypass the environment check above. Its only legitimate homes are
+          # test-support/supabase-target.js, which defines it, and the suite
+          # that tests the resolver.
+          if grep -rn "i-understand-this-targets" \
+                 scripts/pilot-live-fixture.js \
+                 test-pilot-evidence-roundtrip.js \
+                 test-rls-cross-user.js \
+                 test-supabase-integration.js ; then
+            echo "::error::the production force token appears inside the pilot gate"
+            exit 1
+          fi
+
+          # The production ref may appear ONLY as the value of the PRODUCTION_REF
+          # guard constant. Anywhere else — a URL, a fallback, a copy-paste — and
+          # this gate could reach production, so the run stops.
+          #
+          # The exclusion is load-bearing: without it this check matches its own
+          # declarations and fails every run, which is a guard that protects
+          # nothing and trains people to ignore it.
+          OFFENDING=$(grep -rn "${PRODUCTION_REF}" \
+                        test-rls-cross-user.js \
+                        test-supabase-integration.js \
+                        test-pilot-evidence-roundtrip.js \
+                        scripts/pilot-live-fixture.js \
+                        .github/workflows/pilot-live-verification.yml \
+                      | grep -v 'PRODUCTION_REF' || true)
+          if [ -n "${OFFENDING}" ]; then
+            echo "::error::the production project ref is referenced inside the pilot gate:"
+            echo "${OFFENDING}"
+            exit 1
+          fi
+
+          echo "target pinned to pilot ${PILOT_REF}"
+
+      # GUARD 3 — the resolver's own fail-safe, proved before it is relied on.
+      # 19 assertions, offline: unset resolves to pilot, "production" is refused
+      # without the force token, and an unrecognised value is refused rather
+      # than defaulted. If this is broken, nothing downstream can be trusted.
+      - name: Prove the target resolver still fails closed
+        run: node test-supabase-target.js
+
+      # GUARD 4 — what the KEY actually opens. This is the one that catches a
+      # production key pasted into the pilot secret: the marker row does not
+      # exist there, so the run stops before creating anything.
+      - name: Prove the key opens pilot, not production
+        run: node scripts/pilot-live-fixture.js verify-target
+
+      - name: Sweep fixtures left by a cancelled run
+        run: node scripts/pilot-live-fixture.js sweep
+
+      - name: Create ephemeral fixtures
+        id: setup
+        run: node scripts/pilot-live-fixture.js setup
+
+      - name: Install live-test dependencies
+        if: steps.setup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          # The same client version the app loads from the CDN (index.html), so
+          # the round trip writes through the library the product writes through.
+          npm install --no-save @supabase/supabase-js@2.112.1 playwright@1.48.2
+          npx playwright install --with-deps chromium
+
+      # GUARD 5 — the last one, and it is about the fixture rather than the
+      # target: prove the accounts this run is about to use are the disposable
+      # ones it just made. A stale GITHUB_ENV or a hand-edited secret that put a
+      # real address here would otherwise go unnoticed.
+      - name: Prove the run is using its own disposable accounts
+        if: steps.setup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          for v in "$USER_A_EMAIL" "$USER_B_EMAIL" "$TEST_EMAIL"; do
+            case "$v" in
+              plci-*@pilot.invalid) ;;
+              *) echo "::error::fixture account '$v' is not a disposable plci-*@pilot.invalid address"; exit 1 ;;
+            esac
+          done
+          echo "all three accounts are disposable fixtures on the reserved domain"
+
+      # ── The suites ────────────────────────────────────────────────────────
+      # continue-on-error so that one red suite does not hide the other two.
+      # The verdict step below turns any failure into a failed job.
+
+      - name: Cross-user RLS verification
+        id: rls
+        if: steps.setup.outcome == 'success'
+        continue-on-error: true
+        run: node test-rls-cross-user.js
+
+      - name: D-2 evidence round trip (real database)
+        id: d2
+        if: steps.setup.outcome == 'success'
+        continue-on-error: true
+        run: node test-pilot-evidence-roundtrip.js
+
+      # Runs against the DEPLOYED pilot app, which serves an older commit than
+      # this branch. It verifies what is deployed, not what is here — which is
+      # the right scope for it, and the reason D-2 is proved by the suite above
+      # instead.
+      - name: Supabase integration (deployed pilot, browser)
+        id: integration
+        if: steps.setup.outcome == 'success'
+        continue-on-error: true
+        run: node test-supabase-integration.js
+
+      - name: Verdict
+        if: always()
+        run: |
+          echo "cross-user RLS      : ${{ steps.rls.outcome         || 'did not run' }}"
+          echo "D-2 round trip      : ${{ steps.d2.outcome          || 'did not run' }}"
+          echo "supabase integration: ${{ steps.integration.outcome || 'did not run' }}"
+          if [ "${{ steps.setup.outcome }}" != "success" ]; then
+            echo "::error::fixtures were not created — no suite ran"; exit 1
+          fi
+          FAILED=0
+          for o in "${{ steps.rls.outcome }}" "${{ steps.d2.outcome }}" "${{ steps.integration.outcome }}"; do
+            [ "$o" = "success" ] || FAILED=1
+          done
+          if [ "$FAILED" = "1" ]; then
+            echo "::error::at least one live suite failed — see the per-suite outcomes above"; exit 1
+          fi
+          echo "all three live suites passed against pilot ${PILOT_REF}"
+
+      # Always. A failed suite must still leave the database as it found it, or
+      # the next run inherits a dirty world and its result means nothing.
+      - name: Tear down fixtures
+        if: always()
+        run: node scripts/pilot-live-fixture.js teardown

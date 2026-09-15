@@ -80,6 +80,12 @@
       hvacSummary:       '6 rooftop units (Carrier 48TC), 3–10 ton, installed 2019–2024',
       fireProtection:    'Wet-pipe sprinkler throughout, monitored alarm, annual inspection current',
       utilities:         'Electric: Austin Energy · Water/Waste: Austin Water · Gas: Texas Gas Service',
+      // The showroom's picture: an architectural rendering of the fictional
+      // building, never a photograph of a real one — the caption says so and the
+      // header shows it. A real property shows an image only if its own info
+      // carries one; nothing is invented for it.
+      imageUrl:          'assets/demo/cascade-commons-rendering.svg',
+      imageCaption:      'Architectural rendering of the fictional Cascade Commons — demonstration illustration, not a photograph',
     };
   }
 
