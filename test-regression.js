@@ -81,6 +81,7 @@ const SUITES = [
   // who it is about, and blocksBilling says whether billing may proceed — three
   // questions that were being answered by one field.
   { label: 'Billing readiness (per tenant)',    cmd: 'node test-billing-readiness.js' },
+  { label: 'Unapplied lease provisions gate',   cmd: 'node test-unapplied-provisions.js' },
   // I-12. I-4 answered "can I bill this tenant" correctly and reported it
   // nowhere: the results table's last column read "Calc verified" for every
   // tenant — a statement about the arithmetic — and the only billing signal was
@@ -223,6 +224,7 @@ const SUITES = [
   // is the authority's own; the same modal, the same runAllocation, the same
   // amounts, gates, findings, stale protection, year scope and persistence.
   { label: 'CAM workflow layout (e2e)',                cmd: 'node test-e2e-cam-workflow.js' },
+  { label: 'Unapplied lease provisions (e2e)',         cmd: 'node test-e2e-unapplied-provisions.js' },
   // WHOSE CAM YEAR IS IT. `_camYear` is a per-USER localStorage preference and
   // selecting a property did not touch it, so a fresh property carrying 2025
   // invoices was reconciled as 2026 — $8,280.00 of a $217,900.00 pool, internally

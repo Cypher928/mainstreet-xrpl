@@ -42,6 +42,29 @@ Removing an invoice from the register writes the removal to the property and
 re-renders, as it always did; `removeInvItem` never set the stale flag and
 still does not.
 
+## Lease provisions the engine does not apply hold the statement
+
+Intake extracts an expense stop, a gross-up, a base year, an administrative
+fee and its basis, and a pro-rata method, stores each with its clause, and
+lets a reviewer mark it verified. The allocation applies none of them: the
+share is leased area over the property total, times occupancy, less excluded
+categories, under a single-year cap. Rather than bill a tenant as though such a
+clause did not exist, detector 3b in `reconciliation-engine.js` raises one
+yellow, tenant-scoped finding with `blocksBilling: true` for a tenant that
+receives shared CAM and carries any of them. The finding names the term, its
+value, the lease quote when one is on file (and says so when none is), states
+that MainStreet does not apply it, and holds that tenant's statement until it
+is confirmed and handled. The existing gate does the rest: "Why it can't bill",
+the AI Audit Review blocking group, and the Tenant Statement block screen all
+show it through the same machinery as every other blocker.
+
+Present, not truthy: an expense stop of 0 is a stated stop; `null` and `''`
+are absent. A pro-rata method of "rentable" and a fee basis of
+"operating_expenses" are what the engine already does and never fire. Lease
+type is not repeated here; the Gross / Modified Gross detector owns it. The
+arithmetic is untouched, and `test-unapplied-provisions.js` asserts that the
+engine reads none of these fields.
+
 ## The held tenant's action is not green
 
 On a tenant card the *Why it can't bill* action (`.tenant-stmt-card-btn--held`)

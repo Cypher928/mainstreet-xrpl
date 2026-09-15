@@ -468,6 +468,108 @@ window.ReconciliationEngine = (() => {
       }
     }
 
+    // ── 3b. A lease provision the engine reads but does not apply ────────────
+    //
+    // Intake extracts an expense stop, a gross-up, a base year, an
+    // administrative fee and its basis, and a pro-rata method; stores each with
+    // the clause it came from; and lets a reviewer mark it verified. The
+    // allocation uses none of them — the share is leased area over the property
+    // total, times occupancy, less excluded categories, under a single-year cap
+    // — so a tenant whose lease carries one of these was billed as though the
+    // clause did not exist, while the row beside the figure read "Calc verified".
+    //
+    // Same shape as the Gross-lease finding below: yellow, because the engine
+    // will not assert the figure is wrong until the lease is read; blocking,
+    // because that figure is exactly what is in doubt; scoped to the one tenant
+    // it names, so nobody else on the property is held for it. Lease type is
+    // NOT repeated here — detector 4 owns it, and a Gross tenant must not be
+    // held twice for one fact.
+    //
+    // PRESENT, NOT TRUTHY. An expense stop of 0 is a stated stop and fires.
+    // null and '' are absent — '' is how extraction records "looked, found
+    // nothing" (see excluded_categories) — and do not. A pro-rata method of
+    // "rentable" is what the engine already applies; a fee basis of
+    // "operating_expenses" is the whole pool the fee check already divides by.
+    // Neither fires: nothing there is unapplied.
+    //
+    // Nothing here is a second copy of the arithmetic. The detector reads the
+    // stored term and the engine's own result, and writes to neither.
+    const UNAPPLIED_PROVISIONS = [
+      { key: 'expense_stop',    label: 'Expense stop',             read: t => _num(t.expense_stop) },
+      { key: 'gross_up_pct',    label: 'Gross-up',                 read: t => _num(t.gross_up_pct),  unit: '%' },
+      { key: 'baseYear',        label: 'Base year',                read: t => _num(t.baseYear != null ? t.baseYear : t.base_year),
+        evidenceKeys: ['baseYear', 'base_year'] },
+      { key: 'admin_fee_pct',   label: 'Administrative fee',       read: t => _num(t.admin_fee_pct), unit: '%' },
+      { key: 'admin_fee_basis', label: 'Administrative fee basis', read: t => _statedWord(t.admin_fee_basis, 'operating_expenses') },
+      { key: 'pro_rata_method', label: 'Pro-rata method',          read: t => _statedWord(t.pro_rata_method, 'rentable') },
+    ];
+    // A vocabulary field is stated when it is a non-empty word that is not the
+    // one the engine already applies.
+    function _statedWord(v, alreadyApplied) {
+      if (v === null || v === undefined) return null;
+      const s = String(v).trim();
+      if (s === '') return null;
+      return s.toLowerCase() === alreadyApplied ? null : s;
+    }
+    // The clause the term came from, read the way the evidence panel reads it:
+    // the latest snapshot's quote, else the extraction's own quotes map.
+    function _leaseQuote(t, keys) {
+      for (const k of keys) {
+        const snaps = t && t.fieldEvidence && t.fieldEvidence[k] && Array.isArray(t.fieldEvidence[k].snapshots)
+          ? t.fieldEvidence[k].snapshots : [];
+        const last = snaps.length ? snaps[snaps.length - 1] : null;
+        const q = last && last.quote;
+        if (typeof q === 'string' && q.trim()) return q.trim();
+        const direct = t && t.quotes && t.quotes[k];
+        if (typeof direct === 'string' && direct.trim()) return direct.trim();
+      }
+      return null;
+    }
+    results.forEach(r => {
+      const t = tenants.find(t => t.id === r.tenantId);
+      if (!t) return;
+      const sharedInvs = (r.includedInvoices || []).filter(i => i.allocation === 'shared');
+      if (!sharedInvs.length) return;         // nothing shared, nothing computed without the term
+      const stated = [];
+      UNAPPLIED_PROVISIONS.forEach(p => {
+        const v = p.read(t);
+        if (v === null) return;
+        const text = typeof v === 'number'
+          ? (p.key === 'expense_stop' ? _fmt(v) + '/sqft' : String(v) + (p.unit || ''))
+          : v.replace(/_/g, ' ');
+        stated.push({ key: p.key, label: p.label, value: v, text, quote: _leaseQuote(t, p.evidenceKeys || [p.key]) });
+      });
+      if (!stated.length) return;
+      const sharedTotal = sharedInvs.reduce((s, i) => s + (i.share || 0), 0);
+      const one = stated.length === 1;
+      flags.push({
+        severity: 'yellow',   // the engine will not assert the figure is wrong until the lease is read
+        blocksBilling: true,  // but that figure is exactly what is in doubt
+        kind:       'lease_verification',
+        disputable: false,
+        title:  `Lease provision${one ? '' : 's'} not applied — ${r.name}: ${stated.map(s => s.label).join(', ')}`,
+        detail: `${r.name}'s lease states ${stated.map(s => `${s.label.toLowerCase()} ${s.text}`).join(', ')}. `
+              + `MainStreet reads and records ${one ? 'this term' : 'these terms'} but does not apply ${one ? 'it' : 'them'} `
+              + `when calculating CAM, so the ${_fmt(sharedTotal)} in shared charges allocated to ${r.name} was computed `
+              + `as though the lease did not carry ${one ? 'it' : 'them'}. The statement cannot be issued until `
+              + `${one ? 'it is' : 'each is'} confirmed against the lease and handled.`,
+        provisions: stated.map(s => ({ key: s.key, label: s.label, value: s.value, quote: s.quote })),
+        actions: ['Confirm the provision against the lease', 'Correct the field if it was misread', 'Re-run the reconciliation'],
+        source:  'Lease terms on file vs the terms the CAM engine applies',
+        conditions: [
+          `Tenant: ${r.name}`,
+          ...stated.flatMap(s => [
+            `${s.label}: ${s.text}`,
+            s.quote ? `${s.label} — lease says: "${s.quote}"` : `${s.label} — no lease quote on file`,
+          ]),
+          `Shared CAM charges: ${_fmt(sharedTotal)} across ${sharedInvs.length} invoice${sharedInvs.length !== 1 ? 's' : ''}`,
+          'MainStreet does not apply this provision in the CAM calculation — the allocation above was computed without it',
+          'Action: confirm the term against the lease; correct the field if it was misread; then re-run',
+          'Not a dispute: nothing here shows the allocation is wrong until the lease is read',
+        ],
+      });
+    });
+
     // ── 4. Gross / Modified Gross tenant receiving shared CAM ──────────────
     results.forEach(r => {
       const t = tenants.find(t => t.id === r.tenantId);
