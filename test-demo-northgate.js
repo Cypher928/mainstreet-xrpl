@@ -194,6 +194,80 @@ const sqftStr = n => Number(n).toLocaleString('en-US');
   }
   ok(`all ${D.INVOICES.length} invoice documents carry their number, vendor, amount, category and the fictional banner`);
 
+  // ══ D · the property describes ITSELF ═══════════════════════════════════
+  // Northgate opened showing Cascade Commons' rendering, address, owner, parcel,
+  // insurance policy, roof and HVAC. PropertyReference.infoFor() falls back to
+  // the hardcoded Cascade block for anything isDemo() matches, and the Northgate
+  // seed carried _demoVersion — which is precisely the flag isDemo() reads. The
+  // fix is that Northgate states its own facts, in INFO, and is identified by
+  // _ngV. These checks fail if either half is undone.
+  sec('D · the reference block is Northgate\'s own');
+  const PR = require('./property-reference.js');
+  const INFO = D.INFO;
+  is(INFO && typeof INFO === 'object', 'demo-northgate.js exports an INFO block');
+
+  const missingKeys = PR.FIELDS.map(f => f.key).filter(k => !(k in INFO));
+  is(missingKeys.length === 0,
+     `INFO answers every one of the ${PR.FIELDS.length} fields the Property Information panel renders`,
+     'missing: ' + missingKeys.join(', '));
+
+  is(INFO.propertyName === D.PROPERTY.name, `INFO names the property "${INFO.propertyName}"`);
+  is(INFO.address === D.PROPERTY.address, 'INFO carries Northgate\'s own address');
+  is(INFO.owner === D.PROPERTY.owner, 'INFO carries Northgate\'s own owner');
+  is(INFO.parcelId === D.PROPERTY.parcel, 'INFO carries Northgate\'s own parcel id');
+  is(INFO.grossSqft === D.PROPERTY.totalSqft,
+     `INFO's gross area (${sqftStr(INFO.grossSqft)}) is the seed's building area`);
+  is(INFO.numSpaces === D.TENANTS.length + 1,
+     `INFO counts ${INFO.numSpaces} spaces — ${D.TENANTS.length} leases and the vacancy`);
+  is(INFO.occupancyPct === null,
+     'INFO states no occupancy figure, so the panel derives it from live tenant data rather than reciting a stale one');
+
+  // The single assertion that would have caught the defect the manager saw.
+  const infoBlob = JSON.stringify(INFO).toLowerCase();
+  is(!infoBlob.includes('cascade'),
+     'no field of INFO mentions Cascade — not the address, the owner, the carrier, the image or the caption');
+  is(!infoBlob.includes('austin') && !infoBlob.includes('travis'),
+     'and none of it is Cascade\'s Austin geography');
+
+  // infoFor() must reach INFO through its FIRST branch, whatever isDemo() says,
+  // and a property carrying Cascade's marker must not be able to override it.
+  const ngLike = { id: 'de000001-0000-4000-a000-abcdef012345', name: D.PROPERTY.name, _ngV: D.DEMO_VERSION, info: INFO, tenants: [], totalSqft: D.PROPERTY.totalSqft };
+  is(PR.infoFor(ngLike) === INFO, 'PropertyReference.infoFor() returns Northgate\'s own block for a seeded Northgate');
+  is(PR.isDemo(ngLike) === false,
+     '_ngV alone does not make Northgate read as the Cascade showroom, so it is never handed Cascade\'s document catalogs');
+  is(PR.propertyDocumentsFor(ngLike).length === 0 && PR.spaceDocumentsFor(ngLike, { tenant_name: 'Ridgeline Outfitters' }).length === 0,
+     'and neither catalog offers Northgate a Cascade site plan, survey or Travelers policy');
+
+  sec('D2 · the rendering is Northgate\'s own illustration');
+  const imgRel = INFO.imageUrl;
+  const imgAbs = path.join(ROOT, imgRel);
+  is(fs.existsSync(imgAbs), `INFO.imageUrl points at a file that exists (${imgRel})`,
+     'expected an illustration on disk');
+  if (fs.existsSync(imgAbs)) {
+    const svg = fs.readFileSync(imgAbs, 'utf8');
+    is(/NORTHGATE EXCHANGE/.test(svg), 'the illustration is signed Northgate Exchange');
+    is(!/cascade/i.test(svg),
+       'and nowhere in it says Cascade — the Cascade asset was not reused or relabelled');
+    is(/demonstration rendering/i.test(svg) && /not a photograph/i.test(svg),
+       'it labels itself a demonstration rendering of a fictional property, not a photograph');
+    is(/not a photograph/i.test(String(INFO.imageCaption)),
+       'and the caption the header prints says the same');
+    const cascadeAbs = path.join(ROOT, 'assets/demo/cascade-commons-rendering.svg');
+    if (fs.existsSync(cascadeAbs)) {
+      const cas = fs.readFileSync(cascadeAbs, 'utf8');
+      is(cas !== svg, 'it is not a copy of Cascade\'s rendering');
+      is(/CASCADE COMMONS/.test(cas) && !/NORTHGATE/i.test(cas),
+         'and Cascade\'s own rendering is untouched — still Cascade\'s, and still only Cascade\'s');
+    }
+    // Every leased suite is named on the building, and the vacancy is shown
+    // vacant, so the picture cannot quietly disagree with the seed.
+    const unnamed = D.TENANTS.filter(t => !svg.toUpperCase().includes(t.tenant_name.toUpperCase()));
+    is(unnamed.length === 0, `all ${D.TENANTS.length} tenants are signed on the building`,
+       unnamed.map(t => t.tenant_name).join(', '));
+    is(new RegExp(`SUITE ${D.VACANCY.suite}`).test(svg) && /NOW LEASING/i.test(svg),
+       `Suite ${D.VACANCY.suite} is drawn as the empty bay it is`);
+  }
+
   console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
   process.exit(fail ? 1 : 0);
 })();

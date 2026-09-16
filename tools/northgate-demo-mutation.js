@@ -38,6 +38,18 @@
  *     N17  the reconciliation is stored without its inputs fingerprint, so it
  *          reopens permanently unverifiable
  *
+ *   Persistence — the id has to be one the database will take
+ *     N18  the property id goes back to a prefix containing a non-hex digit
+ *     N19  the space ids do
+ *
+ *   Identity — the property has to describe itself
+ *     N20  the stored row carries Cascade's _demoVersion marker again
+ *     N21  the live object does
+ *     N22  the stored row loses its own info block
+ *     N23  the live object does
+ *     N24  the rendering is swapped for Cascade's
+ *     N25  the caption keeps Northgate's picture but Cascade's words
+ *
  * A FAILING BASELINE IS NOT A PASS.
  */
 const fs = require('fs');
@@ -102,6 +114,39 @@ const MUTANTS = [
   { id: 'N17', file: S, why: 'the reconciliation is stored without its inputs fingerprint',
     from: "      try { return camInputsFingerprint(ngSpaces, ngInvoices); } catch (_) { return null; }",
     to:   "      return null;" },
+
+  // ── persistence: an id the database will actually accept ─────────────────
+  // This is the defect itself. `n` is not a hex digit, so the id is not a uuid,
+  // and properties.id / tenants.id / cam_reconciliations.property_id all are.
+  { id: 'N18', file: S, why: 'the property id goes back to a prefix containing a non-hex digit',
+    from: "  NORTHGATE_PROPERTY_ID = 'de000001-0000-4000-a000-' + node;",
+    to:   "  NORTHGATE_PROPERTY_ID = 'ne000000-0000-4000-a000-' + node;" },
+  { id: 'N19', file: S, why: 'the space ids do',
+    from: "    'de000001-0000-4000-a00' + n + '-' + node",
+    to:   "    'ne000000-0000-4000-a00' + n + '-' + node" },
+
+  // ── identity: the property describes itself ──────────────────────────────
+  { id: 'N20', file: S, why: "the stored row carries Cascade's _demoVersion marker again",
+    from: "    _ngV:      ND.DEMO_VERSION,\n    info:      ND.INFO,",
+    to:   "    _ngV:      ND.DEMO_VERSION,\n    _demoVersion: ND.DEMO_VERSION,\n    info:      ND.INFO," },
+  { id: 'N21', file: S, why: 'the live object does',
+    from: "    _ngV: ND.DEMO_VERSION,\n    info: ND.INFO,",
+    to:   "    _ngV: ND.DEMO_VERSION, _demoVersion: ND.DEMO_VERSION,\n    info: ND.INFO," },
+  { id: 'N22', file: S, why: 'the stored row loses its own info block, so a reload falls back to Cascade\'s',
+    from: "    _ngV:      ND.DEMO_VERSION,\n    info:      ND.INFO,",
+    to:   "    _ngV:      ND.DEMO_VERSION," },
+  { id: 'N23', file: S, why: 'the live object does',
+    from: "    _ngV: ND.DEMO_VERSION,\n    info: ND.INFO,",
+    to:   "    _ngV: ND.DEMO_VERSION," },
+  { id: 'N24', file: N, why: "the rendering is swapped for Cascade's",
+    from: "    imageUrl: 'assets/demo/northgate/northgate-exchange-rendering.svg',",
+    to:   "    imageUrl: 'assets/demo/cascade-commons-rendering.svg'," },
+  { id: 'N25', file: N, why: "the caption keeps Northgate's picture but Cascade's words",
+    from: "    imageCaption: 'Architectural rendering of the fictional Northgate Exchange",
+    to:   "    imageCaption: 'Architectural rendering of the fictional Cascade Commons" },
+  { id: 'N26', file: S, why: 'the unsaveable copy under the old id is left to reappear as a twin',
+    from: "  const _ngLegacyPrefix = 'ne000000-';",
+    to:   "  const _ngLegacyPrefix = '\\u0000never-matches-';" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ngmut-'));

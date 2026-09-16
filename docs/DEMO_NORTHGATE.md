@@ -79,13 +79,54 @@ a quote the PDF does not contain cannot be made to highlight.
 
 ## Identity and idempotency
 
-The property has its own id prefix (`ne000000-…`, derived per user like
+The property has its own id prefix (`de000001-…`, derived per user like
 Cascade's) and its own version marker, `_ngV`. A stored row already at the
 current version is left alone, so opening the property repeatedly, or reloading
 after editing it, never re-seeds over what is there. The marker travels on the
 live object as well as the stored row, so an ordinary save cannot strip it. The
 denormalised `tenants` table receives the five leases only: the vacant row is a
 space, not a tenant.
+
+That prefix was `ne000000-…` for one commit, and it made the demo unsaveable.
+`properties.id`, `tenants.id` and `cam_reconciliations.property_id` are all
+`uuid` columns, and `n` is not a hex digit, so nothing about Northgate could be
+written: the property upsert was refused (the seeder logs it and carries on, so
+the demo still ran from memory and localStorage), the tenant insert was refused,
+and then `saveCamResults` posted to `/api/cam-reconciliations`, whose ownership
+check went looking for a property that had never been stored, could not verify
+it, and answered 403. What a manager saw was a reconciliation that calculated
+perfectly under a red banner saying the results were not saved to the server —
+which was true. The reconciliation existed in one browser tab and nowhere else.
+
+The banner was right and the workflow's "CAM Reconciliation Complete" was right:
+they describe different things, the calculation and the write, and only the
+second had failed. The suites missed it because the mock database stored any
+string it was given and the stub API answered every POST with success. Both now
+behave like the real ones — `test-e2e-northgate-billable.js` §0 proves the
+fixture rejects a non-hex id before §16 relies on it, and §16 posts the old id
+to the endpoint and watches it come back 403.
+
+## The property's own face
+
+`PropertyReference.infoFor()` returns a property's own `info` block if it has
+one, and otherwise falls back to a hardcoded block describing Cascade Commons
+for anything `isDemo()` matches. `isDemo()` matches on `_demoVersion` — which
+the Northgate seed also set. So Northgate opened under Cascade's architectural
+rendering, Cascade's Austin address, Cascade's owner, parcel, insurance carrier,
+roof and HVAC, with only the name its own; and `propertyDocumentsFor()` offered
+it Cascade's site plan and Travelers policy.
+
+Northgate now states its own facts. `demo-northgate.js` exports `INFO`, a full
+answer to every field the Property Information panel renders, and the seeder
+attaches it to both the stored row and the live object — so `infoFor()` returns
+it from its first branch and never reaches the fallback. The seed carries `_ngV`
+and nothing else, so `isDemo()` no longer claims it.
+
+Its picture is `assets/demo/northgate/northgate-exchange-rendering.svg`, drawn
+for this property: six bays under the Boise foothills, the five leased suites
+signed, Suite 150 dark and placarded NOW LEASING, four rooftop units because the
+record says four. Cascade's rendering is untouched and still only Cascade's.
+Neither is a photograph, and both say so on their face.
 
 ## Reaching the demos from a portfolio that is not empty
 

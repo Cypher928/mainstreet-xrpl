@@ -25,6 +25,9 @@
 //  12 · seeding again changes nothing — no duplicated spaces or invoices
 //  13 · NEGATIVE: remove the source documents → the same property refuses
 //  14 · NEGATIVE: make one lease Modified Gross → that tenant alone is held
+//  16 · the run is actually PERSISTED — ids Postgres accepts, rows on the
+//       server, still there after a reload, and no save-failed banner
+//  17 · the property shows ITS OWN rendering, not Cascade's
 //
 //   node test-e2e-northgate-billable.js
 // ============================================================================
@@ -35,8 +38,64 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const ROOT = __dirname, PORT = 8999;
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml', '.pdf':'application/pdf', '.png':'image/png' };
 const showroom = fs.readFileSync(path.join(ROOT, 'test-e2e-demo-showroom.js'), 'utf8');
-const DB = showroom.slice(showroom.indexOf('const DB = `') + 12, showroom.indexOf('`;', showroom.indexOf('const DB = `')));
+const DB_RAW = showroom.slice(showroom.indexOf('const DB = `') + 12, showroom.indexOf('`;', showroom.indexOf('const DB = `')));
 const D = require('./demo-northgate.js');
+
+// ── A DATABASE THAT REJECTS WHAT POSTGRES REJECTS ───────────────────────────
+// Northgate's property id began 'ne000000-…'. `n` is not a hex digit, so that
+// string is not a uuid — and properties.id, tenants.id and
+// cam_reconciliations.property_id are all `uuid` columns. On a real database
+// every Northgate write was refused and the manager saw "These CAM results
+// weren't saved to the server" under a reconciliation that had otherwise
+// worked. This suite passed throughout, because the mock stored any string it
+// was handed and the stub API answered every POST with success.
+//
+// Two things are fixed here so the suite can fail on that defect.
+//
+// First, the mock user id. The demo ids are derived from the first twelve hex
+// characters of the authenticated user's uuid, and 'showroom-user-…' yields
+// 'showroomuser' — so under a real uuid check EVERY demo id would be invalid,
+// for reasons that are the fixture's fault rather than the product's. A
+// Supabase user id is always a uuid; this one now is too.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MOCK_USER_OLD = "id:'showroom-user-0001-4000-a000-000000000001'";
+const MOCK_USER_ID  = '7f3a2b1c-9d4e-4a5b-8c6d-0e1f2a3b4c5d';
+const DB = DB_RAW.replace(MOCK_USER_OLD, `id:'${MOCK_USER_ID}'`);
+
+// Second, a uuid constraint over the tables that have one. A rejection is
+// shaped like Postgres's (SQLSTATE 22P02) and recorded, so the test can name
+// the column and the value rather than only observing that something failed.
+const PG_UUID = `
+(function(){
+  var RE=${UUID_RE.toString()};
+  var COLS={properties:['id'],tenants:['id','property_id']};
+  window.__pgUuidRejections=[];
+  var create=window.supabase.createClient;
+  window.supabase.createClient=function(){
+    var c=create.apply(this,arguments), from=c.from.bind(c);
+    c.from=function(n){
+      var q=from(n), cols=COLS[n];
+      if(!cols) return q;
+      ['insert','upsert'].forEach(function(op){
+        var orig=q[op].bind(q);
+        q[op]=function(r){
+          var arr=Array.isArray(r)?r:[r], bad=null;
+          arr.forEach(function(x){cols.forEach(function(k){
+            if(x&&x[k]!=null&&!RE.test(String(x[k]))&&!bad) bad={col:k,val:String(x[k])};});});
+          if(!bad) return orig(r);
+          window.__pgUuidRejections.push({table:n,column:bad.col,value:bad.val});
+          var err={message:'invalid input syntax for type uuid: "'+bad.val+'"',code:'22P02'};
+          var p=Promise.resolve({data:null,error:err});
+          p.select=function(){var q2=Promise.resolve({data:null,error:err});
+            q2.single=function(){return Promise.resolve({data:null,error:err});};return q2;};
+          return p;
+        };
+      });
+      return q;
+    };
+    return c;
+  };
+})();`;
 
 let pass = 0, fail = 0;
 const yes = (c, m, d) => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${m}`); } else { fail++; console.log(`  \x1b[31m✗\x1b[0m ${m}${d ? `\n      → ${d}` : ''}`); } };
@@ -97,9 +156,46 @@ const READ = `(() => {
 })()`;
 
 (async () => {
+  // The reconciliation store, standing in for the cam_reconciliations table.
+  // It outlives page reloads, which is the whole point: a result that is only
+  // in the browser is exactly what the save-failed banner warns about.
+  let CAMDB = [];
+  const json = (rs, code, body) => { rs.writeHead(code, { 'Content-Type': 'application/json' }); rs.end(JSON.stringify(body)); };
+
   const srv = http.createServer((rq, rs) => {
-    let u = decodeURIComponent(rq.url.split('?')[0]); if (u === '/') u = '/index.html';
-    if (u.startsWith('/api/')) { rs.writeHead(200, { 'Content-Type': 'application/json' }); rs.end('{}'); return; }
+    const [u0, qs] = rq.url.split('?');
+    let u = decodeURIComponent(u0); if (u === '/') u = '/index.html';
+
+    // api/cam-reconciliations.js verifies ownership with
+    // GET /properties?id=eq.<id>&user_id=eq.<uid>, treats any status >= 300 as
+    // "not owned", and answers 403. A propertyId that is not a uuid makes that
+    // query itself an error, which is how an invalid id became a Forbidden.
+    if (u === '/api/cam-reconciliations') {
+      if (rq.method === 'POST') {
+        let body = '';
+        rq.on('data', c => { body += c; });
+        rq.on('end', () => {
+          let b; try { b = JSON.parse(body || '{}'); } catch (_) { return json(rs, 400, { error: 'Bad JSON' }); }
+          if (!UUID_RE.test(String(b.propertyId || ''))) {
+            return json(rs, 403, { error: 'Forbidden', detail: `property ${b.propertyId} could not be verified` });
+          }
+          CAMDB = CAMDB.filter(r => !(r.property_id === b.propertyId && String(r.year) === String(b.year)));
+          const rows = (b.rows || []).map(r => ({ ...r }));
+          CAMDB = CAMDB.concat(rows);
+          return json(rs, 200, { data: rows });
+        });
+        return;
+      }
+      const params = new URLSearchParams(qs || '');
+      const pid = params.get('propertyId'), yr = params.get('year');
+      if (pid && !UUID_RE.test(pid)) return json(rs, 403, { error: 'Forbidden' });
+      return json(rs, 200, { data: CAMDB.filter(r =>
+        (!pid || r.property_id === pid) && (!yr || String(r.year) === String(yr))) });
+    }
+    // The server's own view of what it stored, for the test only.
+    if (u === '/__camdb') return json(rs, 200, { rows: CAMDB });
+
+    if (u.startsWith('/api/')) { json(rs, 200, {}); return; }
     fs.readFile(path.join(ROOT, u), (e, d) => { if (e) { rs.writeHead(404); rs.end(); return; }
       rs.writeHead(200, { 'Content-Type': MIME[path.extname(u)] || 'application/octet-stream' }); rs.end(d); });
   });
@@ -113,6 +209,7 @@ const READ = `(() => {
   await page.route('**fonts.g**', r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   await page.addInitScript('window.__TEST_AUTHED=true;');
   await page.addInitScript(DB);
+  await page.addInitScript(PG_UUID);
 
   const boot = async () => {
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
@@ -144,7 +241,25 @@ const READ = `(() => {
   };
   const read = () => page.evaluate(READ);
 
+  // The harness itself has to be honest before anything it measures is worth
+  // reading: a fixture that quietly stopped enforcing uuids would make every
+  // assertion in §16 vacuous.
+  sec('0 · the fixture database enforces the constraint the real one has');
+  yes(DB !== DB_RAW, 'the mock user id was replaced with a real uuid', 'the showroom fixture no longer contains ' + MOCK_USER_OLD);
+  yes(UUID_RE.test(MOCK_USER_ID), 'and that replacement is itself a valid uuid');
+
   await boot();
+
+  const GUARD = await page.evaluate(() => {
+    // Prove the guard is live by offering it something Postgres would refuse,
+    // then clear the record so a later rejection can only come from the product.
+    return window.supabase.createClient().from('properties')
+      .upsert({ id: 'ne000000-0000-4000-a000-abcdef012345', name: 'x' }).select('id')
+      .then(r => { const seen = window.__pgUuidRejections.slice(); window.__pgUuidRejections.length = 0;
+                   return { code: r.error && r.error.code, seen }; });
+  });
+  is(GUARD.code, '22P02', 'the fixture refuses a non-hex id with Postgres\'s own invalid-uuid error');
+  is(GUARD.seen.length, 1, 'and records the refusal, so a real one cannot pass unnoticed');
 
   // ══ 1 · the portfolio ═════════════════════════════════════════════════════
   sec('1 · both demo properties are in the portfolio, and Cascade is untouched');
@@ -158,6 +273,21 @@ const READ = `(() => {
   is(PORT0.names, ['Cascade Commons', NG].sort(), 'the portfolio holds exactly the two seeded demo properties');
   is(PORT0.cascade, { sqft: 26000, tenants: 5, invoices: 26, withDoc: 0 },
      'Cascade Commons is exactly as it was: 5 tenants, 26 invoices, none with a source document');
+
+  // The LIVE object, before anything has been reloaded. The marker that made
+  // Northgate wear Cascade's face travelled on this object as well as the
+  // stored row, so both have to be checked, and the reload checks in §17 only
+  // ever see the row.
+  const LIVE = await page.evaluate(() => {
+    const ng = _props.find(p => /Northgate/.test(p.name || ''));
+    return { isDemo: window.PropertyReference.isDemo(ng), ngV: ng._ngV,
+             demoVersion: ng._demoVersion ?? null, demoV: ng._demoV ?? null,
+             image: (window.PropertyReference.infoFor(ng) || {}).imageUrl || null };
+  });
+  is(LIVE.isDemo, false, 'the freshly seeded Northgate does not read as the Cascade showroom');
+  is([LIVE.demoVersion, LIVE.demoV], [null, null], 'it carries neither of Cascade\'s markers');
+  is(LIVE.ngV, D.DEMO_VERSION, 'only its own, _ngV');
+  is(LIVE.image, D.INFO.imageUrl, 'and it already points at its own rendering, before any reload');
 
   const cardOpened = await openNorthgate();
   yes(cardOpened, 'the Northgate card opens from the portfolio list, with no demo-only button');
@@ -394,6 +524,188 @@ const READ = `(() => {
   const BACK2 = await read();
   is(BACK2.verdict, { canBill: true, label: 'Bill with review' }, 'restoring the lease type restores the billable verdict');
   is(BACK2.results, C.results, 'and the allocations are exactly what they were');
+
+  // ══ 16 · persistence ══════════════════════════════════════════════════════
+  // What the manager reported: "CAM Reconciliation Complete" above a red
+  // "These CAM results weren't saved to the server". The calculation was fine;
+  // the property had never reached the database at all, because its id was not
+  // a uuid, so the endpoint's ownership check could not find it and answered
+  // 403. Everything below is that path, end to end.
+  sec('16 · the reconciliation is actually saved, and stays saved');
+
+  const IDS = await page.evaluate(() => {
+    const ng = _props.find(p => /Northgate/.test(p.name || ''));
+    const cas = _props.find(p => /Cascade/.test(p.name || ''));
+    return { ng: ng.id, spaces: (ng.tenants || []).map(t => t.id), cascade: cas.id,
+             rejections: window.__pgUuidRejections.slice() };
+  });
+  yes(UUID_RE.test(IDS.ng), `Northgate's property id is a uuid Postgres will accept (${IDS.ng})`, IDS.ng);
+  yes(IDS.spaces.length === D.TENANTS.length + 1 && IDS.spaces.every(id => UUID_RE.test(id)),
+      `and so is every one of its ${IDS.spaces.length} space ids`, JSON.stringify(IDS.spaces));
+  yes(IDS.ng !== IDS.cascade && !/^dec00000-/i.test(IDS.ng),
+      'it is its own id, on its own prefix — it cannot be mistaken for Cascade\'s');
+  is(IDS.rejections, [], 'nothing the app wrote was refused for an invalid uuid');
+
+  const SAVE = await page.evaluate(async () => {
+    await runAllocation();
+    await new Promise(r => setTimeout(r, 2600));
+    const b = document.getElementById('camSaveWarningBanner');
+    const p = currentProperty();
+    const stored = await loadCamResults(p.id, getCamYear());
+    return {
+      bannerShown: !!(b && b.style.display !== 'none' && (b.textContent || '').trim()),
+      bannerText: b ? (b.textContent || '').trim() : null,
+      stored: stored.length,
+      names: stored.map(r => r.tenant_name).sort(),
+      allocated: Math.round(stored.reduce((s, r) => s + (Number(r.allocated_amount) || 0), 0) * 100) / 100,
+      year: stored.length ? stored[0].year : null,
+      propId: p.id,
+    };
+  });
+  yes(!SAVE.bannerShown,
+      'Calculate leaves NO "weren\'t saved to the server" banner — the write was accepted',
+      SAVE.bannerText);
+  is(SAVE.stored, D.TENANTS.length, `the server holds one row per tenant (${D.TENANTS.length})`);
+  is(SAVE.names, D.TENANTS.map(t => t.tenant_name).sort(), 'and they are the five tenants, by name');
+  is(SAVE.allocated, 84882.25, 'the persisted allocations add up to the billed total');
+  is(SAVE.year, D.CAM_YEAR, `filed under CAM year ${D.CAM_YEAR}`);
+
+  // Persisted means persisted: the rows are on the server, not in this tab.
+  const SRV = await page.evaluate(async () => (await (await fetch('/__camdb')).json()).rows);
+  is(SRV.length, D.TENANTS.length, 'the server\'s own store really has those rows, independently of the page');
+
+  await boot();
+  yes(await openNorthgate(), 'Northgate reopens after a second full reload');
+  const AFTER = await page.evaluate(async () => {
+    const p = currentProperty();
+    const stored = await loadCamResults(p.id, getCamYear());
+    const b = document.getElementById('camSaveWarningBanner');
+    return { stored: stored.length, names: stored.map(r => r.tenant_name).sort(),
+             allocated: Math.round(stored.reduce((s, r) => s + (Number(r.allocated_amount) || 0), 0) * 100) / 100,
+             banner: !!(b && b.style.display !== 'none' && (b.textContent || '').trim()) };
+  });
+  is(AFTER.stored, D.TENANTS.length, 'after closing the tab and coming back the rows are STILL on the server');
+  is(AFTER.names, SAVE.names, 'the same five tenants');
+  is(AFTER.allocated, SAVE.allocated, 'and the same money — nothing was lost with the tab');
+  yes(!AFTER.banner, 'and the restored run shows no save warning');
+
+  // The endpoint's refusal is real, not something this stub invented: give it
+  // the id the defect produced and it answers exactly as production did.
+  const FORBID = await page.evaluate(async () => {
+    const r = await fetch('/api/cam-reconciliations', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propertyId: 'ne000000-0000-4000-a000-abcdef012345', year: 2025,
+                             rows: [{ tenant_name: 'X', allocated_amount: 1, year: 2025 }] }) });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  });
+  is(FORBID.status, 403, 'the old non-hex id is refused 403 by the reconciliation endpoint — the defect, reproduced');
+  const SRV2 = await page.evaluate(async () => (await (await fetch('/__camdb')).json()).rows.length);
+  is(SRV2, D.TENANTS.length, 'and that refused write stored nothing, leaving Northgate\'s own rows intact');
+
+  // Anyone who opened the demo before the fix has an unsaveable copy in
+  // localStorage under the old id. It was never in the database — it could not
+  // be — so there is nothing to migrate, but left in place it would reappear
+  // beside the real one as a second identical Northgate Exchange.
+  sec('16b · the unsaveable copy from the old id does not come back as a twin');
+  const LEGACY = await page.evaluate(async () => {
+    const ghostId = 'ne000000-0000-4000-a000-7f3a2b1c9d4e';
+    const real = _props.find(p => /Northgate/.test(p.name || ''));
+    const ghost = JSON.parse(JSON.stringify({ ...real, id: ghostId }));
+    _props.push(ghost);
+    const key = _lsUserKey();
+    const stored = JSON.parse(localStorage.getItem(key) || '{}');
+    stored[ghostId] = ghost; localStorage.setItem(key, JSON.stringify(stored));
+    const before = { names: _props.filter(p => /Northgate/.test(p.name || '')).length,
+                     inLs: !!JSON.parse(localStorage.getItem(key) || '{}')[ghostId] };
+    await ensureNorthgateDemo();
+    await new Promise(r => setTimeout(r, 800));
+    const after = { names: _props.filter(p => /Northgate/.test(p.name || '')).length,
+                    inLs: !!JSON.parse(localStorage.getItem(key) || '{}')[ghostId],
+                    ids: _props.filter(p => /Northgate/.test(p.name || '')).map(p => p.id) };
+    return { before, after };
+  });
+  is(LEGACY.before, { names: 2, inLs: true }, 'with the old copy restored there are two Northgates and one is in localStorage');
+  is(LEGACY.after.names, 1, 'after the seeder runs there is one');
+  is(LEGACY.after.inLs, false, 'and the old copy is gone from localStorage');
+  yes(UUID_RE.test(LEGACY.after.ids[0]), 'the survivor is the one with the valid id', JSON.stringify(LEGACY.after.ids));
+
+  // ══ 17 · the property's own face ══════════════════════════════════════════
+  // Northgate opened under Cascade Commons' rendering. PropertyReference falls
+  // back to a hardcoded Cascade block for anything isDemo() matches, and the
+  // Northgate seed carried _demoVersion — the very flag isDemo() reads.
+  sec('17 · Northgate shows its own rendering, and only its own');
+
+  const heroOf = async () => {
+    await page.evaluate(() => { try { PropertyCabinetView.closeDrawer(); } catch (_) {} switchWorkspaceTab('property'); });
+    await page.waitForTimeout(600);
+    const loaded = await page.waitForFunction(
+      () => { const i = document.querySelector('#propertyOsBody .pcv-hero img'); return !!(i && i.complete && i.naturalWidth > 0); },
+      null, { timeout: 8000 }).then(() => true).catch(() => false);
+    return page.evaluate((ok) => {
+      const fig = document.querySelector('#propertyOsBody .pcv-hero');
+      const i = fig && fig.querySelector('img');
+      return { name: (document.querySelector('#propertyOsBody .pcv-name') || {}).textContent || null,
+               addr: (document.querySelector('#propertyOsBody .pcv-addr') || {}).textContent || null,
+               src: i ? i.getAttribute('src') : null,
+               caption: fig ? ((fig.querySelector('figcaption') || {}).textContent || '') : null,
+               loaded: ok };
+    }, loaded);
+  };
+
+  const H = await heroOf();
+  is(H.name, NG, 'the Property tab is showing Northgate Exchange');
+  is(H.src, D.INFO.imageUrl, 'and its hero image is Northgate\'s own rendering');
+  yes(!/cascade/i.test(H.src || ''), 'which is not the Cascade asset under any name', H.src);
+  yes(H.loaded, 'the image actually loads over HTTP');
+  is(H.addr, D.PROPERTY.address, 'the address beside it is Northgate\'s own');
+  yes(/Northgate Exchange/i.test(H.caption || '') && /not a photograph/i.test(H.caption || ''),
+      'the caption names Northgate and says it is not a photograph', H.caption);
+
+  const REF = await page.evaluate(() => {
+    const p = currentProperty();
+    const info = PropertyReference.infoFor(p);
+    return { owner: info.owner, parcel: info.parcelId, carrier: info.insuranceCarrier,
+             isDemo: PropertyReference.isDemo(p),
+             propDocs: PropertyReference.propertyDocumentsFor(p).map(d => d.name),
+             spaceDocs: PropertyReference.spaceDocumentsFor(p, (p.tenants || [])[0]).length };
+  });
+  is(REF.owner, D.PROPERTY.owner, 'the Property Information panel states Northgate\'s owner');
+  is(REF.parcel, D.PROPERTY.parcel, 'Northgate\'s parcel id');
+  is(REF.carrier, D.INFO.insuranceCarrier, 'and Northgate\'s insurance carrier — none of it Cascade\'s');
+  is(REF.propDocs, [], 'it is offered no Cascade site plan, survey or Travelers policy');
+  is(REF.spaceDocs, 0, 'and its spaces are offered no Cascade lease catalog either');
+
+  await boot();
+  yes(await openNorthgate(), 'Northgate reopens from the portfolio once more');
+  const H2 = await heroOf();
+  is(H2.src, H.src, 'after a full reload the image is still Northgate\'s');
+  is(H2.addr, H.addr, 'and so is the address — the saved property carries its own info');
+
+  const CASC = await page.evaluate(async () => {
+    const c = _props.find(p => /Cascade/.test(p.name || ''));
+    selectProperty(c.id);
+    await new Promise(r => setTimeout(r, 1800));
+    return null;
+  });
+  void CASC;
+  const HC = await heroOf();
+  is(HC.name, 'Cascade Commons', 'opening Cascade Commons shows Cascade Commons');
+  is(HC.src, 'assets/demo/cascade-commons-rendering.svg', 'still under its own rendering, untouched by this fix');
+  yes(/Cascade Commons/i.test(HC.caption || ''), 'with its own caption', HC.caption);
+
+  const REAL = await page.evaluate(() => {
+    const real = { id: 'aaaaaaaa-1111-4000-a000-222222222222', name: 'Maple Plaza', totalSqft: 9000,
+                   tenants: [], invoices: [], timeline: [], disputes: [], activityLog: [] };
+    _props.push(real); const prev = activePropId; activePropId = real.id;
+    PropertyOS.renderPropertyPage(real);
+    const out = { hero: !!document.querySelector('#propertyOsBody .pcv-hero'),
+                  name: (document.querySelector('#propertyOsBody .pcv-name') || {}).textContent || null,
+                  info: PropertyReference.infoFor(real) };
+    _props.pop(); activePropId = prev; PropertyOS.renderPropertyPage(currentProperty());
+    return out;
+  });
+  is(REAL, { hero: false, name: 'Maple Plaza', info: null },
+     'a manager\'s own property is unaffected: no image, no address and no facts invented for it');
 
   sec('15 · quiet page');
   is(errors, [], 'no uncaught errors');

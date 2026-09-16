@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 560" width="1600" height="560" role="img" aria-label="Architectural rendering of Northgate Exchange, a fictional neighborhood retail center in Boise, Idaho — demonstration illustration">
+  <title>Northgate Exchange — architectural rendering (demonstration illustration, fictional property)</title>
+  <desc>Six-bay single-storey retail centre, steel frame with masonry veneer, drawn under late-afternoon light with the Boise foothills behind it. Five bays carry tenant signage; Suite 150 is shown unleased. Nothing depicted is real.</desc>
+  <defs>
+    <linearGradient id="ngSky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f7fa8"/><stop offset="0.42" stop-color="#9dc0d6"/>
+      <stop offset="0.78" stop-color="#e6d4bd"/><stop offset="1" stop-color="#f3e6d4"/>
+    </linearGradient>
+    <radialGradient id="ngGlow" cx="0.18" cy="0.2" r="0.42">
+      <stop offset="0" stop-color="#ffeec4" stop-opacity="0.95"/><stop offset="1" stop-color="#ffeec4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ngFoot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8c94a6"/><stop offset="1" stop-color="#6f7a8c"/>
+    </linearGradient>
+    <linearGradient id="ngFootNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b7c72"/><stop offset="1" stop-color="#4c5d57"/>
+    </linearGradient>
+    <linearGradient id="ngPanel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e3e6e4"/><stop offset="1" stop-color="#bcc2c1"/>
+    </linearGradient>
+    <linearGradient id="ngPanelWarm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d6c9b4"/><stop offset="1" stop-color="#ad9d85"/>
+    </linearGradient>
+    <linearGradient id="ngGlass" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7f9fae"/><stop offset="0.4" stop-color="#28414c"/>
+      <stop offset="0.46" stop-color="#5a7c8a"/><stop offset="1" stop-color="#17272f"/>
+    </linearGradient>
+    <linearGradient id="ngGlassDark" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#5b7480"/><stop offset="0.5" stop-color="#1d2a31"/><stop offset="1" stop-color="#121b21"/>
+    </linearGradient>
+    <linearGradient id="ngCanopy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f5a5f"/><stop offset="1" stop-color="#123a3f"/>
+    </linearGradient>
+    <linearGradient id="ngAsphalt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5f6367"/><stop offset="1" stop-color="#34383c"/>
+    </linearGradient>
+    <linearGradient id="ngCanopyDeck" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8e8478"/><stop offset="1" stop-color="#655d52"/>
+    </linearGradient>
+    <linearGradient id="ngCarA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dfe5e8"/><stop offset="1" stop-color="#8f989f"/>
+    </linearGradient>
+    <linearGradient id="ngCarB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#46606f"/><stop offset="1" stop-color="#23303a"/>
+    </linearGradient>
+    <linearGradient id="ngLeaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fad6a"/><stop offset="1" stop-color="#456b3c"/>
+    </linearGradient>
+    <filter id="ngSoft" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="7"/></filter>
+    <filter id="ngSoft2" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="2.5"/></filter>
+    <pattern id="ngVeneer" width="34" height="14" patternUnits="userSpaceOnUse">
+      <rect width="34" height="14" fill="#9d9a93"/>
+      <rect x="0" y="0" width="16" height="6" fill="#928f88"/><rect x="17" y="0" width="17" height="6" fill="#a8a59d"/>
+      <rect x="0" y="7" width="8" height="6" fill="#a4a199"/><rect x="9" y="7" width="16" height="6" fill="#8d8a84"/><rect x="26" y="7" width="8" height="6" fill="#aaa79f"/>
+    </pattern>
+    <pattern id="ngSplit" width="28" height="16" patternUnits="userSpaceOnUse">
+      <rect width="28" height="16" fill="#7d7468"/>
+      <rect x="0" y="0" width="13" height="7" fill="#877d70"/><rect x="14" y="0" width="14" height="7" fill="#746c61"/>
+      <rect x="0" y="8" width="20" height="7" fill="#786f64"/><rect x="21" y="8" width="7" height="7" fill="#8a8073"/>
+    </pattern>
+  </defs>
+
+  <!-- sky, low western sun -->
+  <rect width="1600" height="560" fill="url(#ngSky)"/>
+  <rect width="1600" height="560" fill="url(#ngGlow)"/>
+  <g fill="#fff3e0" opacity="0.5" filter="url(#ngSoft)">
+    <ellipse cx="470" cy="104" rx="170" ry="22"/><ellipse cx="560" cy="82" rx="96" ry="17"/>
+    <ellipse cx="1240" cy="76" rx="150" ry="19"/>
+  </g>
+
+  <!-- Boise foothills: a ridge line, not a treeline -->
+  <path d="M0 268 L150 214 L268 250 L392 188 L520 238 L636 206 L760 244 L900 198 L1032 240 L1168 204 L1300 242 L1430 212 L1600 252 L1600 300 L0 300 Z" fill="url(#ngFoot)" opacity="0.9"/>
+  <path d="M0 292 L130 262 L250 286 L380 256 L512 284 L640 262 L790 288 L940 258 L1090 286 L1240 260 L1400 288 L1600 268 L1600 320 L0 320 Z" fill="url(#ngFootNear)"/>
+  <g fill="#f6efe2" opacity="0.5">
+    <path d="M392 188 L408 206 L378 206 Z"/><path d="M900 198 L916 214 L884 214 Z"/>
+  </g>
+
+  <!-- ground plane -->
+  <ellipse cx="800" cy="416" rx="690" ry="24" fill="#000" opacity="0.2" filter="url(#ngSoft)"/>
+  <rect x="0" y="398" width="1600" height="162" fill="url(#ngAsphalt)"/>
+  <rect x="0" y="398" width="1600" height="9" fill="#cdc8bd"/>
+
+  <!-- ─── building: six bays, flat parapet stepping up over the centre entry ─── -->
+  <g>
+    <!-- parapet cap -->
+    <rect x="128" y="176" width="1344" height="12" fill="#5a5349"/>
+    <rect x="128" y="188" width="1344" height="7" fill="#413b33"/>
+    <!-- main wall: light metal panel over a split-face masonry base -->
+    <rect x="128" y="195" width="1344" height="175" fill="url(#ngPanel)"/>
+    <rect x="128" y="352" width="1344" height="46" fill="url(#ngSplit)"/>
+    <!-- stepped centre element, masonry veneer, carries the centre name -->
+    <rect x="676" y="124" width="248" height="12" fill="#3f3831"/>
+    <rect x="682" y="136" width="236" height="59" fill="url(#ngVeneer)"/>
+    <rect x="682" y="136" width="236" height="59" fill="#2f4d55" opacity="0.72"/>
+    <!-- end pavilions -->
+    <rect x="128" y="158" width="150" height="37" fill="#4e473e"/><rect x="134" y="164" width="138" height="31" fill="url(#ngVeneer)"/>
+    <rect x="1322" y="158" width="150" height="37" fill="#4e473e"/><rect x="1328" y="164" width="138" height="31" fill="url(#ngVeneer)"/>
+    <!-- masonry piers dividing the six bays -->
+    <g fill="url(#ngVeneer)">
+      <rect x="128" y="195" width="36" height="157"/>
+      <rect x="352" y="195" width="26" height="157"/>
+      <rect x="500" y="195" width="26" height="157"/>
+      <rect x="676" y="195" width="26" height="157"/>
+      <rect x="898" y="195" width="26" height="157"/>
+      <rect x="1148" y="195" width="26" height="157"/>
+      <rect x="1436" y="195" width="36" height="157"/>
+    </g>
+    <!-- warm panel band above the storefronts -->
+    <rect x="164" y="195" width="1272" height="26" fill="url(#ngPanelWarm)" opacity="0.85"/>
+
+    <!-- storefronts. Suite 150 (the vacant bay) is dark and unsigned. -->
+    <g>
+      <rect x="176" y="238" width="168" height="114" fill="url(#ngGlass)"/>       <!-- 100 Ridgeline -->
+      <rect x="386" y="238" width="106" height="114" fill="url(#ngGlass)"/>       <!-- 110 Corner Post -->
+      <rect x="534" y="238" width="134" height="114" fill="url(#ngGlass)"/>       <!-- 120 Dental -->
+      <rect x="710" y="238" width="180" height="114" fill="url(#ngGlassDark)"/>   <!-- 150 vacant -->
+      <rect x="932" y="238" width="208" height="114" fill="url(#ngGlass)"/>       <!-- 140 Lakeside -->
+      <rect x="1182" y="238" width="246" height="114" fill="url(#ngGlass)"/>      <!-- 130 Bright Lane -->
+    </g>
+    <!-- mullions -->
+    <g stroke="#0d171d" stroke-width="3" opacity="0.72">
+      <path d="M232 238v114M288 238v114M176 300h168"/>
+      <path d="M421 238v114M457 238v114M386 300h106"/>
+      <path d="M579 238v114M623 238v114M534 300h134"/>
+      <path d="M770 238v114M830 238v114M710 300h180"/>
+      <path d="M1001 238v114M1070 238v114M932 300h208"/>
+      <path d="M1264 238v114M1346 238v114M1182 300h246"/>
+    </g>
+    <!-- low-sun reflections raking across the glass -->
+    <g fill="#ffe9c4" opacity="0.2">
+      <path d="M180 238 L226 238 L196 352 L176 352 Z"/>
+      <path d="M390 238 L424 238 L402 352 L386 352 Z"/>
+      <path d="M538 238 L584 238 L556 352 L534 352 Z"/>
+      <path d="M936 238 L992 238 L956 352 L932 352 Z"/>
+      <path d="M1186 238 L1250 238 L1210 352 L1182 352 Z"/>
+    </g>
+    <!-- entry doors; the vacant bay's are papered over -->
+    <g fill="#14222b" stroke="#9fb4a6" stroke-width="2">
+      <rect x="252" y="296" width="34" height="56"/>
+      <rect x="430" y="296" width="24" height="56"/>
+      <rect x="590" y="296" width="24" height="56"/><rect x="616" y="296" width="24" height="56"/>
+      <rect x="1020" y="296" width="24" height="56"/><rect x="1046" y="296" width="24" height="56"/>
+      <rect x="1288" y="296" width="34" height="56"/>
+    </g>
+    <g fill="#d9d2c4" stroke="#8d8578" stroke-width="1.5">
+      <rect x="778" y="296" width="22" height="56"/><rect x="802" y="296" width="22" height="56"/>
+    </g>
+    <!-- leasing placard in the empty bay's window -->
+    <g>
+      <rect x="732" y="252" width="136" height="44" rx="3" fill="#f4efe3" stroke="#b9b0a0" stroke-width="1.5"/>
+      <text x="800" y="271" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700"
+            fill="#3d382f" text-anchor="middle" letter-spacing="1.2">SUITE 150</text>
+      <text x="800" y="287" font-family="Arial, Helvetica, sans-serif" font-size="10"
+            fill="#6e675b" text-anchor="middle" letter-spacing="1.6">NOW LEASING</text>
+    </g>
+
+    <!-- canopies on the leased bays only -->
+    <g fill="url(#ngCanopy)">
+      <path d="M170 238 L350 238 L362 222 L158 222 Z"/>
+      <path d="M382 238 L496 238 L508 222 L370 222 Z"/>
+      <path d="M530 238 L672 238 L684 222 L518 222 Z"/>
+      <path d="M928 238 L1144 238 L1156 222 L916 222 Z"/>
+      <path d="M1178 238 L1432 238 L1444 222 L1166 222 Z"/>
+    </g>
+    <g fill="url(#ngCanopyDeck)">
+      <rect x="158" y="234" width="204" height="5"/><rect x="370" y="234" width="138" height="5"/>
+      <rect x="518" y="234" width="166" height="5"/><rect x="916" y="234" width="240" height="5"/>
+      <rect x="1166" y="234" width="278" height="5"/>
+    </g>
+    <g fill="#000" opacity="0.16">
+      <rect x="176" y="238" width="168" height="13"/><rect x="386" y="238" width="106" height="13"/>
+      <rect x="534" y="238" width="134" height="13"/><rect x="932" y="238" width="208" height="13"/>
+      <rect x="1182" y="238" width="246" height="13"/>
+    </g>
+
+    <!-- tenant signage: the five leased suites, and the centre name on the tower -->
+    <g font-family="'Trebuchet MS', 'Segoe UI', Arial, sans-serif" text-anchor="middle" fill="#3a352d">
+      <text x="260" y="215" font-size="15" font-weight="700" letter-spacing="1">RIDGELINE OUTFITTERS</text>
+      <text x="439" y="215" font-size="11" font-weight="700" letter-spacing="0.6">CORNER POST CAFÉ</text>
+      <text x="601" y="215" font-size="11" font-weight="700" letter-spacing="0.6">NORTHGATE FAMILY DENTAL</text>
+      <text x="1036" y="215" font-size="13" font-weight="700" letter-spacing="0.8">LAKESIDE VETERINARY CLINIC</text>
+      <text x="1305" y="215" font-size="14" font-weight="700" letter-spacing="1">BRIGHT LANE CLEANERS</text>
+    </g>
+    <text x="800" y="164" font-family="'Trebuchet MS', 'Segoe UI', Arial, sans-serif" font-size="25" font-weight="700"
+          fill="#f1ede4" text-anchor="middle" letter-spacing="4">NORTHGATE EXCHANGE</text>
+    <text x="800" y="184" font-family="Arial, Helvetica, sans-serif" font-size="10"
+          fill="#cfe0e2" text-anchor="middle" letter-spacing="3">BOISE, IDAHO</text>
+
+    <!-- suite numbers stencilled by each door -->
+    <g font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#d8dcd6" opacity="0.8" text-anchor="middle">
+      <text x="269" y="290">100</text><text x="442" y="290">110</text><text x="628" y="290">120</text>
+      <text x="1057" y="290">140</text><text x="1305" y="290">130</text>
+    </g>
+
+    <!-- four rooftop units, matching the property record -->
+    <g fill="#9ba2a8" stroke="#6a7178" stroke-width="1.5">
+      <rect x="290" y="156" width="52" height="20" rx="2"/>
+      <rect x="560" y="156" width="52" height="20" rx="2"/>
+      <rect x="1000" y="156" width="52" height="20" rx="2"/>
+      <rect x="1250" y="156" width="52" height="20" rx="2"/>
+    </g>
+    <!-- wall sconces -->
+    <g fill="#ffe2a4" opacity="0.9">
+      <circle cx="366" cy="228" r="3"/><circle cx="514" cy="228" r="3"/><circle cx="690" cy="228" r="3"/>
+      <circle cx="912" cy="228" r="3"/><circle cx="1162" cy="228" r="3"/>
+    </g>
+  </g>
+
+  <!-- sidewalk -->
+  <rect x="128" y="407" width="1344" height="17" fill="#c5bfb3"/>
+  <g stroke="#aca69a" stroke-width="1">
+    <path d="M240 407v17M360 407v17M480 407v17M600 407v17M720 407v17M840 407v17M960 407v17M1080 407v17M1200 407v17M1320 407v17"/>
+  </g>
+
+  <!-- parking field: 90-degree stalls with an ADA pair at the centre -->
+  <g stroke="#e4dcc9" stroke-width="3" opacity="0.8">
+    <path d="M170 452v56M244 452v56M318 452v56M392 452v56M466 452v56M540 452v56M614 452v56M688 452v56M762 452v56M836 452v56M910 452v56M984 452v56M1058 452v56M1132 452v56M1206 452v56M1280 452v56M1354 452v56M1428 452v56"/>
+  </g>
+  <g fill="#3f6fa0" opacity="0.5"><rect x="688" y="452" width="74" height="56"/><rect x="762" y="452" width="74" height="56"/></g>
+  <g stroke="#e4dcc9" stroke-width="2" opacity="0.7"><path d="M688 452v56M762 452v56M836 452v56"/></g>
+  <rect x="0" y="530" width="1600" height="4" fill="#e4dcc9" opacity="0.5"/>
+
+  <!-- parked cars -->
+  <g>
+    <g transform="translate(258 454)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.26" filter="url(#ngSoft2)"/><rect x="0" y="14" width="56" height="36" rx="9" fill="url(#ngCarA)"/><path d="M9 16 L17 4 L39 4 L47 16 Z" fill="#cdd6db"/><rect x="13" y="6" width="30" height="10" rx="3" fill="#2d3b46"/><circle cx="12" cy="50" r="6" fill="#1c2024"/><circle cx="44" cy="50" r="6" fill="#1c2024"/></g>
+    <g transform="translate(406 454)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.26" filter="url(#ngSoft2)"/><rect x="0" y="14" width="56" height="36" rx="9" fill="url(#ngCarB)"/><path d="M9 16 L17 4 L39 4 L47 16 Z" fill="#5a7280"/><rect x="13" y="6" width="30" height="10" rx="3" fill="#1b262e"/><circle cx="12" cy="50" r="6" fill="#1c2024"/><circle cx="44" cy="50" r="6" fill="#1c2024"/></g>
+    <g transform="translate(998 454)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.26" filter="url(#ngSoft2)"/><rect x="0" y="14" width="56" height="36" rx="9" fill="#6d7f52"/><path d="M9 16 L17 4 L39 4 L47 16 Z" fill="#8a9c6c"/><rect x="13" y="6" width="30" height="10" rx="3" fill="#252d1d"/><circle cx="12" cy="50" r="6" fill="#1c2024"/><circle cx="44" cy="50" r="6" fill="#1c2024"/></g>
+    <g transform="translate(1294 454)"><ellipse cx="28" cy="52" rx="34" ry="6" fill="#000" opacity="0.26" filter="url(#ngSoft2)"/><rect x="0" y="14" width="56" height="36" rx="9" fill="url(#ngCarA)"/><path d="M9 16 L17 4 L39 4 L47 16 Z" fill="#cdd6db"/><rect x="13" y="6" width="30" height="10" rx="3" fill="#2d3b46"/><circle cx="12" cy="50" r="6" fill="#1c2024"/><circle cx="44" cy="50" r="6" fill="#1c2024"/></g>
+  </g>
+
+  <!-- landscape islands -->
+  <g>
+    <rect x="1476" y="410" width="66" height="14" rx="3" fill="#6f7f68"/>
+    <rect x="1506" y="336" width="6" height="78" fill="#5a4a38"/><ellipse cx="1509" cy="322" rx="44" ry="40" fill="url(#ngLeaf)"/><ellipse cx="1532" cy="336" rx="24" ry="22" fill="#79a25c" opacity="0.9"/>
+    <rect x="672" y="410" width="58" height="14" rx="3" fill="#6f7f68"/>
+    <rect x="699" y="372" width="5" height="44" fill="#5a4a38"/><ellipse cx="701" cy="362" rx="28" ry="25" fill="url(#ngLeaf)"/>
+  </g>
+
+  <!-- monument sign: nearest thing to the viewer, standing at the street edge of
+       the lot, so it reads as foreground rather than as something on the wall -->
+  <g>
+    <ellipse cx="96" cy="500" rx="86" ry="12" fill="#000" opacity="0.3" filter="url(#ngSoft2)"/>
+    <rect x="18" y="486" width="156" height="16" rx="4" fill="#6f7f68"/>
+    <rect x="30" y="344" width="132" height="146" fill="url(#ngSplit)"/>
+    <rect x="22" y="330" width="148" height="18" rx="3" fill="#6d6559"/>
+    <rect x="40" y="358" width="112" height="82" rx="4" fill="#1f3b42" stroke="#9fb4a6" stroke-width="2.5"/>
+    <text x="96" y="386" font-family="'Trebuchet MS', Arial, sans-serif" font-size="15" font-weight="700" fill="#f1ede4" text-anchor="middle" letter-spacing="0.8">NORTHGATE</text>
+    <text x="96" y="404" font-family="'Trebuchet MS', Arial, sans-serif" font-size="15" font-weight="700" fill="#f1ede4" text-anchor="middle" letter-spacing="0.8">EXCHANGE</text>
+    <line x1="52" y1="412" x2="140" y2="412" stroke="#9fb4a6" stroke-width="1" opacity="0.7"/>
+    <text x="96" y="428" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#a9c3b3" text-anchor="middle" letter-spacing="0.4">1820 NORTHGATE BLVD</text>
+    <rect x="46" y="450" width="100" height="24" rx="3" fill="#cfd4ce" stroke="#8d9189" stroke-width="1"/>
+    <text x="96" y="466" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#3d403a" text-anchor="middle" letter-spacing="0.5">SUITES 100–150</text>
+  </g>
+
+  <!-- label: unmistakably a rendering of a property that does not exist -->
+  <g>
+    <rect x="16" y="524" width="470" height="26" rx="6" fill="#111417" opacity="0.74"/>
+    <text x="28" y="542" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#f1ede4" letter-spacing="0.4">Northgate Exchange — demonstration rendering, fictional property, not a photograph</text>
+  </g>
+</svg>

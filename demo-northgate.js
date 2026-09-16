@@ -139,6 +139,51 @@
     },
   ];
 
+  // ── The property's own reference record ───────────────────────────────────
+  //
+  // WHY THIS EXISTS. property-reference.js resolves a property's reference info
+  // as "its own `info` when present, otherwise the Cascade demo block if this
+  // looks like the demo, otherwise nothing". Northgate looked like the demo —
+  // it carried `_demoVersion`, which is the flag that test reads — so it was
+  // handed Cascade's block whole: Cascade's address, owner, parcel, insurance,
+  // roof, HVAC, and Cascade's architectural rendering at the top of the
+  // workspace. Only the name came from the property, which is why the header
+  // read "Northgate Exchange" over a picture captioned Cascade Commons.
+  //
+  // Stating Northgate's own info fixes it at the first branch, before the demo
+  // fallback is ever consulted. Every field is Northgate's; nothing is borrowed
+  // and nothing is relabelled. Keys match property-reference.js FIELDS.
+  const INFO = {
+    propertyName:      PROPERTY.name,
+    propertyType:      'Retail — Neighborhood Strip Center',
+    address:           PROPERTY.address,
+    owner:             PROPERTY.owner,
+    propertyManager:   'Dana Whitfield — Property Manager',
+    parcelId:          PROPERTY.parcel,
+    yearBuilt:         '2008 (façade refresh 2021)',
+    grossSqft:         PROPERTY.totalSqft,
+    lotSize:           '2.06 acres (89,730 sqft)',
+    numSpaces:         TENANTS.length + 1,   // five leases and Suite 150
+    occupancyPct:      null,                 // derived at render from live tenants
+    constructionType:  'Type II-B — steel frame, masonry veneer, steel joist roof',
+    parkingSpaces:     '96 surface spaces (4 ADA) — 4.0 per 1,000 sqft',
+    zoning:            'C-2 — General Commercial (City of Boise)',
+    insuranceCarrier:  'Cedar Ridge Insurance Group',
+    insurancePolicyNo: 'CRIG-CP-2210488-25',
+    insuranceExpires:  '2026-01-09',
+    roofAge:           'TPO membrane, installed 2021 — 5 yrs of 20 yr warranty used',
+    hvacSummary:       '4 rooftop units (Trane Precedent), 5–7.5 ton, installed 2018–2021',
+    fireProtection:    'Wet-pipe sprinkler throughout, monitored alarm, annual inspection current',
+    utilities:         'Electric: Northgate Utilities Co-op · Water/Sewer: City of Boise · Gas: Intermountain Gas',
+    // Northgate's OWN illustration, drawn for this property and committed
+    // beside its documents, the way Cascade's is. Never Cascade's asset, and
+    // never Cascade's asset with a new caption: the picture itself says
+    // Northgate Exchange, signs the five leased suites, and shows Suite 150
+    // empty — so it cannot quietly disagree with the seed.
+    imageUrl:          'assets/demo/northgate/northgate-exchange-rendering.svg',
+    imageCaption:      'Architectural rendering of the fictional Northgate Exchange — demonstration illustration, not a photograph',
+  };
+
   // The space no lease covers, recorded as vacant rather than left unresolved.
   // 20,100 leased + 3,900 vacant = 24,000, so the coverage finding can account
   // for the whole building and reads green instead of amber.
@@ -184,7 +229,7 @@
   function invoicePath(inv) { return 'assets/demo/northgate/invoices/' + invoiceFileName(inv); }
 
   return {
-    CAM_YEAR, DEMO_VERSION, PROPERTY, TENANTS, VACANCY, INVOICES,
+    CAM_YEAR, DEMO_VERSION, PROPERTY, INFO, TENANTS, VACANCY, INVOICES,
     leasedSqft, poolTotal, proRataPct,
     leaseFileName, leasePath, invoiceFileName, invoicePath,
   };

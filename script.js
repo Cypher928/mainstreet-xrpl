@@ -21735,9 +21735,22 @@ function _initDemoIds(userId) {
   // Northgate Exchange — the second seeded demo property, on its own prefix so
   // it can never collide with Cascade's rows. Six space ids: five leases and
   // the recorded vacancy.
-  NORTHGATE_PROPERTY_ID = 'ne000000-0000-4000-a000-' + node;
+  //
+  // EVERY CHARACTER HERE MUST BE A HEX DIGIT. properties.id, tenants.id and
+  // cam_reconciliations.property_id are all `uuid`, and Postgres rejects
+  // anything that is not one. This prefix was 'ne000000', and `n` is not hex —
+  // so on a real database every Northgate write failed: the property upsert
+  // (which logs and continues, leaving the demo running from memory and
+  // localStorage), the tenant insert, and then saveCamResults, whose ownership
+  // check could not find a property that had never been stored. The symptom a
+  // manager saw was "These CAM results weren't saved to the server" on a
+  // reconciliation that had otherwise worked perfectly. The mock database the
+  // e2e suites run against does not validate uuids, which is exactly why they
+  // passed. 'de000001' is hex, and is not 'dec00000', so it cannot be mistaken
+  // for Cascade by the id test in property-reference.js.
+  NORTHGATE_PROPERTY_ID = 'de000001-0000-4000-a000-' + node;
   _NORTHGATE_SPACE_IDS  = [1, 2, 3, 4, 5, 6].map(n =>
-    'ne000000-0000-4000-a00' + n + '-' + node
+    'de000001-0000-4000-a00' + n + '-' + node
   );
 }
 
@@ -22476,6 +22489,28 @@ async function ensureNorthgateDemo() {
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id || !NORTHGATE_PROPERTY_ID) return null;
 
+  // THE ID THIS PROPERTY USED TO HAVE. Northgate was seeded once under an id
+  // beginning 'ne000000-', which is not a uuid, so the database refused every
+  // write and that copy exists ONLY in _props and localStorage — there is no
+  // row to delete and no data to lose. Left alone it would come back on the
+  // next load beside the real one, and the manager would see two identical
+  // Northgate Exchanges. It is dropped from both places, once, on the way past.
+  const _ngLegacyPrefix = 'ne000000-';
+  try {
+    for (let i = _props.length - 1; i >= 0; i--) {
+      if (String(_props[i]?.id || '').toLowerCase().startsWith(_ngLegacyPrefix)) _props.splice(i, 1);
+    }
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
+    let dropped = 0;
+    Object.keys(stored).forEach(id => {
+      if (id.toLowerCase().startsWith(_ngLegacyPrefix)) { delete stored[id]; dropped++; }
+    });
+    if (dropped) {
+      _lsSet(_lsUserKey(), JSON.stringify(stored));
+      console.log('[ensureNorthgateDemo] removed', dropped, 'unsaveable legacy copy/copies');
+    }
+  } catch (_) { /* nothing stored locally — nothing to clean */ }
+
   // Idempotency. Same contract Cascade's _demoV carries: a stored row at the
   // current version is left alone, so opening the property repeatedly — or
   // reloading after editing it — never re-seeds over what is there.
@@ -22600,8 +22635,15 @@ async function ensureNorthgateDemo() {
   };
 
   const propertyData = {
+    // _ngV ONLY. This carried _demoVersion as well, and _demoVersion is exactly
+    // the flag PropertyReference.isDemo() reads to decide a property IS the
+    // Cascade showroom — so Northgate inherited Cascade's reference block: its
+    // rendering, address, owner, parcel, insurance policy, roof and HVAC, plus
+    // Cascade's property and space document catalogs. Northgate states its own
+    // facts in ND.INFO below, which infoFor() returns from its first branch, and
+    // it is identified by _ngV, which no other reader confuses with Cascade.
     _ngV:      ND.DEMO_VERSION,
-    _demoVersion: ND.DEMO_VERSION,
+    info:      ND.INFO,
     invoices:  ngInvoices,
     disputes:  [],
     timeline:  [],
@@ -22631,8 +22673,10 @@ async function ensureNorthgateDemo() {
     id: NORTHGATE_PROPERTY_ID,
     // The version marker travels with the live object as well as the row, so an
     // ordinary save cannot strip it and cause the next open to re-seed over the
-    // manager's own edits. Same reason Cascade carries _demoV.
-    _ngV: ND.DEMO_VERSION, _demoVersion: ND.DEMO_VERSION,
+    // manager's own edits. Same reason Cascade carries _demoV — and, as above,
+    // _ngV alone: _demoVersion here handed Northgate Cascade's reference block.
+    _ngV: ND.DEMO_VERSION,
+    info: ND.INFO,
     name: PROP_NAME, totalSqft: PROP_SQFT,
     tenants: ngSpaces, invoices: ngInvoices,
     disputes: [], timeline: [], camYear: CAM_YEAR,
