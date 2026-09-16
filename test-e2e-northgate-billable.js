@@ -661,6 +661,26 @@ const READ = `(() => {
   yes(/Northgate Exchange/i.test(H.caption || '') && /not a photograph/i.test(H.caption || ''),
       'the caption names Northgate and says it is not a photograph', H.caption);
 
+  // THE STORED ROW, NOT THE CACHE. _lsSave writes the live object — info and
+  // all — to localStorage, so a row that reached the database without its info
+  // block still renders correctly in the tab that seeded it. On a second device
+  // there is no localStorage to cover for it: the seeder finds a row already at
+  // _ngV, skips, and hydrates a property with no info, no isDemo fallback and
+  // therefore no image. Reading the row directly is the only way to see that.
+  const ROW = await page.evaluate(async () => {
+    const p = currentProperty();
+    const { data } = await window.supabase.createClient().from('properties')
+      .select('data').eq('id', p.id).single();
+    const info = data && data.data && data.data.info;
+    return { hasInfo: !!info, image: info ? info.imageUrl : null,
+             address: info ? info.address : null,
+             demoVersion: data && data.data ? (data.data._demoVersion ?? null) : 'no row' };
+  });
+  yes(ROW.hasInfo, 'the row IN THE DATABASE carries Northgate\'s info, not only the local cache', JSON.stringify(ROW));
+  is(ROW.image, D.INFO.imageUrl, 'including its own rendering, so a second device shows the same picture');
+  is(ROW.address, D.PROPERTY.address, 'and its own address');
+  is(ROW.demoVersion, null, 'and the row carries no Cascade marker to fall back through');
+
   const REF = await page.evaluate(() => {
     const p = currentProperty();
     const info = PropertyReference.infoFor(p);
