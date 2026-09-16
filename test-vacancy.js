@@ -180,5 +180,56 @@ t('C3 buildPropMeta counts leases, not spaces', () => {
   eq(b.tenantCount ?? b.tenants ?? null, a.tenantCount ?? a.tenants ?? null);
 });
 
+// ── D · one vacancy-aware authority, and the readers that count through it ──
+//
+// A recorded vacancy is a row on `tenants` with `vacant: true`. Five readers
+// each had their own filter and five did not, and the five that did not called
+// a building with a vacant suite "100% Occupied · 6 Tenants" while its own
+// Spaces tab said 5 and 1. tenant-normalize.js now owns the definition; these
+// pin that each reader asks it rather than re-deriving it.
+console.log('\n── D · one vacancy-aware authority ──');
+const TN = require('./tenant-normalize.js');
+const PR = require('./property-reference.js');
+const PA = require('./property-area.js');
+const PC = require('./property-cabinet.js');
+const NG = () => ({ id: 'ng', name: 'Northgate Exchange', totalSqft: 24000, tenants: [
+  { id: 'a', tenant_name: 'Ridgeline Outfitters', leased_sqft: '8400' },
+  { id: 'b', tenant_name: 'Corner Post Café',     leased_sqft: '2100' },
+  { id: 'c', tenant_name: 'Northgate Family Dental', leased_sqft: '3600' },
+  { id: 'd', tenant_name: 'Bright Lane Cleaners', leased_sqft: '1800' },
+  { id: 'e', tenant_name: 'Lakeside Veterinary Clinic', leased_sqft: '4200' },
+  { id: 'v', suite: '150', leased_sqft: '3900', vacant: true },
+] });
+
+t('D1 TenantNormalize.isVacantSpace is strictly the boolean flag', () => {
+  ok(TN.isVacantSpace({ vacant: true }) === true);
+  ok(TN.isVacantSpace({ vacant: 'true' }) === false, 'a string is not vacant');
+  ok(TN.isVacantSpace({ vacant: 1 }) === false, 'a number is not vacant');
+  ok(TN.isVacantSpace({ tenant_name: 'Vacant' }) === false, 'a tenant named Vacant is a tenant');
+  ok(TN.isVacantSpace(null) === false);
+});
+t('D2 occupiedTenants removes exactly the vacancies and nothing else', () => {
+  const rows = NG().tenants;
+  eq(TN.occupiedTenants(rows).map(x => x.id), ['a', 'b', 'c', 'd', 'e']);
+  eq(TN.occupiedTenants(rows.concat([{ id: 'n', tenant_name: '', leased_sqft: '10' }])).map(x => x.id), ['a', 'b', 'c', 'd', 'e', 'n'], 'a nameless lease is still a row for the caller to judge');
+  eq(TN.occupiedTenants(null), []);
+});
+t('D3 Property Information occupancy is occupied area over the building — 83.8%, not 100%', () => {
+  eq(PR.occupancyPct(NG()), 83.8);
+  const p = NG(); p.tenants = p.tenants.filter(x => !x.vacant); eq(PR.occupancyPct(p), 83.8, 'the same with the vacancy simply absent');
+});
+t('D4 the leased-area authority (property record, AI occupancy, MCP) leaves the vacancy out', () => {
+  const a = PA.leasedSqft(NG()); eq(a.value, 20100); eq(a.tenantsCounted, 5); eq(a.complete, true);
+  eq(PA.occupancyPct(NG()).value, 83.8);
+});
+t('D5 the cabinet counts five active tenants and one vacancy through the same definition', () => {
+  eq(PC.activeTenants(NG()).length, 5);
+  ok(PC.isVacant(NG().tenants[5]) === true && PC.isVacant(NG().tenants[0]) === false);
+});
+t('D6 without a vacancy row nothing changes for any of them', () => {
+  const p = { totalSqft: 10000, tenants: [{ id: 'x', tenant_name: 'X', leased_sqft: '6000' }, { id: 'y', tenant_name: 'Y', leased_sqft: '3000' }] };
+  eq(TN.occupiedTenants(p.tenants).length, 2); eq(PR.occupancyPct(p), 90); eq(PA.leasedSqft(p).value, 9000); eq(PC.activeTenants(p).length, 2);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

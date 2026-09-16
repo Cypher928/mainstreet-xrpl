@@ -1436,7 +1436,12 @@ window.AIWorkspace = (() => {
       const rec = record ? record(p) : null;
       const occ = (rec && rec.identity && rec.identity.occupancy != null)
         ? rec.identity.occupancy : null;
-      const tenantCount = (rec && Array.isArray(rec.spaces)) ? rec.spaces.length : (p.tenants || []).length;
+      // Tenants, not spaces: a recorded vacancy is a space on the record and on
+      // p.tenants, and it is not a tenant. This said "6 tenants, 100% occupied"
+      // of a building with five leases and a vacant suite.
+      const tenantCount = (rec && Array.isArray(rec.spaces))
+        ? rec.spaces.filter(sp => !sp.vacant).length
+        : window.TenantNormalize.occupiedTenants(p.tenants).length;
       // Attention was invisible to the AI entirely (Phase G). It is a ranked list
       // the product already computes; the summary now names its top item.
       const attn = (rec && Array.isArray(rec.attention)) ? rec.attention : null;

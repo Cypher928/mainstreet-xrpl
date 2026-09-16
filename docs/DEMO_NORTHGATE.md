@@ -83,7 +83,13 @@ The property has its own id prefix (`de000001-…`, derived per user like
 Cascade's) and its own version marker, `_ngV`. A stored row already at the
 current version is left alone, so opening the property repeatedly, or reloading
 after editing it, never re-seeds over what is there. The marker travels on the
-live object as well as the stored row, so an ordinary save cannot strip it. The
+live object as well as the stored row, and — since the first Pilot walkthrough
+— through the save payload and the load hydration too. It did not at first:
+`saveProperty` copied `_demoV` into the row and not `_ngV`, so the first
+ordinary save (a removed invoice, an entered cap base, a recorded vacancy)
+wrote a row that looked unseeded, and the next open re-seeded over the
+manager's edit. The persistence test now waits past the 800 ms save debounce,
+asserts on the stored row, and reopens the property from a fresh page. The
 denormalised `tenants` table receives the five leases only: the vacant row is a
 space, not a tenant.
 

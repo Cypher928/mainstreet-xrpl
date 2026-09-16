@@ -158,6 +158,30 @@ const READ = `(() => {
   yes(D1.uncovered == null, 'the uncovered-remainder note is gone — the building is accounted for', D1.uncovered);
 
   // ══ 3 · represented in Spaces ═════════════════════════════════════════════
+  // ══ 1b · every surface that counts spaces agrees, with no reload ══════════
+  // The Property tab's header was drawn when the property opened and not
+  // redrawn here, so it went on saying "0 Vacant" until a reload; and the
+  // Property Information panel and the AI summary counted the vacancy as a
+  // tenant and its area as occupied. All of them now read one definition.
+  sec('1b · the Property header, Property Information and the AI summary all say 5 occupied · 1 vacant, immediately');
+  const S1 = await page.evaluate(() => {
+    const T = el => el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+    switchWorkspaceTab('property');
+    const snap = Array.from(document.querySelectorAll('#propertyOsBody .pcv-snap-cell')).map(T);
+    const strip = T(document.getElementById('propertyKpiHeader'));
+    const info = window.PropertyReference.infoFor(currentProperty());
+    const occ = window.PropertyReference.occupancyPct(currentProperty());
+    const p = currentProperty();
+    const ai = window.AIWorkspace.answer({ question: 'Summarize ' + p.name, context: { propertyId: p.id }, wctx: { propertyId: p.id }, props: _props });
+    switchWorkspaceTab('spaces');
+    return { snap, strip, numSpaces: info.numSpaces, occ, aiFirst: (ai.paragraphs || [])[0] || '' };
+  });
+  is(S1.snap, ['26,000 SFTotal size', '6Spaces', '5Occupied', '1Vacant', '90%Occupancy'], 'the Property header already shows 6 spaces · 5 occupied · 1 vacant · 90% — no reload');
+  yes(/5 tenant spaces/.test(S1.strip || '') && /90%/.test(S1.strip || ''), 'the KPI strip above the tabs agrees: 5 tenant spaces, 90%', S1.strip);
+  is(S1.numSpaces, 6, 'Property Information counts six spaces — a vacancy is a space');
+  is(S1.occ, 90, 'and its Occupancy is 90%, from occupied area, not 100%');
+  yes(/^5 tenants, 90% occupied/.test(S1.aiFirst), 'the AI summary says "5 tenants, 90% occupied"', S1.aiFirst);
+
   sec('3 · the vacant space is a clearly-labelled row in Spaces');
   const vac = D1.rows.find(r => r.vacant);
   yes(vac && vac.suite === '106' && vac.tenant === 'Vacant' && vac.status === 'Vacant' && vac.sqft === '2,600', 'row: Suite 106 · Vacant · 2,600 · Vacant badge', JSON.stringify(vac));
@@ -300,6 +324,27 @@ const READ = `(() => {
   is(D4.results, BASE.results, 'the restored charges are the original charges');
   is(D4.findings.map(f => [f.sev, f.title]), [['green', 'Property CAM coverage: 90.0% documented · 10.0% confirmed vacant']], 'the coverage finding is green on the restored path');
   is(D4.facts['Recorded vacant'], '1 space · 2,600 sqft · landlord absorbs', 'Prepare still shows the recorded vacancy');
+
+  // ══ 2b · the portfolio card, after the reload ═════════════════════════════
+  // The first screen a manager sees. It said "100% Occupied · 6 Tenants" of
+  // this building with the vacancy recorded; it counts occupied tenants now.
+  sec('2b · the portfolio card says 5 tenants and 90% occupied');
+  const CARD = await page.evaluate(async () => {
+    const T = el => el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+    const id = currentProperty().id;
+    ccShowPortfolio();
+    await new Promise(r => setTimeout(r, 700));
+    const card = Array.from(document.querySelectorAll('.ptf-prop-card')).find(c => /Cascade Commons/.test(T(c)));
+    const stats = card ? Array.from(card.querySelectorAll('.ptf-stat')).map(T) : null;
+    selectProperty(id);
+    await new Promise(r => setTimeout(r, 2000));
+    switchWorkspaceTab('spaces');
+    return { stats };
+  });
+  // The portfolio-level KPI beside the cards is a portfolio-wide figure over
+  // every property and is pinned by test-vacancy.js C2; the card is the
+  // per-property statement a manager reads first, and it is what was wrong.
+  yes(CARD.stats && CARD.stats[0] === '90%Occupied' && CARD.stats[1] === '5Tenants', 'the card reads 90% Occupied · 5 Tenants', JSON.stringify(CARD.stats));
 
   // ══ 8 · occupied tenants unchanged ════════════════════════════════════════
   sec('8 · the occupied tenants are exactly what they were');

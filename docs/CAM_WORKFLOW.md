@@ -143,6 +143,21 @@ readiness and the occupancy sum in `selectors.js` skip it too. Recording the
 same suite again updates its area rather than adding a second row; a suite
 under a loaded lease is refused and the lease named.
 
+**One definition of vacant.** Five readers had each written their own
+"skip `vacant === true`", and the five that had not — the portfolio card, the
+Property Information panel, the Command Center's per-property occupancy, the
+property record and the AI summary — counted the vacancy as a tenant and its
+area as occupied: "100% Occupied · 6 Tenants" of a building whose own Spaces
+tab said "5 occupied · 1 vacant". `tenant-normalize.js`, which already owns
+the field, now exports `isVacantSpace(t)` and `occupiedTenants(list)`, and
+`PropertyCabinet.isVacant`, `PropertyArea._tenants`,
+`PropertyReference.occupancyPct`, the portfolio card, `command-center.js` and
+`ai-workspace.js` all ask it. A vacancy is still a *space* — "Number of
+Spaces" counts it — but never a tenant and never occupied area. And
+`recordVacantSpace` redraws the Property tab's header, so its space, occupied
+and vacant counts change the moment the vacancy is recorded, not on the next
+reload.
+
 What reads it: the engine's coverage finding subtracts confirmed vacancy from
 the uncovered remainder. When the remainder after recorded vacancy is within
 the same 2% safeguard, the finding is **green** (advisory, never blocking):

@@ -147,6 +147,23 @@ const MUTANTS = [
   { id: 'N26', file: S, why: 'the unsaveable copy under the old id is left to reappear as a twin',
     from: "  const _ngLegacyPrefix = 'ne000000-';",
     to:   "  const _ngLegacyPrefix = '\\u0000never-matches-';" },
+
+  // ── persistence: the version marker must survive a save and a reopen ──────
+  // The defect: an ordinary save wrote the row without _ngV, and the next open
+  // re-seeded over the manager's edits. Each of the three places the marker
+  // travels through is removed in turn.
+  { id: 'N27', file: S, why: 'the save payload drops _ngV, so the first save makes the row look unseeded',
+    from: "      _ngV:              stripped._ngV,",
+    to:   "      _ngV:              undefined," },
+  { id: 'N28', file: S, why: 'the loaded data drops _ngV, so the live object loses it and the next save strips it',
+    from: "        _ngV:              d._ngV          ?? null,",
+    to:   "        _ngV:              null," },
+  { id: 'N29', file: S, why: 'the merged data drops _ngV',
+    from: "    _ngV:              dbData._ngV         ?? base._ngV         ?? null,",
+    to:   "    _ngV:              null," },
+  { id: 'N30', file: S, why: 'the marker is not copied onto the live property on open',
+    from: "    if (data._ngV != null)         property._ngV         = data._ngV;",
+    to:   "" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ngmut-'));

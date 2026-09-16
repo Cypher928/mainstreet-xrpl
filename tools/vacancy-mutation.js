@@ -35,6 +35,7 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const S = 'script.js', E = 'reconciliation-engine.js', T = 'tenant-space.js', V = 'variance-breakdown.js', SEL = 'selectors.js';
+const PR = 'property-reference.js', PA = 'property-area.js', CC = 'command-center.js', AI = 'ai-workspace.js', PREC = 'property-record.js';
 
 const MUTANTS = [
   { id: 'V01', file: S, why: 'the allocation set stops excluding vacant rows',
@@ -93,6 +94,31 @@ const MUTANTS = [
   { id: 'V19', file: T, why: "the form's refusal is swallowed",
     from: "      _list.vacantError = (res && res.error) || 'The vacancy could not be recorded.';",
     to:   "      _list.vacantError = '';" },
+  // ── one vacancy-aware authority, and every consumer that reads it ─────────
+  // Each of these is a consumer that once counted the vacancy as a sixth
+  // tenant and its area as occupied ("100% Occupied · 6 Tenants" on a building
+  // whose Spaces tab said 5 and 1). Each is sent back to its own arithmetic.
+  { id: 'V21', file: S, why: 'the portfolio card counts every row as a tenant and every area as occupied',
+    from: "    const _occupiedRows = Array.isArray(p.tenants) ? window.TenantNormalize.occupiedTenants(p.tenants) : null;",
+    to:   "    const _occupiedRows = Array.isArray(p.tenants) ? p.tenants : null;" },
+  { id: 'V22', file: PR, why: 'the Property Information occupancy counts vacant area as leased',
+    from: "    var leased = _TN().occupiedTenants(property.tenants).reduce(function (s, t) {",
+    to:   "    var leased = (property.tenants || []).reduce(function (s, t) {" },
+  { id: 'V23', file: PA, why: 'the leased-area authority (property record, AI occupancy) counts the vacancy',
+    from: "    return Array.isArray(t) ? _TN().occupiedTenants(t) : [];",
+    to:   "    return Array.isArray(t) ? t.filter(Boolean) : [];" },
+  { id: 'V24', file: CC, why: "the Command Center's per-property occupancy counts vacant area as occupied",
+    from: "      const occupied = window.TenantNormalize.occupiedTenants(p.tenants).reduce((s, t) => s + _num(t && t.leased_sqft), 0);",
+    to:   "      const occupied = (p.tenants || []).reduce((s, t) => s + _num(t && t.leased_sqft), 0);" },
+  { id: 'V25', file: AI, why: 'the AI summary counts the vacancy as a tenant',
+    from: "        ? rec.spaces.filter(sp => !sp.vacant).length",
+    to:   "        ? rec.spaces.length" },
+  { id: 'V26', file: PREC, why: 'the property record stops saying which space is vacant',
+    from: "        vacant:     !!(t && t.vacant === true),",
+    to:   "        vacant:     false," },
+  { id: 'V27', file: S, why: 'the Property tab header is not redrawn after a vacancy is recorded',
+    from: "  try { if (window.PropertyOS && typeof PropertyOS.renderPropertyPage === 'function') PropertyOS.renderPropertyPage(prop, { allowCollapse: false }); } catch (_) {}",
+    to:   "" },
   { id: 'V20', file: SEL, why: 'the property readiness selector counts a vacancy as a lease',
     from: "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];\n    const snap    = p.camReconciliation ?? null;",
     to:   "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];\n    const snap    = p.camReconciliation ?? null;" },

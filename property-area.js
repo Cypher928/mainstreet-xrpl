@@ -78,9 +78,18 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  // A recorded vacancy (`vacant: true`) is a space on this array, not a lease:
+  // its area is by definition NOT under lease, so it is excluded here — through
+  // the one definition tenant-normalize.js owns — before anything is summed.
+  // Counting it made a building with a recorded vacancy read 100% occupied.
+  function _TN() {
+    if (typeof root !== 'undefined' && root && root.TenantNormalize) return root.TenantNormalize;
+    if (typeof require === 'function') return require('./tenant-normalize.js');
+    throw new Error('property-area.js: TenantNormalize is not loaded');
+  }
   function _tenants(property) {
     var t = property && property.tenants;
-    return Array.isArray(t) ? t.filter(Boolean) : [];
+    return Array.isArray(t) ? _TN().occupiedTenants(t) : [];
   }
 
   /**

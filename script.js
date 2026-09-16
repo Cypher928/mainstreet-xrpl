@@ -3721,6 +3721,15 @@ function recordVacantSpace(suite, sqft) {
   try { if (typeof renderCamWorkflow === 'function') renderCamWorkflow(); } catch (_) {}
   try { if (typeof renderAuditPanel === 'function' && lastResults.length) renderAuditPanel(); } catch (_) {}
   try { if (typeof _refreshAdvisorSurfaces === 'function') _refreshAdvisorSurfaces(prop); } catch (_) {}
+  // The Property tab's header counts spaces, occupied and vacant. It is drawn
+  // when the property opens and was not redrawn here, so after "Mark space
+  // vacant" it went on saying "0 Vacant" until a reload. Same refresh call the
+  // property open uses; allowCollapse:false keeps a setup card the manager is
+  // still filling in exactly as it is.
+  try { if (window.PropertyOS && typeof PropertyOS.renderPropertyPage === 'function') PropertyOS.renderPropertyPage(prop, { allowCollapse: false }); } catch (_) {}
+  // The KPI strip above the tabs states occupancy from the same roster and is
+  // drawn on open as well; redrawn here for the same reason.
+  try { if (typeof renderPropertyKpiHeader === 'function') renderPropertyKpiHeader(prop); } catch (_) {}
   return { ok: true, row, updated };
 }
 window.recordVacantSpace = recordVacantSpace;
@@ -26036,13 +26045,17 @@ function renderPortfolio(props) {
     ? `<div class="ptf-empty-state"><div class="ptf-empty-icon">&#x1F50D;</div><div class="ptf-empty-title">No properties match "${esc(_portfolioQuery)}"</div></div>`
     : _demoInvite + _displayPairs.map(({ p, m }) => {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
-    const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
+    // A recorded vacancy is a row on p.tenants and is not a tenant; its area is
+    // not occupied area. One definition, tenant-normalize.js — this card said
+    // "100% Occupied · 6 Tenants" of a building whose Spaces tab said 5 and 1.
+    const _occupiedRows = Array.isArray(p.tenants) ? window.TenantNormalize.occupiedTenants(p.tenants) : null;
+    const tenants = _occupiedRows ? _occupiedRows.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
     const status  = p.status || 'in-progress';
 
     // Per-property occupancy
     const bsqft   = Number(p.totalSqft) || 0;
-    const occSqft = (Array.isArray(p.tenants) ? p.tenants : []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+    const occSqft = (_occupiedRows || []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
     const occPct  = bsqft > 0 ? Math.round((occSqft / bsqft) * 100) : null;
 
     const trendHtml = (() => {
@@ -26312,6 +26325,7 @@ async function selectProperty(id) {
     // its version and the next open does not re-seed it (demoPropFull).
     if (data._demoV != null)       property._demoV       = data._demoV;
     if (data._demoVersion != null) property._demoVersion = data._demoVersion;
+    if (data._ngV != null)         property._ngV         = data._ngV;
     // Settlement record (RLUSD proof-of-settlement) is loaded from the data blob here too —
     // loadProperties() skips the blob, so this lazy load is the only place it arrives. Without
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
@@ -28334,6 +28348,12 @@ async function saveProperty(property) {
       // demo to needlessly re-seed on every subsequent load). Undefined for real properties.
       _demoVersion:      stripped._demoVersion,
       _demoV:            stripped._demoV,
+      // NORTHGATE'S MARKER TRAVELS TOO. Without this line the first ordinary
+      // save wrote the row without _ngV, the next open found "no current seed"
+      // and re-seeded — silently discarding whatever the manager had changed:
+      // a removed invoice, an entered cap base, a recorded vacancy. Same
+      // omission, same consequence, as the _demoV one fixed for Cascade.
+      _ngV:              stripped._ngV,
       activityLog:       stripped.activityLog       || [],
       timeline:          stripped.timeline          || [],
       // Tenants are persisted here (not only in the tenants table) so that
@@ -28777,6 +28797,7 @@ async function loadPropertyData(id) {
         // The demo's seed version — see demoPropFull in ensureDemoProperty.
         _demoV:            d._demoV        ?? null,
         _demoVersion:      d._demoVersion  ?? null,
+        _ngV:              d._ngV          ?? null,
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -28944,6 +28965,7 @@ async function loadPropertyData(id) {
     info:              (dbData.info && typeof dbData.info === 'object') ? dbData.info : (base.info ?? null),
     _demoV:            dbData._demoV       ?? base._demoV       ?? null,
     _demoVersion:      dbData._demoVersion ?? base._demoVersion ?? null,
+    _ngV:              dbData._ngV         ?? base._ngV         ?? null,
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects

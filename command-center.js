@@ -597,7 +597,9 @@ window.CommandCenter = (() => {
     const health = perProp.map(({ p, meta, readiness }) => {
       const h = _healthFor(p, meta, readiness);
       const rrProp = (rr.byProperty || []).find(bp => bp.id === p.id);
-      const occupied = (p.tenants || []).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
+      // A recorded vacancy is on p.tenants; its area is not occupied. One
+      // definition (tenant-normalize.js), the same one the portfolio KPI uses.
+      const occupied = window.TenantNormalize.occupiedTenants(p.tenants).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
       return {
         propertyId: p.id, propertyName: p.name, ...h,
         opportunity: (rrProp?.total || 0),

@@ -112,6 +112,11 @@ const CLASSIFICATION = {
                   why: "cam-pool.js and money-cents.js fall back to require('./source-values.js')" },
   VarianceBreakdown: { kind: 'module', require: './variance-breakdown.js',
                   why: 'own export assignment in variance-breakdown.js; also a declared dependency' },
+  TenantNormalize: { kind: 'module', require: './tenant-normalize.js',
+                  why: 'the one definition of a vacant space (isVacantSpace / occupiedTenants); ' +
+                       'property-reference.js, property-area.js and property-cabinet.js fall back to ' +
+                       "require('./tenant-normalize.js'), and the portfolio card, command-center.js and " +
+                       'ai-workspace.js read it from the window it is loaded onto first' },
 
   // ── browser-only: must remain excluded ─────────────────────────────────
   Selectors: { kind: 'browser_only',

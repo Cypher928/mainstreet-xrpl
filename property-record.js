@@ -205,6 +205,10 @@
       return {
         tenantId:   (t && t.id) != null ? t.id : null,
         tenantName: (t && t.tenant_name) != null ? t.tenant_name : null,
+        // A recorded vacancy is a space in this list, and is reported as one —
+        // so a reader counting tenants can leave it out, and one listing spaces
+        // can say it is empty rather than calling it a tenant with no name.
+        vacant:     !!(t && t.vacant === true),
         // TenantSpace decides what a space is called and whether it has an
         // identity at all; both are reported, neither is second-guessed.
         space:      rec && rec.space ? rec.space : null,

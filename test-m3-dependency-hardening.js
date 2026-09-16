@@ -81,8 +81,11 @@ sec('A. Every global the graph can reach for is inventoried and classified');
 
   const total = INVENTORY.rows.length;
   is(total >= 28, 'A4 the inventory is not trivially small', total + ' names');
-  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'SourceValues'],
-     'A5 three explicit module dependencies');
+  // TenantNormalize joined the list when it became the one definition of a
+  // vacant space, read by property-reference.js, property-area.js and
+  // property-cabinet.js through require() as well as from the window.
+  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'SourceValues', 'TenantNormalize'],
+     'A5 four explicit module dependencies');
   // 20 since the Spaces slice: property-workspace.js reads window.PropertyOS to
   // reveal a COLLAPSED #cardLeases before navigating to it.
   // 21 since the billing-readiness slice: tenant-space.js reads

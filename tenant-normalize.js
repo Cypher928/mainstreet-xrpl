@@ -194,8 +194,28 @@
     };
   }
 
+  // ── THE ONE DEFINITION OF A VACANT SPACE ──────────────────────────────────
+  //
+  // A recorded vacancy is a row on the tenants array with `vacant: true`. It
+  // keeps its suite and area, so it is a SPACE — but it is not a tenant, it is
+  // not occupied area, and it is never a lease. Five readers had each written
+  // their own version of that sentence, and the ones that had not (the portfolio
+  // card, the Property Information panel, the Command Center's per-property
+  // occupancy, the property record, the AI summary) counted the vacancy as a
+  // sixth tenant and its 3,900 sqft as leased: "100% Occupied · 6 Tenants" on
+  // a building whose own Spaces tab said "5 occupied · 1 vacant". Every reader
+  // now asks here. `occupiedTenants` is the roster with vacancies removed —
+  // nothing else is filtered, so a nameless or incomplete lease still counts as
+  // a lease for the caller to judge.
+  function isVacantSpace(t) { return !!(t && t.vacant === true); }
+  function occupiedTenants(list) {
+    return (Array.isArray(list) ? list : []).filter(function (t) { return t && !isVacantSpace(t); });
+  }
+
   const api = {
     normalizeTenant:      normalizeTenant,
+    isVacantSpace:        isVacantSpace,
+    occupiedTenants:      occupiedTenants,
     cleanTenantName:      cleanTenantName,
     toISODate:            toISODate,
     extractDatesFromText: extractDatesFromText,

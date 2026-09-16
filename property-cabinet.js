@@ -181,7 +181,16 @@
   // NOT a lease: activeTenants() is what CAM inputs and coverage arithmetic
   // should read once Phase 1 routes them here. Nothing in this module changes
   // what CAM reads today.
-  function isVacant(t) { return !!(t && t.vacant === true); }
+  // Vacancy has ONE definition, in tenant-normalize.js, which owns the field.
+  // tenant-normalize.js is the first module the page loads and every test that
+  // requires this file can require that one; a missing authority is a broken
+  // build, not a reason to guess.
+  function _TN() {
+    if (typeof window !== 'undefined' && window.TenantNormalize) return window.TenantNormalize;
+    if (typeof require === 'function') return require('./tenant-normalize.js');
+    throw new Error('property-cabinet.js: TenantNormalize is not loaded');
+  }
+  function isVacant(t) { return _TN().isVacantSpace(t); }
 
   function activeTenants(property) {
     return ((property && property.tenants) || []).filter(function (t) {

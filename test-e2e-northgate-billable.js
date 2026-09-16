@@ -432,27 +432,75 @@ const READ = `(() => {
   // re-runs, so "nothing duplicated" cannot tell the version check from its
   // absence. What the check is FOR is not clobbering what the manager did, so
   // that is what is asserted: change something, seed again, and it survives.
+  //
+  // THIS BLOCK USED TO PASS FOR THE WRONG REASON. savePropertyData() is
+  // debounced by 800 ms and returns before the write; the old version waited
+  // 500 ms and re-seeded against a row that had not been written yet, so it
+  // proved nothing about the persisted state — and the persisted state was
+  // wrong: the save payload dropped _ngV, the next open found no current seed,
+  // and re-seeded over the manager's edit. So: wait past the debounce, assert
+  // on the STORED row, then do what a manager does — close the tab, come back
+  // — and assert the edit is what opens. Two edit types, because the removed
+  // invoice is how the defect was found and the cap is a lease field.
   const KEEP = await page.evaluate(async () => {
     const p = currentProperty();
     const t = p.tenants.find(x => x && x.tenant_name === 'Ridgeline Outfitters');
     const was = t.cap;
     [tenantData, p.tenants].flat().filter(x => x && x.tenant_name === 'Ridgeline Outfitters')
       .forEach(x => { x.cap = '9'; });
-    await savePropertyData();
-    await new Promise(r => setTimeout(r, 500));
-    await ensureNorthgateDemo();
-    await new Promise(r => setTimeout(r, 600));
-    const after = (currentProperty().tenants.find(x => x && x.tenant_name === 'Ridgeline Outfitters') || {}).cap;
-    [tenantData, currentProperty().tenants].flat().filter(x => x && x.tenant_name === 'Ridgeline Outfitters')
-      .forEach(x => { x.cap = was; });
-    await savePropertyData();
-    await new Promise(r => setTimeout(r, 500));
-    return { was, after };
+    savePropertyData();
+    await new Promise(r => setTimeout(r, 1600));          // past the 800 ms debounce
+    const { data } = await window.supabase.createClient().from('properties').select('data').eq('id', p.id).single();
+    const row = (data && data.data) || {};
+    const rowT = (row.tenants || []).find(x => x && x.tenant_name === 'Ridgeline Outfitters') || {};
+    return { was, storedNgV: row._ngV ?? null, storedCap: rowT.cap ?? null, invoicesBefore: (row.invoices || []).length };
   });
-  is(String(KEEP.after), '9',
-     'an edit made to the demo SURVIVES a re-seed — the version marker stops the seed overwriting the manager');
+  is(KEEP.storedNgV, D.DEMO_VERSION, 'after the debounced save, the STORED row still carries _ngV');
+  is(String(KEEP.storedCap), '9', 'and the stored lease carries the edit');
+  // Remove an invoice through the product's own control, then leave.
+  const REMOVED = await page.evaluate(async () => {
+    try { setCamRegisterOpen(true); } catch (_) {}
+    await new Promise(r => setTimeout(r, 300));
+    await removeInvItem(0);
+    await new Promise(r => setTimeout(r, 1600));
+    const { data } = await window.supabase.createClient().from('properties').select('data').eq('id', currentProperty().id).single();
+    return { mem: invoiceData.filter(Boolean).length, stored: ((data && data.data && data.data.invoices) || []).length, storedNgV: (data && data.data && data.data._ngV) ?? null };
+  });
+  is(REMOVED, { mem: D.INVOICES.length - 1, stored: D.INVOICES.length - 1, storedNgV: D.DEMO_VERSION },
+     'removing an invoice is written, and the row still carries _ngV');
+  const seedLogs = [];
+  const onSeed = m => { if (/\[ensureNorthgateDemo\] seeding/.test(m.text())) seedLogs.push(m.text()); };
+  page.on('console', onSeed);
+  await boot();
+  yes(await openNorthgate(), 'the tab is closed and Northgate is reopened from the portfolio');
+  page.off('console', onSeed);
+  await page.evaluate(() => switchWorkspaceTab('cam'));
+  await page.waitForTimeout(700);
+  const REOPENED = await page.evaluate(() => ({
+    cap: (currentProperty().tenants.find(x => x && x.tenant_name === 'Ridgeline Outfitters') || {}).cap,
+    invoices: invoiceData.filter(Boolean).length, ngV: currentProperty()._ngV ?? null,
+  }));
+  is(seedLogs, [], 'the seeder did NOT re-run on reopen — the stored row is at the current version');
+  is(String(REOPENED.cap), '9', 'the cap edit SURVIVES a real reopen');
+  is(REOPENED.invoices, D.INVOICES.length - 1, 'and so does the removed invoice — the register is what the manager left');
+  is(REOPENED.ngV, D.DEMO_VERSION, 'and the live object carries _ngV again, so the next save keeps it too');
+  // Put both edits back for the sections that follow, and wait for the write.
+  await page.evaluate(async () => {
+    [tenantData, currentProperty().tenants].flat().filter(x => x && x.tenant_name === 'Ridgeline Outfitters')
+      .forEach(x => { x.cap = '5'; });
+    const ND = window.DemoNorthgate;
+    const inv0 = ND.INVOICES[0];
+    const restored = { id: 'ng-inv-0', vendorName: inv0.vendorName, amount: inv0.amount, category: inv0.category,
+      invoiceDate: inv0.invoiceDate, camEligible: true, fileUrl: ND.invoicePath(inv0), fileName: inv0.n + '.pdf' };
+    invoiceData.unshift(restored);
+    currentProperty().invoices = Array.from(invoiceData);
+    _invoiceInputChanged();
+    savePropertyData();
+    await new Promise(r => setTimeout(r, 1600));
+    await runAllocation(); await new Promise(r => setTimeout(r, 2500));
+  });
   const BACK0 = await read();
-  is(BACK0.results, C.results, 'and restoring the edit leaves the allocations exactly as they were');
+  is(BACK0.results, C.results, 'restoring both edits and re-running leaves the allocations exactly as they were');
 
   sec('12b · the stored reconciliation can account for its own inputs');
   const FP = await page.evaluate(() => {
@@ -610,7 +658,11 @@ const READ = `(() => {
   const LEGACY = await page.evaluate(async () => {
     const ghostId = 'ne000000-0000-4000-a000-7f3a2b1c9d4e';
     const real = _props.find(p => /Northgate/.test(p.name || ''));
-    const ghost = JSON.parse(JSON.stringify({ ...real, id: ghostId }));
+    // The legacy copy carried the property, not its run history: the ghost is
+    // the identity and the roster, without the reconciliation payload, which
+    // by this point in the suite has been re-run several times and would push
+    // the per-user localStorage map past the browser's quota.
+    const ghost = JSON.parse(JSON.stringify({ ...real, id: ghostId, camReconciliation: null, camRuns: [], activityLog: [], timeline: [], results: null }));
     _props.push(ghost);
     const key = _lsUserKey();
     const stored = JSON.parse(localStorage.getItem(key) || '{}');
