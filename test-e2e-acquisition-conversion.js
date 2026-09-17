@@ -70,7 +70,19 @@ const SUPABASE_MOCK = `
   var _user = { id: USER_ID, email: 'acq-conversion@e2e-test.local' };
   var _session = null;
 
-  var _store = { properties: [], tenants: [], acquisition_reviews: [] };
+  // ONE PROPERTY, BECAUSE THE ACQUISITION MODULE REQUIRES ONE. renderPortfolio
+  // hides #acqSection until the account has at least one property (the
+  // first-time empty state), so a genuinely clean account cannot reach the
+  // acquisition flow at all and .acq-new-btn was display:none. STEP 6 counts
+  // properties, so it now counts the increase rather than the total.
+  var _store = {
+    properties: [{
+      id: 'e2e-seed-prop-0001', user_id: USER_ID,
+      name: 'Seed Plaza', sqft: 10000, archived_at: null, data: {},
+    }],
+    tenants: [],
+    acquisition_reviews: [],
+  };
 
   function noopPromise(val) { return Promise.resolve(val); }
   function genId() { return 'mock-' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
@@ -114,6 +126,9 @@ const SUPABASE_MOCK = `
       neq:      function() { return q; },
       in:       function(col, vals) { _inFilters[col] = vals; return q; },
       not:      function() { return q; },
+      // loadProperties' active path calls .is('archived_at', null); without it
+      // the first portfolio read threw and the account read as empty.
+      is:       function() { return q; },
       order:    function() { return q; },
       limit:    function() { return q; },
       single:   function() {
@@ -159,6 +174,12 @@ const SUPABASE_MOCK = `
   window.__e2eStore = _store;
 })();
 `;
+
+// How many properties the mock account starts with. Declared out here, in Node
+// scope, because STEP 6 asserts on the INCREASE and the mock above is a string
+// evaluated in the browser — a `var` inside it is not visible to the assertions.
+// Keep in step with _store.properties in the mock.
+const SEEDED_PROPERTIES = 1;
 
 const MOCK_TENANT = {
   tenant_name: 'Harborview Outfitters',
@@ -327,12 +348,26 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     assert(badgeAfterConvert === 'converted', 'STEP 6: review badge updated to "converted"', badgeAfterConvert);
 
     const convertedPropsCount = await page.evaluate(() => (typeof _props !== 'undefined' ? _props.length : -1));
-    assert(convertedPropsCount === 1, 'STEP 6: a new managed property was created from the review', '_props.length=' + convertedPropsCount);
+    // ONE MORE PROPERTY THAN WE STARTED WITH, and it is found BY NAME.
+    //
+    // The account now opens with a seeded property (see the mock: the
+    // acquisition module is hidden until one exists), so "a property was
+    // created" is the INCREASE, not the total, and the converted property is
+    // not necessarily _props[0]. Asserting on the count alone would also pass
+    // if the conversion had replaced the seed instead of adding to it, so the
+    // seed is checked to still be there.
+    assert(convertedPropsCount === SEEDED_PROPERTIES + 1,
+      'STEP 6: a new managed property was created from the review',
+      '_props.length=' + convertedPropsCount + ' (expected ' + (SEEDED_PROPERTIES + 1) + ')');
 
-    const newPropName = await page.evaluate(() => (typeof _props !== 'undefined' && _props[0] ? _props[0].name : ''));
-    assert(newPropName.includes('Harborview'), 'STEP 6: new property carries the review name', newPropName);
+    const propNames = await page.evaluate(() => (typeof _props !== 'undefined' ? _props.map(p => p && p.name) : []));
+    assert(propNames.some(n => (n || '').includes('Harborview')), 'STEP 6: new property carries the review name', JSON.stringify(propNames));
+    assert(propNames.some(n => (n || '').includes('Seed Plaza')), 'STEP 6: and the pre-existing property was not replaced', JSON.stringify(propNames));
 
-    const newPropTenants = await page.evaluate(() => (typeof _props !== 'undefined' && _props[0] ? (_props[0].tenants || []).map(t => t.tenant_name) : []));
+    const newPropTenants = await page.evaluate(() => {
+      const p = (typeof _props !== 'undefined' ? _props : []).find(x => x && (x.name || '').includes('Harborview'));
+      return p ? (p.tenants || []).map(t => t.tenant_name) : [];
+    });
     assert(newPropTenants.some(n => (n || '').includes('Harborview Outfitters')), 'STEP 6: new property carries the review\'s tenant', JSON.stringify(newPropTenants));
 
     // Back in the portfolio, the converted property should now be open-able.
