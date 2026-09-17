@@ -249,9 +249,29 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
   try {
     // ── STEP 1: Sign up / login ──────────────────────────────────────────────
     section('STEP 1: Login');
-    await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
+    // ?signin=1 — THE INTENT FLAG EVERY CURRENT SUITE USES. landing-experience
+    // maybeShow() returns early on it ("someone who clicked Log in has already
+    // answered the only question this overlay asks"), so the marketing hero
+    // never mounts at z-index 99000 over the sign-in form. Without it the
+    // shared helper clicked Sign In three times into the overlay and threw
+    // "e2e sign-in did not reach the app after 3 attempt(s)". domcontentloaded
+    // rather than networkidle for the same reason the passing suites use it:
+    // the page keeps connections open, so networkidle is a slow coin toss.
+    await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const loginVisible = await page.$eval('#loginScreen', el => el.style.display !== 'none').catch(() => false);
+    // WAIT FOR IT, DO NOT SAMPLE IT. Under the old `networkidle` the page had
+    // long settled by the time this ran; under `domcontentloaded` it runs while
+    // script.js is still booting, and #loginScreen is display:none in the HTML
+    // until _maybeShowLoginFromIntent reveals it. Sampling immediately read the
+    // pre-boot value and called it a failure. The assertion's subject is
+    // unchanged — the login screen IS shown before sign-in — it is simply given
+    // the time the app takes to show it.
+    const loginVisible = await page
+      .waitForFunction(() => {
+        const el = document.getElementById('loginScreen');
+        return !!el && el.style.display !== 'none' && el.style.display !== '';
+      }, null, { timeout: 30000 })
+      .then(() => true).catch(() => false);
     assert(loginVisible, 'STEP 1: login screen visible before sign-in');
 
     await _e2eSignIn(page, { email: "acq-conversion@e2e-test.local", errors: _e2eErrors });
