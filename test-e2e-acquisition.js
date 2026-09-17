@@ -56,9 +56,12 @@ const MIME = {
 function startServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      let filePath = path.join(ROOT, req.url === '/' ? '/index.html' : req.url);
-      // strip query strings
-      filePath = filePath.split('?')[0];
+      // Strip the query BEFORE testing for the root: '/?x=1' does not equal
+      // '/', so stripping afterwards leaves ROOT + '/' — a directory — and the
+      // root answers 404. Latent here (this suite navigates to a bare '/') and
+      // fatal in test-e2e-acquisition-conversion.js, which needs ?signin=1.
+      const urlPath = req.url.split('?')[0];
+      let filePath = path.join(ROOT, urlPath === '/' ? '/index.html' : urlPath);
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
         const ext = path.extname(filePath);

@@ -413,6 +413,8 @@ const SUITES = [
   { label: 'Phase 0 remediation (M1a, M5, P1b)',        cmd: 'node test-phase0-remediation.js' },
   { label: 'Acquisition due diligence',                 cmd: 'node test-acquisition.js' },
   { label: 'Acquisition orphan repair',                 cmd: 'node test-acq-orphan-repair.js' },
+  { label: 'Acquisition review (e2e)',                  cmd: 'node test-e2e-acquisition.js' },
+  { label: 'Acquisition → property conversion (e2e)',   cmd: 'node test-e2e-acquisition-conversion.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Vercel routing contract',                   cmd: 'node test-routing.js' },

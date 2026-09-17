@@ -49,8 +49,15 @@ const MIME = {
 function startServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      let filePath = path.join(ROOT, req.url === '/' ? '/index.html' : req.url);
-      filePath = filePath.split('?')[0];
+      // STRIP THE QUERY FIRST, THEN DECIDE IF IT IS THE ROOT. Stripping after
+      // the check meant '/?signin=1' failed `=== '/'`, so filePath became
+      // ROOT + '/?signin=1' and the split left ROOT + '/' — a DIRECTORY.
+      // readFile on a directory errors, so the root answered 404 and the page
+      // was blank: no #loginScreen, no #loginBtn, and the sign-in helper waited
+      // 45s for an app that had never loaded. The suite could not adopt the
+      // ?signin=1 intent every current suite uses until this was fixed.
+      const urlPath = req.url.split('?')[0];
+      let filePath = path.join(ROOT, urlPath === '/' ? '/index.html' : urlPath);
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
         const ext = path.extname(filePath);
@@ -233,10 +240,20 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
   // image parsing, and /api/upload for cloud-backup of the invoice file.
   await page.route('**/api/claude', route => {
     const postData = route.request().postData() || '';
-    // Both lease and invoice calls send a "document" content block (text-based
-    // extraction for .txt leases, base64 PDF for invoices), so route by the
-    // distinguishing prompt text instead of content-block type.
-    const isInvoiceCall = postData.includes('commercial real estate invoice');
+    // ROUTE ON THE NAMED TASK, NOT ON PROMPT TEXT.
+    //
+    // This matched the literal 'commercial real estate invoice', which the
+    // client used to send inside the prompt. The prompts moved server-side
+    // (api/_claude-tasks.js) and the client now posts a task NAME —
+    // callClaude(file, 'invoice_extraction'). That string appears nowhere in
+    // script.js any more, so the match was always false: every call got
+    // MOCK_TENANT, the invoice list showed only the uploaded filename, and
+    // STEP 4 failed on a vendor that had never been returned.
+    //
+    // `task` is the stable contract between client and endpoint, so keying on
+    // it is both correct today and the thing that will still be true after the
+    // next prompt edit. Lease calls use lease_extraction / lease_claude_extraction.
+    const isInvoiceCall = /"task"\s*:\s*"invoice_extraction"/.test(postData);
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify(isInvoiceCall ? MOCK_INVOICE : MOCK_TENANT),

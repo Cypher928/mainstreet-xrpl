@@ -133,8 +133,29 @@ const EXCLUDED = {
   // sign-in flow gained tabs and a focus step these suites predate, so each
   // needs its entry sequence brought forward. Measured, not assumed — one was
   // patched and re-run to find the second wall.
-  'test-e2e-acquisition.js':            { reason: 'stale', detail: 'Landing dialog blocks the sign-in click, and the entry sequence predates the ?signin=1 intent. See the note above.' },
-  'test-e2e-acquisition-conversion.js': { reason: 'stale', detail: 'Same landing-dialog entry-point drift as test-e2e-acquisition.js. See the note above.' },
+  // test-e2e-acquisition.js and test-e2e-acquisition-conversion.js were here.
+  // Both are now REGISTERED in test-regression.js and pass. Their entry drift
+  // was only partly what this note describes, and it is worth recording what it
+  // actually was, because two of the four causes are not landing-dialog drift
+  // and the remaining eight suites above may not share them either:
+  //
+  //   1. Both mocks lacked .is(). loadProperties calls .is('archived_at', null);
+  //      the call threw, the app caught it and carried on, and the account
+  //      silently read as having no properties.
+  //   2. The acquisition module is HIDDEN for a zero-property account
+  //      (renderPortfolio's first-time empty state), so #acqSection was
+  //      display:none and .acq-new-btn had a zero-size rect. Both mocks now
+  //      seed one property.
+  //   3. Their own static servers tested `req.url === '/'` BEFORE stripping the
+  //      query, so '/?signin=1' resolved to a directory and the root answered
+  //      404 — which is why adding the intent flag made things worse, not
+  //      better, until the server was fixed.
+  //   4. The /api/claude mock routed on prompt text ('commercial real estate
+  //      invoice') that moved server-side when prompts became named tasks. It
+  //      now routes on "task":"invoice_extraction".
+  //
+  // Only the conversion suite ever needed ?signin=1 — the other never signs in
+  // at all, so the landing dialog was never its problem.
   'test-e2e-data-persistence.js':       { reason: 'stale', detail: 'Same landing-dialog entry-point drift as test-e2e-acquisition.js. See the note above.' },
   'test-e2e-escrow-reserve.js':         { reason: 'stale', detail: 'Same landing-dialog entry-point drift; this one dies on page.check rather than page.click.' },
   'test-e2e-existing-landlord.js':      { reason: 'stale', detail: 'Same landing-dialog entry-point drift as test-e2e-acquisition.js. See the note above.' },
