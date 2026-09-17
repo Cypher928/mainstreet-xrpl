@@ -58,7 +58,11 @@ function loadWriter() {
     extract(/\nconst _FIELD_STORAGE  = \{[\s\S]*?\nfunction _fieldCanonical\(k\) \{[^\n]*\n/, 'field key maps'),
     extract(/\nfunction _mkEvidenceSnapshot\(fieldKey, t, opts\) \{[\s\S]*?\n\}\n/, '_mkEvidenceSnapshot'),
     extract(/\nfunction persistFieldEvidence\(tenantId, fieldKey, opts\) \{[\s\S]*?\n\}\n/, 'persistFieldEvidence'),
-    extract(/\nfunction saveFieldOverride\(tenantId, fieldName, newValue\) \{[\s\S]*?\n\}\n/, 'saveFieldOverride'),
+    // EXTRACTED BY NAME, NOT BY SIGNATURE. This named all three parameters, and
+    // the function gained an optional fourth — so the suite stopped finding it
+    // and died on load. That is the exact failure the coverage manifest opens
+    // with (test-smoke-fixes.js, six assertions silently unevaluated).
+    extract(/\nfunction saveFieldOverride\([^)]*\) \{[\s\S]*?\n\}\n/, 'saveFieldOverride'),
     extract(/\nfunction handleProvenancedFieldBlur\(index, field, value, el\) \{[\s\S]*?\n\}\n/, 'handleProvenancedFieldBlur'),
     extract(/\nfunction handleFieldBlur\(index, field, value, el\) \{[\s\S]*?\n\}\n/, 'handleFieldBlur'),
     extract(/\nfunction quickConfirmTenantFields\(tenantId\) \{[\s\S]*?\n\}\n/, 'quickConfirmTenantFields'),
@@ -300,27 +304,70 @@ sec('F. A reviewer can confirm the cap base, not just the percentage');
      'and that snapshot resolves to manually_confirmed — the confirm path works end to end');
 }
 
-// ── G. The wiring is real, and scoped ───────────────────────────────────────
-sec('G. The input is wired, and nothing else was rerouted');
+// ── G. The wiring is real, and now covers every editable lease field ────────
+//
+// S2 routed ONE field — the cap base — and this group asserted that scope, in
+// those words: "S2 is not a blanket change". That scope has since been widened
+// deliberately, and the reason is the same one S2 was written for.
+//
+// S2's argument was that the cap base has no extraction, so a value typed
+// through handleFieldBlur was the entire record of itself. The audit that
+// followed found the argument does not actually depend on the field having no
+// extractor. A lease the AI read but which yielded no square footage is in the
+// identical position: the manager types 4,200, handleFieldBlur writes the value
+// and nothing else, and FieldProvenance's floor branch then reports
+//
+//     state ai_extracted · method "AI Extraction" · sourceFile CascadeLease.pdf
+//
+// for a number no model produced and that document does not contain. The cap
+// base was not a special case; it was the first case noticed.
+//
+// So all eight intake-card fields now take the same path, and the six mirrors
+// in the single-lease editor with them. No new mechanism: still
+// saveFieldOverride, still the same four writes, still keyed through
+// _fieldCanonical. This group now pins the WIDER contract — every editable
+// lease field routed, none left behind — which is the assertion that would
+// notice a field being added to the form and wired to the old writer.
+sec('G. Every editable lease field is wired to the provenanced writer');
 {
   const bare = code(scriptSrc);
   truthy(/onblur="handleProvenancedFieldBlur\(\$\{i\},'capBaseAmount',this\.value,this\)"/.test(bare),
          'the Prior-Year CAM Base input calls handleProvenancedFieldBlur');
-  truthy(!/onblur="handleFieldBlur\(\$\{i\},'capBaseAmount'/.test(bare),
-         'and no longer calls the provenance-free handleFieldBlur');
 
-  const routed = (bare.match(/handleProvenancedFieldBlur\(\$\{i\},'([A-Za-z_]+)'/g) || []);
-  eq(routed.length, 1, 'exactly ONE field was rerouted — S2 is not a blanket change');
-  truthy(/capBaseAmount/.test(routed[0] || ''), 'and it is the cap base');
-
-  // The other fields must keep their existing writer.
-  for (const f of ['tenant_name', 'leased_sqft', 'start_date', 'cap']) {
-    truthy(new RegExp("handleFieldBlur\\(\\$\\{i\\},'" + f + "'").test(bare),
-           f + ' still uses handleFieldBlur');
+  // Every field the two renderers expose, and the one that has always been here.
+  const EXPECTED = ['tenant_name', 'leased_sqft', 'start_date', 'end_date',
+                    'lease_type', 'excluded_categories', 'cap', 'capBaseAmount'];
+  const routed = new Set(
+    (bare.match(/handleProvenancedFieldBlur\(\$\{i\},'([A-Za-z_]+)'/g) || [])
+      .map(m => m.replace(/.*'([A-Za-z_]+)'.*/, '$1')));
+  for (const f of EXPECTED) {
+    truthy(routed.has(f), f + ' is routed through handleProvenancedFieldBlur');
   }
+  eq(routed.size, EXPECTED.length,
+     'and no OTHER field slipped into the provenanced path unannounced');
+
+  // The inverse, and the one that matters most: nothing may still reach the
+  // provenance-free writer from a rendered input. handleFieldBlur survives only
+  // as the unchanged-value fall-through INSIDE handleProvenancedFieldBlur.
+  const bareCallSites = (bare.match(/handleFieldBlur\(\$\{i\},'[A-Za-z_]+'/g) || []);
+  eq(bareCallSites.length, 0,
+     'no rendered input calls handleFieldBlur directly any more',
+     bareCallSites.join(', '));
+
   truthy(/function handleProvenancedFieldBlur/.test(bare), 'the handler is defined');
-  truthy(/saveFieldOverride\(t\.id, field, next\)/.test(bare),
+  truthy(/saveFieldOverride\(t\.id, field, next,/.test(bare),
          'and delegates to saveFieldOverride — the existing path, not a new one');
+
+  // The two options that keep the widened routing from causing harm elsewhere.
+  // Both were added because a suite measured the damage, so both are pinned.
+  truthy(/source: 'data_entry'/.test(bare),
+         "the card marks its edits `data_entry` — filling a blank is not a lease sign-off");
+  truthy(/skipBulkRerender: true/.test(bare),
+         'and does not rebuild the list from inside one of its own inputs');
+  truthy(/function handleFieldBlur/.test(bare),
+         'handleFieldBlur still exists as the unchanged-value fall-through');
+  truthy(/\n  handleFieldBlur\(index, field, value, el\);\n\}/.test(bare),
+         'and handleProvenancedFieldBlur still falls through to it');
 }
 
 // ── H. The writer runs to completion ────────────────────────────────────────

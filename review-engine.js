@@ -306,7 +306,24 @@ window.ReviewEngine = (() => {
     // ── Persisted review metadata ──────────────────────────────────────────
     const persisted         = t.review || {};
     const reviewerConfirmed = !!(persisted.reviewerConfirmed);
-    const hasLegacyOverride = Object.values(t.reviewOverrides || {}).some(ov => ov?.reviewerConfirmed);
+    // A FIELD OVERRIDE IS A REVIEW ACT ONLY WHEN SOMEBODY REVIEWED SOMETHING.
+    //
+    // This read every reviewerConfirmed override as a whole-lease sign-off,
+    // which was true while the only writer was the Lease Field Confidence
+    // editor: opening a field there and pressing Save is a reviewer vouching
+    // for it. The lease intake card now uses the same writer so that a value
+    // typed into a blank field carries its author — and typing a missing
+    // square footage is not a statement about the lease's cap, its audit
+    // rights, or anything else on it. Left unqualified, a lease with two
+    // outstanding advisory items reported itself as Verified the moment one
+    // blank was filled.
+    //
+    // `overrideSource` already travelled on every override; `data_entry` is a
+    // second value in it, not a second mechanism. Absent or any other value
+    // keeps the original meaning, so every stored override — all of which
+    // predate this and carry 'manual' — behaves exactly as before.
+    const hasLegacyOverride = Object.values(t.reviewOverrides || {})
+      .some(ov => ov?.reviewerConfirmed && ov.overrideSource !== 'data_entry');
     // ── Warning groups for structured review UI ────────────────────────────
     const warningGroups = {
       financialProtections: warnings.filter(w => _FINANCIAL_PROTECTION_TYPES.has(w.type)),

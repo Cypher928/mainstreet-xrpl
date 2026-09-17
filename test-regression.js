@@ -472,6 +472,7 @@ const SUITES = [
   { label: 'Field provenance',                  cmd: 'node test-field-provenance.js' },
   { label: 'Cap base provenance',               cmd: 'node test-cap-base-provenance.js' },
   { label: 'Cap base writer',                   cmd: 'node test-cap-base-writer.js' },
+  { label: 'Lease field manual entry',          cmd: 'node test-lease-field-manual-entry.js' },
   { label: 'Quick-confirm provenance',          cmd: 'node test-quick-confirm-provenance.js' },
   { label: 'Cap base extraction',               cmd: 'node test-cap-base-extraction.js' },
   { label: 'CAM row classification (S5)',       cmd: 'node test-cam-row-classification.js' },
@@ -509,6 +510,7 @@ const SUITES = [
   { label: 'Section badges name their subject',  cmd: 'node test-section-badges.js' },
   { label: 'Unbilled pool is read, not judged',  cmd: 'node test-unbilled-pool-narrative.js' },
   { label: 'Field provenance (e2e)',            cmd: 'node test-e2e-field-provenance.js' },
+  { label: 'Lease field editing (e2e)',         cmd: 'node test-e2e-lease-field-editing.js' },
   { label: 'Lease validator: management fee cap',       cmd: 'node test-mgmt-fee-cap.js' },
   // D2-1 — AND THE SAME CHECK ON THE PANEL, WITH ARGUMENTS IT DID NOT BUILD.
   // The suite above pins _tier1LeaseChecks against hand-built inputs, and that

@@ -3853,13 +3853,13 @@ function renderTenantFields(i) {
           <label>Tenant Name</label>
           <input type="text" value="${esc(d.tenant_name || '')}"
             onfocus="isEditingField=true"
-            onblur="handleFieldBlur(${i},'tenant_name',this.value)"/>
+            onblur="handleProvenancedFieldBlur(${i},'tenant_name',this.value)"/>
         </div>
         <div class="field">
           <label title="The square footage this tenant occupies — not the total building size. Used to calculate this tenant's pro-rata share of CAM expenses.">Leased Sqft &#x24D8;</label>
           <input type="number" value="${d.leased_sqft ?? ''}"
             onfocus="isEditingField=true"
-            onblur="handleFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
+            onblur="handleProvenancedFieldBlur(${i},'leased_sqft',this.value);checkSqftValidation()"/>
         </div>
       </div>
       <div class="field-row">
@@ -3867,19 +3867,19 @@ function renderTenantFields(i) {
           <label>Lease Start Date</label>
           <input type="date" value="${toInputDate(d.start_date)}"
             onfocus="isEditingField=true"
-            onblur="handleFieldBlur(${i},'start_date',this.value)"/>
+            onblur="handleProvenancedFieldBlur(${i},'start_date',this.value)"/>
         </div>
         <div class="field">
           <label>Lease End Date</label>
           <input type="date" value="${toInputDate(d.end_date)}"
             onfocus="isEditingField=true"
-            onblur="handleFieldBlur(${i},'end_date',this.value)"/>
+            onblur="handleProvenancedFieldBlur(${i},'end_date',this.value)"/>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label>Lease Type</label>
-          <select onchange="handleFieldBlur(${i},'lease_type',this.value||null)">
+          <select onchange="handleProvenancedFieldBlur(${i},'lease_type',this.value||null)">
             <option value="">Select lease type</option>
             <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
             <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -3890,7 +3890,7 @@ function renderTenantFields(i) {
           <label>Excluded Categories (comma-separated)</label>
           <input type="text" value="${esc(d.excluded_categories || '')}"
             onfocus="isEditingField=true"
-            onblur="handleFieldBlur(${i},'excluded_categories',this.value)"/>
+            onblur="handleProvenancedFieldBlur(${i},'excluded_categories',this.value)"/>
         </div>
       </div>
     </div>`;
@@ -6062,7 +6062,11 @@ function handleProvenancedFieldBlur(index, field, value, el) {
 
   if (t && t.id && changed) {
     isEditingField = false;
-    saveFieldOverride(t.id, field, next);   // value + override + snapshot + audit
+    // Data entry, not a review sign-off, and the list must not be rebuilt from
+    // inside one of its own inputs. See saveFieldOverride's header for what
+    // each option prevents and which suite measured it.
+    saveFieldOverride(t.id, field, next,    // value + override + snapshot + audit
+                      { source: 'data_entry', skipBulkRerender: true });
     if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
     if (el) {
       el.classList.add('field-save-flash');
@@ -8202,8 +8206,45 @@ function _citationChip(d, fieldKey) {
   return `<div class="fe-chip fe-chip--uncited">⚠️ No clause quote on file</div>`;
 }
 
-// Saves a manual override to the tenant object + triggers persistence.
-function saveFieldOverride(tenantId, fieldName, newValue) {
+/**
+ * Saves a manual override to the tenant object + triggers persistence.
+ *
+ * `opts` exists so the lease intake card can use this writer without the two
+ * side effects that only make sense for the Lease Field Confidence editor it
+ * was written for. Both are measured, not anticipated:
+ *
+ *   skipBulkRerender  renderBulkResults() replaces every card's DOM. The LFC
+ *                     editor lives in the report expansion, so refreshing the
+ *                     list below it is free; the intake card IS the list, so
+ *                     rebuilding it from inside one of its own inputs destroys
+ *                     the node the user is moving to. Measured by
+ *                     test-cap-base-persistence: type a cap, tab to Prior-Year
+ *                     CAM Base, type 33000 — and the base arrived null, because
+ *                     the input it was typed into had already been detached by
+ *                     the cap's own save. The card refreshes its summary line
+ *                     in place instead (refreshBulkSummary), which is what it
+ *                     did before this path existed.
+ *
+ *   source            what KIND of act this was. See below.
+ *
+ * FILLING IN A BLANK IS NOT VERIFYING A LEASE. review-engine.js short-circuits
+ * a tenant to `manually_verified` when ANY field override is reviewerConfirmed
+ * (its `hasLegacyOverride`). That is right for this function's original caller —
+ * opening a field in the review editor and pressing Save is a reviewer vouching
+ * for it — and wrong for data entry: typing the square footage the AI could not
+ * read says nothing about the lease's cap, its audit rights, or anything else.
+ * Routing the intake card through here without this distinction made a lease
+ * with two outstanding advisory items report itself as Verified the moment a
+ * missing field was filled, which is the same fabrication this change exists to
+ * remove, pointed the other way. Measured by test-e2e-lease-review-flow.
+ *
+ * `data_entry` is a second value in an existing field, not a second mechanism.
+ * FIELD-level provenance is unaffected — the override is still reviewerConfirmed,
+ * FieldProvenance still resolves `manually_entered`, and the reviewer and
+ * timestamp are unchanged. Only the TENANT-level claim is withheld, because
+ * nobody made it.
+ */
+function saveFieldOverride(tenantId, fieldName, newValue, opts) {
   const idx = tenantData.findIndex(t => t && t.id === tenantId);
   if (idx === -1) return;
   const t = tenantData[idx];
@@ -8225,7 +8266,7 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
     [fieldName]: newValue,   // update live field so reconciliation reads override
     reviewOverrides: {
       ...prev,
-      [fieldName]: { original, override: newValue, reviewerConfirmed: true, reviewedAt: new Date().toISOString(), overrideSource: 'manual' },
+      [fieldName]: { original, override: newValue, reviewerConfirmed: true, reviewedAt: new Date().toISOString(), overrideSource: (opts && opts.source) || 'manual' },
     },
   };
   const reviewStateBefore = deriveTenantReviewState(t).status;
@@ -8273,7 +8314,7 @@ function saveFieldOverride(tenantId, fieldName, newValue) {
       tenantId, actor: user?.email || 'Reviewer', title: `Field corrected — ${fieldName}`,
       description: `${fieldName}: "${original}" → "${newValue}"`,
       metadata: { fieldName, original, newValue } }); }
-  renderBulkResults();
+  if (!(opts && opts.skipBulkRerender)) renderBulkResults();
   _refreshLfcExpansion(tenantId);
   showToast('✓ Field updated — re-run reconciliation to apply to totals.', { color: '#0c4a6e', textColor: '#7dd3fc', duration: 4000 });
 }
@@ -8899,6 +8940,28 @@ function _filterBulkTenants(pairs) {
 
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
+  // WHICH CARDS ARE OPEN IS THE USER'S STATE, NOT THE RENDERER'S.
+  //
+  // This function rebuilds every card from scratch and reopens only the ones
+  // carrying `_autoExpand`, which is set at extraction time for low-confidence
+  // and failed reads and never again. Anything the manager opened by hand is
+  // closed by the next render.
+  //
+  // That did not matter while a field edit wrote the value and nothing else.
+  // Now a card edit goes through saveFieldOverride, which ends by calling this
+  // function — so without this, typing into a field and tabbing out slams shut
+  // the card being worked in. It is already the behaviour of the one field that
+  // has always been routed that way (Prior-Year CAM Base), and the fix belongs
+  // here rather than at the seven new call sites, because it is this function
+  // that discards the state.
+  //
+  // Read from the live DOM, not from a flag on the record: the open/closed
+  // state is a property of the screen and must not be written into the tenant
+  // data, where it would be saved and re-loaded as though it meant something.
+  const _openBefore = new Set(
+    Array.from(el.querySelectorAll('.bulk-tenant-detail'))
+      .filter(d => d.style.display === 'block')
+      .map(d => d.id));
   el.innerHTML = '';
   el.scrollTop = 0;
 
@@ -9067,7 +9130,7 @@ function renderBulkResults() {
               <input type="text" value="${esc(d.tenant_name || '')}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'tenant_name',this.value,this);refreshBulkSummary(${i})"/>
+                onblur="handleProvenancedFieldBlur(${i},'tenant_name',this.value,this);refreshBulkSummary(${i})"/>
               ${_citationChip(d, 'tenant_name')}${_amendmentProvenanceChip(d, 'tenant_name')}
             </div>
             <div class="field">
@@ -9075,7 +9138,7 @@ function renderBulkResults() {
               <input type="number" value="${d.leased_sqft || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'leased_sqft',this.value,this);refreshBulkSummary(${i});checkSqftValidation()"/>
+                onblur="handleProvenancedFieldBlur(${i},'leased_sqft',this.value,this);refreshBulkSummary(${i});checkSqftValidation()"/>
               ${_citationChip(d, 'leased_sqft')}${_amendmentProvenanceChip(d, 'leased_sqft')}
             </div>
           </div>
@@ -9085,7 +9148,7 @@ function renderBulkResults() {
               <input type="date" value="${d.start_date || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'start_date',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'start_date',this.value,this)"/>
               ${_citationChip(d, 'start_date')}${_amendmentProvenanceChip(d, 'start_date')}
             </div>
             <div class="field">
@@ -9093,14 +9156,14 @@ function renderBulkResults() {
               <input type="date" value="${d.end_date || ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'end_date',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'end_date',this.value,this)"/>
               ${_citationChip(d, 'end_date')}${_amendmentProvenanceChip(d, 'end_date')}
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label>Lease Type</label>
-              <select onchange="handleFieldBlur(${i},'lease_type',this.value||null,this)">
+              <select onchange="handleProvenancedFieldBlur(${i},'lease_type',this.value||null,this)">
                 <option value="">Select lease type</option>
                 <option value="Triple Net (NNN)"${d.lease_type === 'Triple Net (NNN)' ? ' selected' : ''}>Triple Net (NNN)</option>
                 <option value="Gross"${d.lease_type === 'Gross' ? ' selected' : ''}>Gross</option>
@@ -9113,7 +9176,7 @@ function renderBulkResults() {
               <input type="text" value="${esc(d.excluded_categories || '')}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'excluded_categories',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'excluded_categories',this.value,this)"/>
               ${_citationChip(d, 'excluded_categories')}${_amendmentProvenanceChip(d, 'excluded_categories')}
             </div>
           </div>
@@ -9123,7 +9186,7 @@ function renderBulkResults() {
               <input type="number" step="0.1" min="0" max="100" value="${d.cap ?? ''}"
                 onfocus="isEditingField=true"
                 onkeydown="_onFieldKeydown(event)"
-                onblur="handleFieldBlur(${i},'cap',this.value,this)"/>
+                onblur="handleProvenancedFieldBlur(${i},'cap',this.value,this)"/>
               ${_citationChip(d, 'cap')}${_amendmentProvenanceChip(d, 'cap')}
             </div>
             <div class="field">
@@ -9232,6 +9295,16 @@ function renderBulkResults() {
     ${_buildPreReconSummary(tenants)}
     ${filterBarHtml}
     ${rows || '<div class="bulk-filter-empty">No tenants match your filter.</div>'}`;
+
+  // Reopen what the user had open. The chevron is part of the same state, so it
+  // is set here too rather than left reading "Edit" above an expanded card.
+  _openBefore.forEach(id => {
+    const det = document.getElementById(id);
+    if (!det || det.style.display === 'block') return;
+    det.style.display = 'block';
+    const chev = document.getElementById('bchev-' + id.slice('bdet-'.length));
+    if (chev) chev.innerHTML = '&#x25B2; Close';
+  });
 
   // Re-focus search input after re-render so typing stays smooth
   if (_bulkFilter.query) {
@@ -23801,10 +23874,28 @@ function rwFlag(tenantId) {
   _rwRenderAll(updated);
 }
 
+/**
+ * "Edit Fields" — and it has to land somewhere a field can be edited.
+ *
+ * This opened openTenantDetailPanel, which is a READ-ONLY sheet: every lease
+ * value in it is a <div class="tdp-stat-value"> and a field the extraction
+ * missed renders as an em-dash with class tdp-null. So the Review Workspace
+ * named each gap ("Enter the leased square footage from the signed lease
+ * agreement"), offered a button labelled Edit Fields, and delivered a page with
+ * nothing to type into. That is the whole "missing fields cannot be entered"
+ * report: the fields ARE editable, on the lease intake card, and this button
+ * was the one review path that did not go there.
+ *
+ * openLeaseBlockerFix already resolves the tenant's first blocking field and
+ * hands it to openReviewItemFix, which switches to Spaces → Leases, reveals the
+ * collapsed lease block, expands the card's detail, focuses that field's input
+ * and flashes it. The other review entry point — the "Next step" CTA on the
+ * Needs Review box — has always used it. No new navigation is introduced here;
+ * this button simply stops being the exception.
+ */
 function rwOpenTenant(tenantId) {
   closeReviewWorkspace();
-  const idx = tenantData.findIndex(x => x && x.id === tenantId);
-  if (idx !== -1) openTenantDetailPanel(idx);
+  openLeaseBlockerFix(tenantId);
 }
 
 function openLeaseModalFromRw() {
