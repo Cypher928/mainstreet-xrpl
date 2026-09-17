@@ -63,7 +63,21 @@ function loadModules() {
     querySelectorAll: () => [],
   };
   vm.createContext(sandbox);
-  for (const f of ['property-area.js', 'dispute-status.js', 'tenant-space.js', 'property-record.js']) {
+  // tenant-normalize.js FIRST, and it is not optional. property-area.js,
+  // property-cabinet.js and property-reference.js each resolve the vacancy
+  // authority through a _TN() helper that reads window.TenantNormalize and
+  // falls back to require(). Inside a vm context there IS no require, so
+  // omitting this file does not degrade — it throws
+  // "property-area.js: TenantNormalize is not loaded" the first time
+  // occupancyPct is reached, which is what took this suite out at section D.
+  //
+  // That throw is deliberate product behaviour: a missing authority is meant
+  // to be a broken build rather than a silent second definition of what a
+  // vacant space is. So the fix belongs here, in the harness that did not
+  // build the world the browser builds — index.html loads tenant-normalize.js
+  // before all five of its consumers, and this list now does the same.
+  for (const f of ['tenant-normalize.js', 'property-area.js', 'dispute-status.js',
+                   'tenant-space.js', 'property-record.js']) {
     const p = path.join(__dirname, f);
     if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), sandbox, { filename: f });
   }
