@@ -111,6 +111,18 @@ async function admin(pathname, opts = {}) {
   return { ok: r.ok, status: r.status, body };
 }
 
+// P0.1 — is migration 024 applied to the project this key opens? PostgREST
+// answers an unknown relation with 404 / PGRST205. Asked rather than assumed,
+// so this script still tears down cleanly against a database where 024 has not
+// been applied (or has been rolled back) instead of failing on every verb.
+async function organisationsPresent() {
+  const r = await rest('/organizations?select=id&limit=1');
+  if (r.ok) return true;
+  const code = r.body && typeof r.body === 'object' ? String(r.body.code || '') : '';
+  if (r.status === 404 || code === 'PGRST205' || code === '42P01') return false;
+  die(`could not tell whether migration 024 is applied (http ${r.status}): ${JSON.stringify(r.body)}`);
+}
+
 // ── verify-target ───────────────────────────────────────────────────────────
 // The important guard. Everything else asserts what the CONFIG says; this
 // asserts what the KEY actually opens. If someone pastes the production service
@@ -149,11 +161,17 @@ async function sweep() {
   if (!stale.length) { log('✓ no stale fixtures'); return; }
   log(`sweeping ${stale.length} stale fixture account(s)`);
 
+  const orgs = await organisationsPresent();
   for (const u of stale) {
     // Properties cascade to tenants, tenant_users, tenant_invitations,
     // cam_reconciliations, lease_documents, lease_jobs, tenant_field_evidence
     // and tenant_review_audit — verified against the live schema.
     await rest(`/properties?user_id=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
+    // P0.1 — the organisation 024's properties_default_organization trigger
+    // made for this landlord. Scoped to created_by, which is this stale
+    // fixture's own uid: an organisation whose creator is already gone has a
+    // null created_by and cannot match, so a sweep never reaches one.
+    if (orgs) await rest(`/organizations?created_by=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
     await admin(`/admin/users/${u.id}`, { method: 'DELETE' });
   }
   log('✓ sweep complete');
@@ -297,14 +315,75 @@ async function teardown() {
     const r = await rest(`/properties?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' });
     if (!r.ok) { failed++; console.error(`::warning::could not delete property ${id} (http ${r.status})`); }
   }
+
+  // P0.1 — the organisation this run's landlord was given.
+  //
+  // Nothing here creates one: setup inserts properties, and 024's
+  // properties_default_organization trigger gives the inserting user an
+  // organisation (named after their email) and an admin membership if they have
+  // none. So the fixture's world is one object larger than the code that builds
+  // it admits, and teardown has to know that.
+  //
+  // ORDER IS THE WHOLE FIX. properties.organization_id is `on delete restrict`,
+  // so the properties must go first. organizations.created_by is `on delete set
+  // null`, so the organisation must go BEFORE its creator — delete the user
+  // first and created_by becomes null, which erases the only thing that proves
+  // the row was ours and leaves an organisation nobody can attribute or
+  // safely remove. That is exactly how the b1ci-* organisations already sitting
+  // in pilot got there; they are left alone deliberately.
+  //
+  // SCOPE: created_by = a uid this run created minutes ago and recorded in its
+  // own state file. Not a name pattern, not "organisations with no members" —
+  // either of those could reach a row this run did not create. Memberships
+  // cascade from the organisation.
+  //
+  // The ids are read and kept BEFORE anything is deleted. Verifying afterwards
+  // by created_by would be worthless: the user delete below sets that column to
+  // null, so an organisation that survived its DELETE would stop matching the
+  // query meant to catch it and teardown would report a clean run while having
+  // just produced an orphan. An id does not change.
+  const orgs = await organisationsPresent();
+  const orgIds = [];
+  if (orgs) {
+    for (const id of state.userIds || []) {
+      const r = await rest(`/organizations?created_by=eq.${id}&select=id`);
+      if (!r.ok) { failed++; console.error(`::warning::could not list organisation(s) created by ${id} (http ${r.status})`); continue; }
+      for (const o of r.body || []) if (!orgIds.includes(o.id)) orgIds.push(o.id);
+    }
+    for (const id of orgIds) {
+      const r = await rest(`/organizations?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' });
+      if (!r.ok) { failed++; console.error(`::warning::could not delete organisation ${id} (http ${r.status})`); }
+    }
+  }
+
   for (const id of state.userIds || []) {
     const r = await admin(`/admin/users/${id}`, { method: 'DELETE' });
     if (!r.ok) { failed++; console.error(`::warning::could not delete user ${id} (http ${r.status})`); }
   }
 
+  // Not a formality: teardown deletes by id and reports what is actually left,
+  // not what it asked for. A DELETE that returns 2xx while the row survives —
+  // a restrict violation swallowed upstream, a filter that matched nothing —
+  // is the failure mode that produced the orphans in the first place, and it
+  // is invisible without reading the rows back.
+  let residue = 0;
+  for (const id of state.propertyIds || []) {
+    const r = await rest(`/properties?id=eq.${id}&select=id`);
+    if (r.ok && Array.isArray(r.body) && r.body.length) { residue++; console.error(`::warning::property ${id} still present after delete`); }
+  }
+  for (const id of orgIds) {
+    const r = await rest(`/organizations?id=eq.${id}&select=id`);
+    if (r.ok && Array.isArray(r.body) && r.body.length) { residue++; console.error(`::warning::organisation ${id} still present after delete`); }
+  }
+  for (const id of state.userIds || []) {
+    const r = await admin(`/admin/users/${id}`);
+    if (r.ok && r.body && r.body.id === id) { residue++; console.error(`::warning::user ${id} still present after delete`); }
+  }
+
   fs.unlinkSync(STATE_FILE);
-  if (failed) die(`teardown left ${failed} object(s) behind — sweep will retry on the next run`);
-  log('✓ fixtures removed');
+  if (failed || residue) die(`teardown left ${failed + residue} object(s) behind — sweep will retry on the next run`);
+  log(`✓ fixtures removed — ${(state.propertyIds || []).length} propert(ies), ${(state.userIds || []).length} user(s), ` +
+      `${orgIds.length} organisation(s); re-read confirms none remain`);
 }
 
 const verb = process.argv[2];

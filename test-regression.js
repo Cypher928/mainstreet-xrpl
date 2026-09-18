@@ -434,6 +434,10 @@ const SUITES = [
   // test-rls-cross-user.js, in the pilot gate.
   { label: 'Organisation membership authz (P0.1)',      cmd: 'node test-membership-authz.js' },
   { label: 'Organisations migration 024 (P0.1)',        cmd: 'node test-organizations-migration.js' },
+  // The CI fixture's own cleanup. 024's default-organisation trigger gives a
+  // fixture landlord an organisation the fixture script never writes; teardown
+  // has to remove it, in the right order and scoped to that run alone.
+  { label: 'B1 CI fixture teardown (organisations)',    cmd: 'node test-b1-fixture-teardown.js' },
   // Phase 0, P0.3 — migrations 025–029 as text: the register extended in place,
   // provisions with the same five states, lineage, append-only events, and the
   // financial tables; every policy on the 024 rule; every rollback honest.
