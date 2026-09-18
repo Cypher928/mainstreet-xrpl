@@ -540,6 +540,9 @@ const SUITES = [
   { label: 'Lease validator: audit rights',             cmd: 'node test-audit-rights.js' },
   { label: 'Property workspace',                        cmd: 'node test-property-workspace.js' },
   { label: 'Property lifecycle',                        cmd: 'node test-property-lifecycle.js' },
+  // Phase 0, P0.2 — the stage vocabulary, the classifier every surface reads,
+  // the no-copy transition, the server refusals, and the leakage proof.
+  { label: 'Property lifecycle stage (P0.2)',           cmd: 'node test-lifecycle-stage.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },
   { label: 'Dispute lifecycle',                         cmd: 'node test-dispute-lifecycle.js' },

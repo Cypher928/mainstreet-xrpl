@@ -61,6 +61,10 @@ const HYD  = require('./_property-record-hydrator.js');
 // hold. Membership is read at call time; a revoked member's next listing
 // shrinks immediately.
 const { activeOrgIds, propertyScope } = require('./_membership');
+// P0.2 — the one definition of "the managed portfolio": stage = acquired.
+// list_properties lists managed properties and SAYS how many acquisitions it
+// left out; it never lists a prospect as a property.
+const PL = require('../property-lifecycle.js');
 
 /** Stated in every envelope's provenance — the rule that admitted the caller. */
 const OWNERSHIP_RULE = 'properties.user_id = authenticated user, or active organisation membership (organization_members: accepted, not revoked)';
@@ -81,6 +85,10 @@ const REFUSAL = {
   AUTH_UNAVAILABLE:'auth_service_unavailable',
   NOT_AUTHORIZED:  'not_authorized',
   NOT_FOUND:       'property_not_found',
+  // P0.2 — the property exists and the caller may see it, but it is an
+  // acquisition prospect (or a passed deal), not a managed property. These
+  // capabilities describe the managed portfolio; acquisitions get their own.
+  NOT_MANAGED:     'property_not_managed',
   TENANT_NOT_FOUND:'tenant_not_found',
   SPACE_NOT_FOUND: 'space_not_found',
   FIELD_NOT_FOUND: 'field_not_found',
@@ -432,6 +440,12 @@ function capAmbiguityCaveat(cap, scope) {
  * both capabilities over the same stored values and asserts they agree, so a
  * change to either side is caught rather than merely discouraged.
  */
+/** The error object PostgREST put in a non-2xx body, whatever shape it took. */
+function _errOf(res) {
+  const j = res && res.json;
+  return Array.isArray(j) ? (j[0] || null) : (j || null);
+}
+
 function _canonicalSqft(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -598,10 +612,17 @@ async function listProperties(args, ctx) {
       { provenance: { reads }, asOf: c.now });
   }
 
-  const r = await sb(
-    `/properties?${propertyScope(id.userId, orgs.orgIds)}` +
-    `&select=id,name,sqft,created_at,updated_at,archived_at&order=name.asc`,
-    { method: 'GET' });
+  const listPath = `/properties?${propertyScope(id.userId, orgs.orgIds)}`;
+  let r = await sb(`${listPath}&select=id,name,sqft,created_at,updated_at,archived_at,lifecycle_stage&order=name.asc`,
+                   { method: 'GET' });
+  // P0.2 — a project without migration 023 rejects the column (42703). Every
+  // row there is a managed property; read without it and say the stage was
+  // assumed, not read.
+  let stageAssumed = false;
+  if (r.status >= 300 && PL.isStageColumnMissing(_errOf(r))) {
+    stageAssumed = true;
+    r = await sb(`${listPath}&select=id,name,sqft,created_at,updated_at,archived_at&order=name.asc`, { method: 'GET' });
+  }
 
   if (r.status >= 300) {
     return refuse(REFUSAL.READ_FAILED,
@@ -609,7 +630,12 @@ async function listProperties(args, ctx) {
       { provenance: { reads }, asOf: c.now });
   }
 
-  const rows = Array.isArray(r.json) ? r.json : [];
+  const allRows = Array.isArray(r.json) ? r.json : [];
+  // P0.2 — a prospect, a deal under review or a passed deal is a property row
+  // at a pre-acquisition stage. It is NOT part of the managed portfolio and is
+  // not listed as one. The count left out is stated below.
+  const rows      = allRows.filter(PL.isManaged);
+  const leftOut   = allRows.length - rows.length;
   const properties = rows.map(row => ({
     propertyId: row.id,
     name:       row.name,
@@ -632,6 +658,21 @@ async function listProperties(args, ctx) {
              'CAM status and readiness are NOT included and must not be inferred ' +
              'as zero — call get_property for those.',
   }];
+  if (leftOut > 0) {
+    caveats.push({
+      code: 'acquisitions_excluded', severity: SEVERITY.INFO, scope: 'properties',
+      message: leftOut + ' propert' + (leftOut === 1 ? 'y' : 'ies') + ' at a pre-acquisition ' +
+               'or passed lifecycle stage ' + (leftOut === 1 ? 'is' : 'are') + ' not listed: ' +
+               'an acquisition prospect is not part of the managed portfolio.',
+    });
+  }
+  if (stageAssumed) {
+    caveats.push({
+      code: 'lifecycle_stage_assumed', severity: SEVERITY.INFO, scope: 'properties',
+      message: 'This project has no lifecycle_stage column (migration 023 not applied); ' +
+               'every row was treated as a managed property.',
+    });
+  }
   if (!properties.length) {
     caveats.push({
       code: 'no_properties_owned', severity: SEVERITY.INFO, scope: 'properties',
@@ -669,6 +710,9 @@ function _refusalFor(reason, reads, now) {
     [HYD.REFUSAL.NO_USER]:   [REFUSAL.NO_TOKEN,       'The caller could not be authenticated.'],
     [HYD.REFUSAL.NOT_OWNED]: [REFUSAL.NOT_AUTHORIZED, 'This property is not owned by the authenticated user.'],
     [HYD.REFUSAL.NOT_FOUND]: [REFUSAL.NOT_FOUND,      'No such property for this user.'],
+    [HYD.REFUSAL.NOT_MANAGED]: [REFUSAL.NOT_MANAGED,
+      'This property is an acquisition prospect or a passed deal, not a managed property. ' +
+      'The managed-portfolio capabilities do not describe it.'],
     [HYD.REFUSAL.READ_FAILED]: [REFUSAL.READ_FAILED,
       'The property could not be read. This is not a statement that it is empty.'],
   };

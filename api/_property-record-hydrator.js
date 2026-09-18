@@ -66,6 +66,9 @@ const _t   = require('./_pilot-target');
 const DEPS = require('./_server-deps');
 // P0.1 — owner OR active organisation member. One rule, in one module.
 const { propertyAccess } = require('./_membership');
+// P0.2 — the one definition of a property's lifecycle stage. A record is
+// assembled for a MANAGED property; a prospect is refused here, by name.
+const PL = require('../property-lifecycle.js');
 const TN   = require('../tenant-normalize.js');
 const PropertyRecord = require('../property-record.js');
 
@@ -123,6 +126,12 @@ async function _defaultFetch(pathAndQuery, options = {}) {
 
 /** Methods that would change data. None of them may ever appear here. */
 const WRITE_METHODS = ['POST', 'PATCH', 'PUT', 'DELETE'];
+
+/** The error object PostgREST put in a non-2xx body, whatever shape it took. */
+function _errOf(res) {
+  const j = res && res.json;
+  return Array.isArray(j) ? (j[0] || null) : (j || null);
+}
 
 /**
  * Wrap a transport so a write is refused rather than merely absent. A read-only
@@ -193,6 +202,12 @@ const REFUSAL = {
   NOT_OWNED:    'not_authorized',
   NOT_FOUND:    'property_not_found',
   READ_FAILED:  'read_failed',
+  // P0.2 — the row exists and the caller may see it, but it is not a managed
+  // property: a prospect, a deal under review, or a passed deal. A
+  // PropertyRecord is the record of a building you manage; assembling one for
+  // a building you have not bought would present acquisition data as
+  // operational truth.
+  NOT_MANAGED:  'property_not_managed',
 };
 
 /**
@@ -203,7 +218,12 @@ const REFUSAL = {
  *   userId      {string}   required — the AUTHENTICATED user. Absent ⇒ refused.
  *   sbFetch     {function} optional transport, for tests. Wrapped read-only.
  *   deps        {object}   optional dependency set, for tests.
- * @returns {Promise<{ok, record?, reason?, reads, degraded}>}
+ *   stages      {string[]} optional — the lifecycle stages this caller may
+ *                          hydrate. Default: the managed stages only
+ *                          (PropertyLifecycle.MANAGED). A later acquisition
+ *                          surface passes the pre-acquisition stages
+ *                          explicitly; nothing widens this by default.
+ * @returns {Promise<{ok, record?, reason?, reads, degraded, lifecycleStage?}>}
  */
 async function hydrate(opts) {
   const o = opts || {};
@@ -233,17 +253,31 @@ async function hydrate(opts) {
   //      and that is the point: one regression should not open a cross-tenant
   //      read. An owner's read carries user_id=eq.<uid> exactly as before; a
   //      member's carries organization_id=eq.<the org that admitted them>. ──
-  const propRes = await sb(
-    `/properties?id=eq.${encodeURIComponent(propertyId)}` +
-    `${_grantFilter(access, userId)}&select=id,name,sqft,data`,
-    { method: 'GET' });
+  const degraded = [];
+  const propPath = `/properties?id=eq.${encodeURIComponent(propertyId)}${_grantFilter(access, userId)}`;
+  let propRes = await sb(`${propPath}&select=id,name,sqft,data,lifecycle_stage`, { method: 'GET' });
+  // P0.2 — a project without migration 023 rejects the column (42703). Read
+  // without it: every row there is a managed property, and the record says
+  // the stage was assumed rather than read.
+  if (propRes.status >= 300 && PL.isStageColumnMissing(_errOf(propRes))) {
+    degraded.push('lifecycle.stage_column_absent');
+    propRes = await sb(`${propPath}&select=id,name,sqft,data`, { method: 'GET' });
+  }
   if (propRes.status >= 300) return { ok: false, reason: REFUSAL.READ_FAILED, reads, degraded: [] };
   const rows = Array.isArray(propRes.json) ? propRes.json : [];
   if (!rows.length) return { ok: false, reason: REFUSAL.NOT_FOUND, reads, degraded: [] };
 
   const row  = rows[0];
   const d    = row.data || {};
-  const degraded = [];
+
+  // ── 2. The stage. A PropertyRecord is assembled for a managed property. A
+  //      caller that has a reason to read a prospect says so in opts.stages;
+  //      nothing here widens the default. ─────────────────────────────────
+  const stage   = PL.stageOf(row);
+  const allowed = Array.isArray(o.stages) && o.stages.length ? o.stages : PL.MANAGED;
+  if (allowed.indexOf(stage) === -1) {
+    return { ok: false, reason: REFUSAL.NOT_MANAGED, lifecycleStage: stage, reads, degraded };
+  }
 
   // A property row can exist with no stored blob at all — a property created
   // but never saved. Every section below then reads `d.<x> || []` and produces
@@ -389,14 +423,14 @@ async function hydrate(opts) {
         + 'here, and their absence is not a claim that they do not exist.',
   });
 
-  return { ok: true, record, reads, degraded };
+  return { ok: true, record, reads, degraded, lifecycleStage: stage };
 }
 
 module.exports = {
   hydrate,
   REFUSAL,
   // Exported for tests and for a future endpoint; not used elsewhere here.
-  _ownsProperty, _grantFilter, _evidenceRowToSnapshot, _readOnly, WRITE_METHODS,
+  _ownsProperty, _grantFilter, _evidenceRowToSnapshot, _readOnly, WRITE_METHODS, _errOf,
   // M9. The read bound, exported so a test can assert it is applied rather than
   // trust the comment above it.
   READ_TIMEOUT_MS, _defaultFetch,

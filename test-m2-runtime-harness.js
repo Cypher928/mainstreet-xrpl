@@ -294,14 +294,16 @@ sec('E. Every global the graph reaches for is one we have accounted for');
 sec('F. The declared dependency set is sufficient, and complete');
 {
   eq(R.normal.deps.missing, [], 'F1 nothing in the declared set failed to load in the sandbox');
-  eq(R.normal.deps.required.length, 10, 'F2 ten dependencies are declared');
+  // 11 since P0.2: PropertyLifecycle (property-lifecycle.js), the stage
+  // vocabulary and the one definition of "the managed portfolio". Pure.
+  eq(R.normal.deps.required.length, 11, 'F2 eleven dependencies are declared');
   eq(R.normal.record.meta.unavailable, [],
      'F3 and assemble() reports no section it could not compose');
-  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 10,
+  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 11,
      'F4 the two maps together are that same set');
   // Sufficiency is only meaningful if a shortfall would be visible.
   const short = DEPS.missing({ FieldProvenance: {} });
-  is(short.length === 9, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
+  is(short.length === 10, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
 }
 
 // ── G. Normal hydration ────────────────────────────────────────────────────

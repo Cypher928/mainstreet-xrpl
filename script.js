@@ -966,7 +966,8 @@ class ReconciliationResult {
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [];
 let activePropId = null; // null = portfolio view
-let _props = []; // canonical merged array from loadProperties()
+let _props = []; // canonical merged array from loadProperties() — ACQUIRED and active only (PropertyLifecycle)
+let _prospectProps = []; // P0.2 — pre-acquisition and passed properties; never in _props, never in an aggregate
 // Has a properties load actually SUCCEEDED this session? Consulted by
 // _acqOrphaned(): "this property is gone" is only sayable once we know what
 // exists. An empty _props after a failed load must never be read as deletion.
@@ -27220,32 +27221,31 @@ async function loadProperties(opts) {
   const archived = !!(opts && opts.archived);
 
   // Select only the columns needed for the property list — skip the large data blob.
-  let q = db
-    .from('properties')
-    .select('id, name, sqft, user_id, archived_at')
-    .eq('user_id', user.id);
-  q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
-  let { data, error } = await q;
+  // P0.2 — lifecycle_stage travels with the row; PropertyLifecycle decides what it means.
+  const _q = (cols) => { const q = db.from('properties').select(cols).eq('user_id', user.id);
+    return archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null); };
+  let { data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS);
 
-  // Pre-migration fallback. Until migrations/010_property_archive.sql is
-  // applied the column does not exist and PostgREST rejects the whole query
-  // (42703) — which would empty the portfolio rather than degrade. Retry
-  // without the filter and treat every row as active, which is what it is.
+  // Pre-migration fallbacks. A missing column rejects the whole query (42703), which would
+  // empty the portfolio rather than degrade. Without 023 every row reads as acquired;
+  // without 010 every row reads as active, and there is no archived view to read.
+  if (PropertyLifecycle.isStageColumnMissing(error)) {
+    console.warn('[loadProperties] lifecycle_stage missing — apply migrations/023_property_lifecycle.sql. Treating every property as acquired.');
+    ({ data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS_PRE_023));
+  }
   if (error && /archived_at/.test(error.message || '')) {
     console.warn('[loadProperties] archived_at missing — apply migrations/010_property_archive.sql. Treating all properties as active.');
     if (archived) return [];
-    ({ data, error } = await db.from('properties')
-      .select('id, name, sqft, user_id').eq('user_id', user.id));
+    ({ data, error } = await db.from('properties').select('id, name, sqft, user_id').eq('user_id', user.id));
   }
 
   if (error) throw error;
 
-  const properties = (data || []).map(p => ({
-    id:         p.id,
-    name:       p.name,
-    totalSqft:  p.sqft || 0,
-    archivedAt: p.archived_at || null,
-  }));
+  // P0.2 — rows → {active, archived, prospects}: a prospect or passed deal never enters the
+  // list this returns, so nothing downstream can count it (property-lifecycle.js).
+  const split = PropertyLifecycle.classify(data || []);
+  _prospectProps = archived ? _prospectProps : split.prospects;
+  const properties = archived ? split.archived : split.active;
 
   if (properties.length === 0) return properties;
 

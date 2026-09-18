@@ -443,6 +443,99 @@ const CLICK_LABEL = function (rx) {
   check('and an archived property is not mistaken for a deleted one',
         archConv.orphan === false);
 
+  // ── P0.2: STAGE. A prospect never enters the portfolio; it joins by ─────
+  //    TRANSITION to acquired — the same row, never a copy.
+  const stage = await page.evaluate(async () => {
+    __rows.properties = [
+      { id: 'p-mgd',  user_id: 'u1', name: 'Managed Plaza',  sqft: 10000, archived_at: null, lifecycle_stage: 'acquired' },
+      { id: 'p-pros', user_id: 'u1', name: 'Prospect Tower', sqft: 90000, archived_at: null, lifecycle_stage: 'prospect' },
+      { id: 'p-dd',   user_id: 'u1', name: 'Diligence Mall', sqft: 70000, archived_at: null, lifecycle_stage: 'due_diligence' },
+      { id: 'p-pass', user_id: 'u1', name: 'Passed Centre',  sqft: 80000, archived_at: null, lifecycle_stage: 'passed' },
+      { id: 'p-old',  user_id: 'u1', name: 'Legacy Row',     sqft: 5000,  archived_at: null },   // predates 023
+      { id: 'p-arch', user_id: 'u1', name: 'Archived Plaza', sqft: 60000, archived_at: '2026-01-01T00:00:00Z', lifecycle_stage: 'acquired' },
+    ];
+    __rows.tenants = [
+      { id: 't-p', property_id: 'p-pros', name: 'Anchor Prospect', sqft: 90000, end_date: '2026-10-01' },
+      { id: 't-m', property_id: 'p-mgd',  name: 'Managed Tenant',  sqft: 8000,  end_date: '2030-01-01' },
+    ];
+    _acqReviews = [];
+    _props = await loadProperties();
+    _propsLoadedOk = true;
+    portfolio.splice(0, portfolio.length, ..._props);
+    renderPortfolio(_props);
+    const k   = portfolioKPIs(_props);
+    const pid = AcquisitionEngine.computePortfolioIntelligence(_props);
+    const rar = AcquisitionEngine.computeRevenueAtRisk(_props);
+    // The same engines over the UNCLASSIFIED rows — what leakage would look like.
+    const naive = __rows.properties.map(r => ({ id: r.id, name: r.name, totalSqft: r.sqft,
+      tenants: __rows.tenants.filter(t => t.property_id === r.id).map(t => ({ tenant_name: t.name, leased_sqft: t.sqft, end_date: t.end_date })) }));
+    const kNaive = portfolioKPIs(naive);
+    const archived = await loadProperties({ archived: true });
+    return {
+      ids: _props.map(p => p.id).sort(),
+      prospects: _prospectProps.map(p => p.id).sort(),
+      kpiTile: document.getElementById('pKpiProperties').textContent,
+      kProps: k.properties, kOcc: k.occupancyPct, kNaiveProps: kNaive.properties, kNaiveOcc: kNaive.occupancyPct,
+      pidCount: pid.propertyCount, pidSqft: pid.totalBuildingSqft,
+      rarHasProspect: [...rar.expired, ...rar.critical, ...rar.high, ...rar.medium].some(a => a.propertyId === 'p-pros'),
+      archivedIds: archived.map(p => p.id),
+      prospectsAfterArchivedRead: _prospectProps.map(p => p.id).sort(),
+      rowCount: __rows.properties.length,
+    };
+  });
+  check('P0.2: the portfolio holds the acquired, active properties only', JSON.stringify(stage.ids) === '["p-mgd","p-old"]', JSON.stringify(stage.ids));
+  check('a prospect, a deal in diligence and a passed deal are held apart in _prospectProps',
+        JSON.stringify(stage.prospects) === '["p-dd","p-pass","p-pros"]', JSON.stringify(stage.prospects));
+  check('the Properties KPI tile counts 2, not 6', stage.kpiTile === '2' && stage.kProps === 2, `${stage.kpiTile} / ${stage.kProps}`);
+  check('occupancy is the managed buildings\' occupancy (8,000 of 15,000)', stage.kOcc === 53, String(stage.kOcc));
+  check('THE TEETH: the same KPI over the unclassified rows would say 6 properties and a different occupancy',
+        stage.kNaiveProps === 6 && stage.kNaiveOcc !== stage.kOcc, `${stage.kNaiveProps} / ${stage.kNaiveOcc}`);
+  check('portfolio intelligence sees 2 properties and 15,000 sqft', stage.pidCount === 2 && stage.pidSqft === 15000, `${stage.pidCount} / ${stage.pidSqft}`);
+  check('revenue at risk carries no prospect lease', stage.rarHasProspect === false);
+  check('the archived view shows the archived managed property only', JSON.stringify(stage.archivedIds) === '["p-arch"]', JSON.stringify(stage.archivedIds));
+  check('and reading the archived view did not disturb the deal list', JSON.stringify(stage.prospectsAfterArchivedRead) === '["p-dd","p-pass","p-pros"]');
+
+  const joined = await page.evaluate(async () => {
+    const before = __rows.properties.length;
+    const row = __rows.properties.find(r => r.id === 'p-pros');
+    const tr  = PropertyLifecycle.transition(row, 'acquired', { actorUid: 'u1', now: '2026-09-18T12:00:00.000Z' });
+    if (!tr.ok) return { ok: false, error: tr.error };
+    // The patch, applied to the SAME row — the only write a transition makes.
+    await db.from('properties').update(tr.patch).eq('id', 'p-pros');
+    _props = await loadProperties();
+    portfolio.splice(0, portfolio.length, ..._props);
+    renderPortfolio(_props);
+    const after = __rows.properties.find(r => r.id === 'p-pros');
+    return {
+      ok: true,
+      patchKeys: Object.keys(tr.patch).sort(),
+      ids: _props.map(p => p.id).sort(),
+      prospects: _prospectProps.map(p => p.id).sort(),
+      kpiTile: document.getElementById('pKpiProperties').textContent,
+      sameRowCount: __rows.properties.length === before,
+      sameId: after && after.id === 'p-pros' && after.name === 'Prospect Tower' && after.sqft === 90000,
+      acquiredAt: after && after.acquired_at, by: after && after.stage_changed_by,
+      tenantsCameAlong: (_props.find(p => p.id === 'p-pros') || { tenants: [] }).tenants.length,
+    };
+  });
+  check('a prospect joins the portfolio by a stage TRANSITION', joined.ok === true && JSON.stringify(joined.ids) === '["p-mgd","p-old","p-pros"]', JSON.stringify(joined));
+  check('the transition wrote stage columns and nothing else',
+        JSON.stringify(joined.patchKeys) === '["acquired_at","lifecycle_stage","stage_changed_at","stage_changed_by"]', JSON.stringify(joined.patchKeys));
+  check('NO ROW WAS COPIED OR REBUILT — same row count, same id, same name, same sqft', joined.sameRowCount && joined.sameId);
+  check('acquired_at and who are stamped on that row', joined.acquiredAt === '2026-09-18T12:00:00.000Z' && joined.by === 'u1');
+  check('the KPI tile now counts 3', joined.kpiTile === '3', joined.kpiTile);
+  check('and the deal list no longer holds it', JSON.stringify(joined.prospects) === '["p-dd","p-pass"]', JSON.stringify(joined.prospects));
+  check('its tenant came with it — the same record, now managed', joined.tenantsCameAlong === 1, String(joined.tenantsCameAlong));
+
+  const terminal = await page.evaluate(() => {
+    const mgd = __rows.properties.find(r => r.id === 'p-mgd');
+    return { back: PropertyLifecycle.transition(mgd, 'prospect').error, pass: PropertyLifecycle.transition(mgd, 'passed').error,
+             reopen: PropertyLifecycle.transition(__rows.properties.find(r => r.id === 'p-pass'), 'prospect').ok };
+  });
+  check('a managed property cannot be sent back to a deal stage — archive is its exit',
+        terminal.back === 'not_allowed' && terminal.pass === 'not_allowed', JSON.stringify(terminal));
+  check('a passed deal can be reopened', terminal.reopen === true);
+
   check('no uncaught errors across the lifecycle', errs.length === 0, errs.slice(0, 2).join(' | ') || 'clean');
 
   await ctx.close(); await browser.close(); srv.close();

@@ -404,10 +404,14 @@ sec('I. The bundle-trace proof from M2 is intact');
   eq(RUN.bundle.unresolved, [], 'I3 nothing unresolved');
   // 18 since P0.1: api/_membership.js (owner OR active organisation member)
   // joined the graph through the hydrator and the capability layer.
-  is(RUN.bundle.files.length === 18, 'I4 eighteen files in the bundle',
+  // 19 since P0.2: property-lifecycle.js (the stage vocabulary and the one
+  // definition of "the managed portfolio") joined the same way.
+  is(RUN.bundle.files.length === 19, 'I4 nineteen files in the bundle',
      String(RUN.bundle.files.length));
   is(RUN.bundle.files.some(f => /_membership\.js$/.test(f)),
      'I4b and api/_membership.js is one of them — the rule ships with the bundle');
+  is(RUN.bundle.files.some(f => /property-lifecycle\.js$/.test(f)),
+     'I4c and property-lifecycle.js is one of them — the stage rule ships with the bundle');
   eq(INVENTORY.files, RUN.bundle.files,
      'I5 and the inventory covers exactly the files the bundle contains');
 }

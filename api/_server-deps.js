@@ -100,6 +100,7 @@ const REQUIRE = {
   '../variance-breakdown.js': () => require('../variance-breakdown.js'),
   '../dispute-status.js':     () => require('../dispute-status.js'),
   '../property-area.js':      () => require('../property-area.js'),
+  '../property-lifecycle.js': () => require('../property-lifecycle.js'),
   '../lease-intelligence.js': () => require('../lease-intelligence.js'),
   '../tenant-space.js':       () => require('../tenant-space.js'),
   '../property-workspace.js': () => require('../property-workspace.js'),
@@ -126,6 +127,9 @@ const CLEAN = {
   // files with no DOM, no network, no storage and no session state.
   DisputeStatus:     '../dispute-status.js',
   PropertyArea:      '../property-area.js',
+  // P0.2 — the stage vocabulary and the one definition of "the portfolio".
+  // Pure: no DOM, no network, no storage, no session state.
+  PropertyLifecycle: '../property-lifecycle.js',
 };
 
 /** Browser-first: they assign to `window` and return nothing useful from require. */

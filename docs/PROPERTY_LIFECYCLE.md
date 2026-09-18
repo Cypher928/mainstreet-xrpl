@@ -54,6 +54,36 @@ whose claim is verified memory, that is the wrong default.
 
 ## The model
 
+### Stage (P0.2 — migration `023_property_lifecycle.sql`)
+
+Before a property is Active it may be a **deal**. `properties.lifecycle_stage`
+is one of `prospect`, `under_review`, `due_diligence`, `acquired`, `passed`,
+and it defaults to `acquired`, so every property that existed before the
+column did is a managed property and nothing about it changes.
+
+- **The managed portfolio is `acquired` and not archived.** `property-lifecycle.js`
+  is the one place that decides it (`classify(rows)` → `active`, `archived`,
+  `prospects`), and `loadProperties` keeps only `active` in `_props`. Every
+  aggregate reads `_props`, so a prospect cannot move a number: it never
+  enters the array. The server's `list_properties` and `get_property` apply
+  the same rule and refuse a prospect by name (`property_not_managed`).
+- **A deal becomes a property by transition, never by copying.**
+  `PropertyLifecycle.transition(row, 'acquired', {actorUid})` returns a PATCH
+  of stage columns for the same row — `lifecycle_stage`, `acquired_at`,
+  `stage_changed_by`, `stage_changed_at` — and nothing else. Same id, same
+  documents, same tenants; no second row, no rebuild.
+- **`acquired` is terminal.** A managed property leaves by Archive, below,
+  never by a stage. A pre-acquisition deal may move among its three stages,
+  be acquired, or be **passed** (declined, file kept); a passed deal may be
+  reopened to `prospect`.
+- **Absent column, managed property.** Until 023 is applied the app and the
+  server read every row as `acquired` — the whole truth on that project — and
+  say so (`lifecycle_stage_assumed`).
+
+Walked by `test-lifecycle-stage.js` and the stage section of
+`test-property-lifecycle.js`; `tools/lifecycle-stage-mutation.js` proves the
+suites bite.
+
 ### Active
 
 - Appears in the portfolio.
