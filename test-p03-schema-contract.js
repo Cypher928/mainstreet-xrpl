@@ -49,6 +49,7 @@ const strip = (s) => s.replace(/^\s*--.*$/gm, '');
 const FILES = {
   '025': ['025_document_register.sql', '025_document_register_rollback.sql'],
   '026': ['026_lease_provisions.sql',  '026_lease_provisions_rollback.sql'],
+  '026b': ['026b_lease_provisions_privileges.sql', '026b_lease_provisions_privileges_rollback.sql'],
   '027': ['027_evidence_lineage.sql',  '027_evidence_lineage_rollback.sql'],
   '028': ['028_property_events.sql',   '028_property_events_rollback.sql'],
   '029': ['029_financial_tables.sql',  '029_financial_tables_rollback.sql'],
@@ -102,7 +103,7 @@ sec('A. Target and blast radius — every file');
 for (const n of Object.keys(FILES)) {
   const raw = RAW[n], sql = SQL[n];
   t(`A1 ${n} carries the pilot marker guard`, sql.indexOf(MARKER) !== -1);
-  t(`A2 ${n} refuses before the first DDL statement`, sql.indexOf('raise exception') < sql.search(/\b(alter table|create table|create or replace)\b/));
+  t(`A2 ${n} refuses before the first DDL or privilege statement`, sql.indexOf('raise exception') < sql.search(/\b(alter table|create table|create or replace|revoke|grant)\b/));
   t(`A3 ${n} is one transaction`, /^begin;/m.test(sql) && /^commit;/m.test(sql) && sql.indexOf('begin;') < sql.indexOf(MARKER));
   t(`A4 ${n} never names the production project`, raw.indexOf(PROD_REF) === -1 && RB[n].indexOf(PROD_REF) === -1);
   t(`A5 ${n} touches nothing XRPL`, !/xrpl|ripple|rlusd|wallet/i.test(sql) && !/xrpl|ripple|rlusd|wallet/i.test(RBS[n]));
@@ -178,6 +179,20 @@ sec('C. 026 — provisions use the same verified-memory architecture');
   eq(pols.map(p => p.name).sort(), ['lease_provisions_member_insert', 'lease_provisions_member_select', 'lease_provisions_member_update', 'lease_provisions_service_role_all'], 'C18 four policies, none of them delete');
   t('C19 the current-provision index is partial on superseded_by is null', /lease_provisions_current_idx[\s\S]*where superseded_by is null/.test(s));
   t('C20 a provision cannot supersede itself', /superseded_by <> id/.test(s));
+
+  // 026b — the privilege layer says the same thing the policy layer says.
+  // 026 is applied on pilot and is not replayed; 026b corrects the table
+  // privileges in place (the schema's default ACL had handed authenticated
+  // DELETE, TRUNCATE, REFERENCES and TRIGGER at creation).
+  const b = SQL['026b'];
+  t('C21 026b revokes delete, truncate, references and trigger from authenticated on lease_provisions',
+    /revoke delete, truncate, references, trigger on public\.lease_provisions from authenticated;/.test(b));
+  t('C22 026b re-states the intended grant: select, insert, update — and nothing more',
+    /grant\s+select, insert, update\s+on public\.lease_provisions to\s+authenticated;/.test(b) && !/grant[^;]*delete[^;]*to\s+authenticated/.test(b));
+  t('C23 026b revokes anon', /revoke all on public\.lease_provisions from public, anon;/.test(b));
+  t('C24 026b touches nothing else: no column, policy, trigger or row', !/alter table|create policy|drop policy|create trigger|drop trigger|insert into|update public|delete from/.test(b));
+  t('C25 026b explains that 026 is not replayed', /not replayed/.test(RAW['026b']));
+  t('C26 the 026b rollback restores exactly the four privileges it revoked', /grant delete, truncate, references, trigger on public\.lease_provisions to authenticated;/.test(RBS['026b']) && !/policy|trigger on|alter table/.test(RBS['026b'].replace(/grant[^;]*;/, '')));
 }
 
 sec('D. 027 — evidence lineage, in place');
@@ -243,6 +258,11 @@ sec('F. 029 — financial tables, tables only');
   t('F12 mapped_category is free text — the vocabulary is gl-import.js\'s', /mapped_category\s+text,/.test(s) && !/mapped_category in \(/.test(s));
   t('F13 NO data is written — tables only', !/\binsert into\b/.test(s) && !/\bupdate public\./.test(s));
   t('F14 members select and insert; no update or delete grant', /grant select, insert on public\.financial_sources to authenticated/.test(s) && /grant select, insert on public\.gl_entries\s+to authenticated/.test(s) && !/update on public\.gl_entries\s+to authenticated|delete on public\.gl_entries\s+to authenticated/.test(s));
+  t('F14b and everything else is REVOKED from authenticated by name, on both tables — the privilege layer is not left to the schema default',
+    /revoke update, delete, truncate, references, trigger on public\.financial_sources from authenticated;/.test(s) &&
+    /revoke update, delete, truncate, references, trigger on public\.gl_entries\s+from authenticated;/.test(s));
+  t('F14c the revokes come AFTER the grants (a grant after a revoke would reopen the door)',
+    s.indexOf('grant select, insert on public.gl_entries') < s.indexOf('revoke update, delete, truncate, references, trigger on public.gl_entries'));
   t('F15 anon is revoked on both', /revoke all on public\.financial_sources from public, anon/.test(s) && /revoke all on public\.gl_entries\s+from public, anon/.test(s));
   const pols = allPolicies(s);
   eq(pols.map(p => p.name).sort(), ['financial_sources_member_insert', 'financial_sources_member_select', 'financial_sources_service_role_all', 'gl_entries_member_insert', 'gl_entries_member_select', 'gl_entries_service_role_all'], 'F16 six policies');
@@ -255,6 +275,16 @@ sec('G. The whole set — one architecture, one rule, one order');
   t('G1 every member policy reads member_property_ids() — the 024 rule', pols.length === 9 && pols.every(p => /select public\.member_property_ids\(\)/.test(p.body)), pols.map(p => p.name).join(','));
   t('G2 no policy anywhere reads user_id = auth.uid() — no single-user policy ships', !/user_id = auth\.uid\(\)/.test(ALL_SQL));
   t('G3 nothing is granted to anon', !/to anon\b/.test(ALL_SQL) && !/grant[^;]*\banon\b/.test(ALL_SQL));
+  // The privilege layer, table by table: what authenticated is INTENDED to hold.
+  // 028 revokes everything and grants back select+insert; 029 grants and then
+  // revokes the rest by name; 026's set is corrected by 026b. No new table is
+  // left to the schema default.
+  t('G3b every new table states authenticated\'s privileges explicitly — grant plus a revoke of the rest',
+    /revoke all on public\.property_events from authenticated, service_role/.test(SQL['028']) &&
+    /revoke update, delete, truncate, references, trigger on public\.financial_sources from authenticated/.test(SQL['029']) &&
+    /revoke update, delete, truncate, references, trigger on public\.gl_entries\s+from authenticated/.test(SQL['029']) &&
+    /revoke delete, truncate, references, trigger on public\.lease_provisions from authenticated/.test(SQL['026b']));
+  t('G3c no new table grants authenticated DELETE anywhere', !/grant[^;]*\bdelete\b[^;]*to\s+authenticated/.test(ALL_SQL) && !/grant all on public\.(lease_provisions|property_events|financial_sources|gl_entries)\s+to authenticated/.test(ALL_SQL));
   const fks = [...ALL_SQL.matchAll(/references (public|auth)\.[a-z_]+\([a-z_]+\)([^,\n)]*)/g)];
   t('G4 every foreign key states its delete rule', fks.length >= 14 && fks.every(m => /on delete (cascade|set null)/.test(m[2])), String(fks.length));
   t('G5 references to lease_documents are all set null (the register outlives what cites it)',

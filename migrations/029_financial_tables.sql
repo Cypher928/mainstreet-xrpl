@@ -28,6 +28,13 @@
 -- RLS: owner OR active member (024): select + insert. No update or delete
 -- policy for members in Phase 0; Phase 2 decides what a re-import may do.
 --
+-- PRIVILEGES ARE SET EXPLICITLY, NOT INHERITED. A Supabase project's default
+-- privileges hand every new table ALL to authenticated at creation, and a
+-- grant is additive. So after the grants below, everything not granted is
+-- revoked by name: the privilege layer and the policy layer both say
+-- "members select and insert, nothing else". (026b did the same for
+-- lease_provisions after the fact.)
+--
 -- PILOT ONLY. Same marker guard. Idempotent. Rollback: 029_financial_tables_rollback.sql.
 
 begin;
@@ -117,6 +124,8 @@ revoke all on public.financial_sources from public, anon;
 revoke all on public.gl_entries        from public, anon;
 grant select, insert on public.financial_sources to authenticated;
 grant select, insert on public.gl_entries        to authenticated;
+revoke update, delete, truncate, references, trigger on public.financial_sources from authenticated;
+revoke update, delete, truncate, references, trigger on public.gl_entries        from authenticated;
 grant all on public.financial_sources to service_role;
 grant all on public.gl_entries        to service_role;
 
@@ -152,4 +161,6 @@ commit;
 -- select count(*) from public.gl_entries;          -- expect 0
 -- select has_table_privilege('anon', 'public.gl_entries', 'select');              -- expect false
 -- select has_table_privilege('authenticated', 'public.gl_entries', 'delete');     -- expect false
+-- select string_agg(privilege_type, ',' order by 1) from information_schema.role_table_grants
+--   where table_name in ('gl_entries','financial_sources') and grantee = 'authenticated' group by table_name;  -- expect INSERT,SELECT for both
 -- select policyname, cmd from pg_policies where tablename in ('financial_sources','gl_entries') order by 1;
