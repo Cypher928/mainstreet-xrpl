@@ -85,6 +85,18 @@ const EXCLUDED = {
             'WRITES, so it carries a second target lock of its own and exits 2 rather than ' +
             'skipping. Needs TEST_EMAIL/PASSWORD/PROP_ID/TENANT_ID and @supabase/supabase-js.',
   },
+  'test-p03-live-roundtrip.js': {
+    reason: 'credentials',
+    detail: 'Phase 0 P0.3 — migrations 025–029 (document register, lease provisions, evidence ' +
+            'lineage, property events, financial tables) against the real PILOT database with real ' +
+            'JWTs: persistence round trips, RLS for owner / member / revoked / stranger / anon, the ' +
+            'provision immutability trigger, the append-only event trigger for the member AND the ' +
+            'service role, and idempotent ledger import. Runs in CI via ' +
+            '.github/workflows/pilot-live-verification.yml on the fixture world; reports NOT RUN with ' +
+            'a CI warning until the migrations are applied to pilot, and fails on a partial ' +
+            'application. It WRITES, refuses production, and exits 2 rather than skipping. The offline ' +
+            'contract is test-p03-schema-contract.js, which IS registered.',
+  },
   'test-escrow-extraction-verification.js': {
     reason: 'credentials',
     detail: 'Calls the live Anthropic API and costs real tokens. Needs ANTHROPIC_API_KEY. ' +

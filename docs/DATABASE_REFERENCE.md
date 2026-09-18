@@ -167,6 +167,28 @@ runner in-repo). New migrations: next number, idempotent
 (`create table if not exists`, guarded `alter`), and always paired with RLS
 policies for new tables.
 
+### Phase 0 (023–029) — the acquisition foundation, one architecture
+
+Applied to **Pilot only**, in the plan's order (024 first): 024 → 023 → 025 →
+026 / 027 / 029 → 028. The numbers are the files' identities; the order is the
+plan's. Every policy on every new or rewritten table reads 024's
+`member_property_ids()` (owner OR active organisation member); none reads
+`user_id = auth.uid()`.
+
+| # | What | Reused / extended / new |
+|---|---|---|
+| 024 | `organizations`, `organization_members`, `properties.organization_id`; every landlord policy becomes owner-or-member; storage policies accept the org prefix | new tables; existing policies rewritten in place |
+| 023 | `properties.lifecycle_stage` (prospect · under_review · due_diligence · acquired · passed, default acquired), `acquired_at`, `passed_at`, `stage_changed_*`; `acquisition_reviews.property_id` nullable | extends `properties`; Acquire is a stage transition, never a copy |
+| 025 | `lease_documents` gains `doc_type` (32 labels + unclassified), `category` (cabinet drawer key), `doc_family_id`, `status`, confidence/classifier, dates, `uploaded_by`, `supersedes_document_id`, `sha256`, size, mime; view `property_documents` (security_invoker) | **extends** the register — `lease_documents` IS the register; `tenant_documents` is a portal publication record pointing at it |
+| 026 | `lease_provisions` — a clause with structure, plain sentence, quote/page/section, the **same five FieldProvenance states**, reviewer attribution, `source_document_id`, `superseded_by`; value columns immutable by trigger, no member delete | new; same verified-memory shape as `tenant_field_evidence` |
+| 027 | `tenant_field_evidence` gains `amendment_id`, `source_document_id`, `superseded_by`; no backfill | extends in place |
+| 028 | `property_events` — append-only (trigger refuses UPDATE and any DELETE that is not the property's own cascade; no update/delete grant to any role), actor stamped from `auth.uid()` and a spoofed actor refused, `organization_id` stamped from the property | new; P0.5 makes the existing writers dual-write here |
+| 029 | `financial_sources` (rent_roll · general_ledger · operating_statement · budget · t12 → the register row, period, extracted jsonb) and `gl_entries` (one line per GL row, traceable to its source, `row_hash` unique per property) | new, tables only; Phase 2 fills them; the CAM-tab GL import is unchanged |
+
+Contracts: `test-organizations-migration.js`, `test-lifecycle-stage.js`,
+`test-p03-schema-contract.js` (offline); `test-rls-cross-user.js` Group 4 and
+`test-p03-live-roundtrip.js` (pilot gate, live).
+
 ## 7. When to normalize vs blob
 
 Follow the existing precedent:

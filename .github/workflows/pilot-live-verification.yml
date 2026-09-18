@@ -39,6 +39,7 @@ on:
       - 'api/document-url.js'
       - 'api/_membership.js'
       - 'test-rls-cross-user.js'
+      - 'test-p03-live-roundtrip.js'
       - 'test-supabase-integration.js'
       - 'test-pilot-evidence-roundtrip.js'
       - 'test-support/supabase-target.js'
@@ -249,23 +250,34 @@ jobs:
         continue-on-error: true
         run: node test-supabase-integration.js
 
+      # P0.3 — the document register, provisions, lineage, events and financial
+      # tables against the real database with real JWTs. Reports NOT RUN (with
+      # a warning) until migrations 025–029 are applied to pilot; a partial
+      # application is a failure.
+      - name: P0.3 live round trip (025–029)
+        id: p03
+        if: steps.setup.outcome == 'success'
+        continue-on-error: true
+        run: node test-p03-live-roundtrip.js
+
       - name: Verdict
         if: always()
         run: |
           echo "cross-user RLS      : ${{ steps.rls.outcome         || 'did not run' }}"
           echo "D-2 round trip      : ${{ steps.d2.outcome          || 'did not run' }}"
           echo "supabase integration: ${{ steps.integration.outcome || 'did not run' }}"
+          echo "P0.3 round trip     : ${{ steps.p03.outcome         || 'did not run' }}"
           if [ "${{ steps.setup.outcome }}" != "success" ]; then
             echo "::error::fixtures were not created — no suite ran"; exit 1
           fi
           FAILED=0
-          for o in "${{ steps.rls.outcome }}" "${{ steps.d2.outcome }}" "${{ steps.integration.outcome }}"; do
+          for o in "${{ steps.rls.outcome }}" "${{ steps.d2.outcome }}" "${{ steps.integration.outcome }}" "${{ steps.p03.outcome }}"; do
             [ "$o" = "success" ] || FAILED=1
           done
           if [ "$FAILED" = "1" ]; then
             echo "::error::at least one live suite failed — see the per-suite outcomes above"; exit 1
           fi
-          echo "all three live suites passed against pilot ${PILOT_REF}"
+          echo "all four live suites passed against pilot ${PILOT_REF}"
 
       # Always. A failed suite must still leave the database as it found it, or
       # the next run inherits a dirty world and its result means nothing.

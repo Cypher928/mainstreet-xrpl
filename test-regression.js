@@ -434,6 +434,10 @@ const SUITES = [
   // test-rls-cross-user.js, in the pilot gate.
   { label: 'Organisation membership authz (P0.1)',      cmd: 'node test-membership-authz.js' },
   { label: 'Organisations migration 024 (P0.1)',        cmd: 'node test-organizations-migration.js' },
+  // Phase 0, P0.3 — migrations 025–029 as text: the register extended in place,
+  // provisions with the same five states, lineage, append-only events, and the
+  // financial tables; every policy on the 024 rule; every rollback honest.
+  { label: 'P0.3 schema contract (025–029)',            cmd: 'node test-p03-schema-contract.js' },
   { label: 'A lease is data, not instructions',         cmd: 'node test-untrusted-lease-text.js' },
   { label: 'Explain prompt control (AI-2)',             cmd: 'node test-explain-prompt-control.js' },
   { label: 'Request limits',                            cmd: 'node test-request-limits.js' },
