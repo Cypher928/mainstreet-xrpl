@@ -8392,6 +8392,9 @@
      portfolio" is (acquired, not archived). loadProperties in script.js hands it
      every row and keeps only the list it returns as active. Must load first. -->
 <script src="property-lifecycle.js"></script>
+<!-- P0.4 — the one list of lease fields. script.js builds both lease
+     extraction prompts from it, so it must load first. -->
+<script src="lease-field-registry.js"></script>
 <script src="field-provenance.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>

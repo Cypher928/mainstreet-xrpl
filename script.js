@@ -1640,17 +1640,7 @@ async function callClaudeWithPdfDirect(file) {
   const extractionPrompt = `Extract the following fields from this commercial lease document.
 Return ONLY valid JSON. No explanation. No markdown.
 
-{
-  "tenant_name": string or null,
-  "lease_start_date": "YYYY-MM-DD" or null,
-  "lease_end_date": "YYYY-MM-DD" or null,
-  "cam_commencement_date": "YYYY-MM-DD" or null,
-  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
-  "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
-  "sqft": number or null,
-  "cam_cap": number or null,
-  "property_name": string or null
-}
+${LeaseFieldRegistry.promptSchema('pdf')}
 
 PROPERTY NAME: The name or address of the building/property covered by this lease, as stated in the premises description or recitals (e.g. "Lakeview Plaza", "123 Main Street"). Null if not stated.
 
@@ -2019,27 +2009,7 @@ NOTE: This text may have been extracted via OCR from a scanned document — tole
 Return ONLY valid JSON. No explanation. No markdown.
 
 Extract:
-{
-  "tenant_name": string,
-  "lease_start_date": "YYYY-MM-DD" or null,
-  "lease_end_date": "YYYY-MM-DD" or null,
-  "cam_commencement_date": "YYYY-MM-DD" or null,
-  "partial_period_basis": "per_diem" | "monthly" | "full_period" | null,
-  "lease_type": "NNN" | "Gross" | "Modified Gross" | null,
-  "sqft": number or null,
-  "cam_cap": number or null,
-  "cap_base_amount": number or null,
-  "admin_fee_pct": number or null,
-  "admin_fee_basis": "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated" | null,
-  "gross_up_pct": number or null,
-  "expense_stop": number or null,
-  "audit_rights": true | false | null,
-  "pro_rata_method": "rentable" | "leasable" | "occupied" | "gross" | null,
-  "renewal_options": string or null,
-  "excluded_categories": string or null,
-  "property_name": string or null,
-  "quotes": { "cam_cap": string|null, "cap_base_amount": string|null, "admin_fee_pct": string|null, "gross_up_pct": string|null, "expense_stop": string|null, "audit_rights": string|null, "pro_rata_method": string|null, "renewal_options": string|null, "cam_commencement_date": string|null, "partial_period_basis": string|null, "admin_fee_basis": string|null }
-}
+${LeaseFieldRegistry.promptSchema('text')}
 
 TENANT NAME (highest priority):
 - Look for labels: "Tenant:", "Lessee:", "Occupant:"

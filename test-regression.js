@@ -349,6 +349,10 @@ const SUITES = [
   // The negative half matters as much: a lease silent about partial periods
   // must read as source 'default' and never as lease-confirmed.
   { label: 'Lease extraction chain (e2e)',      cmd: 'node test-e2e-lease-extraction.js' },
+  // P0.4. One lease field registry. Both browser extraction prompts are built
+  // from it, and the golden blocks are frozen at e03560a, so a registry edit
+  // that would change what the model is asked for fails here first.
+  { label: 'Lease field registry (P0.4)',       cmd: 'node test-lease-field-registry.js' },
   // D-3. The recovery panel, which is what a person reaches for when they think
   // their data is wrong. "Rebuild Reconciliation State" called a function that
   // has never existed, so it threw on every property that HAD results to

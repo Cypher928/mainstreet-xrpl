@@ -41,6 +41,11 @@ const SCRIPT = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
 // a source assertion that matches a comment is a green test about nothing.
 const CODE = SCRIPT.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
   .map(l => l.replace(/(^|\s)\/\/.*$/, '$1')).join('\n');
+// P0.4 — the client extraction contract is no longer written out inside
+// script.js; both browser prompts are rendered from lease-field-registry.js.
+// The two assertions below read the RENDERED text rather than the source that
+// used to contain it, which is what is actually sent to the model.
+const CLIENT = require('./lease-field-registry.js').promptSchema('text');
 
 console.log('\n══ A management-fee cap has a base, and the base has a source ══');
 
@@ -126,13 +131,13 @@ yes('an extracted-only snapshot does not make a value "manual"',
 H('Both extraction contracts request the basis and its clause');
 const TASKS = fs.readFileSync(path.join(__dirname, 'api', '_claude-tasks.js'), 'utf8');
 yes('the client contract declares admin_fee_basis with the vocabulary',
-    /"admin_fee_basis":\s*"operating_expenses"\s*\|\s*"controllable_expenses"\s*\|\s*"excluding_management_fee"\s*\|\s*"unstated"\s*\|\s*null/.test(CODE),
-    'not found in script.js');
+    /"admin_fee_basis":\s*"operating_expenses"\s*\|\s*"controllable_expenses"\s*\|\s*"excluding_management_fee"\s*\|\s*"unstated"\s*\|\s*null/.test(CLIENT),
+    'not found in the rendered client prompt (lease-field-registry.js)');
 yes('the server contract declares it too',
     /"admin_fee_basis":\s*"operating_expenses"/.test(TASKS), 'not found in api/_claude-tasks.js');
 yes('both ask for the verbatim clause behind it',
     /"admin_fee_basis":\s*string\s*\|\s*null/.test(TASKS) &&
-    /"admin_fee_basis":\s*string\|null/.test(CODE),
+    /"admin_fee_basis":\s*string\|null/.test(CLIENT),
     'quotes channel missing');
 yes('the instruction refuses to guess a base',
     /A percentage with no stated base is "unstated", NOT a guess at one/.test(SCRIPT) &&
