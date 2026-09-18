@@ -375,7 +375,8 @@ sec('H. Ownership, read-only, evidence, provenance and unavailable are unchanged
   eq(R.unauthenticated.reason, 'authentication_required', 'H1 no user is still refused');
   eq(R.unauthenticated.reads.length, 0, 'H2 still before any read');
   eq(R.notOwned.reason, 'not_authorized', 'H3 a non-owner is still refused');
-  eq(R.notOwned.reads.length, 1, 'H4 still after the ownership probe alone');
+  // P0.1 — the probe is followed by one organisation lookup before a refusal.
+  eq(R.notOwned.reads.length, 2, 'H4 still after the ownership probe and the organisation lookup alone');
 
   is((RICH.methods || []).every(m => m === 'GET'), 'H5 every request is still a GET',
      (RICH.methods || []).join(','));
@@ -401,8 +402,12 @@ sec('I. The bundle-trace proof from M2 is intact');
   eq(RUN.bundle.computed, [], 'I1 no computed require anywhere in the graph');
   eq(RUN.bundle.external, [], 'I2 no npm package');
   eq(RUN.bundle.unresolved, [], 'I3 nothing unresolved');
-  is(RUN.bundle.files.length === 17, 'I4 seventeen files in the bundle',
+  // 18 since P0.1: api/_membership.js (owner OR active organisation member)
+  // joined the graph through the hydrator and the capability layer.
+  is(RUN.bundle.files.length === 18, 'I4 eighteen files in the bundle',
      String(RUN.bundle.files.length));
+  is(RUN.bundle.files.some(f => /_membership\.js$/.test(f)),
+     'I4b and api/_membership.js is one of them — the rule ships with the bundle');
   eq(INVENTORY.files, RUN.bundle.files,
      'I5 and the inventory covers exactly the files the bundle contains');
 }

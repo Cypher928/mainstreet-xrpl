@@ -59,8 +59,9 @@ const STATE_FILE = path.join(process.cwd(), '.pilot-live-state.json');
 // tear down" while nine objects sat in the database. Cleanup that only works on
 // the happy path is not cleanup.
 function remember(key, id) {
-  let s = { runId: null, userIds: [], propertyIds: [] };
+  let s = { runId: null, userIds: [], propertyIds: [], objectPaths: [] };
   if (fs.existsSync(STATE_FILE)) s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  if (!s[key]) s[key] = [];
   if (!s[key].includes(id)) s[key].push(id);
   fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
 }
@@ -115,6 +116,48 @@ async function admin(pathname, opts = {}) {
   return { ok: r.ok, status: r.status, body };
 }
 
+/** Storage API with the service role — used only to plant and remove one small object. */
+async function storage(pathname, opts = {}) {
+  const r = await fetch(`${SUPABASE_URL}/storage/v1${pathname}`, {
+    ...opts,
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, ...(opts.headers || {}) },
+  });
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  return { ok: r.ok, status: r.status, body };
+}
+
+// P0.1 — is migration 024 applied to the project this key opens? PostgREST
+// answers an unknown relation with 404 / PGRST205. Asked once per run and
+// exported, so the suites can say "did not run" rather than guess.
+async function organisationsPresent() {
+  const r = await rest('/organization_members?select=id&limit=1');
+  if (r.ok) return true;
+  const code = r.body && typeof r.body === 'object' ? String(r.body.code || '') : '';
+  if (r.status === 404 || code === 'PGRST205' || code === '42P01') return false;
+  die(`could not tell whether migration 024 is applied (http ${r.status}): ${JSON.stringify(r.body)}`);
+}
+
+// Objects planted under a fixture uid. Storage does not cascade from anything,
+// so they are removed by path, and a sweep lists them by prefix.
+async function removeObjects(bucket, paths) {
+  if (!paths.length) return { ok: true };
+  return storage(`/object/${bucket}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: paths }),
+  });
+}
+async function listObjects(bucket, prefix) {
+  const r = await storage(`/object/list/${bucket}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, limit: 100, offset: 0 }),
+  });
+  return r.ok && Array.isArray(r.body) ? r.body.map(o => `${prefix}/${o.name}`) : [];
+}
+
 // ── verify-target ───────────────────────────────────────────────────────────
 // The important guard. Everything else asserts what the CONFIG says; this
 // asserts what the KEY actually opens. If someone pastes the production service
@@ -153,11 +196,20 @@ async function sweep() {
   if (!stale.length) { log('✓ no stale fixtures'); return; }
   log(`sweeping ${stale.length} stale fixture account(s)`);
 
+  const orgs = await organisationsPresent();
   for (const u of stale) {
     // Properties cascade to tenants, tenant_users, tenant_invitations,
     // cam_reconciliations, lease_documents, lease_jobs, tenant_field_evidence
     // and tenant_review_audit — verified against the live schema.
     await rest(`/properties?user_id=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
+    // P0.1 — the organisation the trigger made for this user (properties
+    // restrict it, so after the properties; created_by is set-null on user
+    // delete, so BEFORE the user or it is orphaned). Memberships cascade.
+    if (orgs) await rest(`/organizations?created_by=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
+    // Any object planted under the uid (storage cascades from nothing).
+    for (const bucket of ['leases', 'invoices']) {
+      await removeObjects(bucket, await listObjects(bucket, u.id));
+    }
     await admin(`/admin/users/${u.id}`, { method: 'DELETE' });
   }
   log('✓ sweep complete');
@@ -247,6 +299,64 @@ async function setup() {
   });
   if (!patched.ok) die(`could not seed properties.data.tenants: ${JSON.stringify(patched.body)}`);
 
+  // ── P0.1 — the organisation world: two more accounts, one document ───────
+  //
+  // C is an ACTIVE member of A's organisation and must see A's rows; D is a
+  // REVOKED member and must see none of them. Both are created whether or not
+  // migration 024 is applied, so the accounts to tear down are the same either
+  // way; the membership rows, the storage object and the register row exist
+  // only when the migration does, and ORG_FIXTURE says which world this is.
+  const userC = await createUser('c', runId);
+  const userD = await createUser('d', runId);
+  const orgs  = await organisationsPresent();
+  let orgEnv = { ORG_FIXTURE: 'absent' };
+
+  if (orgs) {
+    // The property insert above fired properties_default_organization: A's
+    // property now carries A's organisation. Read it rather than assume it.
+    const pr = await rest(`/properties?id=eq.${propA.id}&select=organization_id`);
+    const orgA = pr.ok && pr.body && pr.body[0] && pr.body[0].organization_id;
+    if (!orgA) die(`migration 024 is applied but property ${propA.id} has no organisation — the default-organisation trigger did not fire: ${JSON.stringify(pr.body)}`);
+
+    const mem = await rest('/organization_members', {
+      method: 'POST',
+      body: JSON.stringify([
+        { organization_id: orgA, user_id: userC.id, role: 'property_manager', invited_by: userA.id,
+          accepted_at: new Date().toISOString(), revoked_at: null },
+        { organization_id: orgA, user_id: userD.id, role: 'read_only', invited_by: userA.id,
+          accepted_at: new Date().toISOString(), revoked_at: new Date().toISOString() },
+      ]),
+    });
+    if (!mem.ok || mem.body.length !== 2) die(`could not create membership rows: ${JSON.stringify(mem.body)}`);
+
+    // One small object under A's uid — the LEGACY path shape — and its register
+    // row. The suite proves that a member reaches it only through the register
+    // (api/document-url), and that nobody reaches it by knowing the path.
+    const objectPath = `${userA.id}/plci-${runId}-lease.pdf`;
+    const pdf = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n', 'utf8');
+    const up = await storage(`/object/leases/${objectPath}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' }, body: pdf,
+    });
+    if (!up.ok) die(`could not plant the fixture object: http ${up.status} ${JSON.stringify(up.body)}`);
+    remember('objectPaths', `leases/${objectPath}`);
+
+    const doc = await rest('/lease_documents', {
+      method: 'POST',
+      body: JSON.stringify([{
+        property_id: propA.id, tenant_id: tenant.id, tenant_name: 'CI Roundtrip Tenant',
+        file_name: `plci-${runId}-lease.pdf`, file_url: `leases/${objectPath}`, parsing_status: 'success',
+      }]),
+    });
+    if (!doc.ok || doc.body.length !== 1) die(`could not create the fixture register row: ${JSON.stringify(doc.body)}`);
+
+    orgEnv = {
+      ORG_FIXTURE:      'present',
+      USER_A_ORG_ID:    orgA,
+      USER_A_DOC_ID:    doc.body[0].id,
+      USER_A_DOC_REF:   `leases/${objectPath}`,
+    };
+  }
+
   const st = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   st.runId = runId;
   fs.writeFileSync(STATE_FILE, JSON.stringify(st, null, 2));
@@ -263,6 +373,11 @@ async function setup() {
     USER_A_PROP_ID: propA.id,
     USER_B_EMAIL:   userB.email,
     USER_B_PASS:    userB.password,
+    USER_C_EMAIL:   userC.email,
+    USER_C_PASS:    userC.password,
+    USER_D_EMAIL:   userD.email,
+    USER_D_PASS:    userD.password,
+    ...orgEnv,
 
     TEST_EMAIL:     userA.email,
     TEST_PASSWORD:  userA.password,
@@ -279,7 +394,8 @@ async function setup() {
     console.log(Object.entries(env).map(([k, v]) => `export ${k}='${v}'`).join('\n'));
   }
 
-  log(`✓ fixtures created — 2 landlords, 1 property, 1 tenant (blob + table) (run ${runId})`);
+  log(`✓ fixtures created — 2 landlords + 1 member + 1 revoked member, 1 property, 1 tenant (blob + table), ` +
+      `organisations ${orgs ? 'PRESENT (membership rows + 1 registered object)' : 'ABSENT (migration 024 not applied here)'} (run ${runId})`);
 }
 
 // ── teardown ────────────────────────────────────────────────────────────────
@@ -294,6 +410,25 @@ async function teardown() {
   for (const id of state.propertyIds || []) {
     const r = await rest(`/properties?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' });
     if (!r.ok) { failed++; console.error(`::warning::could not delete property ${id} (http ${r.status})`); }
+  }
+  // P0.1 — the planted object (storage cascades from nothing), then each
+  // user's organisation (restricted by properties, so after them; set-null on
+  // user delete, so before the users or it is orphaned).
+  const byBucket = {};
+  for (const p of state.objectPaths || []) {
+    const [bucket, ...rest_] = p.split('/');
+    (byBucket[bucket] = byBucket[bucket] || []).push(rest_.join('/'));
+  }
+  for (const [bucket, paths] of Object.entries(byBucket)) {
+    const r = await removeObjects(bucket, paths);
+    if (!r.ok) { failed++; console.error(`::warning::could not delete ${paths.length} object(s) in ${bucket} (http ${r.status})`); }
+  }
+  const orgs = await organisationsPresent();
+  if (orgs) {
+    for (const id of state.userIds || []) {
+      const r = await rest(`/organizations?created_by=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' });
+      if (!r.ok) { failed++; console.error(`::warning::could not delete organisation(s) created by ${id} (http ${r.status})`); }
+    }
   }
   for (const id of state.userIds || []) {
     const r = await admin(`/admin/users/${id}`, { method: 'DELETE' });
@@ -312,10 +447,23 @@ async function teardown() {
     const r = await admin(`/admin/users/${id}`);
     if (r.ok && r.body && r.body.id === id) { residue++; console.error(`::warning::user ${id} still present after delete`); }
   }
+  for (const [bucket, paths] of Object.entries(byBucket)) {
+    for (const p of paths) {
+      const left = await listObjects(bucket, p.split('/')[0]);
+      if (left.includes(p)) { residue++; console.error(`::warning::object ${bucket}/${p} still present after delete`); }
+    }
+  }
+  if (orgs) {
+    for (const id of state.userIds || []) {
+      const r = await rest(`/organizations?created_by=eq.${id}&select=id`);
+      if (r.ok && Array.isArray(r.body) && r.body.length) { residue++; console.error(`::warning::organisation(s) created by ${id} still present after delete`); }
+    }
+  }
 
   fs.unlinkSync(STATE_FILE);
   if (failed || residue) die(`teardown left ${failed + residue} object(s) behind — sweep will retry on the next run`);
-  log(`✓ fixtures removed — ${(state.propertyIds || []).length} propert(ies), ${(state.userIds || []).length} user(s); re-read confirms none remain`);
+  log(`✓ fixtures removed — ${(state.propertyIds || []).length} propert(ies), ${(state.userIds || []).length} user(s), ` +
+      `${(state.objectPaths || []).length} object(s)${orgs ? ', their organisations' : ''}; re-read confirms none remain`);
 }
 
 const verb = process.argv[2];

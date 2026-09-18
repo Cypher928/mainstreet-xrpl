@@ -200,11 +200,20 @@ sec('SEC-11 · ownership is filtered as well as policy-enforced');
   assert('RLS is documented as the primary protection, this as the second layer',
     /RLS stays the primary protection/.test(fn));
 
-  // The server-side pattern this mirrors must still be intact.
+  // The server-side pattern this mirrors must still be intact. Since P0.1 the
+  // four routes delegate to api/_membership.js (owner OR active organisation
+  // member) rather than each carrying the query; the owner probe itself — the
+  // user_id filter — now lives there, once, and must still be the first read.
+  const mem = fs.readFileSync(path.join(ROOT, 'api/_membership.js'), 'utf8');
+  assert('api/_membership.js probes ownership with a server-side user_id filter',
+    /user_id=eq\.\$\{_enc\(userId\)\}&select=id/.test(mem));
+  assert('and consults membership only where it is ACTIVE — accepted and not revoked',
+    /accepted_at=not\.is\.null&revoked_at=is\.null/.test(mem));
   for (const h of ['ask-lease', 'validate-lease', 'lease-documents', 'cam-reconciliations']) {
     const src = fs.readFileSync(path.join(ROOT, `api/${h}.js`), 'utf8');
-    assert(`api/${h}.js still filters user_id server-side`,
-      /user_id=eq\.\$\{encodeURIComponent\(userId\)\}/.test(src));
+    assert(`api/${h}.js authorises through _membership, not a local query`,
+      /require\('\.\/_membership'\)/.test(src) && /isMemberOfProperty\(/.test(src)
+      && !/user_id=eq\.\$\{encodeURIComponent\(userId\)\}/.test(src));
   }
 }
 
@@ -410,6 +419,13 @@ sec('SEC-1 · a stored document is authorised before it can be read');
     if (u.includes('/storage/v1/object/sign/')) {
       signCalls++;
       return { ok: true, status: 200, text: async () => JSON.stringify({ signedURL: '/object/sign/leases/user-A/lease.pdf?token=xyz' }) };
+    }
+    // P0.1 — the handler first looks for a document-register row for the path.
+    // This world has none, so every request here is decided by the SEC-1 rule
+    // alone: own uid prefix, or nothing. (test-membership-authz.js covers the
+    // registered and organisation cases.)
+    if (u.includes('/rest/v1/lease_documents?')) {
+      return { ok: true, status: 200, text: async () => '[]' };
     }
     throw new Error('unexpected fetch ' + u);
   };

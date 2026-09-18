@@ -41,8 +41,10 @@
  * by the user it describes, so authorising from it would let a caller grant
  * itself whatever it liked.
  *
- * Ownership is `properties.user_id = <the authenticated user>`, and that is the
- * only ownership there is here. MainStreet has a SECOND identity space —
+ * Ownership is `properties.user_id = <the authenticated user>` — or, since P0.1,
+ * an ACTIVE membership (organization_members: accepted, not revoked) of the
+ * property's organisation, read at call time through api/_membership.js. That
+ * is the only access there is here. MainStreet has a SECOND identity space —
  * tenant_users (migration 012) links an auth user to a tenant space and carries
  * a property_id — and a tenant-portal user therefore holds a perfectly valid
  * session for a property they do not own. They get an empty portfolio and a
@@ -55,6 +57,13 @@
 
 const _t   = require('./_pilot-target');
 const HYD  = require('./_property-record-hydrator.js');
+// P0.1 — the portfolio is what the user owns PLUS what their organisations
+// hold. Membership is read at call time; a revoked member's next listing
+// shrinks immediately.
+const { activeOrgIds, propertyScope } = require('./_membership');
+
+/** Stated in every envelope's provenance — the rule that admitted the caller. */
+const OWNERSHIP_RULE = 'properties.user_id = authenticated user, or active organisation membership (organization_members: accepted, not revoked)';
 // Literal, like every require in _server-deps.js, so a bundler can see it.
 const DEPS = require('./_server-deps.js');
 
@@ -577,8 +586,20 @@ async function listProperties(args, ctx) {
   const reads = [];
   const sb = _readOnly(async (p, o) => { reads.push(p); return (c.sbFetch || _defaultFetch)(p, o); });
 
+  // P0.1 — which organisations admit this user, right now. A FAILED membership
+  // read is a failed listing, not an owner-only one: answering with a smaller
+  // portfolio than the truth is the same lie as answering with an empty one.
+  // A project without the membership table (migration 024 not applied) is
+  // not a failure — it degrades to owner-only, which is the whole truth there.
+  const orgs = await activeOrgIds(sb, id.userId);
+  if (!orgs.ok) {
+    return refuse(REFUSAL.READ_FAILED,
+      'Organisation membership could not be read. This is not an empty portfolio.',
+      { provenance: { reads }, asOf: c.now });
+  }
+
   const r = await sb(
-    `/properties?user_id=eq.${encodeURIComponent(id.userId)}` +
+    `/properties?${propertyScope(id.userId, orgs.orgIds)}` +
     `&select=id,name,sqft,created_at,updated_at,archived_at&order=name.asc`,
     { method: 'GET' });
 
@@ -623,7 +644,7 @@ async function listProperties(args, ctx) {
   return envelope({
     data: { properties, count: properties.length },
     provenance: { reads, tables: ['properties'], hydrated: false,
-                  ownership: 'properties.user_id = authenticated user',
+                  ownership: OWNERSHIP_RULE,
                   store: STORE.ROW,
                   units: unitsFor(['properties']) },
     caveats,
@@ -741,7 +762,7 @@ async function getProperty(args, ctx) {
       sectionStatus: status,
       reads: h.reads,
       hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       store: STORE.BLOB,
       evidenceStore: STORE.TABLE + ' (tenant_field_evidence)',
       units: unitsFor(['identity', 'lease', 'cam', 'disputes', 'fields']),
@@ -870,7 +891,7 @@ async function getTenant(args, ctx) {
       sectionStatus: { spaces: spacesStatus, fields: fieldsStatus,
                        disputes: disputesStatus, documents: documentsStatus },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       store: STORE.BLOB,
       // M8d — 'cam' joins the list because camResult now comes through the same
@@ -1046,7 +1067,7 @@ async function getLeaseEvidence(args, ctx) {
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
       sectionStatus: { spaces: found.status, fields: fieldsStatus },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.fields via FieldProvenance — passed through unchanged',
       store: STORE.TABLE + ' (tenant_field_evidence)',
@@ -1137,7 +1158,7 @@ async function getSpace(args, ctx) {
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
       sectionStatus: { spaces: found.status },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.spaces — the same representation get_property returns',
       store: STORE.BLOB,
@@ -1239,7 +1260,7 @@ async function getTimeline(args, ctx) {
         unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
         sectionStatus: { spaces: found.status, timeline: scopedStatus },
         reads: h.reads, hydrated: true,
-        ownership: 'properties.user_id = authenticated user',
+        ownership: OWNERSHIP_RULE,
         resolvedWithin: a.propertyId,
         source: 'PropertyRecord.timeline.byTenant — scoped by TimelineMerge',
       store: STORE.BLOB,
@@ -1292,7 +1313,7 @@ async function getTimeline(args, ctx) {
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
       sectionStatus: { timeline: status, spaces: spacesStatus },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       source: 'PropertyRecord.timeline.property — database only, never localStorage',
       store: STORE.BLOB,
       attributionUnknown,
@@ -1390,7 +1411,7 @@ async function getDisputes(args, ctx) {
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
       sectionStatus: { disputes: status },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.disputes — the stored record only',
       store: STORE.BLOB,
@@ -1681,7 +1702,7 @@ async function getCamStatus(args, ctx) {
                        'cam.pool': poolUnavailable ? STATUS.UNAVAILABLE : STATUS.OK,
                        'cam.unallocated': unallocUnavailable ? STATUS.UNAVAILABLE : STATUS.OK },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       source: 'PropertyRecord.cam — the stored camReconciliation snapshot only; ' +
               'the cam_reconciliations table is NOT read',
@@ -1787,7 +1808,7 @@ async function getAttention(args, ctx) {
       unavailable: unavailable.slice(), degraded: degradedCodes.slice(),
       sectionStatus: { attention: status },
       reads: h.reads, hydrated: true,
-      ownership: 'properties.user_id = authenticated user',
+      ownership: OWNERSHIP_RULE,
       resolvedWithin: a.propertyId,
       source: 'PropertyWorkspace.collectAttention via PropertyRecord.attention — ' +
               'ranked as composed, projected to severity/title/why',
@@ -1971,5 +1992,5 @@ module.exports = {
   REFUSAL, SEVERITY, STATUS, WRITE_METHODS, DEGRADED_SECTIONS, UNKNOWN_CODES, CAVEAT_TEXT,
   _readOnly,
   // M9. Exported so the bound can be asserted rather than read off a comment.
-  READ_TIMEOUT_MS, _defaultFetch,
+  READ_TIMEOUT_MS, _defaultFetch, OWNERSHIP_RULE,
 };

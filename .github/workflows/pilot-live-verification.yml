@@ -13,8 +13,10 @@
 #   test-supabase-integration.js      the deployed pilot app's dual-write path,
 #                                     driven through a real browser.
 #
-# Every run builds its own two landlords, one property and one tenant, and
-# deletes them. No real customer data is read or written.
+# Every run builds its own two landlords, one property and one tenant — and,
+# since P0.1, an active organisation member, a revoked one, and one registered
+# document under the property (Group 4 of the cross-user suite) — and deletes
+# them all. No real customer data is read or written.
 #
 # WHY THE THREE SUITES DO NOT STOP EACH OTHER
 # A failing RLS suite must not hide the D-2 result, and a browser suite that
@@ -34,6 +36,8 @@ on:
       - 'lease-period.js'
       - 'supabase-config.js'
       - 'api/cam-reconciliations.js'
+      - 'api/document-url.js'
+      - 'api/_membership.js'
       - 'test-rls-cross-user.js'
       - 'test-supabase-integration.js'
       - 'test-pilot-evidence-roundtrip.js'
@@ -90,6 +94,15 @@ jobs:
       # APP_URL stays the bare origin because the API probes are built on it.
       APP_ENTRY_URL: https://www.mainstreet-review.com/app
       HEADLESS: 'true'
+
+      # P0.1 — Group 4 of the cross-user suite proves the organisation boundary
+      # at three layers. The RLS and storage layers are proved against the
+      # database directly and need only migration 024. The API layer (an active
+      # member gets 200 from the deployed routes) can only hold once the pilot
+      # DEPLOYMENT carries the P0.1 routes; until then the suite reports the
+      # member's API status as information and asserts only the refusals, which
+      # hold on either build. Flip to '1' when P0.1 is promoted to pilot.
+      ORG_API_DEPLOYED: '0'
 
     steps:
       - uses: actions/checkout@v4
@@ -202,13 +215,13 @@ jobs:
         if: steps.setup.outcome == 'success'
         run: |
           set -euo pipefail
-          for v in "$USER_A_EMAIL" "$USER_B_EMAIL" "$TEST_EMAIL"; do
+          for v in "$USER_A_EMAIL" "$USER_B_EMAIL" "$USER_C_EMAIL" "$USER_D_EMAIL" "$TEST_EMAIL"; do
             case "$v" in
               plci-*@pilot.invalid) ;;
               *) echo "::error::fixture account '$v' is not a disposable plci-*@pilot.invalid address"; exit 1 ;;
             esac
           done
-          echo "all three accounts are disposable fixtures on the reserved domain"
+          echo "all five accounts are disposable fixtures on the reserved domain (organisations: ${ORG_FIXTURE:-unknown})"
 
       # ── The suites ────────────────────────────────────────────────────────
       # continue-on-error so that one red suite does not hide the other two.

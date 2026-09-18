@@ -143,7 +143,17 @@ sec('A. Ownership fails closed, and does so before a single read');
   const t4 = transport({ owns: false });
   const r4 = await H.hydrate({ propertyId: OTHER, userId: USER, sbFetch: t4 });
   eq(r4.reason, H.REFUSAL.NOT_OWNED, 'A7 a property the user does not own is refused');
-  eq(t4.calls.length, 1, 'A8 after exactly one read — the ownership probe, and nothing after it');
+  // P0.1 — an owner miss is followed by ONE more read, of the property's
+  // organisation, so membership can be considered. This fixture's property has
+  // no organisation, so the membership table is never asked and the property
+  // row itself (name, sqft, data) is never read.
+  eq(t4.calls.length, 2, 'A8 after exactly two reads — the ownership probe and the organisation lookup, and nothing after it');
+  is(/^\/properties\?id=eq\.[^&]+&select=id,organization_id$/.test(t4.calls[1].path),
+     'A8b the second read asks only for the property\'s organisation', t4.calls[1].path);
+  is(!t4.calls.some(c => /^\/organization_members/.test(c.path)),
+     'A8c a property with no organisation never reaches the membership table');
+  is(!t4.calls.some(c => /select=id,name,sqft,data/.test(c.path)),
+     'A8d and the property record itself was never read');
 
   // A broken ownership probe is not a passing one. "Could not determine" and
   // "yes" are different answers, and only one of them may return a row.

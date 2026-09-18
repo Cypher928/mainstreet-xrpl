@@ -29,8 +29,10 @@
  * handler in api/ does, and never as a substitute for the check. Two independent
  * things have to hold before a row is returned:
  *
- *   1. _ownsProperty() confirms the (property, user) pair exists, and
- *   2. the property read ITSELF carries user_id=eq.<uid>
+ *   1. _ownsProperty() confirms the user is the property's OWNER or an ACTIVE
+ *      MEMBER of its organisation (P0.1, api/_membership.js), and
+ *   2. the property read ITSELF carries the filter that grant implies —
+ *      user_id=eq.<uid> for an owner, organization_id=eq.<org> for a member.
  *
  * Either alone would be sufficient today. Both are here because a regression in
  * one still fails closed, and "fails closed" is the only acceptable failure mode
@@ -62,6 +64,8 @@
 // runtime. See the header of api/_server-deps.js.
 const _t   = require('./_pilot-target');
 const DEPS = require('./_server-deps');
+// P0.1 — owner OR active organisation member. One rule, in one module.
+const { propertyAccess } = require('./_membership');
 const TN   = require('../tenant-normalize.js');
 const PropertyRecord = require('../property-record.js');
 
@@ -135,17 +139,26 @@ function _readOnly(fetchImpl) {
 }
 
 /**
- * Ownership. Mirrors _ownsProperty in api/cam-reconciliations.js and
- * api/lease-documents.js: the (property, user) pair must exist. Any non-2xx, or
- * an empty result, is a refusal.
+ * Access. The same rule api/cam-reconciliations.js and api/lease-documents.js
+ * apply: the user OWNS the property, or is an ACTIVE MEMBER of its organisation
+ * (api/_membership.js, read at call time — never cached). Any non-2xx, or an
+ * empty result, is a refusal. The name is kept so every caller and test that
+ * asks "_ownsProperty" keeps asking the one question that matters.
  */
 async function _ownsProperty(sb, propertyId, userId) {
-  const r = await sb(
-    `/properties?id=eq.${encodeURIComponent(propertyId)}` +
-    `&user_id=eq.${encodeURIComponent(userId)}&select=id`,
-    { method: 'GET' });
-  if (r.status >= 300) return false;
-  return Array.isArray(r.json) && r.json.length > 0;
+  return (await propertyAccess(sb, propertyId, userId)).allowed;
+}
+
+/**
+ * The filter the property read itself carries, derived from HOW access was
+ * granted — so the second check is redundant with the first on purpose, and a
+ * member's read is scoped to the organisation that admitted them, never wider.
+ */
+function _grantFilter(access, userId) {
+  if (access.via === 'member' && access.organizationId) {
+    return `&organization_id=eq.${encodeURIComponent(access.organizationId)}`;
+  }
+  return `&user_id=eq.${encodeURIComponent(userId)}`;
 }
 
 /**
@@ -210,17 +223,19 @@ async function hydrate(opts) {
   const raw = o.sbFetch || _defaultFetch;
   const sb  = _readOnly(async (p, options) => { reads.push(p); return raw(p, options); });
 
-  // ── 0. Ownership, checked independently of the read that follows ─────────
-  if (!(await _ownsProperty(sb, propertyId, userId))) {
+  // ── 0. Access, checked independently of the read that follows ────────────
+  const access = await propertyAccess(sb, propertyId, userId);
+  if (!access.allowed) {
     return { ok: false, reason: REFUSAL.NOT_OWNED, reads, degraded: [] };
   }
 
-  // ── 1. The property. The user_id filter is REDUNDANT with the check above,
+  // ── 1. The property. The grant filter is REDUNDANT with the check above,
   //      and that is the point: one regression should not open a cross-tenant
-  //      read. ──────────────────────────────────────────────────────────────
+  //      read. An owner's read carries user_id=eq.<uid> exactly as before; a
+  //      member's carries organization_id=eq.<the org that admitted them>. ──
   const propRes = await sb(
     `/properties?id=eq.${encodeURIComponent(propertyId)}` +
-    `&user_id=eq.${encodeURIComponent(userId)}&select=id,name,sqft,data`,
+    `${_grantFilter(access, userId)}&select=id,name,sqft,data`,
     { method: 'GET' });
   if (propRes.status >= 300) return { ok: false, reason: REFUSAL.READ_FAILED, reads, degraded: [] };
   const rows = Array.isArray(propRes.json) ? propRes.json : [];
@@ -381,7 +396,7 @@ module.exports = {
   hydrate,
   REFUSAL,
   // Exported for tests and for a future endpoint; not used elsewhere here.
-  _ownsProperty, _evidenceRowToSnapshot, _readOnly, WRITE_METHODS,
+  _ownsProperty, _grantFilter, _evidenceRowToSnapshot, _readOnly, WRITE_METHODS,
   // M9. The read bound, exported so a test can assert it is applied rather than
   // trust the comment above it.
   READ_TIMEOUT_MS, _defaultFetch,

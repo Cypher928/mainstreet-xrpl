@@ -202,9 +202,29 @@ window.AccessControl = (() => {
     return r === 'tenant';
   }
 
+  // ── Organisation roles (P0.1) ────────────────────────────────────────────────
+  //
+  // LABELS ONLY. These are the five values organization_members.role may hold
+  // (migration 024). Nothing in this file or in the product branches on them
+  // yet; the API and RLS in P0.1 grant access on ACTIVE MEMBERSHIP alone, and
+  // role-based permissions arrive in a later phase. Listed here so the one
+  // place that describes roles describes all of them.
+  const ORG_ROLES = Object.freeze(['admin', 'property_manager', 'accounting', 'leasing', 'read_only']);
+
+  /**
+   * Is this string one of the organisation roles migration 024 accepts?
+   * @param {*} role
+   * @returns {boolean}
+   */
+  function isOrgRole(role) {
+    return typeof role === 'string' && ORG_ROLES.indexOf(role) !== -1;
+  }
+
   // ── Exports ──────────────────────────────────────────────────────────────────
 
   return {
+    ORG_ROLES,
+    isOrgRole,
     canViewPortfolio,
     canViewProperty,
     canEditReview,

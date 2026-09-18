@@ -347,7 +347,11 @@ sec('I. The ownership contract survives the move to a real runtime');
 
   eq(R.notOwned.ok, false, 'I5 a property the user does not own is refused');
   eq(R.notOwned.reason, 'not_authorized', 'I6 with the right reason');
-  eq(R.notOwned.reads.length, 1, 'I7 after the ownership probe and nothing more');
+  // P0.1 — an owner miss costs one more read, of the property's organisation
+  // (membership can only be judged against it). Still no record read.
+  eq(R.notOwned.reads.length, 2, 'I7 after the ownership probe and the organisation lookup, and nothing more');
+  is(!R.notOwned.reads.some(p => /select=id,name,sqft,data/.test(p)),
+     'I7b the property record itself was never read for a refused caller');
   is(!R.notOwned.record, 'I8 and no record');
 }
 

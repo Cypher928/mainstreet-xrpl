@@ -18,6 +18,8 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // it can and cannot do: it is per-instance and Vercel scales instances, so it
 // brakes runaway loops and single-client hammering, not a determined attacker.
 const { checkRate, sendRateLimited } = require('./_rate-limit');
+// P0.1 — owner OR active organisation member. One rule, in one module.
+const { isMemberOfProperty } = require('./_membership');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -77,15 +79,25 @@ async function fetchLeaseDoc(id) {
   return rows[0];
 }
 
+/** PostgREST transport, service role — the { status, json } shape _membership expects. */
+async function _sbFetch(path, options = {}) {
+  const k   = sbKey();
+  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    signal: AbortSignal.timeout(8000),
+    ...options,
+    headers: { 'apikey': k, 'Authorization': `Bearer ${k}`, ...(options.headers || {}) },
+  });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  return { status: res.status, json };
+}
+
+// Owner OR active organisation member of the document's property. Read on every
+// call; a revoked member is refused on the next request.
 async function _ownsLeaseDoc(doc, userId) {
   if (!doc.property_id) return false;
-  const k   = sbKey();
-  const url = `${SUPABASE_URL}/rest/v1/properties?id=eq.${encodeURIComponent(doc.property_id)}&user_id=eq.${encodeURIComponent(userId)}&select=id`;
-  const res = await fetch(url, { headers: { 'apikey': k, 'Authorization': `Bearer ${k}` } });
-  const text = await res.text();
-  let rows;
-  try { rows = JSON.parse(text); } catch { rows = []; }
-  return Array.isArray(rows) && rows.length > 0;
+  return isMemberOfProperty(_sbFetch, doc.property_id, userId);
 }
 
 // Enforces all hard requirements. Called on every finding before it leaves the server.

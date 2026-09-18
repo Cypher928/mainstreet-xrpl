@@ -458,7 +458,9 @@ sec('D. Every database operation stays read-only');
   eq(writes, [], 'D1 no capability issued a non-GET through the transport ('
      + all.length + ' reads)');
   const tables = [...new Set(all.map(s => (s.match(/^GET \/([a-z_]+)/) || [])[1]))].sort();
-  eq(tables, ['properties', 'tenant_field_evidence'], 'D2 and touched only two tables');
+  // P0.1 — list_properties reads the caller's organisation memberships first.
+  eq(tables, ['organization_members', 'properties', 'tenant_field_evidence'],
+     'D2 and touched only the three approved tables');
 
   let refused = false;
   try { await HYD._readOnly(async () => ({}))('/properties', { method: 'POST' }); }

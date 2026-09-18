@@ -121,10 +121,34 @@ function auth(opts) {
 function db(opts) {
   const o = Object.assign({ blob: FULL_BLOB, evidence: [EV_ROW], ownedBy: OWNER,
                             tenantStatus: 200, evStatus: 200, propStatus: 200,
-                            listStatus: 200, tableTenants: [] }, opts || {});
+                            listStatus: 200, tableTenants: [],
+                            // P0.1 — organisation memberships. Default: the table
+                            // is absent (404), which is a pre-024 project and
+                            // keeps every older case exactly as it was.
+                            members: null, membersStatus: null }, opts || {});
   const calls = [];
   const fn = async (p, options) => {
     calls.push({ path: p, method: (options && options.method) || 'GET' });
+
+    // P0.1 — the caller's active memberships
+    if (/^\/organization_members\?/.test(p)) {
+      if (o.membersStatus) return { status: o.membersStatus, json: { message: 'x' } };
+      if (!o.members) return { status: 404, json: { code: 'PGRST205', message: 'Could not find the table' } };
+      return { status: 200, json: o.members };
+    }
+    // P0.1 — the portfolio read for a member: owned OR in their organisations
+    if (/^\/properties\?or=\(user_id\.eq\.([^,]+),organization_id\.in\.\(([^)]+)\)\)&select=id,name,sqft/.test(p)) {
+      const m = p.match(/or=\(user_id\.eq\.([^,]+),organization_id\.in\.\(([^)]+)\)\)/);
+      const uid = decodeURIComponent(m[1]);
+      const orgs = m[2].split(',').map(decodeURIComponent);
+      const rows = [];
+      if (uid === o.ownedBy) rows.push({ id: PROP, name: 'Main Street Plaza', sqft: 1000,
+        created_at: '2025-01-01T00:00:00Z', updated_at: '2025-02-01T00:00:00Z', archived_at: null });
+      if (orgs.indexOf('0a0a0a0a-0000-4000-8000-0000000000a0') !== -1) rows.push({
+        id: 'dddddddd-0000-4000-8000-00000000000d', name: 'Shared Annex', sqft: 250,
+        created_at: '2025-03-01T00:00:00Z', updated_at: '2025-03-01T00:00:00Z', archived_at: null });
+      return { status: 200, json: rows };
+    }
 
     // list_properties — the portfolio read, filtered by user
     if (/^\/properties\?user_id=eq\.([^&]+)&select=id,name,sqft/.test(p)) {
@@ -331,7 +355,12 @@ sec('D. A tenant-portal identity is not a landlord');
   const g2 = await MCP.call('get_property', { propertyId: PROP },
                             ctx({ token: 'tenant', sbFetch: generous }));
   eq(g2.data, null, 'D8 a permissive back end does not change the answer');
-  eq(generous.calls.length, 1, 'D9 and only the ownership probe was ever issued');
+  // P0.1 — an owner miss costs one more read, of the property's organisation,
+  // before the refusal. This fixture's property has none, so membership is
+  // never consulted and the record itself is never read.
+  eq(generous.calls.length, 2, 'D9 and only the ownership probe and the organisation lookup were ever issued');
+  is(!generous.calls.some(c => /select=id,name,sqft,data/.test(c.path)),
+     'D9b the property record was never read for a caller who does not own it');
 
   // Ownership is never inferred from tenant_users.
   is(!/tenant_users/.test(CODE), 'D10 tenant_users is not consulted for ownership');
@@ -354,14 +383,34 @@ sec('E. list_properties returns owned properties, and reads the minimum');
   eq(r.data.properties.map(p => p.archived), [false, true],
      'E3 with archived state exposed rather than silently filtered');
 
-  eq(d.calls.length, 1, 'E4 in exactly ONE read — no hydration per property');
-  is(d.calls[0].path.indexOf('user_id=eq.' + OWNER) !== -1,
+  // P0.1 — the listing is preceded by ONE membership read (which organisations
+  // admit this user), then ONE portfolio read. Still no hydration per property.
+  eq(d.calls.length, 2, 'E4 in exactly TWO reads — membership, then the portfolio — no hydration per property');
+  is(/^\/organization_members\?user_id=eq\./.test(d.calls[0].path),
+     'E4b the first read is the caller\'s own active memberships', d.calls[0].path);
+  is(d.calls[1].path.indexOf('user_id=eq.' + OWNER) !== -1,
      'E5 filtered on the authenticated user');
-  is(d.calls[0].path.indexOf('data') === -1,
-     'E6 and the property blob is NOT selected', d.calls[0].path);
-  is(!/tenant|evidence|cam_reconciliation/.test(d.calls[0].path),
+  is(d.calls[1].path.indexOf('data') === -1,
+     'E6 and the property blob is NOT selected', d.calls[1].path);
+  is(!d.calls.some(c => /tenant|evidence|cam_reconciliation/.test(c.path)),
      'E7 no tenant, evidence or CAM read for a listing');
   eq(r.provenance.hydrated, false, 'E8 provenance says the rows were not hydrated');
+
+  // P0.1 — a member's portfolio is what they own PLUS what their organisations
+  // hold; and a FAILED membership read is a failed listing, never a smaller one.
+  const ORG = '0a0a0a0a-0000-4000-8000-0000000000a0';
+  const dm = db({ members: [{ organization_id: ORG }] });
+  const rm = await MCP.call('list_properties', {}, ctx({ sbFetch: dm }));
+  eq(rm.data.count, 2, 'E8b an active member lists their own property AND the organisation\'s');
+  eq(rm.data.properties.map(p => p.name).sort(), ['Main Street Plaza', 'Shared Annex'], 'E8c by name');
+  is(/or=\(user_id\.eq\.[^,]+,organization_id\.in\.\(/.test(dm.calls[1].path),
+     'E8d the portfolio read carries owned-OR-organisation, not owner-only', dm.calls[1].path);
+  const df = db({ membersStatus: 500 });
+  const rf = await MCP.call('list_properties', {}, ctx({ sbFetch: df }));
+  eq(rf.data, null, 'E8e a failed membership read yields NO portfolio, not an owner-only one');
+  eq(codes(rf), ['read_failed'], 'E8f reported as read_failed');
+  is(!df.calls.some(c => /^\/properties\?/.test(c.path)),
+     'E8g and the property list was never read — a partial answer was not even attempted');
 
   is(codes(r).indexOf('summary_only') !== -1,
      'E9 and a caveat that counts and statuses are absent, not zero');
@@ -675,7 +724,9 @@ sec('I. No writes, no RPC, and only the reads M1b approved');
      Array.from(new Set(d.calls.map(c => c.method))).join(','));
 
   const tables = Array.from(new Set(d.calls.map(c => c.path.split('?')[0]))).sort();
-  eq(tables, ['/properties', '/tenant_field_evidence'],
+  // P0.1 added organization_members: list_properties asks which organisations
+  // admit the caller. Read-only, like everything else here.
+  eq(tables, ['/organization_members', '/properties', '/tenant_field_evidence'],
      'I2 and only the approved tables were touched');
 
   const guarded = MCP._readOnly(async () => ({ status: 200, json: [] }));

@@ -617,7 +617,7 @@ sec('J. The same envelope as every capability before it');
     eq(r.provenance.origin, 'server', 'J3.' + name + ' origin is server');
     eq(r.provenance.includesBrowserLocalState, false,
        'J4.' + name + ' and it says it has no browser-local state');
-    eq(r.provenance.ownership, 'properties.user_id = authenticated user',
+    eq(r.provenance.ownership, MCP.OWNERSHIP_RULE,
        'J5.' + name + ' with the ownership rule stated');
     is(Array.isArray(r.provenance.reads) && r.provenance.reads.length === 3,
        'J6.' + name + ' and the exact reads it performed');

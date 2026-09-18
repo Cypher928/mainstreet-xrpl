@@ -428,6 +428,12 @@ const SUITES = [
   { label: 'Extraction field preservation',             cmd: 'node test-tenant-field-preservation.js' },
   { label: 'Spaces list refresh after upload',          cmd: 'node test-spaces-refresh.js' },
   { label: 'Security (Part 4)',                         cmd: 'node test-security.js' },
+  // Phase 0, P0.1 — organisations. The API-layer rule (owner OR active member,
+  // nothing cached, fails closed) and the migration that carries the same rule
+  // into RLS and storage. The live two-organisation proof is Group 4 of
+  // test-rls-cross-user.js, in the pilot gate.
+  { label: 'Organisation membership authz (P0.1)',      cmd: 'node test-membership-authz.js' },
+  { label: 'Organisations migration 024 (P0.1)',        cmd: 'node test-organizations-migration.js' },
   { label: 'A lease is data, not instructions',         cmd: 'node test-untrusted-lease-text.js' },
   { label: 'Explain prompt control (AI-2)',             cmd: 'node test-explain-prompt-control.js' },
   { label: 'Request limits',                            cmd: 'node test-request-limits.js' },

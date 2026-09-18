@@ -284,7 +284,11 @@ sec('B. The boundary holds for each new capability, not by inheritance');
   const d = db();
   await MCP.call('get_space', { propertyId: PROP, spaceId: T1 },
                  ctx({ token: 'tenant', sbFetch: d }));
-  eq(d.calls.length, 1, 'B15 a non-owner call issues only the ownership probe');
+  // P0.1 — an owner miss costs one more read, of the property's organisation,
+  // before the refusal; the record itself is never read.
+  eq(d.calls.length, 2, 'B15 a non-owner call issues only the ownership probe and the organisation lookup');
+  is(!d.calls.some(c => /select=id,name,sqft,data/.test(c.path)),
+     'B15b and never the property record');
 }
 
 // ── C. No authorization from a role or metadata claim ──────────────────────

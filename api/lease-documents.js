@@ -12,6 +12,8 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // it can and cannot do: it is per-instance and Vercel scales instances, so it
 // brakes runaway loops and single-client hammering, not a determined attacker.
 const { checkRate, sendRateLimited } = require('./_rate-limit');
+// P0.1 — owner OR active organisation member. One rule, in one module.
+const { isMemberOfProperty } = require('./_membership');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -38,14 +40,11 @@ function key() {
   return _t.serviceRoleKey || SUPABASE_ANON_KEY;
 }
 
+// The name is kept: every call site below still asks "may this user act on this
+// property", and the answer is now owner-or-active-member (api/_membership.js).
+// Membership is read on every call — revocation takes effect on the next request.
 async function _ownsProperty(propertyId, userId) {
-  const r = await sbFetch(
-    `/properties?id=eq.${encodeURIComponent(propertyId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
-    { method: 'GET', headers: { 'Prefer': '' } }
-  );
-  if (r.status >= 300) return false;
-  const rows = Array.isArray(r.json) ? r.json : [];
-  return rows.length > 0;
+  return isMemberOfProperty(sbFetch, propertyId, userId);
 }
 
 function _isMigrationMissing(json) {
