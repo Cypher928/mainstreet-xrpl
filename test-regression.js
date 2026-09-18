@@ -442,6 +442,12 @@ const SUITES = [
   // provisions with the same five states, lineage, append-only events, and the
   // financial tables; every policy on the 024 rule; every rollback honest.
   { label: 'P0.3 schema contract (025–029)',            cmd: 'node test-p03-schema-contract.js' },
+  // The one P0.3 invariant that source text cannot establish: property_events
+  // is append-only. Starts its own PostgreSQL, applies 028 and 028b unmodified
+  // and drives them as the table owner — the only role holding DELETE, UPDATE
+  // and TRUNCATE, and so the only one that can tell a working guard from a
+  // decorative one. Exits non-zero if no PostgreSQL is installed.
+  { label: 'Events are append-only (028/028b, real DB)', cmd: 'node test-028-append-only.js' },
   { label: 'A lease is data, not instructions',         cmd: 'node test-untrusted-lease-text.js' },
   { label: 'Explain prompt control (AI-2)',             cmd: 'node test-explain-prompt-control.js' },
   { label: 'Request limits',                            cmd: 'node test-request-limits.js' },

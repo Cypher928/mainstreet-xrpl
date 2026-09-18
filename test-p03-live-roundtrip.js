@@ -83,6 +83,15 @@ async function service(path, opts = {}) {
   let json; try { json = text ? JSON.parse(text) : null; } catch { json = text; }
   return { status: r.status, json, rows: Array.isArray(json) ? json.length : 0 };
 }
+// GoTrue admin. Used only to create and remove a throwaway account of this
+// run's own, so the foreign-key cleanup path can be exercised end to end.
+async function admin(path, opts = {}) {
+  const headers = { apikey: SERVICE_KEY, Authorization: 'Bearer ' + SERVICE_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(URL_ + '/auth/v1' + path, { method: opts.method || 'GET', headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const text = await r.text();
+  let json; try { json = text ? JSON.parse(text) : null; } catch { json = text; }
+  return { status: r.status, json };
+}
 async function signIn(email, password) {
   const r = await fetch(URL_ + '/auth/v1/token?grant_type=password', {
     method: 'POST', headers: { apikey: ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
@@ -249,6 +258,80 @@ const isMissing = (r) => r.status === 404 || (r.json && typeof r.json === 'objec
     if (cIns.status < 300 && cIns.json[0].actor_uid === C.uid) pass('C (member) can write an event, stamped as C'); else fail('C could not write an event: ' + cIns.status);
     const bIns = await rest('/property_events', B.token, { method: 'POST', body: { property_id: PROP, action: 'p03_stranger_write' } });
     if (bIns.status >= 400) pass('B cannot write an event under A\'s property (' + bIns.status + ')'); else fail('B wrote an event under A\'s property');
+
+    // 028b — the organisation is a fact about the property, not a claim the
+    // writer makes. 028 kept whatever the caller supplied.
+    if (ORG_A && SERVICE_KEY) {
+      const otherOrg = await service('/organizations', { method: 'POST', body: { name: 'plci-' + stamp + '-not-As-org' } });
+      const oid = otherOrg.status < 300 && otherOrg.json && otherOrg.json[0] && otherOrg.json[0].id;
+      if (!oid) {
+        info('organisation-authority check not run (could not create a throwaway organisation: ' + otherOrg.status + ')');
+      } else {
+        const mis = await rest('/property_events', A.token, { method: 'POST', body: {
+          property_id: PROP, action: 'p03_org_claim', organization_id: oid,
+        } });
+        const stored = mis.status < 300 && mis.json && mis.json[0] && mis.json[0].organization_id;
+        if (stored === ORG_A) pass('a mismatched organization_id supplied by the caller never becomes stored data');
+        else fail('caller-supplied organisation was stored: ' + stored + ' (property belongs to ' + ORG_A + ')');
+        await service('/organizations?id=eq.' + oid, { method: 'DELETE' });
+      }
+    }
+
+    // 028b — a referenced row can still be deleted, and the event outlives it
+    // with only that one column dropped. Under 028 both of these failed with
+    // "rows are never updated", which would have blocked user deletion outright
+    // once P0.5 starts writing events.
+    if (SERVICE_KEY) {
+      const email = 'plci-' + stamp + '-departing@pilot.invalid';
+      const made = await admin('/admin/users', { method: 'POST', body: { email, password: 'x' + stamp + 'Aa!', email_confirm: true } });
+      const uid = made.status < 300 && made.json && made.json.id;
+      if (!uid) {
+        info('user-deletion check not run (could not create a throwaway account: ' + made.status + ')');
+      } else {
+        const own = await service('/property_events', { method: 'POST', body: {
+          property_id: PROP, action: 'p03_by_departing_user', actor_email: email, actor_uid: uid,
+        } });
+        const owned = own.status < 300 && own.json && own.json[0];
+        const gone = await admin('/admin/users/' + uid, { method: 'DELETE' });
+        const after = owned ? await service('/property_events?id=eq.' + owned.id + '&select=actor_uid,actor_email,action') : null;
+        const row = after && after.json && after.json[0];
+        if (gone.status < 300 && row && row.actor_uid === null && row.action === 'p03_by_departing_user' && row.actor_email === email) {
+          pass('deleting a referenced user succeeds; the event survives with actor_uid NULL and nothing else changed');
+        } else {
+          fail('user deletion / event survival: delete=' + gone.status + ' row=' + JSON.stringify(row));
+        }
+      }
+    }
+
+    if (SERVICE_KEY) {
+      // The same for an organisation. A property may not be left pointing at a
+      // deleted organisation (properties.organization_id is ON DELETE RESTRICT),
+      // so the throwaway property is moved back to A's organisation first; the
+      // event keeps pointing at the organisation it was filed under.
+      const tmpOrg = await service('/organizations', { method: 'POST', body: { name: 'plci-' + stamp + '-temp-org' } });
+      const toid = tmpOrg.status < 300 && tmpOrg.json && tmpOrg.json[0] && tmpOrg.json[0].id;
+      const tmpProp = toid ? await service('/properties', { method: 'POST', body: {
+        user_id: A.uid, name: 'plci-' + stamp + '-org-probe', sqft: 1000, data: {}, organization_id: toid,
+      } }) : null;
+      const tpid = tmpProp && tmpProp.status < 300 && tmpProp.json && tmpProp.json[0] && tmpProp.json[0].id;
+      if (!toid || !tpid) {
+        info('organisation-deletion check not run (could not build the throwaway organisation/property)');
+      } else {
+        const oev = await service('/property_events', { method: 'POST', body: { property_id: tpid, action: 'p03_org_linked' } });
+        const oevr = oev.status < 300 && oev.json && oev.json[0];
+        await service('/properties?id=eq.' + tpid, { method: 'PATCH', body: { organization_id: ORG_A || null } });
+        const odel = await service('/organizations?id=eq.' + toid, { method: 'DELETE' });
+        const oafter = oevr ? await service('/property_events?id=eq.' + oevr.id + '&select=organization_id,action') : null;
+        const orow = oafter && oafter.json && oafter.json[0];
+        if (oevr && oevr.organization_id === toid && odel.status < 300 && orow && orow.organization_id === null && orow.action === 'p03_org_linked') {
+          pass('deleting a referenced organisation succeeds; the event survives with organization_id NULL');
+        } else {
+          fail('organisation deletion / event survival: stamped=' + (oevr && oevr.organization_id) + ' delete=' + odel.status + ' row=' + JSON.stringify(orow));
+        }
+        // The event goes with the property, which is the one cascade 028 permits.
+        await service('/properties?id=eq.' + tpid, { method: 'DELETE' });
+      }
+    }
   }
 
   // ── 029 ───────────────────────────────────────────────────────────────────

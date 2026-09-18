@@ -57,8 +57,15 @@ const MUTANTS = [
   // ── 028 ───────────────────────────────────────────────────────────────────
   { id: 'E01', file: M('028_property_events.sql'), why: 'a member can write an event as someone else',
     from: "    elsif new.actor_uid <> v_caller then\n      raise exception 'property_events.actor_uid must be the caller' using errcode = 'insufficient_privilege';\n    end if;", to: "    end if;" },
-  { id: 'E02', file: M('028_property_events.sql'), why: 'a direct DELETE passes',
-    from: "  if pg_trigger_depth() = 0 then", to: "  if pg_trigger_depth() = 99 then" },
+  // E02 RETIRED. It changed 028's delete predicate from `= 0` to `= 99`, and
+  // was killed only by the old contract assertion that required the literal
+  // `= 0` — the assertion that pinned the defect. 028b replaces that function
+  // body outright with `create or replace`, so mutating 028's copy cannot
+  // change the shipped database at all: applying the mutation and running the
+  // behaviour suite gives 32 passed, 0 failed, identical to the original. It
+  // is an equivalent mutant, and the honest response to one is to retire it
+  // rather than re-pin dead text so the number stays high. V01 mutates the
+  // same predicate where it is actually live, in 028b.
   { id: 'E03', file: M('028_property_events.sql'), why: 'events can be updated',
     from: "  if tg_op = 'UPDATE' then\n    raise exception", to: "  if tg_op = 'NEVER' then\n    raise exception" },
   { id: 'E04', file: M('028_property_events.sql'), why: 'service_role is granted everything, including delete',
@@ -106,8 +113,44 @@ const MUTANTS = [
   // ── negative controls ────────────────────────────────────────────────────
   { id: 'N01', file: M('026_lease_provisions.sql'), why: 'NEGATIVE CONTROL — members lose insert; the abstract cannot be written',
     from: "grant select, insert, update on public.lease_provisions to authenticated;", to: "grant select on public.lease_provisions to authenticated;" },
-  { id: 'N02', file: M('028_property_events.sql'), why: 'NEGATIVE CONTROL — the guard refuses the property cascade too, so no property can ever be deleted',
-    from: "  if pg_trigger_depth() = 0 then\n    raise exception", to: "  if true then\n    raise exception" },
+  { id: 'N02', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'NEGATIVE CONTROL — the stamp refuses a caller-less write, so the service role can no longer record an act on behalf of a verified user',
+    from: "  if v_caller is not null then",
+    to:   "  if v_caller is null then\n    raise exception 'no caller' using errcode = 'insufficient_privilege';\n  end if;\n  if v_caller is not null then" },
+
+  // ── 028b, checked against the BEHAVIOUR suite ────────────────────────────
+  // These do not change what the SQL says about itself, they change what the
+  // database does. Only a suite that runs a real PostgreSQL can tell. This is
+  // the gap that let the original depth defect ship: the contract suite was
+  // asked whether the text looked right, and it did.
+  { id: 'V01', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'the delete guard goes back to the unreachable depth 0 — every DELETE passes again',
+    from: "    if pg_trigger_depth() <= 1 then\n      raise exception 'property_events is append-only: rows are never deleted",
+    to:   "    if pg_trigger_depth() = 0 then\n      raise exception 'property_events is append-only: rows are never deleted" },
+  { id: 'V02', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'the truncate guard is gone — a privileged TRUNCATE empties the event log',
+    from: "create trigger property_events_no_truncate\n  before truncate on public.property_events\n  for each statement execute function public._property_events_no_truncate();",
+    to:   "" },
+  { id: 'V03', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'organization_id is trusted from the caller again when supplied',
+    from: "  select p.organization_id into new.organization_id\n  from public.properties p where p.id = new.property_id;\n\n  return new;",
+    to:   "  if new.organization_id is null then\n    select p.organization_id into new.organization_id\n    from public.properties p where p.id = new.property_id;\n  end if;\n\n  return new;" },
+  { id: 'V04', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'any trigger-driven update is allowed, not just the foreign key SET NULL',
+    from: "  if not (\n        new.id              is not distinct from old.id",
+    to:   "  if false and not (\n        new.id              is not distinct from old.id" },
+  { id: 'V05', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'every UPDATE is refused again — deleting a referenced user or organisation breaks',
+    from: "  if pg_trigger_depth() <= 1 then\n    raise exception 'property_events is append-only: rows are never updated'",
+    to:   "  if true then\n    raise exception 'property_events is append-only: rows are never updated'" },
+  { id: 'V06', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'the delete guard also refuses the property cascade, so a property can never be deleted',
+    from: "    if pg_trigger_depth() <= 1 then\n      raise exception 'property_events is append-only: rows are never deleted",
+    to:   "    if pg_trigger_depth() <= 2 then\n      raise exception 'property_events is append-only: rows are never deleted" },
+  { id: 'V07', file: M('028b_property_events_append_only_fix.sql'), suites: ['test-028-append-only.js'],
+    why: 'the actor spoof check is dropped — a member can file an event as someone else',
+    from: "    elsif new.actor_uid <> v_caller then\n      raise exception 'property_events.actor_uid must be the caller' using errcode = 'insufficient_privilege';",
+    to:   "    elsif false then\n      raise exception 'property_events.actor_uid must be the caller' using errcode = 'insufficient_privilege';" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'p03mut-'));
@@ -121,17 +164,21 @@ fs.cpSync(ROOT, tmp, {
 const ORIGINAL = {};
 for (const m of MUTANTS) if (!ORIGINAL[m.file]) ORIGINAL[m.file] = fs.readFileSync(path.join(ROOT, m.file), 'utf8');
 
+// Most mutants change what the SQL SAYS, and the contract suite reads it.
+// The 028b mutants change what the database DOES, so they are put to the
+// behaviour suite, which starts a real PostgreSQL and drives the triggers.
 const SUITES = ['test-p03-schema-contract.js'];
-function runSuites() {
+function runSuites(list) {
   const failed = [];
-  for (const suite of SUITES) {
-    try { execFileSync(process.execPath, [suite], { cwd: tmp, stdio: 'pipe', timeout: 120000 }); }
+  for (const suite of (list || SUITES)) {
+    try { execFileSync(process.execPath, [suite], { cwd: tmp, stdio: 'pipe', timeout: 300000 }); }
     catch (_) { failed.push(suite); }
   }
   return failed;
 }
 
-const baseline = runSuites();
+const BEHAVIOUR = Array.from(new Set(MUTANTS.filter(m => m.suites).flatMap(m => m.suites)));
+const baseline = runSuites(SUITES.concat(BEHAVIOUR));
 console.log('Baseline (unmutated copy): ' + (baseline.length ? 'FAIL ' + baseline.join(', ') : 'PASS'));
 if (baseline.length) {
   console.error('\nThe unmutated copy does not pass, so every result below would be meaningless. Nothing is mutated.');
@@ -149,7 +196,7 @@ for (const m of MUTANTS) {
     continue;
   }
   fs.writeFileSync(path.join(tmp, m.file), src.replace(m.from, m.to));
-  const failed = runSuites();
+  const failed = runSuites(m.suites);
   fs.writeFileSync(path.join(tmp, m.file), src);
   if (failed.length) { killed++; console.log(`  \x1b[32m☠\x1b[0m  ${m.id} killed — ${m.why}`); }
   else { survived++; survivors.push(m.id); console.log(`  \x1b[31m✗\x1b[0m  ${m.id} SURVIVED — ${m.why}`); }

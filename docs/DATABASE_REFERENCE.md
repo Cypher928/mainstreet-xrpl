@@ -170,7 +170,7 @@ policies for new tables.
 ### Phase 0 (023–029) — the acquisition foundation, one architecture
 
 Applied to **Pilot only**, in the plan's order (024 first): 024 → 023 → 025 →
-026 / 027 / 029 → 028. The numbers are the files' identities; the order is the
+026 / 026b / 027 / 029 → 028 → 028b. The numbers are the files' identities; the order is the
 plan's. Every policy on every new or rewritten table reads 024's
 `member_property_ids()` (owner OR active organisation member); none reads
 `user_id = auth.uid()`.
@@ -183,7 +183,8 @@ plan's. Every policy on every new or rewritten table reads 024's
 | 026 | `lease_provisions` — a clause with structure, plain sentence, quote/page/section, the **same five FieldProvenance states**, reviewer attribution, `source_document_id`, `superseded_by`; value columns immutable by trigger, no member delete | new; same verified-memory shape as `tenant_field_evidence` |
 | 026b | table privileges on `lease_provisions` set explicitly: authenticated holds SELECT, INSERT, UPDATE and nothing else (Supabase's default ACL had granted ALL at creation; 026 is applied and not replayed) | hardening; both layers now state the contract |
 | 027 | `tenant_field_evidence` gains `amendment_id`, `source_document_id`, `superseded_by`; no backfill | extends in place |
-| 028 | `property_events` — append-only (trigger refuses UPDATE and any DELETE that is not the property's own cascade; no update/delete grant to any role), actor stamped from `auth.uid()` and a spoofed actor refused, `organization_id` stamped from the property | new; P0.5 makes the existing writers dual-write here |
+| 028 | `property_events` — append-only, actor stamped from `auth.uid()` and a spoofed actor refused, `organization_id` stamped from the property; no update/delete grant to any role | new; P0.5 makes the existing writers dual-write here |
+| 028b | corrects 028's guards, which did not do what they said. Its delete check tested `pg_trigger_depth() = 0`, unreachable inside a row trigger (a direct statement arrives at 1, a cascade at 2), so **every** DELETE passed; TRUNCATE was never covered at all; and the blanket UPDATE refusal made `ON DELETE SET NULL` on `actor_uid`/`organization_id` unreachable, so a referenced user or organisation could not be deleted. Now: depth `<= 1` is refused, a statement-level trigger refuses TRUNCATE, an update is allowed only from inside a trigger AND only to null those two columns, and `organization_id` is derived from the property unconditionally | hardening; proved by behaviour in `test-028-append-only.js` against a real PostgreSQL |
 | 029 | `financial_sources` (rent_roll · general_ledger · operating_statement · budget · t12 → the register row, period, extracted jsonb) and `gl_entries` (one line per GL row, traceable to its source, `row_hash` unique per property) | new, tables only; Phase 2 fills them; the CAM-tab GL import is unchanged |
 
 Contracts: `test-organizations-migration.js`, `test-lifecycle-stage.js`,

@@ -52,6 +52,7 @@ const FILES = {
   '026b': ['026b_lease_provisions_privileges.sql', '026b_lease_provisions_privileges_rollback.sql'],
   '027': ['027_evidence_lineage.sql',  '027_evidence_lineage_rollback.sql'],
   '028': ['028_property_events.sql',   '028_property_events_rollback.sql'],
+  '028b': ['028b_property_events_append_only_fix.sql', '028b_property_events_append_only_fix_rollback.sql'],
   '029': ['029_financial_tables.sql',  '029_financial_tables_rollback.sql'],
 };
 const RAW = {}, SQL = {}, RB = {}, RBS = {};
@@ -229,8 +230,26 @@ sec('E. 028 — append-only, identity-stamped events');
   t('E12 the stamp runs before insert', /create trigger property_events_stamp\s+before insert on public\.property_events/.test(s));
   const ao = fnBody(s, '_property_events_append_only');
   t('E13 an append-only guard exists', !!ao);
-  t('E14 every UPDATE is refused', ao && /tg_op = 'UPDATE'[\s\S]*raise exception/.test(ao));
-  t('E15 a direct DELETE is refused; only the property\'s cascade passes', ao && /pg_trigger_depth\(\) = 0[\s\S]*raise exception/.test(ao));
+  t('E14 028 refused every UPDATE outright (028b narrows this to FK SET NULL)', ao && /tg_op = 'UPDATE'[\s\S]*raise exception/.test(ao));
+  // E15 USED TO READ: `pg_trigger_depth() = 0` followed by a raise, asserted
+  // against the source of 028. That predicate is unreachable inside a row
+  // trigger — a direct statement arrives at depth 1 and a cascade at 2 — so
+  // the assertion certified the defect instead of catching it, and the table
+  // accepted a privileged DELETE for as long as it stood. Source text is not
+  // evidence for a runtime guarantee. The invariant is now proved by
+  // BEHAVIOUR in test-028-append-only.js, which starts a real PostgreSQL,
+  // applies 028 and 028b unmodified, and drives them as the table owner: the
+  // only role that actually holds DELETE, UPDATE and TRUNCATE, and therefore
+  // the only one that can tell a working guard from a decorative one.
+  t('E15 the append-only invariant is proved by behaviour against a real database', (() => {
+    const p = path.join(ROOT, 'test-028-append-only.js');
+    if (!fs.existsSync(p)) return false;
+    const b = fs.readFileSync(p, 'utf8');
+    return /initdb/.test(b)
+        && /028b_property_events_append_only_fix\.sql/.test(b)
+        && /028_property_events\.sql/.test(b)
+        && /truncate/i.test(b);
+  })());
   t('E16 the guard runs before update or delete', /create trigger property_events_append_only\s+before update or delete on public\.property_events/.test(s));
   t('E17 no UPDATE or DELETE grant to authenticated or service_role', /revoke all on public\.property_events from authenticated, service_role/.test(s) && /grant select, insert on public\.property_events to authenticated/.test(s) && /grant select, insert on public\.property_events to service_role/.test(s) && !/grant all on public\.property_events/.test(s));
   const pols = allPolicies(s).filter(p => p.table === 'property_events');
@@ -238,6 +257,44 @@ sec('E. 028 — append-only, identity-stamped events');
   t('E19 NO policy is for update, delete or all', pols.every(p => !/for (update|delete|all)\b/.test(p.body)));
   t('E20 member insert is checked against member_property_ids()', /property_events_member_insert[\s\S]*with check \(property_id in \(select public\.member_property_ids\(\)\)\)/.test(s));
   t('E21 anon is revoked', /revoke all on public\.property_events from public, anon/.test(s));
+}
+
+sec('E2. 028b — the corrected append-only guard');
+{
+  const s = SQL['028b'];
+  const ao = fnBody(s, '_property_events_append_only');
+  const stamp = fnBody(s, '_property_events_stamp');
+  const nt = fnBody(s, '_property_events_no_truncate');
+
+  t('E22 028b replaces the append-only guard', !!ao);
+  t('E23 the guard no longer tests the unreachable depth 0', ao && !/pg_trigger_depth\(\)\s*=\s*0/.test(ao));
+  t('E24 a DELETE at depth 1 — an application statement — is refused',
+    ao && /tg_op = 'DELETE'[\s\S]*pg_trigger_depth\(\) <= 1[\s\S]*raise exception/.test(ao));
+  t('E25 an UPDATE at depth 1 is refused',
+    ao && /pg_trigger_depth\(\) <= 1[\s\S]*never updated/.test(ao));
+  t('E26 a deeper UPDATE may only null actor_uid or organization_id',
+    ao && /new\.actor_uid\s+is not distinct from old\.actor_uid\s+or new\.actor_uid\s+is null/.test(ao)
+       && /new\.organization_id is not distinct from old\.organization_id or new\.organization_id is null/.test(ao));
+  for (const c of ['id', 'property_id', 'actor_email', 'action', 'subject_type', 'subject_id',
+                   'field_key', 'old_value', 'new_value', 'detail', 'client_ts', 'created_at']) {
+    t(`E27 ${c} must be identical across a permitted update`,
+      ao && new RegExp('new\\.' + c + '\\s+is not distinct from old\\.' + c).test(ao));
+  }
+  t('E28 a TRUNCATE guard exists and refuses', !!nt && /raise exception[\s\S]*never truncated/.test(nt));
+  t('E29 it is a statement-level BEFORE TRUNCATE trigger',
+    /create trigger property_events_no_truncate\s+before truncate on public\.property_events\s+for each statement/.test(s));
+  t('E30 organization_id is derived unconditionally — no "if absent" branch',
+    stamp && /select p\.organization_id into new\.organization_id/.test(stamp)
+          && !/if new\.organization_id is null/.test(stamp));
+  t('E31 actor_uid stays the caller, and a named stranger is still refused',
+    stamp && /new\.actor_uid := v_caller/.test(stamp) && /new\.actor_uid <> v_caller[\s\S]*raise exception/.test(stamp));
+  t('E32 028b changes no column, policy, grant or index',
+    !/create table|alter table|create policy|drop policy|create index|grant |revoke /.test(s));
+  t('E33 028b carries the pilot marker guard', s.indexOf('fd9c09b1-b657-4c58-9999-c3cce28e7600') !== -1);
+  t('E34 the rollback restores 028\'s bodies and drops the truncate trigger',
+    /drop trigger  if exists property_events_no_truncate/.test(RBS['028b'])
+    && /drop function if exists public\._property_events_no_truncate\(\)/.test(RBS['028b'])
+    && /pg_trigger_depth\(\) = 0/.test(RBS['028b']));
 }
 
 sec('F. 029 — financial tables, tables only');
