@@ -115,6 +115,21 @@ for (const cat of ['credentials', 'network', 'stale']) {
   files.forEach(f => console.log(`    · ${f}`));
 }
 
+// Phase 0 P0.0 — the monolith budget is ALWAYS registered. The §00 rule is only
+// a rule while the suite that enforces it runs on every regression; parking it
+// as "stale" or "cosmetic" would be the quietest possible way to repeal it. So
+// this file — the one that decides what is allowed to be excused — refuses to
+// excuse it. Adding it to the manifest fails here, not in six months.
+const NEVER_EXCUSED = ['test-monolith-budget.js'];
+
+t('the monolith budget is registered and can never be excused', () => {
+  for (const f of NEVER_EXCUSED) {
+    ok(fs.existsSync(path.join(ROOT, f)), `${f} is missing from disk — the §00 rule has no enforcer`);
+    ok(registered.has(f), `${f} is not run by test-regression.js — the §00 rule is unenforced`);
+    ok(!EXCLUDED[f], `${f} is listed in the coverage manifest — the §00 rule cannot be excused; remove the entry`);
+  }
+});
+
 t('the uncovered list has not grown without anyone deciding to', () => {
   // A number, deliberately hard-coded. Raising it is a decision someone makes in
   // a diff, with a reason in the manifest beside it — which is the entire point.

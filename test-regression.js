@@ -12,6 +12,13 @@
 const { execSync } = require('child_process');
 
 const SUITES = [
+  // FIRST, by design. Phase 0 P0.0 — the §00 rule that script.js does not grow.
+  // Every other suite below asks whether the product still works; this one asks
+  // whether the change was made in the right place. It runs first so a slice
+  // that landed logic in the monolith is told so before an hour of browser
+  // suites, and it cannot be excused through the coverage manifest
+  // (test-suite-registration.js treats it as always-registered).
+  { label: 'Monolith budget (§00)',    cmd: 'node test-monolith-budget.js' },
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
