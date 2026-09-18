@@ -54,6 +54,7 @@ const FILES = {
   '028': ['028_property_events.sql',   '028_property_events_rollback.sql'],
   '028b': ['028b_property_events_append_only_fix.sql', '028b_property_events_append_only_fix_rollback.sql'],
   '029': ['029_financial_tables.sql',  '029_financial_tables_rollback.sql'],
+  '030': ['030_property_events_derive.sql', '030_property_events_derive_rollback.sql'],
 };
 const RAW = {}, SQL = {}, RB = {}, RBS = {};
 for (const [n, [m, r]] of Object.entries(FILES)) { RAW[n] = read(m); SQL[n] = strip(RAW[n]); RB[n] = read(r); RBS[n] = strip(RB[n]); }
@@ -295,6 +296,71 @@ sec('E2. 028b — the corrected append-only guard');
     /drop trigger  if exists property_events_no_truncate/.test(RBS['028b'])
     && /drop function if exists public\._property_events_no_truncate\(\)/.test(RBS['028b'])
     && /pg_trigger_depth\(\) = 0/.test(RBS['028b']));
+}
+
+sec('E3. 030 — durable history derived in the property transaction (P0.5)');
+{
+  const s = SQL['030'];
+  const derive = fnBody(s, '_property_events_derive');
+  const safe   = fnBody(s, '_p05_safe_ts');
+
+  t('E35 it is an AFTER trigger on properties.data — same transaction as the write',
+    /create trigger property_events_derive\s+after insert or update of data on public\.properties/.test(s));
+  t('E36 it adds source_key and a partial unique index on (property_id, source_key)',
+    /alter table public\.property_events\s+add column if not exists source_key text/.test(s)
+    && /create unique index if not exists property_events_source_key_uniq\s+on public\.property_events \(property_id, source_key\)\s+where source_key is not null/.test(s));
+  t('E37 every insert is ON CONFLICT DO NOTHING — 028b forbids DO UPDATE',
+    (s.match(/on conflict \(property_id, source_key\) where source_key is not null do nothing/g) || []).length === 2
+    && !/do update/.test(s));
+
+  // The watermark, which is the whole of the no-backfill promise.
+  t('E38 a watermark table records what already existed', /create table if not exists public\.property_events_watermark/.test(s));
+  t('E39 it is seeded from the CURRENT blobs, once, at migration time',
+    /insert into public\.property_events_watermark \(property_id, legacy_timeline_keys\)[\s\S]*from public\.properties p/.test(s));
+  t('E40 activity is gated on carrying a stable id — legacy entries have none',
+    derive && /and nullif\(btrim\(coalesce\(e->>'id', ''\)\), ''\) is not null/.test(derive));
+  t('E41 timeline is gated on not being in the watermark',
+    derive && /and not \(q\.k = any \(v_legacy\)\)/.test(derive));
+  t('E42 the timeline key prefers dedupeKey, falling back to id',
+    derive && /coalesce\(\s*nullif\(btrim\(coalesce\(e->'metadata'->>'dedupeKey', ''\)\), ''\),\s*nullif\(btrim\(coalesce\(e->>'id', ''\)\), ''\)\s*\) as k/.test(derive));
+
+  // Identity is never taken from the blob.
+  t('E43 the insert supplies neither actor_uid nor organization_id',
+    derive && !/actor_uid/.test(derive) && !/organization_id/.test(derive));
+  t('E44 the property is the row being written, never a value from the entry',
+    derive && /select\s+new\.id,/.test(derive) && !/e->>'propertyId'/.test(derive));
+
+  // Totality: only a genuine database failure may fail a save.
+  t('E45 the action is clamped to the 1..80 the check allows',
+    derive && /left\(coalesce\(nullif\(btrim\(e->>'type'\), ''\), 'unknown'\), 80\)/.test(derive));
+  t('E46 the timestamp goes through a cast that cannot raise',
+    derive && /public\._p05_safe_ts\(/.test(derive) && safe && /exception when others then\s*return null;/.test(safe));
+  t('E47 both arrays are guarded before jsonb_array_elements, which raises on a scalar',
+    derive && /if jsonb_typeof\(new\.data->'activityLog'\) = 'array' then/.test(derive)
+           && /if jsonb_typeof\(new\.data->'timeline'\) = 'array' then/.test(derive));
+  t('E48 a null or non-object data column returns early', derive && /jsonb_typeof\(new\.data\) <> 'object'/.test(derive));
+
+  t('E49 the watermark table is not reachable by any application role',
+    /revoke all on public\.property_events_watermark from public, anon, authenticated, service_role/.test(s));
+  t('E50 030 does not alter 028 or 028b\'s triggers, policies or grants on property_events',
+    !/create policy|drop policy/.test(s)
+    && !/property_events_append_only|property_events_stamp|property_events_no_truncate/.test(s));
+  t('E51 the rollback drops the trigger, both functions, the watermark and the column',
+    /drop trigger   if exists property_events_derive/.test(RBS['030'])
+    && /drop function  if exists public\._property_events_derive\(\)/.test(RBS['030'])
+    && /drop function  if exists public\._p05_safe_ts\(text\)/.test(RBS['030'])
+    && /drop table     if exists public\.property_events_watermark/.test(RBS['030'])
+    && /drop column if exists source_key/.test(RBS['030']));
+  t('E52 the rollback says plainly that re-applying is not a no-op',
+    /Re-applying is therefore not a no-op/.test(RB['030']));
+
+  // Source text cannot establish a transactional guarantee; behaviour can.
+  t('E53 the durability invariant has a behaviour test that runs a real database', (() => {
+    const p = path.join(ROOT, 'test-030-event-derivation.js');
+    if (!fs.existsSync(p)) return false;
+    const b = fs.readFileSync(p, 'utf8');
+    return /initdb/.test(b) && /030_property_events_derive\.sql/.test(b) && /rollback;/.test(b);
+  })());
 }
 
 sec('F. 029 — financial tables, tables only');

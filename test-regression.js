@@ -452,6 +452,11 @@ const SUITES = [
   // and TRUNCATE, and so the only one that can tell a working guard from a
   // decorative one. Exits non-zero if no PostgreSQL is installed.
   { label: 'Events are append-only (028/028b, real DB)', cmd: 'node test-028-append-only.js' },
+  // P0.5. The durable history is derived inside the transaction that writes the
+  // property, so the event commits with the mutation or neither does. Only a
+  // real database can demonstrate that, and the failure it prevents — the UI
+  // reporting success while history is gone — is invisible above the HTTP layer.
+  { label: 'Durable property events (030, real DB)',  cmd: 'node test-030-event-derivation.js' },
   { label: 'A lease is data, not instructions',         cmd: 'node test-untrusted-lease-text.js' },
   { label: 'Explain prompt control (AI-2)',             cmd: 'node test-explain-prompt-control.js' },
   { label: 'Request limits',                            cmd: 'node test-request-limits.js' },
