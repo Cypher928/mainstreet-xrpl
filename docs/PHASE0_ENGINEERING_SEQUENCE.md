@@ -372,6 +372,46 @@ awaiting triage.
 | **Six orphan organisations** | Historical residue from CI runs before `131c309`. Deliberately not deleted — a broad cleanup such as "delete all organisations with no members" was explicitly rejected. |
 | **The unexplained 14:03 no-write** | On the pre-P0.2 build at `www.mainstreet-review.com`, not reproducible against `c9789b1`, and therefore not evidence about the accepted code. P3 hardened the path on its own merits rather than claiming a cause. |
 | **Two id-less entries dropped from the blob on load** | Explained mechanically by the P2 defect (cross-origin localStorage plus the tenant-count pick). Confirming it fired in that specific session would need the `[PIPELINE:4b] MERGE decision` console output, which was not captured. |
+| **D-Rx — the startup reaper runs twice per sign-in** | See below. Found during the R2 Pilot browser validation, parked immediately, and deliberately NOT folded into R2. |
+
+### D-Rx — `_reapStaleLeaseJobs` runs twice on every sign-in
+
+**PARKED. Separate from the accepted R2 change, and not to be fixed as part of
+it.**
+
+The mechanism is two call paths into one function, not two reaper call sites:
+
+- `_reapStaleLeaseJobs()` has exactly **one** invocation site, `script.js:71`,
+  inside `_showApp()`.
+- `login()` calls `_showApp()` directly (`script.js:276`), on the reasoning that
+  `onAuthStateChange` may not fire in restricted browsers.
+- `onAuthStateChange` calls `_showApp()` again on `SIGNED_IN` (`script.js:382`).
+- So a single sign-in reaches `_showApp()` **twice**.
+- `_initialized` makes `init()` idempotent — but the reaper runs ABOVE that
+  guard and is not gated by it. It is the one startup task with no idempotence
+  gate, three lines from a guard that already exists.
+
+Measured on Pilot on 2026-09-19 against preview `3aaa99c`, across two sign-ins
+in one browser session: **21 stale jobs produced 42 conditional PATCH attempts**
+— exactly two per job — plus two lookup GETs per sweep and 21 extra
+existence-probe GETs. Two sweep invocations, not a retry.
+
+No data was harmed. R2's terminal guard matched zero rows on every second
+attempt, because `status=in.(queued,processing)` no longer holds once the first
+write lands, and R2's zero-row classifier correctly read that as a healthy stale
+refusal rather than a fault. All 42 returned 200.
+
+**That safety is not a reason to leave it.** The duplicate invocation triples the
+requests the sweep actually needs, at a cost that scales with however many stale
+jobs a user can see, and it manufactures a concurrent write race on every
+sign-in. R2 makes that race safe today; nothing else in the codebase records
+that the duplicate depends on the terminal guard staying exactly as it is. This
+entry is that record.
+
+The eventual fix is to gate the reaper behind the same one-shot
+startup/idempotence mechanism that already protects `init()`, plus a behaviour
+test asserting one invocation per sign-in across both `_showApp()` call paths.
+**Not implemented, not authorised, and explicitly out of scope for R2.**
 
 ---
 
