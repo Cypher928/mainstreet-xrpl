@@ -3,6 +3,11 @@
 
 import { request } from 'https';
 
+// ⚠ This export has NO runtime effect. `api.bodyParser` is a Next.js API-route
+// construct and this is not a Next.js project. The real ceiling is Vercel's
+// ~4.5 MB request body limit, enforced before this handler runs. It is retained
+// only as documentation of the constraint. The limit that IS real lives in
+// request-limits.js and is checked below.
 export const config = {
   api: {
     bodyParser: {
@@ -11,6 +16,8 @@ export const config = {
   },
 };
 
+const { checkEncodedSize } = require('../request-limits.js');
+
 const _t = require('./_pilot-target');
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -18,14 +25,10 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error('[api/upload] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -100,8 +103,9 @@ export default async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 60, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 60, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   const { fileName, fileType, fileBase64, bucket = 'invoices' } = req.body || {};
@@ -117,6 +121,15 @@ export default async function handler(req, res) {
   const uploadError = _validateUpload(fileName, fileType);
   if (uploadError) {
     return res.status(400).json({ error: uploadError });
+  }
+
+  // The client gate in script.js can be bypassed — a direct POST, or a stale
+  // tab running the build that allowed 60 MB. Check here too, against the same
+  // constant and with the same sentence, so a user who reaches it is not told
+  // two different stories about the same limit.
+  const sizeVerdict = checkEncodedSize(fileBase64.length, bucket === 'leases' ? 'lease' : 'invoice');
+  if (!sizeVerdict.ok) {
+    return res.status(413).json({ error: sizeVerdict.error });
   }
 
   const key      = _t.serviceRoleKey || SUPABASE_ANON_KEY;
@@ -149,6 +162,17 @@ export default async function handler(req, res) {
     return res.status(status).json({ error: `Supabase Storage error (HTTP ${status}): ${body}` });
   }
 
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${safeName}`;
-  return res.status(200).json({ url: publicUrl });
+  // SEC-1 — return a storage REFERENCE, not a public URL.
+  //
+  // This used to mint `${SUPABASE_URL}/storage/v1/object/public/${bucket}/...`
+  // and the app stored it on the invoice and the lease_documents row. Once the
+  // buckets are private that URL resolves for nobody, and it goes on claiming
+  // in the database — and in any log or export it reaches — that the object is
+  // publicly readable.
+  //
+  // `bucket/path` is what /api/document-url needs to sign, and
+  // resolveDocumentUrl() accepts it. Rows written before this change hold the
+  // full public URL; the resolver parses the path back out of those too, so
+  // both shapes work and no data migration is required.
+  return res.status(200).json({ url: `${bucket}/${safeName}` });
 }

@@ -8,14 +8,12 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error('[api/cam-reconciliations] Supabase URL/anon not configured for ' + _t.name + ' target');
 }
 
-const _rl = new Map();
-function _chkRate(uid, max, winMs) {
-  const now = Date.now();
-  let w = _rl.get(uid) || { n: 0, reset: now + winMs };
-  if (now > w.reset) w = { n: 0, reset: now + winMs };
-  w.n++; _rl.set(uid, w);
-  return w.n <= max;
-}
+// SEC-12 — one sliding-window limiter, shared. See api/_rate-limit.js for what
+// it can and cannot do: it is per-instance and Vercel scales instances, so it
+// brakes runaway loops and single-client hammering, not a determined attacker.
+const { checkRate, sendRateLimited } = require('./_rate-limit');
+// P0.1 — owner OR active organisation member. One rule, in one module.
+const { isMemberOfProperty } = require('./_membership');
 
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
@@ -42,14 +40,11 @@ function key() {
   return _t.serviceRoleKey || SUPABASE_ANON_KEY;
 }
 
+// The name is kept: every call site below still asks "may this user act on this
+// property", and the answer is now owner-or-active-member (api/_membership.js).
+// Membership is read on every call — revocation takes effect on the next request.
 async function _ownsProperty(propertyId, userId) {
-  const r = await sbFetch(
-    `/properties?id=eq.${encodeURIComponent(propertyId)}&user_id=eq.${encodeURIComponent(userId)}&select=id`,
-    { method: 'GET', headers: { 'Prefer': '' } }
-  );
-  if (r.status >= 300) return false;
-  const rows = Array.isArray(r.json) ? r.json : [];
-  return rows.length > 0;
+  return isMemberOfProperty(sbFetch, propertyId, userId);
 }
 
 // Returns true when Supabase reports the table does not exist (migration not run).
@@ -83,8 +78,9 @@ export default async function handler(req, res) {
 
   const user = await _verifyUser(req, res);
   if (!user) return;
-  if (!_chkRate(user.id, 60, 60000)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  {
+    const _rl = checkRate(user.id, 60, 60000);
+    if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
   // DELETE then INSERT (upsert-style replace for a property+year)

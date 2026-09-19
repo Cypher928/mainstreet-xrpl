@@ -15,13 +15,22 @@
   'use strict';
 
   // ── Production guard ────────────────────────────────────────────────────────
-  // Allowed on: localhost, 127.0.0.1, and *.vercel.app ONLY when ?devRole=1
-  // is present in the URL. Never activates on any other hostname.
-  const _host   = window.location.hostname;
-  const _isLocal   = _host === 'localhost' || _host === '127.0.0.1' || _host === '';
-  const _isVercelPreview = _host.endsWith('.vercel.app') &&
-    new URLSearchParams(window.location.search).get('devRole') === '1';
-  if (!_isLocal && !_isVercelPreview) return;
+  // Allowed on localhost / 127.0.0.1 ONLY. Never activates on any other host.
+  //
+  // Phase A removed the former `*.vercel.app` + ?devRole=1 escape hatch. The
+  // custom pilot domain (www.mainstreet-review.com) never matched
+  // .endsWith('.vercel.app'), but the pilot BRANCH ALIAS
+  // (mainstreet-xrpl-git-pilot-*.vercel.app) did — and it serves the same
+  // application against the same pilot Supabase project. Once tenant sessions
+  // exist, an arbitrary client-side role switch on a host that reaches real
+  // tenant data is not a risk worth carrying for QA convenience.
+  //
+  // Switching roles here never granted database access (RLS keys off
+  // properties.user_id and tenant_users, never a role claim), so this is
+  // defence in depth rather than a fix for a live hole.
+  const _host    = window.location.hostname;
+  const _isLocal = _host === 'localhost' || _host === '127.0.0.1' || _host === '';
+  if (!_isLocal) return;
 
   // ── Pre-normalized dev users (fallbacks when QAFixtures not loaded) ─────────
   // These match the shape AuthService.setUser() expects.

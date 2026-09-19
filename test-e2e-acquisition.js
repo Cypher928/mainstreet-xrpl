@@ -56,9 +56,12 @@ const MIME = {
 function startServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      let filePath = path.join(ROOT, req.url === '/' ? '/index.html' : req.url);
-      // strip query strings
-      filePath = filePath.split('?')[0];
+      // Strip the query BEFORE testing for the root: '/?x=1' does not equal
+      // '/', so stripping afterwards leaves ROOT + '/' — a directory — and the
+      // root answers 404. Latent here (this suite navigates to a bare '/') and
+      // fatal in test-e2e-acquisition-conversion.js, which needs ?signin=1.
+      const urlPath = req.url.split('?')[0];
+      let filePath = path.join(ROOT, urlPath === '/' ? '/index.html' : urlPath);
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
         const ext = path.extname(filePath);
@@ -76,8 +79,26 @@ function startServer() {
 // Handles all tables the app queries on startup + acquisition_reviews.
 const SUPABASE_MOCK = `
 (function() {
-  var _store = { acquisition_reviews: [] };
   var _user  = { id: 'e2e-test-user-id', email: 'e2e@test.local' };
+
+  // ONE PROPERTY, BECAUSE THE ACQUISITION MODULE REQUIRES ONE.
+  //
+  // renderPortfolio hides #acqSection (with the KPI bar, both search inputs and
+  // the sort row) until the account has at least one property — the deliberate
+  // first-time empty state: welcome → demo properties → create, and nothing
+  // else. This mock seeded no properties, so the section this suite drives was
+  // display:none and every click on .acq-new-btn timed out against a zero-size
+  // element. Diagnosed by asking the page what was on top of the button:
+  // nothing was — #msLanding was absent and no overlay existed. The account
+  // now looks like one that can actually reach acquisitions.
+  var _store = {
+    properties: [{
+      id: 'e2e-seed-prop-0001', user_id: 'e2e-test-user-id',
+      name: 'Seed Plaza', sqft: 10000, archived_at: null, data: {},
+    }],
+    tenants: [],
+    acquisition_reviews: [],
+  };
 
   function noopPromise(val) { return Promise.resolve(val); }
 
@@ -104,6 +125,15 @@ const SUPABASE_MOCK = `
       eq:       function(col, val) { _filters[col] = val; return q; },
       neq:      function() { return q; },
       in:       function() { return q; },
+      // is AND not — loadProperties calls .is('archived_at', null) on the
+      // active path and .not('archived_at','is',null) on the archived one. The
+      // mock had neither, so the very first portfolio read threw
+      // "q.is is not a function", the app logged it and carried on with an
+      // empty list, and the suite's real subject never rendered. Chainable
+      // no-ops: this fixture holds one unarchived property, so filtering on
+      // archived_at cannot change the answer.
+      is:       function() { return q; },
+      not:      function() { return q; },
       order:    function() { return q; },
       limit:    function() { return q; },
       single:   function() {
@@ -231,7 +261,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const app = document.getElementById('appContent');
       return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 });
+    }, null, { timeout: 45000 });
 
     const dashVisible = await page.$eval('#portfolioDashboard', el => el.style.display !== 'none').catch(() => false);
     assert(dashVisible, 'ACQ-E2E-1: portfolio dashboard visible after auth mock fires');
@@ -266,7 +296,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const titleText = await page.$eval('#acqDetailTitle', el => el.textContent).catch(() => '');
     assert(titleText.includes('123 Main Street'), 'ACQ-E2E-3: detail panel title matches review name', titleText);
@@ -316,7 +346,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const c = document.getElementById('acqReportContainer');
       return c && c.innerHTML.length > 100;
-    }, { timeout: 8000 });
+    }, null, { timeout: 45000 });
 
     // ACQ-E2E-5: KPI cards rendered
     const kpiRow = await page.$('.acq-kpi-row').catch(() => null);
@@ -360,7 +390,7 @@ const MOCK_INVOICES = [
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const reportAfterReentry = await page.$eval('#acqReportContainer', el => el.innerHTML).catch(() => '');
     assert(reportAfterReentry.length > 100, 'ACQ-E2E-9: report container still has content after re-entry', reportAfterReentry.length + ' chars');

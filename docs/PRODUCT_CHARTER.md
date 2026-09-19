@@ -3,6 +3,10 @@
 _The few principles the product must never violate. When a decision is unclear,
 this document — with [PRODUCT_VISION.md](./PRODUCT_VISION.md) — is the tie-breaker._
 
+_For the architectural invariants these imply — what the system must not stop
+doing, and how each is enforced by a test — see
+[ARCHITECTURE_PRINCIPLES.md](./ARCHITECTURE_PRINCIPLES.md)._
+
 ---
 
 ## Mission

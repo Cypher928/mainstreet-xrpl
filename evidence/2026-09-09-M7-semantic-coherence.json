@@ -1,0 +1,177 @@
+{
+  "phase": "M7 — semantic coherence",
+  "date": "2026-09-09",
+  "branch": "claude/validation-runs-analysis-ji1zb3",
+  "base_commit": "1e9ebf7",
+  "commit": "4705718",
+  "kind": "coherence phase — no capability added, no transport, no write, no payments, no CAM data repaired, no pagination, no rate limiting",
+
+  "files_changed": {
+    "added": [
+      "dispute-status.js — the one definition of an open dispute, derived from the transition table",
+      "property-area.js — the one definition of leased area and occupancy",
+      "test-m7-semantic-coherence.js — 135 assertions"
+    ],
+    "modified": [
+      "api/_mcp-capabilities.js — STORE, UNITS, DISPUTE_RULE, AREA_REASON, capAmbiguityCaveat; getDisputes counts through the shared predicate and reports closed and unknown; provenance.store and provenance.units on every capability; occupancy and cap caveats",
+      "api/_server-deps.js — both modules declared; DisputeStatus added to SHIM_KEYS and PLACED in the shim",
+      "property-record.js — _identity uses PropertyArea for leasedSqft and occupancy; identity.areaBasis added; header and LIMITS rewritten",
+      "property-workspace.js — collectAttention counts open disputes through the shared predicate, and no longer prefers Selectors.buildPropMeta",
+      "tenant-space.js — openDisputes and the space badge count through the shared predicate",
+      "script.js — DISPUTE_TRANSITIONS reads the module's table, with the literal kept only as a browser fallback",
+      "index.html — both modules loaded before script.js, tenant-space.js and property-workspace.js",
+      "tools/global-dependency-inventory.js — DisputeStatus classified as shimmed",
+      "test-regression.js — M7 registered",
+      "test-property-record-hydrator.js, test-m2-runtime-harness.js, test-m3-dependency-hardening.js, test-m4-mcp-capabilities.js, test-m5-property-memory.js — phase-boundary pins updated (see prior_assertions_updated)"
+    ]
+  },
+
+  "canonical_definitions_selected": {
+    "open_dispute": {
+      "definition": "A dispute is OPEN when DISPUTE_TRANSITIONS still permits it to move, CLOSED when its transition list is empty, and UNKNOWN otherwise.",
+      "resolves_to_today": { "open": ["open", "docs_requested"], "closed": ["accepted", "rejected", "resolved"], "unknown": "everything else" },
+      "why_this_one": "It was not a judgement call. DISPUTE_TRANSITIONS (script.js:14897) is the machine resolveDispute actually enforces; the other three readings were opinions. docs_requested is plainly open — the landlord has asked for documents and nobody has decided anything.",
+      "derived_not_restated": "classify() reads the transition list rather than naming statuses, so a state added to the machine is classified correctly the day it is added. Asserted by adding a state at runtime (A2z/A2y/A2x) and by proving the consumers defer rather than merely agree (B2f-i).",
+      "legacy_alias": "resolved — not in the machine, but written in stored fixture data and already treated as terminal by command-center.js:84 and ai-workspace.js:405. Evidenced, not assumed.",
+      "deliberately_unknown": "escalated and withdrawn appear exactly once in the codebase, inside script.js's VALID_DISPUTE_STATUSES, and nothing writes either. Classifying them would be guessing at vocabulary that was proposed and never used.",
+      "third_answer_carried": "tally() returns open, closed AND unknown with the unrecognised statuses named. total === open + closed + unknown always. Folding unknowns into closed understates what needs attention; folding them into open invents work."
+    },
+    "leased_area": {
+      "definition": "Sum of leased_sqft over EVERY tenant, and only when every tenant has one. No filter, no fallback, no substitution.",
+      "why_the_three_old_rules_are_all_wrong": "Each substitutes something for a tenant whose area is unknown: `|| 0` treats it as occupying nothing; `|| sqft` swaps in a different quantity mid-sum (demised area vs the tenant row's own figure); an 'active' filter answers a question no other consumer asks.",
+      "null_reasons": ["no_tenants", "incomplete_tenant_area", "negative_area", "property_area_module_absent"]
+    },
+    "occupancy": {
+      "definition": "leasedSqft / totalSqft, from the SAME numerator, so the pair can never contradict each other and are null together.",
+      "clamp_removed": "Math.min(100, ...) is gone from this path. leased > total returns null with reason 'exceeds_total'. That configuration is a contradiction in the stored record — double-counted tenants, a stale suite, a total never updated after a subdivision — and the clamp turned exactly that evidence into a confident 'fully occupied'.",
+      "property_reference_untouched": "PropertyReference.occupancyPct is left exactly as it is. It is a browser UI helper; changing it is a UI change. The record simply stops depending on it."
+    }
+  },
+
+  "before_after": {
+    "dispute_counts": {
+      "fixture": "one dispute status=open, one status=docs_requested",
+      "before": "get_attention: '1 open dispute' · get_disputes: openDisputeCount 2 — measured in the M1-M6 audit",
+      "after": "get_attention: '2 open disputes' · get_disputes: openDisputeCount 2 · TenantSpace counts.openDisputes 2 — measured (B2e)",
+      "coverage": "all 63 combinations of every status the machine defines, driven from the table itself (B3)"
+    },
+    "unknown_statuses": {
+      "before": "silently excluded from openDisputeCount, indistinguishable from closed",
+      "after": "counted in unknownStatusCount, named in a caveat, and openDisputeCount declared a LOWER BOUND"
+    },
+    "lease_cap": {
+      "before": "{\"cap\": 5} with no unit stated anywhere in the response",
+      "after": "same value, plus provenance.units['lease.cap'] = { unit: 'percent', guarantee: 'convention', note naming the paths that bypass normalizeCap }",
+      "ambiguous_range": "0 < cap < 1 raises lease.cap_unit_ambiguous stating BOTH readings, the factor of 100 between them, and that the value is NOT converted"
+    },
+    "currency": {
+      "before": "undeclared",
+      "after": "unit 'currency', currencyCode null, guarantee 'unknown' — fmt() prints a dollar sign but no currency code is stored anywhere in the schema, and inventing USD would assert a fact about every property in the system"
+    },
+    "area": {
+      "before": "leasedSqft always null; occupancy published from PropertyReference.occupancyPct, one of the three disagreeing rules; leased > total clamped to 100",
+      "after_complete_roster": "leasedSqft 800, occupancy 80, areaBasis.rule stated, areaBasis.clamped false",
+      "after_incomplete_roster": "both null, tenantsMissingArea 1, caveat identity.area_incomplete_tenant_area",
+      "after_contradiction": "leasedSqft 800 reported, occupancy null, reason exceeds_total, caveat identity.area_exceeds_total, and no 100 anywhere in identity (D16)"
+    },
+    "store_provenance": {
+      "before": "only get_cam_status named its store, and only in prose",
+      "after": "provenance.store on all nine; the blob wording states that the normalised tables were NOT read and are not reconciled with the answer"
+    }
+  },
+
+  "unresolved_ambiguity_reported_not_guessed": [
+    {
+      "item": "tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, upstream of PropertyArea",
+      "consequence": "A tenant whose demised area was never recorded still reaches the record carrying its rentable figure under the leased name. PropertyArea never substitutes, but it cannot see that the substitution already happened.",
+      "how_it_is_handled": "The declared guarantee for identity.leasedSqft is 'convention', not 'enforced', and the note names tenant-normalize.js. Measured and asserted in D10a-c rather than claimed away.",
+      "why_not_fixed": "Changing the tenant normaliser changes what a tenant record IS on every write path in the product. That is not a coherence change."
+    },
+    {
+      "item": "No currency code is stored anywhere",
+      "how_it_is_handled": "declared as unknown rather than assumed to be USD"
+    },
+    {
+      "item": "lease.sqft may be rentable rather than demised area, for the same upstream reason",
+      "how_it_is_handled": "stated in the units note for lease.sqft"
+    }
+  ],
+
+  "out_of_scope_finding_reported_not_fixed": {
+    "where": "script.js:24277 and :24311, inside sanitizeImportedPropertyData",
+    "what": "VALID_DISPUTE_STATUSES is new Set(['open','resolved','escalated','withdrawn']) — a SECOND dispute vocabulary, sharing only 'open' with the state machine. Any status not in that set is rewritten to 'open'.",
+    "measured": "docs_requested -> open, accepted -> open, rejected -> open, nonsense -> open. resolved, escalated and withdrawn pass through.",
+    "consequence": "Importing a property silently REOPENS every decided dispute on it. An accepted or rejected dispute comes back as open.",
+    "why_not_fixed_in_m7": "It is on the import WRITE path, not on any M1-M6 read surface, and the hydrator never calls it. M7 forbids writes and unrelated fixes. Reported here for a separate decision.",
+    "note": "This is a data-integrity defect, not a reporting one. It changes stored records."
+  },
+
+  "tests": {
+    "file": "test-m7-semantic-coherence.js",
+    "assertions": 135,
+    "failed": 0,
+    "offline": "every transport and auth call is defined in the file; nothing opens a socket or can reach Pilot or Production",
+    "notable": "The dispute-agreement test enumerates all 63 combinations of every status the machine defines, driven from the transition table, so a status added later is covered the day it is added rather than the day two numbers disagree again. Section B2 drives property-workspace.js and tenant-space.js DIRECTLY under a window shim, because the Selectors back door is unreachable from any server capability — the server graph excludes Selectors by design."
+  },
+
+  "mutation_testing": {
+    "mutants": 25,
+    "killed": 25,
+    "survived": 0,
+    "malformed": 0,
+    "first_pass_survivors": 5,
+    "survivors_were_real_gaps_not_equivalences": [
+      {
+        "mutant": "B-open-hardcoded-list",
+        "change": "replace the table-derived predicate with a literal list of the same four answers",
+        "why_it_survived": "behaviourally identical today; it only loses the property that a new state is classified correctly",
+        "closed_by": "A2z/A2y/A2x/A2w — add a state to the machine at runtime, assert the predicate follows, remove it again"
+      },
+      {
+        "mutant": "F-attention-reverts, H-tenantspace-reverts",
+        "change": "disable the shared-module branch so each file uses its own literal fallback",
+        "why_it_survived": "the fallbacks are `open || docs_requested`, which equals the canonical rule for every status that exists today — so the files could ignore the shared module entirely and every assertion still passed",
+        "closed_by": "B2f-i — the same new-state trick, which distinguishes DEFERRING from merely AGREEING"
+      },
+      {
+        "mutant": "G-attention-prefers-selectors-meta",
+        "change": "restore `meta.openDisputes != null ? meta.openDisputes : ...`",
+        "why_it_survived": "the server graph excludes Selectors, so buildPropMeta is never available and the back door is unreachable from any capability",
+        "closed_by": "B2b — drives collectAttention directly under a window shim supplying a Selectors stub that offers the old narrow number"
+      },
+      {
+        "mutant": "Y-shim-opened-up",
+        "change": "add 'Selectors' to SHIM_KEYS",
+        "why_it_survived": "shimKeys() reports what is IN the shim; Selectors is never placed, so it stayed absent even when permitted",
+        "closed_by": "F8/F8a/F8b — the DECLARATION is pinned as well as the contents, and the prune behaviour is measured"
+      }
+    ]
+  },
+
+  "shim_boundary": {
+    "added": "DisputeStatus, and nothing else",
+    "justification": "It clears the same bar PropertyReference already clears: a pure module looked up by name at CALL time. property-workspace.js and tenant-space.js are browser-first files that must count open disputes the same way every other consumer does; the alternative is a second copy of the predicate in each, which is the duplication M7 exists to remove.",
+    "safety_asserted_not_argued": "test-m2 D7a-c and test-m7 A8/A9 assert no DOM, storage, network or other global access, purity of classify(), and that classifying mutates nothing the module holds.",
+    "bug_this_caught": "test-m1b I4 failed because DisputeStatus was DECLARED on the allow-list but never PLACED in the shim — CLEAN modules load with no global installed, so the UMD tail found no window. Both browser files were silently taking their fallbacks, and the single shared definition M7 exists to create was not the one running. Fixed by placing it explicitly, alongside PropertyReference, with the reason recorded in the code."
+  },
+
+  "prior_assertions_updated": {
+    "what": "Six phase-boundary assertions across M1b, M2, M3, M4 and M5 pinned the four-name shim list, the eight-dependency count, the fifteen-file bundle and the shimmed classification set.",
+    "why_they_had_to_change": "M7 adds two modules to the dependency graph and one reviewed name to the shim. These pins exist to catch exactly that, and they did — which is the system working.",
+    "how": "Counts and lists updated to the new reviewed set. M4's K6/J11 and M5's A7/K10 are re-expressed to assert that THOSE phases added nothing, rather than freezing a literal every later phase must edit. The shim widening is not merely waved through: test-m2 gained D7a-c proving the new name's purity, and test-m7 F8a-b pins the declaration and measures the prune.",
+    "flagged_because": "This is the agent editing tests that previously constrained it. Stated plainly rather than buried."
+  },
+
+  "not_done": [
+    "No new capability — the same nine",
+    "No transport, no HTTP route, no MCP server",
+    "No write path of any kind; writes still refused by the guard and absent from the code",
+    "No payments, escrow or settlement exposure",
+    "The seven provenance-only lease field values are still not populated",
+    "No CAM data repaired, rewritten, backfilled or reconciled — the expected-CAM gate is unchanged and a legacy row still withholds (F2-F4)",
+    "No pagination, no size caps, no rate limiting",
+    "No Pilot or Production access of any kind",
+    "PropertyReference.occupancyPct unchanged — the browser UI behaves exactly as before",
+    "sanitizeImportedPropertyData unchanged — reported above, not fixed"
+  ]
+}

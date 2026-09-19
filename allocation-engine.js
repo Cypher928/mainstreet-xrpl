@@ -1,3 +1,14 @@
+// ⚠️  NOT THE PRODUCTION CAM ENGINE.
+//
+// This module is a standalone reference implementation retained as the package
+// entry point. The reconciliation a tenant statement comes from is
+// runFullReconciliation() in script.js, and it is covered by
+// test-allocation.js, which drives it in a browser.
+//
+// Do not "fix a CAM bug" here and expect it to reach a customer. See CAM-6 in
+// the production readiness audit: this file and the real engine disagreed for
+// months while the test suite covered this one.
+
 /**
  * CAM Logic — Allocation Engine
  * Calculates Commercial Area Maintenance charges per tenant

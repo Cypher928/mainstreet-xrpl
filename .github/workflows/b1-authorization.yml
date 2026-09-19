@@ -1,0 +1,131 @@
+# B1 tenant authorization gate
+# ============================================================================
+# Runs the 19-case negative-authorization suite against the PILOT project over
+# real HTTP — GoTrue for sign-in, PostgREST for every read and write.
+#
+# This is B1's exit criterion. Phase A and B1 were both verified at the database
+# layer with injected JWT claims, which exercises the real RLS engine but not
+# the request path a tenant actually uses. This job closes that gap, and keeps
+# it closed: the boundary is re-proved whenever anything on the auth surface
+# changes, not once by hand.
+#
+# Every run builds its own landlord, two properties, three tenants and three
+# memberships, and deletes them. No real customer data is read or written, and
+# no real tenant account exists at any point.
+#
+# PILOT ONLY. Four independent guards below; any one of them fails the run.
+name: B1 tenant authorization gate
+
+on:
+  workflow_dispatch:
+  push:
+    paths: &auth_surface
+      - 'migrations/**'
+      - 'api/tenant-accept-invite.js'
+      - 'portal.js'
+      - 'portal.html'
+      - 'test-tenant-authz.js'
+      - 'access-control.js'
+      - 'auth-service.js'
+      - 'supabase-config.js'
+      - 'scripts/b1-ci-fixture.js'
+      - '.github/workflows/b1-authorization.yml'
+  pull_request:
+    paths: *auth_surface
+
+# Read-only. This job needs the repository and nothing else; it must never be
+# able to write to it.
+permissions:
+  contents: read
+
+# Fixtures share one database. Two concurrent runs would sweep each other's
+# world mid-flight and report failures that are artefacts of the runner.
+concurrency:
+  group: b1-authorization
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: 19-case authorization suite (pilot)
+    runs-on: ubuntu-latest
+    # Secrets live in this environment. Production secrets are not in scope here
+    # and cannot be reached by this job.
+    environment: pilot
+
+    env:
+      PILOT_REF: bhmktujbxdbvdmpybmad
+      PRODUCTION_REF: zhsuhehgehbzkmzurzyf
+      PILOT_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PILOT_SUPABASE_SERVICE_ROLE_KEY }}
+      # Hardcoded, not a repository variable. It is a public URL, so making it
+      # configuration bought nothing except one more thing to set up wrongly —
+      # and the same reasoning applies here as to the project ref in
+      # scripts/b1-ci-fixture.js: a gate that can be re-pointed by editing a
+      # setting is one bad edit from testing the wrong thing.
+      APP_ORIGIN: https://www.mainstreet-review.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # GUARD 1 + 2 — what the configuration claims.
+      - name: Refuse to run against anything but pilot
+        run: |
+          set -euo pipefail
+          if [ -z "${PILOT_SUPABASE_SERVICE_ROLE_KEY}" ]; then
+            echo "::error::PILOT_SUPABASE_SERVICE_ROLE_KEY is not set for environment 'pilot'"
+            exit 1
+          fi
+
+          # The suite hardcodes its own target and aborts if it is not pilot.
+          # Assert that pin is still in place rather than trusting it.
+          if ! grep -q "PILOT_REF = '${PILOT_REF}'" test-tenant-authz.js; then
+            echo "::error::test-tenant-authz.js is no longer pinned to the pilot project ref"
+            exit 1
+          fi
+
+          # The production ref may appear ONLY as the value of the PRODUCTION_REF
+          # guard constant. Anywhere else — a URL, a fallback, a copy-paste — and
+          # this gate could reach production, so the run stops.
+          #
+          # The exclusion is load-bearing: without it this check matches its own
+          # declarations and fails every run, which is a guard that protects
+          # nothing and trains people to ignore it.
+          OFFENDING=$(grep -rn "${PRODUCTION_REF}" \
+                        test-tenant-authz.js \
+                        scripts/b1-ci-fixture.js \
+                        .github/workflows/b1-authorization.yml \
+                      | grep -v 'PRODUCTION_REF' || true)
+          if [ -n "${OFFENDING}" ]; then
+            echo "::error::the production project ref is referenced inside the authorization gate:"
+            echo "${OFFENDING}"
+            exit 1
+          fi
+
+          echo "target pinned to pilot ${PILOT_REF}"
+
+      # GUARD 3 — what the KEY actually opens. This is the one that catches a
+      # production key pasted into the pilot secret: the marker row does not
+      # exist there, so the run stops before creating anything.
+      - name: Prove the key opens pilot, not production
+        run: node scripts/b1-ci-fixture.js verify-target
+
+      - name: Sweep fixtures left by a cancelled run
+        run: node scripts/b1-ci-fixture.js sweep
+
+      - name: Create ephemeral fixtures
+        run: node scripts/b1-ci-fixture.js setup
+
+      # The suite exits non-zero on any failed assertion, and exits 2 rather
+      # than skipping if it cannot reach the host or a variable is missing —
+      # an unrun security test must never read as a pass.
+      - name: Run the 19-case authorization suite
+        run: node test-tenant-authz.js
+
+      # Always. A failed suite must still leave the database as it found it, or
+      # the next run inherits a dirty world and its result means nothing.
+      - name: Tear down fixtures
+        if: always()
+        run: node scripts/b1-ci-fixture.js teardown

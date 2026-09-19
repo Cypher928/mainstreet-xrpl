@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" width="1200" height="520" role="img" aria-label="Demonstration illustration of the Cascade Commons parking field — fictional property, not a photograph">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9fc5e8"/><stop offset="1" stop-color="#e8f1f8"/>
+    </linearGradient>
+    <linearGradient id="lot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3f45"/><stop offset="1" stop-color="#23262b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="520" fill="url(#sky)"/>
+  <!-- distant building band -->
+  <rect x="60" y="150" width="1080" height="110" fill="#d9cdb8"/>
+  <rect x="60" y="140" width="1080" height="14" fill="#8b6f47"/>
+  <rect x="60" y="205" width="1080" height="55" fill="#b9c7d1" opacity="0.9"/>
+  <g fill="#f4efe6" font-family="Georgia, serif" font-size="22" letter-spacing="4">
+    <text x="600" y="185" text-anchor="middle">CASCADE COMMONS</text>
+  </g>
+  <!-- canopy posts -->
+  <g fill="#6b7280">
+    <rect x="140" y="205" width="8" height="55"/><rect x="360" y="205" width="8" height="55"/>
+    <rect x="580" y="205" width="8" height="55"/><rect x="800" y="205" width="8" height="55"/>
+    <rect x="1020" y="205" width="8" height="55"/>
+  </g>
+  <!-- parking field, freshly sealed -->
+  <polygon points="0,260 1200,260 1200,520 0,520" fill="url(#lot)"/>
+  <!-- stall striping -->
+  <g stroke="#f5f5f0" stroke-width="4">
+    <line x1="80" y1="300" x2="80" y2="360"/><line x1="160" y1="300" x2="160" y2="360"/><line x1="240" y1="300" x2="240" y2="360"/>
+    <line x1="320" y1="300" x2="320" y2="360"/><line x1="400" y1="300" x2="400" y2="360"/><line x1="480" y1="300" x2="480" y2="360"/>
+    <line x1="560" y1="300" x2="560" y2="360"/><line x1="640" y1="300" x2="640" y2="360"/><line x1="720" y1="300" x2="720" y2="360"/>
+    <line x1="800" y1="300" x2="800" y2="360"/><line x1="880" y1="300" x2="880" y2="360"/><line x1="960" y1="300" x2="960" y2="360"/>
+    <line x1="1040" y1="300" x2="1040" y2="360"/><line x1="1120" y1="300" x2="1120" y2="360"/>
+    <line x1="40" y1="430" x2="40" y2="510"/><line x1="140" y1="430" x2="140" y2="510"/><line x1="240" y1="430" x2="240" y2="510"/>
+    <line x1="340" y1="430" x2="340" y2="510"/><line x1="440" y1="430" x2="440" y2="510"/><line x1="540" y1="430" x2="540" y2="510"/>
+    <line x1="640" y1="430" x2="640" y2="510"/><line x1="740" y1="430" x2="740" y2="510"/><line x1="840" y1="430" x2="840" y2="510"/>
+    <line x1="940" y1="430" x2="940" y2="510"/><line x1="1040" y1="430" x2="1040" y2="510"/><line x1="1140" y1="430" x2="1140" y2="510"/>
+  </g>
+  <!-- ADA stalls -->
+  <g fill="#1d4ed8" opacity="0.9">
+    <rect x="484" y="304" width="72" height="52" rx="3"/><rect x="564" y="304" width="72" height="52" rx="3"/>
+  </g>
+  <g fill="#ffffff" font-family="Arial, sans-serif" font-size="26" font-weight="700">
+    <text x="520" y="340" text-anchor="middle">&#9855;</text><text x="600" y="340" text-anchor="middle">&#9855;</text>
+  </g>
+  <!-- drive aisle arrows -->
+  <g fill="#f5f5f0"><polygon points="300,395 340,395 340,385 365,400 340,415 340,405 300,405"/>
+    <polygon points="900,405 860,405 860,415 835,400 860,385 860,395 900,395"/></g>
+  <!-- a few parked cars -->
+  <g>
+    <rect x="92" y="308" width="60" height="44" rx="10" fill="#9ca3af"/><rect x="100" y="314" width="44" height="14" rx="4" fill="#dbeafe"/>
+    <rect x="252" y="308" width="60" height="44" rx="10" fill="#7f1d1d"/><rect x="260" y="314" width="44" height="14" rx="4" fill="#fecaca"/>
+    <rect x="732" y="308" width="60" height="44" rx="10" fill="#1f2937"/><rect x="740" y="314" width="44" height="14" rx="4" fill="#cbd5e1"/>
+    <rect x="1052" y="308" width="60" height="44" rx="10" fill="#f8fafc"/><rect x="1060" y="314" width="44" height="14" rx="4" fill="#bfdbfe"/>
+  </g>
+  <!-- pylon sign -->
+  <rect x="1130" y="60" width="14" height="200" fill="#4b5563"/>
+  <rect x="1082" y="40" width="110" height="70" rx="6" fill="#1f2937" stroke="#C9973A" stroke-width="3"/>
+  <g fill="#C9973A" font-family="Georgia, serif" font-size="13" text-anchor="middle">
+    <text x="1137" y="66">CASCADE</text><text x="1137" y="84">COMMONS</text><text x="1137" y="100" font-size="9" fill="#e5e7eb">4820 CASCADE PKWY</text>
+  </g>
+  <!-- trees -->
+  <g><rect x="30" y="215" width="8" height="45" fill="#5b3a1e"/><circle cx="34" cy="205" r="26" fill="#3f7d3a"/>
+     <rect x="1000" y="215" width="8" height="45" fill="#5b3a1e"/><circle cx="1004" cy="205" r="26" fill="#3f7d3a"/></g>
+  <!-- label: unmistakably a demonstration -->
+  <rect x="14" y="14" width="470" height="30" rx="6" fill="#111827" opacity="0.82"/>
+  <text x="26" y="35" fill="#fbbf24" font-family="Arial, sans-serif" font-size="15" font-weight="700">Demonstration illustration — fictional property, not a photograph</text>
+</svg>

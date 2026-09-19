@@ -167,6 +167,34 @@ runner in-repo). New migrations: next number, idempotent
 (`create table if not exists`, guarded `alter`), and always paired with RLS
 policies for new tables.
 
+### Phase 0 (023–029) — the acquisition foundation, one architecture
+
+Applied to **Pilot only**, in the plan's order (024 first): 024 → 023 → 025 →
+026 / 026b / 027 / 029 → 028 → 028b. The numbers are the files' identities; the order is the
+plan's. Every policy on every new or rewritten table reads 024's
+`member_property_ids()` (owner OR active organisation member); none reads
+`user_id = auth.uid()`.
+
+| # | What | Reused / extended / new |
+|---|---|---|
+| 024 | `organizations`, `organization_members`, `properties.organization_id`; every landlord policy becomes owner-or-member; storage policies accept the org prefix | new tables; existing policies rewritten in place |
+| 023 | `properties.lifecycle_stage` (prospect · under_review · due_diligence · acquired · passed, default acquired), `acquired_at`, `passed_at`, `stage_changed_*`; `acquisition_reviews.property_id` nullable | extends `properties`; Acquire is a stage transition, never a copy |
+| 025 | `lease_documents` gains `doc_type` (32 labels + unclassified), `category` (cabinet drawer key), `doc_family_id`, `status`, confidence/classifier, dates, `uploaded_by`, `supersedes_document_id`, `sha256`, size, mime; view `property_documents` (security_invoker) | **extends** the register — `lease_documents` IS the register; `tenant_documents` is a portal publication record pointing at it |
+| 026 | `lease_provisions` — a clause with structure, plain sentence, quote/page/section, the **same five FieldProvenance states**, reviewer attribution, `source_document_id`, `superseded_by`; value columns immutable by trigger, no member delete | new; same verified-memory shape as `tenant_field_evidence` |
+| 026b | table privileges on `lease_provisions` set explicitly: authenticated holds SELECT, INSERT, UPDATE and nothing else (Supabase's default ACL had granted ALL at creation; 026 is applied and not replayed) | hardening; both layers now state the contract |
+| 027 | `tenant_field_evidence` gains `amendment_id`, `source_document_id`, `superseded_by`; no backfill | extends in place |
+| 028 | `property_events` — append-only, actor stamped from `auth.uid()` and a spoofed actor refused, `organization_id` stamped from the property; no update/delete grant to any role | new; P0.5 makes the existing writers dual-write here |
+| 028b | corrects 028's guards, which did not do what they said. Its delete check tested `pg_trigger_depth() = 0`, unreachable inside a row trigger (a direct statement arrives at 1, a cascade at 2), so **every** DELETE passed; TRUNCATE was never covered at all; and the blanket UPDATE refusal made `ON DELETE SET NULL` on `actor_uid`/`organization_id` unreachable, so a referenced user or organisation could not be deleted. Now: depth `<= 1` is refused, a statement-level trigger refuses TRUNCATE, an update is allowed only from inside a trigger AND only to null those two columns, and `organization_id` is derived from the property unconditionally | hardening; proved by behaviour in `test-028-append-only.js` against a real PostgreSQL |
+| 029 | `financial_sources` (rent_roll · general_ledger · operating_statement · budget · t12 → the register row, period, extracted jsonb) and `gl_entries` (one line per GL row, traceable to its source, `row_hash` unique per property) | new, tables only; Phase 2 fills them; the CAM-tab GL import is unchanged |
+
+| 030 | durable history, derived in the transaction that already writes it (P0.5). `savePropertyData` puts the activity log and the timeline inside `properties.data`, and `saveProperty` sends them in ONE PostgREST call, so history is already atomic with the property mutation — just trapped in a blob. An AFTER trigger on `properties.data` reads it and records each entry as a real `property_events` row, so the event commits with the property or neither does. No outbox, no queue, no worker, and no script.js change. `source_key` (`activity:<id>` \| `timeline:<dedupeKey\|id>`) plus a partial unique index makes a replayed save a no-op; 028b's refusal of any non-FK UPDATE is what forces `ON CONFLICT DO NOTHING` rather than `DO UPDATE` | new; proved by behaviour in `test-030-event-derivation.js` |
+| | **Watermark, and no backfill.** Pre-P0.5 entries name their actor with a display string like `User`, so their authenticated identity is unrecoverable and they must never become apparently-verified history. Activity is gated on carrying the stable id that `AuditService.shapeEvent` assigns from P0.5 onward, so older entries are excluded by construction with no clock involved. The timeline always had ids, so 030 captures every existing timeline key into `property_events_watermark` at migration time, when no post-P0.5 entry can yet exist. Any future backfill is separate and explicitly authorized, and would use the original timestamp with `actor_uid` NULL | |
+| | **Not fixed here, deliberately:** the 800 ms debounce in `savePropertyData` with no `pagehide` flush anywhere, where a dying tab loses the mutation and its history together; and Storage-first uploads, where `api/upload.js` writes the object outside any database transaction | |
+
+Contracts: `test-organizations-migration.js`, `test-lifecycle-stage.js`,
+`test-p03-schema-contract.js` (offline); `test-rls-cross-user.js` Group 4 and
+`test-p03-live-roundtrip.js` (pilot gate, live).
+
 ## 7. When to normalize vs blob
 
 Follow the existing precedent:

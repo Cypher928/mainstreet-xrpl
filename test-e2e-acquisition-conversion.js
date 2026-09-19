@@ -26,6 +26,7 @@ catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 const { chromium } = pw;
 
 const http   = require('http');
+const { signIn: _e2eSignIn, attachDiagnostics } = require('./test-support/e2e-login');
 const fs     = require('fs');
 const path   = require('path');
 const PORT   = parseInt(process.env.APP_PORT || '7842', 10);
@@ -48,8 +49,15 @@ const MIME = {
 function startServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      let filePath = path.join(ROOT, req.url === '/' ? '/index.html' : req.url);
-      filePath = filePath.split('?')[0];
+      // STRIP THE QUERY FIRST, THEN DECIDE IF IT IS THE ROOT. Stripping after
+      // the check meant '/?signin=1' failed `=== '/'`, so filePath became
+      // ROOT + '/?signin=1' and the split left ROOT + '/' — a DIRECTORY.
+      // readFile on a directory errors, so the root answered 404 and the page
+      // was blank: no #loginScreen, no #loginBtn, and the sign-in helper waited
+      // 45s for an app that had never loaded. The suite could not adopt the
+      // ?signin=1 intent every current suite uses until this was fixed.
+      const urlPath = req.url.split('?')[0];
+      let filePath = path.join(ROOT, urlPath === '/' ? '/index.html' : urlPath);
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end('not found'); return; }
         const ext = path.extname(filePath);
@@ -69,7 +77,19 @@ const SUPABASE_MOCK = `
   var _user = { id: USER_ID, email: 'acq-conversion@e2e-test.local' };
   var _session = null;
 
-  var _store = { properties: [], tenants: [], acquisition_reviews: [] };
+  // ONE PROPERTY, BECAUSE THE ACQUISITION MODULE REQUIRES ONE. renderPortfolio
+  // hides #acqSection until the account has at least one property (the
+  // first-time empty state), so a genuinely clean account cannot reach the
+  // acquisition flow at all and .acq-new-btn was display:none. STEP 6 counts
+  // properties, so it now counts the increase rather than the total.
+  var _store = {
+    properties: [{
+      id: 'e2e-seed-prop-0001', user_id: USER_ID,
+      name: 'Seed Plaza', sqft: 10000, archived_at: null, data: {},
+    }],
+    tenants: [],
+    acquisition_reviews: [],
+  };
 
   function noopPromise(val) { return Promise.resolve(val); }
   function genId() { return 'mock-' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
@@ -113,6 +133,9 @@ const SUPABASE_MOCK = `
       neq:      function() { return q; },
       in:       function(col, vals) { _inFilters[col] = vals; return q; },
       not:      function() { return q; },
+      // loadProperties' active path calls .is('archived_at', null); without it
+      // the first portfolio read threw and the account read as empty.
+      is:       function() { return q; },
       order:    function() { return q; },
       limit:    function() { return q; },
       single:   function() {
@@ -159,6 +182,12 @@ const SUPABASE_MOCK = `
 })();
 `;
 
+// How many properties the mock account starts with. Declared out here, in Node
+// scope, because STEP 6 asserts on the INCREASE and the mock above is a string
+// evaluated in the browser — a `var` inside it is not visible to the assertions.
+// Keep in step with _store.properties in the mock.
+const SEEDED_PROPERTIES = 1;
+
 const MOCK_TENANT = {
   tenant_name: 'Harborview Outfitters',
   lease_start_date: '2023-03-01',
@@ -196,6 +225,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
 
   const ctx  = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
+  const _e2eErrors = attachDiagnostics(page);
 
   const consoleLogs = [];
   page.on('console', m => consoleLogs.push({ type: m.type(), text: m.text() }));
@@ -210,10 +240,20 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
   // image parsing, and /api/upload for cloud-backup of the invoice file.
   await page.route('**/api/claude', route => {
     const postData = route.request().postData() || '';
-    // Both lease and invoice calls send a "document" content block (text-based
-    // extraction for .txt leases, base64 PDF for invoices), so route by the
-    // distinguishing prompt text instead of content-block type.
-    const isInvoiceCall = postData.includes('commercial real estate invoice');
+    // ROUTE ON THE NAMED TASK, NOT ON PROMPT TEXT.
+    //
+    // This matched the literal 'commercial real estate invoice', which the
+    // client used to send inside the prompt. The prompts moved server-side
+    // (api/_claude-tasks.js) and the client now posts a task NAME —
+    // callClaude(file, 'invoice_extraction'). That string appears nowhere in
+    // script.js any more, so the match was always false: every call got
+    // MOCK_TENANT, the invoice list showed only the uploaded filename, and
+    // STEP 4 failed on a vendor that had never been returned.
+    //
+    // `task` is the stable contract between client and endpoint, so keying on
+    // it is both correct today and the thing that will still be true after the
+    // next prompt edit. Lease calls use lease_extraction / lease_claude_extraction.
+    const isInvoiceCall = /"task"\s*:\s*"invoice_extraction"/.test(postData);
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify(isInvoiceCall ? MOCK_INVOICE : MOCK_TENANT),
@@ -226,19 +266,32 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
   try {
     // ── STEP 1: Sign up / login ──────────────────────────────────────────────
     section('STEP 1: Login');
-    await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle', timeout: 30000 });
+    // ?signin=1 — THE INTENT FLAG EVERY CURRENT SUITE USES. landing-experience
+    // maybeShow() returns early on it ("someone who clicked Log in has already
+    // answered the only question this overlay asks"), so the marketing hero
+    // never mounts at z-index 99000 over the sign-in form. Without it the
+    // shared helper clicked Sign In three times into the overlay and threw
+    // "e2e sign-in did not reach the app after 3 attempt(s)". domcontentloaded
+    // rather than networkidle for the same reason the passing suites use it:
+    // the page keeps connections open, so networkidle is a slow coin toss.
+    await page.goto('http://127.0.0.1:' + PORT + '/?signin=1', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const loginVisible = await page.$eval('#loginScreen', el => el.style.display !== 'none').catch(() => false);
+    // WAIT FOR IT, DO NOT SAMPLE IT. Under the old `networkidle` the page had
+    // long settled by the time this ran; under `domcontentloaded` it runs while
+    // script.js is still booting, and #loginScreen is display:none in the HTML
+    // until _maybeShowLoginFromIntent reveals it. Sampling immediately read the
+    // pre-boot value and called it a failure. The assertion's subject is
+    // unchanged — the login screen IS shown before sign-in — it is simply given
+    // the time the app takes to show it.
+    const loginVisible = await page
+      .waitForFunction(() => {
+        const el = document.getElementById('loginScreen');
+        return !!el && el.style.display !== 'none' && el.style.display !== '';
+      }, null, { timeout: 30000 })
+      .then(() => true).catch(() => false);
     assert(loginVisible, 'STEP 1: login screen visible before sign-in');
 
-    await page.fill('#loginEmail', 'acq-conversion@e2e-test.local');
-    await page.fill('#loginPassword', 'AcqConversion123!');
-    await page.click('#loginBtn');
-
-    await page.waitForFunction(() => {
-      const app = document.getElementById('appContent');
-      return app && app.style.display !== 'none' && app.style.display !== '';
-    }, { timeout: 10000 }).catch(() => {});
+    await _e2eSignIn(page, { email: "acq-conversion@e2e-test.local", errors: _e2eErrors });
 
     const appVisible = await page.$eval('#appContent', el => el.style.display !== 'none' && el.style.display !== '').catch(() => false);
     assert(appVisible, 'STEP 1: app content visible after sign-in');
@@ -256,7 +309,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const p = document.getElementById('acqDetailPanel');
       return p && p.style.display !== 'none';
-    }, { timeout: 5000 });
+    }, null, { timeout: 45000 });
 
     const titleText = await page.$eval('#acqDetailTitle', el => el.textContent).catch(() => '');
     assert(titleText.includes('Harborview Plaza'), 'STEP 2: detail panel opened for new review', titleText);
@@ -272,7 +325,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const el = document.getElementById('acqLeaseList');
       return el && el.innerText.includes('Harborview Outfitters');
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const leaseListText = await page.$eval('#acqLeaseList', el => el.innerText).catch(() => '');
     assert(leaseListText.includes('Harborview Outfitters'), 'STEP 3: lease extracted via real pipeline and listed', leaseListText.slice(0, 150));
@@ -288,7 +341,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const el = document.getElementById('acqInvoiceList');
       return el && el.innerText.includes('Harbor Cleaning Services');
-    }, { timeout: 20000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const invoiceListText = await page.$eval('#acqInvoiceList', el => el.innerText).catch(() => '');
     assert(invoiceListText.includes('Harbor Cleaning Services'), 'STEP 4: invoice extracted via real pipeline and listed', invoiceListText.slice(0, 150));
@@ -305,7 +358,7 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const c = document.getElementById('acqReportContainer');
       return c && c.innerHTML.length > 100;
-    }, { timeout: 8000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const badgeAfterAnalysis = await page.$eval('#acqDetailBadge', el => el.textContent).catch(() => '');
     assert(badgeAfterAnalysis === 'complete', 'STEP 5: review badge updated to "complete"', badgeAfterAnalysis);
@@ -319,25 +372,39 @@ const MOCK_INVOICE = { vendorName: 'Harbor Cleaning Services', amount: 5400, cat
     await page.waitForFunction(() => {
       const m = document.getElementById('acqConvertModal');
       return m && m.style.display !== 'none';
-    }, { timeout: 5000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     await page.click('#acqConvertConfirmBtn');
 
     await page.waitForFunction(() => {
       const badge = document.getElementById('acqDetailBadge');
       return badge && badge.textContent === 'converted';
-    }, { timeout: 10000 }).catch(() => {});
+    }, null, { timeout: 45000 }).catch(() => {});
 
     const badgeAfterConvert = await page.$eval('#acqDetailBadge', el => el.textContent).catch(() => '');
     assert(badgeAfterConvert === 'converted', 'STEP 6: review badge updated to "converted"', badgeAfterConvert);
 
     const convertedPropsCount = await page.evaluate(() => (typeof _props !== 'undefined' ? _props.length : -1));
-    assert(convertedPropsCount === 1, 'STEP 6: a new managed property was created from the review', '_props.length=' + convertedPropsCount);
+    // ONE MORE PROPERTY THAN WE STARTED WITH, and it is found BY NAME.
+    //
+    // The account now opens with a seeded property (see the mock: the
+    // acquisition module is hidden until one exists), so "a property was
+    // created" is the INCREASE, not the total, and the converted property is
+    // not necessarily _props[0]. Asserting on the count alone would also pass
+    // if the conversion had replaced the seed instead of adding to it, so the
+    // seed is checked to still be there.
+    assert(convertedPropsCount === SEEDED_PROPERTIES + 1,
+      'STEP 6: a new managed property was created from the review',
+      '_props.length=' + convertedPropsCount + ' (expected ' + (SEEDED_PROPERTIES + 1) + ')');
 
-    const newPropName = await page.evaluate(() => (typeof _props !== 'undefined' && _props[0] ? _props[0].name : ''));
-    assert(newPropName.includes('Harborview'), 'STEP 6: new property carries the review name', newPropName);
+    const propNames = await page.evaluate(() => (typeof _props !== 'undefined' ? _props.map(p => p && p.name) : []));
+    assert(propNames.some(n => (n || '').includes('Harborview')), 'STEP 6: new property carries the review name', JSON.stringify(propNames));
+    assert(propNames.some(n => (n || '').includes('Seed Plaza')), 'STEP 6: and the pre-existing property was not replaced', JSON.stringify(propNames));
 
-    const newPropTenants = await page.evaluate(() => (typeof _props !== 'undefined' && _props[0] ? (_props[0].tenants || []).map(t => t.tenant_name) : []));
+    const newPropTenants = await page.evaluate(() => {
+      const p = (typeof _props !== 'undefined' ? _props : []).find(x => x && (x.name || '').includes('Harborview'));
+      return p ? (p.tenants || []).map(t => t.tenant_name) : [];
+    });
     assert(newPropTenants.some(n => (n || '').includes('Harborview Outfitters')), 'STEP 6: new property carries the review\'s tenant', JSON.stringify(newPropTenants));
 
     // Back in the portfolio, the converted property should now be open-able.

@@ -1,4 +1,6 @@
-# MainStreet — AI-Powered CAM Reconciliation for Commercial Real Estate
+# MainStreet — Property Intelligence for Commercial Real Estate
+
+*MainStreet is the verified memory for every commercial property.*
 
 > **Transparent CAM reconciliation for commercial real estate — automated allocation, AI document extraction, and tenant-verifiable settlement in RLUSD on the XRP Ledger.**
 

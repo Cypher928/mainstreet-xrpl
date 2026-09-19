@@ -9,6 +9,22 @@
 window.Selectors = (() => {
   'use strict';
 
+  /**
+   * M7 — one definition of an open dispute, read at call time.
+   *
+   * buildPropMeta's `openDisputes` used `status === 'open'`, so it reported 1 on
+   * a property holding one `open` and one `docs_requested` dispute while the
+   * Overview attention panel — reading DisputeStatus — reported 2. That gap is
+   * why property-workspace.js carries a comment explaining that it deliberately
+   * stopped trusting `meta.openDisputes`; this is the other half of that fix.
+   * The literal fallback matches the one there.
+   */
+  const _isOpenDispute = (d) => {
+    const DS = (typeof window !== 'undefined') && window.DisputeStatus;
+    if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
+    return !!d && (d.status === 'open' || d.status === 'docs_requested');
+  };
+
   // ── Sort constants ────────────────────────────────────────────────────────
 
   // Canonical review queue order — must be stable across all renders.
@@ -35,7 +51,8 @@ window.Selectors = (() => {
   function getReviewQueueItems(props) {
     const items = [];
     for (const p of (props || [])) {
-      const tenants     = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+      // A recorded vacancy (`vacant: true`) is a space, not a lease to review.
+      const tenants     = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];
       const reconResults = (p.camReconciliation ?? p.results)?.results || [];
 
       for (const t of tenants) {
@@ -95,7 +112,7 @@ window.Selectors = (() => {
     const reconResults = results; // alias for clarity below
 
     const missingDocs  = invoices.filter(i => i && !i.fileUrl && !i.fileName).length;
-    const openDisputes = (prop.disputes || []).filter(d => d.status === 'open').length;
+    const openDisputes = (prop.disputes || []).filter(_isOpenDispute).length;
 
     let redCount = 0, yellowCount = 0;
     if (snap) {
@@ -143,7 +160,7 @@ window.Selectors = (() => {
       }
     }
 
-    const tenantArr             = Array.isArray(prop.tenants) ? prop.tenants.filter(Boolean) : [];
+    const tenantArr             = Array.isArray(prop.tenants) ? prop.tenants.filter(t => t && t.vacant !== true) : [];
     const tenantsNeedingReview  = tenantArr.filter(t => ReviewEngine.getTenantReviewState(t, reconResults) === 'needs_review').length;
     const incompleteLeases      = tenantArr.filter(t => ReviewEngine.getTenantReviewState(t, reconResults) === 'incomplete').length;
     const manuallyVerifiedCount = tenantArr.filter(t => ReviewEngine.getTenantReviewState(t, reconResults) === 'manually_verified').length;
@@ -175,7 +192,8 @@ window.Selectors = (() => {
     // Portfolio-wide occupancy
     const totalBldgSqft = safeProps.reduce((s, p) => s + (Number(p.totalSqft) || 0), 0);
     const totalOccSqft  = safeProps.reduce((s, p) => {
-      const tenants = Array.isArray(p.tenants) ? p.tenants : [];
+      // Recorded vacant area is not occupied area.
+      const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];
       return s + tenants.reduce((ts, t) => ts + (parseFloat(t.leased_sqft) || 0), 0);
     }, 0);
     const occupancyPct = totalBldgSqft > 0 ? Math.round((totalOccSqft / totalBldgSqft) * 100) : null;
@@ -228,7 +246,8 @@ window.Selectors = (() => {
    *             expiredCount, expiringCount, lowConfCount, proRataGap, unresolvedCount, incompleteCount }}
    */
   function derivePropertyReadiness(p) {
-    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+    // A recorded vacant space is not a lease; it has no expiry, confidence or pro-rata share.
+    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];
     const snap    = p.camReconciliation ?? null;
     const results = snap?.results || [];
     const meta    = buildPropMeta(p);
@@ -331,7 +350,8 @@ window.Selectors = (() => {
     const cutoffIso = cutoff.toISOString().slice(0, 10);
 
     for (const p of (props || [])) {
-      const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+      // A recorded vacant space is not a lease; it has no expiry, confidence or pro-rata share.
+    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];
       const results = (p.camReconciliation ?? null)?.results || [];
 
       totalUnresolved  += getReviewQueueItems([p]).filter(i => !i.reviewerConfirmed).length;
@@ -341,7 +361,7 @@ window.Selectors = (() => {
       totalExpired     += tenants.filter(t => t.end_date && t.end_date < today).length;
       totalExpiring    += tenants.filter(t => t.end_date && t.end_date >= today && t.end_date <= cutoffIso).length;
       totalLowConf     += tenants.filter(t => t._confidence === 'low' || t._confidence === 'failed').length;
-      totalExposure    += (p.disputes || []).filter(d => d.status === 'open')
+      totalExposure    += (p.disputes || []).filter(_isOpenDispute)
         .reduce((s, d) => s + (parseFloat(d.tenantShare) || 0), 0);
       const totalPR = results.reduce((s, r) => s + (r.proRataPercent || 0), 0);
       if (results.length > 0 && Math.abs(totalPR - 100) >= 5) proRataGapProps++;

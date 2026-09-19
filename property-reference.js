@@ -80,6 +80,12 @@
       hvacSummary:       '6 rooftop units (Carrier 48TC), 3–10 ton, installed 2019–2024',
       fireProtection:    'Wet-pipe sprinkler throughout, monitored alarm, annual inspection current',
       utilities:         'Electric: Austin Energy · Water/Waste: Austin Water · Gas: Texas Gas Service',
+      // The showroom's picture: an architectural rendering of the fictional
+      // building, never a photograph of a real one — the caption says so and the
+      // header shows it. A real property shows an image only if its own info
+      // carries one; nothing is invented for it.
+      imageUrl:          'assets/demo/cascade-commons-rendering.svg',
+      imageCaption:      'Architectural rendering of the fictional Cascade Commons — demonstration illustration, not a photograph',
     };
   }
 
@@ -146,12 +152,20 @@
     return demoSpaceDocuments(tenant.tenant_name, tenant.suite || null);
   }
 
+  // Vacancy has one definition, in tenant-normalize.js (loaded first; required
+  // here under node). A recorded vacancy is not occupied area.
+  function _TN() {
+    if (typeof window !== 'undefined' && window.TenantNormalize) return window.TenantNormalize;
+    if (typeof require === 'function') return require('./tenant-normalize.js');
+    throw new Error('property-reference.js: TenantNormalize is not loaded');
+  }
+
   /** Live occupancy from tenant data — never a hardcoded number. */
   function occupancyPct(property) {
     if (!property) return null;
     var total = Number(property.totalSqft || property.sqft) || 0;
     if (!total) return null;
-    var leased = (property.tenants || []).reduce(function (s, t) {
+    var leased = _TN().occupiedTenants(property.tenants).reduce(function (s, t) {
       return s + (Number(t && (t.leased_sqft || t.sqft)) || 0);
     }, 0);
     if (!leased) return null;

@@ -29,7 +29,7 @@ function assert(label, condition, detail = '') {
 // ---------------------------------------------------------------------------
 
 const TIER2_CHECKS      = new Set(['CAM_EXCLUSIONS', 'STRUCT_EXCLUSIONS', 'TAX_ALLOCATION']);
-const VALID_SEVERITIES  = new Set(['info', 'warning', 'critical']);
+const VALID_SEVERITIES  = new Set(['info', 'unconfirmed', 'warning', 'critical']);
 const VALID_CONFIDENCES = new Set(['high', 'medium', 'low']);
 const VALIDATION_MODEL  = 'claude-sonnet-4-6';
 const MAX_LEASE_TEXT    = 300000;
@@ -45,7 +45,7 @@ function _normalizeFinding(f) {
   let severity   = typeof f.severity   === 'string' ? f.severity.toLowerCase()   : '';
   let confidence = typeof f.confidence === 'string' ? f.confidence.toLowerCase() : '';
 
-  if (!VALID_SEVERITIES.has(severity))    severity   = 'info';
+  if (!VALID_SEVERITIES.has(severity))    severity   = 'unconfirmed';
   if (!VALID_CONFIDENCES.has(confidence)) confidence = 'medium';
 
   const quote       = typeof f.quote       === 'string' && f.quote.trim()       ? f.quote.trim()       : null;
@@ -60,10 +60,10 @@ function _normalizeFinding(f) {
     confidence = confidence === 'high' ? 'medium' : confidence;
   }
 
-  // Hard requirement: Lease silence → Info/High
+  // Hard requirement: lease silence → Unconfirmed/High
   const findingLc = finding.toLowerCase();
   if (SILENCE_PHRASES.some(p => findingLc.includes(p))) {
-    severity   = 'info';
+    severity   = 'unconfirmed';
     confidence = 'high';
   }
 
@@ -227,7 +227,20 @@ async function runTests() {
     assert('VL-6:  confidence stays high',                      f[0].confidence === 'high');
   }
 
-  // ── Lease silence → Info/High ─────────────────────────────────────────────
+  // ── Lease silence → Unconfirmed/High ──────────────────────────────────────
+  //
+  // These asserted coercion to 'info', which the Lease Validation panel renders
+  // as a green tick reading PASSED. The requirement was always that silence must
+  // not be reported as a failure; it was never that silence should be reported
+  // as compliance confirmed. "The lease is silent on structural exclusions"
+  // shown as PASSED beside a $55,000 unitemised category is absence of evidence
+  // presented as evidence of absence.
+  //
+  // 'unconfirmed' already existed client-side, meaning exactly this: "the lease
+  // does not provide enough information to confirm this. Not a failure — not a
+  // pass either." Only this tier could not produce it. The coercion is unchanged
+  // in every other respect, including confidence staying high: the reading is
+  // confident, the compliance is not established.
 
   console.log('\n[Lease silence coercion]');
   {
@@ -248,7 +261,8 @@ async function runTests() {
         finding: `The lease ${phrase} this item.`, quote: null, section: null, page: null, explanation: null,
       }] });
       const f = parseValidationFindings(raw);
-      assert(`VL-7.${i+1}: "${phrase}" → severity coerced to info`, f[0].severity === 'info');
+      assert(`VL-7.${i+1}: "${phrase}" → severity coerced to unconfirmed`, f[0].severity === 'unconfirmed');
+      assert(`VL-7.${i+1}b: "${phrase}" is NOT reported as a pass`, f[0].severity !== 'info');
       assert(`VL-8.${i+1}: "${phrase}" → confidence coerced to high`, f[0].confidence === 'high');
     });
   }
@@ -324,7 +338,10 @@ async function runTests() {
     const f = parseValidationFindings(raw);
     assert('VL-23: severity normalized to lowercase',     f[0].severity === 'critical');
     assert('VL-24: confidence normalized to lowercase',   f[0].confidence === 'high');
-    assert('VL-25: unknown severity coerced to info',     f[1].severity === 'info');
+    // Fails safe, not open: an unrecognised verdict has confirmed nothing, so it
+    // must never render as the affirmative green PASSED.
+    assert('VL-25: unknown severity coerced to unconfirmed', f[1].severity === 'unconfirmed');
+    assert('VL-25b: unknown severity is never reported as a pass', f[1].severity !== 'info');
     assert('VL-26: unknown confidence coerced to medium', f[1].confidence === 'medium');
   }
 

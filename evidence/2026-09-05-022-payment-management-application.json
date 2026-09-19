@@ -1,0 +1,128 @@
+{
+  "executed": "2026-09-05",
+  "phase": "Phase 1a — migration 022 applied to Pilot. Record-only payment management; no fund movement of any kind.",
+  "target": "Pilot bhmktujbxdbvdmpybmad ONLY",
+  "production_untouched": {
+    "origin_main": "9c6d905db1da92b61f5d83079c6bb93cf7147df9",
+    "main_head_date": "2026-08-01",
+    "session_commits_on_main": 0,
+    "session_commits_that_are_ancestors_of_main": 0,
+    "note": "A grep for 'Claude-Session' on main returns 117 — all from earlier work merged long before this session. A grep for THIS session id returns 0, and none of this session's six commits is an ancestor of main."
+  },
+
+  "artifact": {
+    "file": "migrations/022_payment_management.sql",
+    "sha256": "d3fa9f6752ee017fa3be07b77ab1df5e3ecb5e0420db5077a798d7b095d23fde",
+    "bytes": 41042, "lines": 793,
+    "committed_in": "0b1d9d7",
+    "rollback_file": "migrations/022_payment_management_rollback.sql",
+    "rollback_sha256": "3c731030458759399e4fd23b7552d6ee1feaab38e35aeb07b4a6b775214bd2d2"
+  },
+
+  "fidelity": {
+    "_why": "The migration was transcribed into the API rather than piped from disk, so 'what is deployed is what was reviewed' had to be measured, not assumed. Each deployed function body (pg_proc.prosrc) was whitespace-normalised and hashed against the same body extracted from the file.",
+    "functions_compared": 14,
+    "identical_after_correction": 14,
+    "drift_found_and_corrected": {
+      "function": "payment_record_settlement",
+      "difference": "one in-body comment line was dropped in transcription: '-- Recomputed inside this transaction from the actual non-voided rows.'",
+      "functional_impact": "none — the executable statements were identical",
+      "action": "the function was re-applied verbatim from the file so the deployed object is byte-identical to the approved one",
+      "body_md5_before_fix": "c97180acd4554f627099cf3505bcbfff",
+      "body_md5_after_fix":  "0e49f8b3be298e9ebca86e9ac6fd486c"
+    },
+    "false_alarm_noted": "A first comparison reported all 14 differing. That was the verification query, not the deployment: Postgres btrim() with one argument strips spaces but NOT newlines, so its normalised string kept a leading space that JavaScript's trim() removed. Corrected to btrim(regexp_replace(...)) which matches."
+  },
+
+  "before_after": {
+    "public_tables":        {"before": 17, "after": 21, "delta": "+4, the payment tables"},
+    "tenants_rows":         {"before": 84, "after": 84},
+    "tenants_md5":          {"before": "9570c59cfdbcc864f77e65fd12e1643d", "after": "9570c59cfdbcc864f77e65fd12e1643d"},
+    "evidence_rows":        {"before": 423, "after": 423},
+    "evidence_md5":         {"before": "eaea9277697568e05122ada5de621d6c", "after": "eaea9277697568e05122ada5de621d6c"},
+    "cam_rows":             {"before": 46, "after": 46},
+    "cam_target_md5":       {"before": "adc94703ead4dbb5f3bcb55cf005b61f", "after": "adc94703ead4dbb5f3bcb55cf005b61f"},
+    "billing_md5":          {"before": "6acf22e57bca6a60359a29256b9e15eb", "after": "6acf22e57bca6a60359a29256b9e15eb"},
+    "sum_actual_cam":       {"before": "422516.12", "after": "422516.12"},
+    "sum_allocated":        {"before": "422516.12", "after": "422516.12"},
+    "sum_total_expenses":   {"before": "3612900", "after": "3612900"},
+    "properties_rows":      {"before": 27, "after": 27},
+    "tenant_statements_rows": {"before": 0, "after": 0},
+    "dangling_cam_refs":    {"before": 6, "after": 6},
+    "resync_proc_md5":      {"before": "ac6c864fe287cf6fb7c584e160ec16fb", "after": "e733e321df4d44c6101afb0182990d05",
+                             "note": "expected: 022 replaces it to add the payments retention clause"}
+  },
+
+  "verified": {
+    "payment_tables": 4,
+    "payment_balances_view": 1,
+    "payment_procedures": 8,
+    "procedure_names": ["payment_authorize","payment_cancel","payment_create","payment_dispute_open",
+                        "payment_dispute_resolve","payment_issue","payment_record_settlement","payment_void_settlement"],
+    "policies": 10,
+    "non_select_policies_for_non_service_roles": 0,
+    "grants_to_authenticated": "SELECT only, on all four tables",
+    "grants_to_anon": "none",
+    "source_statement_id_not_null": true,
+    "source_statement_fk": "FOREIGN KEY (source_statement_id) REFERENCES tenant_statements(id) ON DELETE RESTRICT",
+    "tenant_property_fk": "FOREIGN KEY (tenant_id, property_id) REFERENCES tenants(id, property_id) ON DELETE RESTRICT",
+    "one_active_index": "CREATE UNIQUE INDEX payments_one_active_per_statement ON public.payments USING btree (source_statement_id) WHERE (state <> 'cancelled'::text)",
+    "immutability_trigger_present": true,
+    "guard_covers_source_statement_id_and_authorized_amount": true,
+    "all_procs_security_definer_with_pinned_search_path": true,
+    "all_procs_call_assert_owner": true,
+    "neither_dispute_proc_assigns_state": true,
+    "no_proc_takes_a_state_parameter": true,
+    "payment_rows_all_tables": 0
+  },
+
+  "resync_021_after_022": {
+    "payments_clause_occurrences": 2,
+    "in_retention_count": true,
+    "in_delete_predicate": true,
+    "empty_roster_guard": true,
+    "no_usable_rows_guard": true,
+    "server_side_id_mint": false,
+    "upserts": true,
+    "reports_retained_referenced": true,
+    "ownership_check": true,
+    "live_probe_rolled_back": {
+      "resync_after_022": "ok, upserted 1, deleted 0, retained_referenced 0",
+      "empty_roster": "noop_reason empty_roster, deleted 0, tenant survived"
+    }
+  },
+
+  "write_boundary_probe_rolled_back": {
+    "payment_create_without_a_statement": "refused — 'a payment must be created from a statement version'",
+    "payment_create_by_non_owner": "refused — 'Not authorized: caller does not own property ...'",
+    "scratch_rows_remaining_after_rollback": 0
+  },
+
+  "rollback_static_check": {
+    "_note": "PostgreSQL has no parse-without-execute for DDL, so this is a static validation. The rollback was NOT run.",
+    "dollar_quote_delimiters": "balanced",
+    "parentheses": "balanced (52/52)",
+    "single_quotes": "even (104)",
+    "drop_statements": 19,
+    "create_statements": 1,
+    "children_dropped_before_parent": true,
+    "restores_resync": true,
+    "omits_payments_clause": true,
+    "does_not_reintroduce_009_delete": true,
+    "keeps_021_guards": true,
+    "warns_destructive": true
+  },
+
+  "not_touched": [
+    "api/rlusd-settlement.js", "rlusd-integration.js", "xrpl-integration.js",
+    "script.js", "index.html", "vercel.json", "scripts/",
+    "migrations 000-021 (files)", "the settlement wallet", "any Ripple credential or endpoint",
+    "Production project zhsuhehgehbzkmzurzyf", "origin/main"
+  ],
+
+  "tests": {
+    "test-payment-state-machine.js": "63 passed, 0 failed",
+    "test-payment-schema-contract.js": "95 passed, 0 failed",
+    "full_regression": "113 passed, 1 failed (test-broken-promises.js — long-standing, pre-existing)"
+  }
+}
