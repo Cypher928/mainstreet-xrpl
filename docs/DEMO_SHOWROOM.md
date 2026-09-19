@@ -68,6 +68,63 @@ Every name, amount, account number and signature in them is invented. The
 fictional lender is the one place a real institution would otherwise have been
 attached to invented loan terms; it is not.
 
+## v9 — the invoice register carries its source documents
+
+Until v9 the register was 26 rows of vendor, amount, category and date with no
+document behind any of them, and the product's own audit said so:
+
+> **26 of 26 invoices missing source document** — property-wide, red,
+> 0 of 5 tenants billable
+
+That refusal was correct, and none of the machinery that produces it changed.
+What changed is that the documents now exist. `tools/build-demo-invoices.js`
+renders one PDF per row to `assets/demo/invoices/`, and the seed attaches them:
+
+```
+node tools/build-demo-invoices.js          # → assets/demo/invoices/invoice-cc-2025-NNNN.pdf
+node tools/build-demo-invoices.js --check  # exit 1 if any is missing
+```
+
+**The register is not copied into the tool.** Every vendor, amount, category
+and date is parsed out of `demoInvoiceList` in `script.js` at build time, and
+the tool refuses to write anything if the parse does not yield the 26 rows the
+seed holds. **The index is the identity**: row `i` is documented by the `i`-th
+file, the same index that gives the row its `inv-<i>` id, so a document cannot
+come to sit against the wrong bill. `_demoInvoiceUrl()` and
+`_demoInvoiceFileName()` in `script.js` are the one place that mapping is
+spelled, and both the register the CAM screen renders and the
+`invoicesFull` array `buildAuditSummary()` reads are built from it —
+they used to be able to disagree.
+
+What this does and does not change:
+
+| | Before | After |
+|---|---|---|
+| Missing-document finding | red, property-wide | not raised; a green finding records the documents |
+| Tenants billable | 0 of 5 | 3 of 5 |
+| Whole Health Market | blocked · property | **billable**, $34,650.00 |
+| Summit Coffee & Provisions | blocked · property | needs confirmation — a parking exclusion the matcher could not apply |
+| ProActive Physical Therapy | blocked · property | **still held** — Modified Gross lease, CAM treatment unconfirmed |
+| Property verdict | Not ready to bill | Not ready to bill — one tenant, others unaffected |
+| Every allocated amount | — | **unchanged** |
+
+ProActive stays held deliberately. A Modified Gross lease may or may not permit
+CAM pass-throughs and the engine will not assert which without a human reading
+the lease (`reconciliation-engine.js`, the Gross/Modified Gross detector,
+`blocksBilling: true` on a yellow finding). Its classification was not touched.
+
+Attaching evidence changes what the audit can verify, not what anyone owes:
+the tenant allocation stays $88,776.77 and the cap reductions stay $75,548.60.
+`test-e2e-invoice-evidence-identity.js` asserts both figures twice — once with
+the documents and once with them stripped back out.
+
+Documents are checked against the register from the other end by
+`test-demo-invoices.js` (in the regression as *Demo invoice document
+contract*): same 26 things in the same order, each document stating its own
+row's vendor, amount, date and category, none naming another row's invoice
+number, every one marked fictional, and nothing borrowed from Northgate
+Exchange — that property has its own register, vendors and Boise address.
+
 ## Verification
 
 `test-e2e-demo-showroom.js` (in the regression as *Demo showroom — populated

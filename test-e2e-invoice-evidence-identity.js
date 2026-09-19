@@ -338,13 +338,81 @@ const INV = (id, vendor, amount, date) => ({ id, vendorName: vendor, amount,
   });
   eqMoney(D.poolUnsubstantiated, 9000, 'one id across two findings', 'summing would give 13000');
 
+  // ══ G0 · THE DEMO AS IT SHIPS ════════════════════════════════════════════
+  // Run BEFORE G, which mutates the register: this is the state a judge opens.
+  sec('G0 · Cascade Commons as seeded — the register carries its source documents');
+  const G0 = await p.evaluate(async () => {
+    await loadDemo();
+    await new Promise(r => setTimeout(r, 7000));
+    const d = (_props || []).find(x => /Cascade/i.test(x.name || ''));
+    await selectProperty(d.id);
+    await new Promise(r => setTimeout(r, 3000));
+    const AX = window.AuditExposure;
+    const summary = buildAuditSummary();
+    const exp = AX.deriveExposure(summary, lastTotal || 0);
+    const md = (summary.red || []).concat(summary.yellow || [])
+      .find(f => /missing source document/.test(f.title || ''));
+    const green = (summary.green || []).find(f => /have source documents attached/.test(f.title || ''));
+    return {
+      invoices: (invoiceData || []).length,
+      documented: (invoiceData || []).filter(i => i && (i.fileUrl || i.fileName)).length,
+      missingFinding: md ? md.title : null,
+      greenFinding: green ? green.title : null,
+      poolUnsubstantiated: exp.poolUnsubstantiated,
+      propertyBlockers: (exp.blocking.property || []).map(f => f.title),
+      heldTenants: Object.keys(exp.blocking.byTenant || {}),
+      allocation: (lastResults || []).reduce((s, r) => s + (r.allocatedAmount || 0), 0),
+      capAdj: (lastResults || []).reduce((s, r) => s + (r.capAdjustment || 0), 0),
+    };
+  });
+  (G0.documented === 26 && G0.invoices === 26)
+    ? ok('all 26 seeded invoices carry a source document')
+    : bad('the seeded register is not fully documented', JSON.stringify(G0));
+  (G0.missingFinding === null)
+    ? ok('no "missing source document" finding is raised')
+    : bad('the finding is still raised on the shipped demo', String(G0.missingFinding));
+  (G0.greenFinding === 'All 26 invoices have source documents attached')
+    ? ok('the audit records the documents as a positive finding')
+    : bad('the green finding is missing', String(G0.greenFinding));
+  eqMoney(G0.poolUnsubstantiated, 0, 'unsubstantiated pool on the shipped demo');
+  (G0.propertyBlockers.length === 0)
+    ? ok('nothing holds the property as a whole')
+    : bad('a property-level blocker survives', JSON.stringify(G0.propertyBlockers));
+  (G0.heldTenants.length === 1 && G0.heldTenants[0] === 'ProActive Physical Therapy')
+    ? ok('one tenant is held — the Modified Gross lease question, which is not a document problem')
+    : bad('the tenant hold moved', JSON.stringify(G0.heldTenants));
+  // ARITHMETIC IS UNTOUCHED BY EVIDENCE. Attaching documents changes what the
+  // audit can verify, not what anyone owes. Same figures as section G below,
+  // which runs the same reconciliation with the documents taken away.
+  eqMoney(G0.allocation, 88776.77, 'tenant allocation, documented');
+  eqMoney(G0.capAdj, 75548.60, 'cap reductions, documented');
+
   // ══ G · THE DEMO, END TO END ═════════════════════════════════════════════
-  sec('G · Cascade Commons — the reported case, through the real screen');
+  //
+  // THE REPORTED CASE IS A REGISTER WITH NO DOCUMENTS, AND IT IS BUILT HERE.
+  //
+  // The bug this suite exists for was found on Cascade Commons when its 26
+  // invoices had no source documents: ten vendors, 26 bills, and an
+  // unsubstantiated pool that collapsed to $105,350 because impact ids were
+  // keyed by vendor name. Seed v9 attaches those documents, so the shipped
+  // demo no longer raises that finding at all — which would quietly retire this
+  // end-to-end check rather than keep it.
+  //
+  // So the case is reconstructed: the documents are stripped in the page and
+  // the reconciliation re-run, which is the register the report described,
+  // reached through the same code. Section H below pins what the demo actually
+  // ships as, so both are held.
+  sec('G · Cascade Commons with an undocumented register — the reported case, through the real screen');
   const G = await p.evaluate(async () => {
     await loadDemo();
     await new Promise(r => setTimeout(r, 7000));
     const d = (_props || []).find(x => /Cascade/i.test(x.name || ''));
     await selectProperty(d.id);
+    await new Promise(r => setTimeout(r, 3000));
+    const prop = currentProperty();
+    (prop.invoices || []).forEach(i => { delete i.fileUrl; delete i.fileName; });
+    invoiceData.splice(0, invoiceData.length, ...prop.invoices);
+    await runAllocation();
     await new Promise(r => setTimeout(r, 3000));
     const AX = window.AuditExposure;
     const summary = buildAuditSummary(lastResults || [], invoiceData || [], lastTotal || 0);

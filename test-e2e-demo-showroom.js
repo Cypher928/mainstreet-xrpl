@@ -31,6 +31,15 @@ let pw; try { pw = require('playwright'); }
 catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
 
 const ROOT = __dirname, PORT = 8966;
+// THE SEED'S OWN VERSION, READ FROM THE SEED. These assertions used to write
+// `8` down here, so the first bump of DEMO_VERSION reported six failures that
+// all said "seed version 8" — a version change reported as a broken fixture.
+// What they are about is that the marker TRAVELS: seeded, saved and reloaded,
+// the row keeps whatever version the seeder stamped. That is checked against
+// the seeder, not against a number remembered here.
+const SEED_V = Number((/const DEMO_VERSION = (\d+);/.exec(
+  fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8')) || [])[1]);
+
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css',
                '.json':'application/json', '.png':'image/png', '.jpg':'image/jpeg',
                '.svg':'image/svg+xml', '.pdf':'application/pdf' };
@@ -178,7 +187,7 @@ const sorted = a => a.slice().sort();
     };
   });
   yes(seed.isDemo, 'the loaded property is the demo property');
-  is(seed.demoV, 8, 'the stored row is seed version 8');
+  is(seed.demoV, SEED_V, `the stored row is seed version ${SEED_V}`);
   is(seed.recCount, ALL_IDS.length, `the timeline carries all ${ALL_IDS.length} demo cabinet records`);
   is(seed.rowRecCount, ALL_IDS.length, '…and the STORED row carries them too (they are persisted, not rendered)');
   yes(seed.uniqueIds, 'every timeline event id is unique — no record exists twice');
@@ -598,7 +607,7 @@ const sorted = a => a.slice().sort();
     const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
     return { memV: live._demoV, rowV: row && row.data._demoV, recs: (row.data.timeline || []).filter(e => /^demo-rec-/.test(String(e.id))).length };
   });
-  is(early, { memV: 8, rowV: 8, recs: ALL_IDS.length }, 'the seeded live object carries its version, so a save straight after seeding keeps the row at seed 8');
+  is(early, { memV: SEED_V, rowV: SEED_V, recs: ALL_IDS.length }, `the seeded live object carries its version, so a save straight after seeding keeps the row at seed ${SEED_V}`);
   await p2.evaluate(() => loadDemo());
   await p2.waitForFunction(() => (currentProperty() || {}).timeline && currentProperty().timeline.length > 20, null, { timeout: 30000 });
   await p2.waitForTimeout(800);
@@ -627,7 +636,7 @@ const sorted = a => a.slice().sort();
   is(w1.out, { taxes: 9, insurance: 4, financing: 4, financials: 5, agreements: 5, building: 17, history: 5 }, 'and each drawer shows its own');
   yes(/9 record/.test(w1.tiles.taxes) && /17 record/.test(w1.tiles.building) && /4 record/.test(w1.tiles.financing), 'the landing tiles count them', JSON.stringify(w1.tiles));
   is(seeds.length, 1, 'because the seed ran once — the row was behind');
-  is([w1.rowV, w1.memV, w1.invoiceIds], [8, 8, true], 'the stored row and the live property are both at seed 8, and the register has its ids');
+  is([w1.rowV, w1.memV, w1.invoiceIds], [SEED_V, SEED_V, true], `the stored row and the live property are both at seed ${SEED_V}, and the register has its ids`);
 
   // A manager writes to the demo and the app saves. The version marker must survive that.
   const saved = await p2.evaluate(async () => {
@@ -638,14 +647,14 @@ const sorted = a => a.slice().sort();
     const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
     return { rowV: row.data._demoV, rowNote: (row.data.timeline || []).some(e => e.title === 'Manager note on the demo') };
   });
-  is(saved, { rowV: 8, rowNote: true }, 'an ordinary save keeps the row at seed 8 and stores the manager’s note');
+  is(saved, { rowV: SEED_V, rowNote: true }, `an ordinary save keeps the row at seed ${SEED_V} and stores the manager\u2019s note`);
 
   seeds.length = 0;
   await boot2();
   await openFromCard();
   const w2 = await walk();
   is(seeds.length, 0, 'reloaded and opened from the card again: the seed does NOT run (the row is current)');
-  is([w2.recs, w2.note, w2.rowNote, w2.memV], [ALL_IDS.length, true, true, 8], 'the 49 records and the manager’s note are all still there, and the live property carries the version it was loaded with');
+  is([w2.recs, w2.note, w2.rowNote, w2.memV], [ALL_IDS.length, true, true, SEED_V], 'the 49 records and the manager’s note are all still there, and the live property carries the version it was loaded with');
   is(w2.out, { taxes: 9, insurance: 4, financing: 4, financials: 5, agreements: 5, building: 17, history: 5 }, 'the drawers read the same after the reload');
   // …and a save from THIS session (whose property came from the store, not the seeder) keeps the marker too.
   const saved2 = await p2.evaluate(async () => {
@@ -654,7 +663,7 @@ const sorted = a => a.slice().sort();
     const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
     return { rowV: row.data._demoV, rowNote: (row.data.timeline || []).some(e => e.title === 'Manager note on the demo') };
   });
-  is(saved2, { rowV: 8, rowNote: true }, 'a save from a session that loaded the demo from the store keeps the marker and the note');
+  is(saved2, { rowV: SEED_V, rowNote: true }, 'a save from a session that loaded the demo from the store keeps the marker and the note');
   seeds.length = 0;
   await boot2();
   await openFromCard();

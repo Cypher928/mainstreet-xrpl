@@ -415,6 +415,7 @@ const SUITES = [
   { label: 'Acquisition orphan repair',                 cmd: 'node test-acq-orphan-repair.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
+  { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },
   { label: 'Vercel routing contract',                   cmd: 'node test-routing.js' },
   { label: 'Extraction field preservation',             cmd: 'node test-tenant-field-preservation.js' },
   { label: 'Spaces list refresh after upload',          cmd: 'node test-spaces-refresh.js' },

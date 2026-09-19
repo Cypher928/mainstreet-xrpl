@@ -21796,6 +21796,27 @@ async function cleanupLegacyDemos(userId) {
   }
 }
 
+// ── Where the demo register's source documents live ─────────────────────────
+//
+// Named, and named ONCE, because three things have to agree about it: the seed
+// that writes fileUrl onto each invoice row, the build tool that renders the
+// PDFs, and the test that checks the two match. A path spelled inline in the
+// seed is a path the tool cannot be held to.
+//
+// The index IS the identity. The register's rows already carry index-derived
+// ids (`inv-7` is the PavePro bill, and a cabinet record's relatedInvoiceIds
+// resolve to the same numbers), so the document for row i is simply the i-th
+// document. Nothing matches on vendor name or amount, which repeat.
+const DEMO_INVOICE_DIR = 'assets/demo/invoices/';
+function _demoInvoiceNo(i)       { return 'CC-2025-' + String(i + 1).padStart(4, '0'); }
+function _demoInvoiceUrl(i)      { return DEMO_INVOICE_DIR + 'invoice-cc-2025-' + String(i + 1).padStart(4, '0') + '.pdf'; }
+// What the manager reads in the register's "source document" cell. The number
+// first so the cell sorts and scans the way the documents are filed, the vendor
+// after it so a row is recognisable without opening anything.
+function _demoInvoiceFileName(inv, i) { return 'Invoice ' + _demoInvoiceNo(i) + ' — ' + inv.vendorName + '.pdf'; }
+window._demoInvoiceUrl      = _demoInvoiceUrl;
+window._demoInvoiceFileName = _demoInvoiceFileName;
+
 // Ensures Cascade Commons exists in Supabase with complete seeded state.
 // Idempotent — skips re-seeding if valid camReconciliation already present.
 // Returns DEMO_PROPERTY_ID on success, null on auth failure.
@@ -21809,19 +21830,31 @@ async function ensureDemoProperty() {
   // ── Idempotency check — skip only if fully seeded AND the settlement record is present ──
   // (requiring settlement.txHash means a row seeded by an older version re-seeds once to pick
   // up the on-ledger settlement, rather than being skipped in a stale state.)
+  // ONE VERSION NUMBER, DECLARED BEFORE ANYTHING READS IT. This guard and the
+  // saved payload each carried their own literal `8` while DEMO_VERSION was
+  // declared further down, so bumping the seed meant remembering three places —
+  // and a missed one leaves every existing copy un-reseeded, which is a seed
+  // that changed where nobody can see it. Declared here, used everywhere.
+  //
+  // v9: the 2025 invoice register carries its source documents
+  // (assets/demo/invoices, built by tools/build-demo-invoices.js). The audit's
+  // "26 of 26 invoices missing source document" was a correct refusal and is
+  // now answered with documents, not by changing what the audit asks for.
+  const DEMO_VERSION = 9;
+
   try {
     const { data: row, error } = await db.from('properties')
       .select('data')
       .eq('id', DEMO_PROPERTY_ID)
       .eq('user_id', user.id)
       .single();
-    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === 8 && row?.data?.settlement?.txHash) {
-      console.log('[ensureDemoProperty] already seeded v8 (with settlement) — skip');
+    if (!error && row?.data?.camReconciliation?.results?.length > 0 && row?.data?._demoV === DEMO_VERSION && row?.data?.settlement?.txHash) {
+      console.log(`[ensureDemoProperty] already seeded v${DEMO_VERSION} (with settlement) — skip`);
       return DEMO_PROPERTY_ID;
     }
   } catch (_) { /* not found — fall through to seed */ }
 
-  console.log('[ensureDemoProperty] seeding Cascade Commons v8…');
+  console.log(`[ensureDemoProperty] seeding Cascade Commons v${DEMO_VERSION}…`);
 
   // ── Demo data constants ───────────────────────────────────────────────────
   const PROP_NAME    = 'Cascade Commons';
@@ -21830,9 +21863,9 @@ async function ensureDemoProperty() {
   // which pilot feedback flagged as making the demo look broken.
   const PROP_SQFT    = 26000;
   const CAM_YEAR     = 2025;
-  // v8: the filing cabinet is populated — the register carries stable ids and
-  // the timeline carries the building's own records (see demoCabinetRecords).
-  const DEMO_VERSION = 8;
+  // v8 populated the filing cabinet — the register carries stable ids and the
+  // timeline carries the building's own records (see demoCabinetRecords).
+  // DEMO_VERSION itself is declared above the idempotency guard that reads it.
 
   // capBaseAmount is prior-year CAM so that cap enforcement fires on this demo.
   const demoTenantConfigs = [
@@ -21951,6 +21984,16 @@ async function ensureDemoProperty() {
     { vendorName: 'ComfortFirst HVAC',           amount:  2900, category: 'maintenance',  invoiceDate: '2025-11-20' },
   ];
 
+  // THE SAME REGISTER, CARRYING ITS SOURCE DOCUMENTS. Derived once and used
+  // everywhere an invoice row is handed on, so the CAM screen, the audit and
+  // the saved row cannot disagree about whether a bill has a document behind it.
+  // Every field of the row is preserved; the two added are the document.
+  const demoInvoiceRegister = demoInvoiceList.map((inv, i) => ({
+    ...inv,
+    fileUrl:  _demoInvoiceUrl(i),
+    fileName: _demoInvoiceFileName(inv, i),
+  }));
+
   const totalExpenses = demoInvoiceList.reduce((s, inv) => s + inv.amount, 0);
 
   // ── Normalize tenants (gives stable IDs + all expected fields) ────────────
@@ -21994,12 +22037,31 @@ async function ensureDemoProperty() {
   const invoiceSummary = demoInvoiceList.map((inv, i) => ({
     id: `inv-${i}`, vendor: inv.vendorName, category: inv.category, amount: inv.amount,
   }));
+  // THE SAME THREE EXCLUSION FIELDS A LIVE RUN CARRIES.
+  //
+  // A real reconciliation builds lastTenants with all three — applied, not
+  // applied, and the fingerprint the acknowledgement is keyed to. This summary
+  // carried only the first, so the demo restored from its snapshot and the same
+  // demo after pressing Calculate disagreed about Summit Coffee: restored, its
+  // unapplied parking exclusion was invisible and the tenant read Billable;
+  // re-run, _exclusionBlockReason found it and the tenant read Needs
+  // confirmation. Same data, two answers, decided by whether anyone had pressed
+  // the button.
+  //
+  // That disagreement was there before and could not be seen: while the
+  // register had no source documents every tenant was held by the property-level
+  // blocker, so the exclusion branch was never reached. Documenting the register
+  // did not create it, it uncovered it. Derived from the tenant's own
+  // excluded_categories by the same function the run uses, so the two agree by
+  // construction rather than by coincidence.
   const tenantSummary = demoTenants.map(t => ({
     name:               t.tenant_name,
     leasedSqft:         parseSqft(t.leased_sqft),
     totalSqft:          PROP_SQFT,
     capPct:             t.cap ? parseFloat(t.cap) : null,
-    excludedCategories: _appliedExclusions(t),   // F-02: applied only
+    excludedCategories:   _appliedExclusions(t),   // F-02: applied only
+    exclusionsNotApplied: _exclusionState(t.excluded_categories).notApplied,
+    exclusionFingerprint: _exclusionState(t.excluded_categories).fingerprint,
   }));
 
   const camReconciliation = {
@@ -22010,7 +22072,13 @@ async function ensureDemoProperty() {
     total:        totalExpenses,
     results:      fullResults.map(r => ({ ...r })),
     invoices:     invoiceSummary,
-    invoicesFull: demoInvoiceList, // full objects; stripped on save, re-hydrated on load
+    // WITH THE DOCUMENTS, because this is the array the audit reads.
+    // buildAuditSummary() works from lastInvoicesFull, not from the register
+    // the CAM screen renders — so a documented register that left this one bare
+    // would still be told "26 of 26 invoices missing source document". Same
+    // rows, same order, same index-derived document. Stripped on save and
+    // re-hydrated from data.invoices, which carries the same two fields.
+    invoicesFull: demoInvoiceRegister,
     tenants:      tenantSummary,
     // The demo is a REAL reconciliation of the tenants and invoices seeded
     // beside it, so it can say what it was based on. Computed from those exact
@@ -22393,17 +22461,24 @@ async function ensureDemoProperty() {
     // disputes already use ('inv-7' is the PavePro bill FitZone disputed), so a
     // record's relatedTo link, a dispute's invoiceId and a variance row all
     // resolve to one row. ensureInvoiceIds keeps a non-numeric id as it is.
-    invoices:          demoInvoiceList.map((inv, i) => ({
+    // THE SOURCE DOCUMENT IS DERIVED FROM THE ROW'S OWN POSITION, not written
+    // out per row. `inv-7` is the PavePro bill and invoice-cc-2025-0008.pdf is
+    // the PavePro invoice; one index decides both, so a document cannot come to
+    // sit against the wrong row. The files are built from this same register by
+    // tools/build-demo-invoices.js and checked against it by
+    // test-demo-invoices.js.
+    invoices:          demoInvoiceRegister.map((inv, i) => ({
       id: `inv-${i}`,
       vendorName: inv.vendorName, amount: inv.amount,
       category: inv.category, invoiceDate: inv.invoiceDate,
+      fileUrl: inv.fileUrl, fileName: inv.fileName,
     })),
     disputes:          demoDisputes,
     timeline:          demoTimeline,
     camYear:           CAM_YEAR,
     results:           null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
-    _demoV:            8,
+    _demoV:            DEMO_VERSION,
   };
 
   const { error: propErr } = await db.from('properties')

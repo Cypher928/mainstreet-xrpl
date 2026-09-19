@@ -438,7 +438,16 @@ const DB = `
     const out = { label: held && held.textContent.trim(), held: rgb(held), billable: rgb(probe) };
     probe.remove(); return out;
   });
-  yes(L.label === '⛔ Why it can’t bill', 'the action and its wording are unchanged', L.label);
+  // WHICH HELD WORDING, NOT WHICH TENANT. This asserted the one label the demo
+  // used to show, because the undocumented register held every tenant at
+  // "Why it can't bill". With the register documented, what is held on this
+  // property is a tenant whose CAM treatment needs confirming, and its action
+  // reads "Confirm to bill". Both are held states and this section is about how
+  // a held action LOOKS — the colour check below is the subject — so the label
+  // is asserted as one of the two the gate can produce rather than as the one
+  // that happened to be on screen.
+  yes(L.label === '⛔ Why it can’t bill' || L.label === '⚠️ Confirm to bill',
+      'the action carries a held wording, not a cleared one', L.label);
   yes(L.held && !(L.held[1] > L.held[0] && L.held[1] > L.held[2]), 'its text colour is not green-dominant', JSON.stringify(L.held));
   yes(L.billable && L.billable[1] > L.billable[0] && L.billable[1] > L.billable[2] && JSON.stringify(L.billable) !== JSON.stringify(L.held), 'while the billable action keeps its green — the two states no longer look alike', JSON.stringify(L));
 

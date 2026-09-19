@@ -290,14 +290,36 @@ const READ = `(() => {
     const AX = window.AuditExposure;
     const ex = AX.deriveExposure(s, window.CamPool.total(invoiceData.filter(Boolean)));
     const rd = AX.billingReadiness(ex);
+    const byTenant = ex.blocking.byTenant || {};
     return { name: currentProperty().name, canBill: rd.canBill, label: rd.label,
-             blockers: (ex.blocking.property || []).map(b => b.title) };
+             blockers: (ex.blocking.property || []).map(b => b.title),
+             heldTenants: Object.keys(byTenant),
+             heldTitles: Object.keys(byTenant).reduce((a, t) => a.concat((byTenant[t] || []).map(b => b.title)), []),
+             documented: (invoiceData || []).filter(i => i && (i.fileUrl || i.fileName)).length,
+             invoices: (invoiceData || []).length };
   });
   is(CASC.name, 'Cascade Commons', 'Cascade opens from its portfolio card');
   yes(CASC.canBill === false && CASC.label === 'Not ready to bill',
       '8 · and still refuses to bill', JSON.stringify(CASC));
-  is(CASC.blockers, ['26 of 26 invoices missing source document'],
-     '8 · held by exactly the finding it has always been held by');
+
+  // WHAT HOLDS IT HAS MOVED, AND THAT IS THE POINT OF SEED v9.
+  //
+  // This asserted one property-level finding — 26 of 26 invoices missing source
+  // document — which held every tenant. The register now carries its source
+  // documents (assets/demo/invoices), so that finding is answered and nothing
+  // holds the property as a whole. What remains is one TENANT's hold, and it is
+  // a hold the engine is right to keep: a Modified Gross lease may or may not
+  // permit CAM pass-throughs, and it will not assert which without a human
+  // reading the lease. The demo refuses to bill for a better reason than it
+  // used to, not for no reason.
+  is(CASC.documented, CASC.invoices,
+     '8 · every invoice in the register carries a source document');
+  is(CASC.blockers, [],
+     '8 · nothing holds the property as a whole any more');
+  is(CASC.heldTenants, ['ProActive Physical Therapy'],
+     '8 · exactly one tenant is held, and no other tenant is affected');
+  yes(CASC.heldTitles.length === 1 && /^Modified Gross tenant receiving shared CAM/.test(CASC.heldTitles[0]),
+      '8 · held by the lease question the engine will not answer for itself', JSON.stringify(CASC.heldTitles));
 
   sec('9 · opening a demo twice seeds nothing more');
   const TWICE = await page.evaluate(async () => {

@@ -271,8 +271,13 @@ const READ = `(() => {
       withDoc: (c.invoices||[]).filter(i => i && (i.fileUrl || i.fileName)).length } : null; })(),
   }));
   is(PORT0.names, ['Cascade Commons', NG].sort(), 'the portfolio holds exactly the two seeded demo properties');
-  is(PORT0.cascade, { sqft: 26000, tenants: 5, invoices: 26, withDoc: 0 },
-     'Cascade Commons is exactly as it was: 5 tenants, 26 invoices, none with a source document');
+  // Seed v9 gives Cascade's register its source documents (assets/demo/invoices).
+  // What this check is for is unchanged: seeding Northgate must not reach into
+  // the other demo property. So it still pins Cascade's shape exactly — now
+  // including that all 26 of its invoices are documented, which is Cascade's
+  // own state and nothing Northgate is allowed to alter.
+  is(PORT0.cascade, { sqft: 26000, tenants: 5, invoices: 26, withDoc: 26 },
+     'Cascade Commons is exactly as it was: 5 tenants, 26 invoices, each with its source document');
 
   // The LIVE object, before anything has been reloaded. The marker that made
   // Northgate wear Cascade's face travelled on this object as well as the

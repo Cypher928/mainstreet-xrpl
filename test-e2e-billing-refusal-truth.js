@@ -2,10 +2,16 @@
 // ============================================================================
 // "WHY IT CAN'T BILL" TELLS THE TRUTH IN BOTH STATES.
 //
-// The tenant card's button reads "Why it can't bill". On Cascade Commons every
-// tenant is blocked by ONE property-level finding — 26 of 26 invoices have no
-// source document — and the reconciliation is current. The answer to the
-// button must be that blocker, from the billing gate that decides it.
+// The tenant card's button reads "Why it can't bill". With a register whose
+// invoices carry no source documents, every tenant is blocked by ONE
+// property-level finding — 26 of 26 invoices missing source document — and the
+// reconciliation is current. The answer to the button must be that blocker,
+// from the billing gate that decides it.
+//
+// That state is set up here rather than inherited from the demo seed. Seed v9
+// gives Cascade's register its source documents, so the seeded property is no
+// longer blocked; this suite strips them in the page and re-runs, reaching the
+// same state through the same code. See undocumentTheRegister below.
 //
 // Results that are NOT current are a different state and keep their refusal:
 // a statement is never produced from them. But that refusal has two reasons —
@@ -83,6 +89,10 @@ const DB = `
 
 const TENANT = 'FitZone Athletics';
 const BLOCKER = '26 of 26 invoices missing source document';
+// The seed's own version, so a bump is not reported here as a broken fixture.
+const SEED_DEMO_VERSION = Number(
+  (/const DEMO_VERSION = (\d+);/.exec(fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8')) || [])[1]
+);
 
 (async () => {
   const srv = http.createServer((rq, rs) => {
@@ -121,6 +131,43 @@ const BLOCKER = '26 of 26 invoices missing source document';
     await page.waitForTimeout(600);
   };
 
+  // THE SUITE MAKES ITS OWN BLOCKED STATE.
+  //
+  // This used to lean on the demo seed happening to be blocked: Cascade's 26
+  // invoices carried no source documents, so every tenant was held by one
+  // property-level finding and the block screen had something to name. Seed v9
+  // attaches those documents (assets/demo/invoices), the finding is answered,
+  // and the demo is no longer blocked — which is the point of that change and
+  // not a regression here.
+  //
+  // What this suite is about is unchanged: when billing IS refused, the screen
+  // must name the reason. So it now creates the condition it tests instead of
+  // inheriting it — the documents are stripped from the register in the page
+  // and the reconciliation re-run, which is the same state the seed used to
+  // ship in, reached through the same code. Nothing about the gate is stubbed:
+  // buildAuditSummary raises the finding because the invoices really have no
+  // documents, exactly as it did before.
+  //
+  // Done ONCE, before section A, and deliberately not inside boot(): the
+  // stripped register is saved, so it survives the reloads the later sections
+  // do, and re-running the allocation on every boot would re-strike the
+  // fingerprint that section B goes out of its way to remove.
+  const undocumentTheRegister = async () => {
+    await page.evaluate(async () => {
+      const p = currentProperty();
+      (p.invoices || []).forEach(i => { delete i.fileUrl; delete i.fileName; });
+      if (typeof invoiceData !== 'undefined') {
+        invoiceData.splice(0, invoiceData.length, ...p.invoices);
+      }
+      await runAllocation();
+      // The run is now the current one for this data, so the fingerprint the
+      // staleness check compares against is re-struck here rather than left
+      // describing the documented register.
+      await saveProperty(p);
+    });
+    await page.waitForTimeout(1500);
+  };
+
   // Press the tenant's card button — the real onclick — and report what happened.
   const PRESS = `(async function (tenant) {
     const seen = [];
@@ -145,6 +192,7 @@ const BLOCKER = '26 of 26 invoices missing source document';
   // ══ A · current and blocked ════════════════════════════════════════════════
   sec('A · results current, tenant blocked by the property-level gate: the button answers with the blocker');
   await boot();
+  await undocumentTheRegister();
   const state = await page.evaluate((t) => {
     const bs = window.tenantBillingState(t);
     return { stale: _resultsStale, unverified: _resultsUnverified, year: lastResultsYear, cam: getCamYear(),
@@ -172,7 +220,11 @@ const BLOCKER = '26 of 26 invoices missing source document';
     const row = (JSON.parse(localStorage.getItem('__mockdb') || '{}').properties || []).find(r => r.id === DEMO_PROPERTY_ID);
     return { fp: !!(row.data.camReconciliation && row.data.camReconciliation.inputsFingerprint), v: row.data._demoV };
   });
-  is(aged, { fp: false, v: 8 }, 'fixture: the stored run carries no fingerprint (and the demo is not re-seeded over it)');
+  // READ FROM THE SEED, NOT WRITTEN DOWN HERE. This asserted `v: 8` and so
+  // failed the first time the seed was bumped, reporting a version change as a
+  // fingerprint failure. What the fixture needs is that the row was NOT
+  // re-seeded — that its version is still whatever the seed currently is.
+  is(aged, { fp: false, v: SEED_DEMO_VERSION }, 'fixture: the stored run carries no fingerprint (and the demo is not re-seeded over it)');
   await boot();
   const Bs = await page.evaluate(() => ({ stale: _resultsStale, unverified: _resultsUnverified }));
   is(Bs, { stale: true, unverified: true }, 'restored: the run is not treated as current, because it cannot be checked');

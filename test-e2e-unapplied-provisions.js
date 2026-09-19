@@ -96,13 +96,19 @@ const READ = `(() => {
   sec('1 · the demo opens exactly as it did');
   const D0 = await read();
   is(D0.provisionFindings, [], 'no provision finding on the demo — every such field is null on all five leases');
-  is(D0.blockingProperty, ['26 of 26 invoices missing source document'], 'the one property-level blocker is the one the demo always had');
+  // Seed v9 documents Cascade's 26 invoices, so the property-level blocker the
+  // demo used to carry is answered and gone. The baseline this section pins is
+  // "what the demo opens as", not that particular finding; sections 2–4 below
+  // are about provision findings and compare against whatever this is.
+  is(D0.blockingProperty, [], 'nothing holds the property as a whole');
   is(Object.keys(D0.blockingByTenant), ['ProActive Physical Therapy'], 'only ProActive is held under its own name');
   yes(D0.blockingByTenant['ProActive Physical Therapy'].length === 1
       && /^Modified Gross tenant receiving shared CAM/.test(D0.blockingByTenant['ProActive Physical Therapy'][0]),
       'held once, by the Gross detector, for its lease type', JSON.stringify(D0.blockingByTenant));
   is(D0.ready, { canBill: false, label: 'Not ready to bill' }, 'the property verdict is what it was');
-  is(D0.heldCards, 5, 'all five cards are held (the property-level blocker) — as before');
+  // Two held, not five: ProActive on its Modified Gross lease and Summit on a
+  // parking exclusion the matcher could not apply. The other three are billable.
+  is(D0.heldCards, 2, 'two cards are held, each for its own tenant-level reason');
   yes(Object.keys(D0.amounts).length === 5 && Object.values(D0.amounts).every(v => v > 0), 'five allocations, all positive', JSON.stringify(D0.amounts));
 
   // ══ 2 · an expense stop on one lease ═════════════════════════════════════
