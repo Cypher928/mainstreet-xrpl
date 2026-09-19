@@ -66,6 +66,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1"></script>
   <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
   <script src="supabase-config.js"></script>
+  <!-- Which build is this? Logs one line beside the Supabase target line. A pilot
+       session once validated for two hours against a stale deployment because
+       nothing in the browser could say. Non-blocking; never fatal. -->
+  <script src="build-stamp.js"></script>
   <!-- ONE definition of how large a request body may be, shared byte-for-byte with
        the serverless handlers via require(). Must precede lease-ingest.js and
        script.js, which both gate uploads on it. -->

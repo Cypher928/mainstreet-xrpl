@@ -19,6 +19,13 @@ const SUITES = [
   // suites, and it cannot be excused through the coverage manifest
   // (test-suite-registration.js treats it as always-registered).
   { label: 'Monolith budget (§00)',    cmd: 'node test-monolith-budget.js' },
+  // SECOND, for the same kind of reason. A pilot validation ran for two hours
+  // against a build older than the feature under test, because nothing in the
+  // browser could say which commit was running and no cache rule stopped one
+  // stale module being served beside fresh ones. This holds both halves of
+  // that fix — the *.js Cache-Control rule and the build stamp — to their
+  // contract, so a suite below can be trusted to be testing this commit.
+  { label: 'Build identity & asset freshness', cmd: 'node test-build-identity.js' },
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
