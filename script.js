@@ -4967,6 +4967,8 @@ function _syncJobToDb(job, { terminal = false } = {}) {
   // Strip in-memory-only fields before sending to Supabase
   const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));
   const ctx = { jobId: job.id, stage: job.stage, terminal };
+  // lease_jobs_owner_all WITH CHECK is `property_id IN member_property_ids()`, and NULL IN (…) is NULL, which a policy reads as false. So an incomplete row is a 403 the caller then retries — say so once instead.
+  if (!row.property_id) { logError('lease_job_sync_incomplete', new Error('no property_id on lease job ' + job.id), ctx); return Promise.resolve(false); }
   return Promise.resolve(db.from('lease_jobs').upsert(row))
     .then(({ error } = {}) => {
       if (!error) return true;
@@ -5022,7 +5024,7 @@ async function _reapStaleLeaseJobs() {
     // surface minimal means a startup sweep cannot become a source of console
     // errors on any client whose builder differs.
     const { data, error } = await db.from('lease_jobs')
-      .select('id,status,stage,updated_at')
+      .select('id,status,stage,updated_at,property_id')
       .in('status', ['queued', 'processing']);
     if (error) { console.warn('[reapStaleLeaseJobs] lookup failed:', error.message); return { reaped: 0, error: error.message }; }
     const stale = (data || []).filter(j =>
@@ -5031,7 +5033,7 @@ async function _reapStaleLeaseJobs() {
       _clearJobWatchdog(job.id);
       await failLeaseJob(job.id, new Error(
         'Ingestion did not complete — the browser tab closed or was suspended before the lease finished processing. Re-upload to try again.'
-      ), job.stage || 'extraction');
+      ), job.stage || 'extraction', job.property_id);
     }
     if (stale.length) console.warn(`[reapStaleLeaseJobs] closed out ${stale.length} abandoned job(s)`);
     return { reaped: stale.length };
@@ -5060,11 +5062,12 @@ function _armJobWatchdog(jobId) {
   }, JOB_WATCHDOG_MS));
 }
 
-function failLeaseJob(jobId, err, stage) {
+function failLeaseJob(jobId, err, stage, propertyId) {
   // Every diagnostic column is written on failure. Leaving confidence_level and
   // extraction_route null made a failed job unreadable after the fact — the
   // columns needed to explain the failure were the ones not being set.
   return updateLeaseJob(jobId, {
+    ...(propertyId ? { property_id: propertyId } : {}), // a reaped job is not in the Map; RLS needs it on the write back
     status:                  'failed',
     stage:                   stage || 'extraction',
     progress:                _JOB_STAGES[stage]?.progress ?? 0,

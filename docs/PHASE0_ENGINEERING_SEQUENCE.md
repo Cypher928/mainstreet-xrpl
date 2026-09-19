@@ -322,9 +322,12 @@ which he owns. Two jobs × two attempts = the **bursts of four 403s** seen at
 every app load, on both the old deployment and `c9789b1`.
 
 `lease_jobs` holds 110 rows, all with a non-null `property_id` (written by the
-full-row path, which includes it) and none newer than `2026-09-16 20:35`. **71
-rows across 8 users are stuck in `processing`** and can never be closed out, so
-the reaper retries the same jobs on every load, forever.
+full-row path, which includes it) and none newer than `2026-09-16 20:35`. **68
+rows are stuck in `processing`** — across 6 owners and 19 properties, 0 in
+`queued` — and can never be closed out, so the reaper retries the same jobs on
+every load, forever. (An earlier report of "71 rows across 8 users" was a
+miscount of a result listing; the counted figures are recorded in §4/P4 of the
+follow-up commit.)
 
 **Impact.** Lease-job state is no longer persisted: a tab closed mid-upload
 leaves a job `processing` permanently, and the watchdog's terminal write — the
@@ -337,7 +340,13 @@ load also writes four `logError` entries (`lease_job_sync`,
 carry `property_id` through the reaper — add it to the SELECT and pass it into
 the update — so the upsert sends a complete row. Consider also having
 `_syncJobToDb` refuse a row with no `property_id` rather than issuing a write
-that cannot succeed. The 71 pre-existing stuck rows are a separate data decision.
+that cannot succeed. The 68 pre-existing stuck rows are a separate data decision.
+
+**Fixed in `R1` (see below).** The reaper now selects `property_id`, carries it
+through `failLeaseJob`, and `_syncJobToDb` refuses an incomplete row before
+issuing a request. The 68 stuck rows were left exactly as they are, by
+instruction — a separate data decision, not something to change silently while
+fixing the code that stranded them.
 
 Note on method: `window._msErrors.show()` was the intended instrument but no
 browser was reachable from the working environment. The `job_id` and
@@ -414,6 +423,8 @@ the Phase 0 checkpoint only, never per slice.
 | P1 deployment identity | `620276a` | — |
 | P2 activity merge invariant | `4bf342e` | — |
 | P3 save-failure visibility | `972461c` | — |
+| Docs: this file | `6aaf5dc` | — |
+| R1 lease-job reaper keeps property_id | see `git log` | — |
 
 Branch: `claude/validation-runs-analysis-ji1zb3`. Nothing in this sequence has
 been deployed to Production, and Production Supabase `zhsuhehgehbzkmzurzyf` has

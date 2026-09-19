@@ -31,6 +31,11 @@ const SUITES = [
   // to go nowhere — no log, no toast, no write, and nothing to say so. This
   // pins the error boundary and the sink that every approved call site uses.
   { label: 'Save failures are visible',        cmd: 'node test-save-failure-visible.js' },
+  // The startup reaper closed out abandoned lease jobs with a row that had no
+  // property_id, which the lease_jobs RLS policy correctly refused — four 403s
+  // per app load, and a job that could never reach a terminal state. The column
+  // travels now, and an incomplete row is refused before the request.
+  { label: 'Lease-job reaper keeps property_id', cmd: 'node test-lease-job-reaper.js' },
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
