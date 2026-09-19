@@ -54,6 +54,19 @@
   /** The states the startup reaper is allowed to act on. */
   const ACTIVE = ['queued', 'processing'];
 
+  // TWO FILTERS, TWO CONTRACTS, AND THEY ARE NOT THE SAME.
+  //
+  //   .in(column, values)        takes an ARRAY and formats the list itself
+  //   .not(column, 'in', value)  takes the value VERBATIM, so it needs the
+  //                              parenthesised string
+  //
+  // Handing `.in()` the preformatted string made supabase-js iterate it as a
+  // sequence of characters. The reaper's scope went out as
+  // `status=in.("(",q,u,e,d,",",p,r,o,c,s,i,n,g,")")`, which matches no row,
+  // so every reaper write returned 200 and changed nothing — and R2's zero-row
+  // classification correctly read that as a healthy stale refusal and stayed
+  // silent. Caught only by reading the request URL in the Pilot edge log.
+  // _list is therefore for `.not()` alone.
   const _list = (values) => '(' + values.join(',') + ')';
   const _int  = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.trunc(v) : null;
 
@@ -97,7 +110,7 @@
       // state it actually saw. Every other terminal write is unconditional:
       // finishing a job is the whole point of reaching the end of the pipeline.
       if (o.scopeActive) {
-        filters.push(['in', 'status', _list(ACTIVE)]);
+        filters.push(['in', 'status', ACTIVE]);
         return { mode: 'terminal', filters, guarded: true };
       }
       return { mode: 'terminal', filters, guarded: false };

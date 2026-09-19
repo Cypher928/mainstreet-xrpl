@@ -55,13 +55,40 @@ function makeDb() {
   const queue = [];          // pending requests, flushed on demand
   const log = [];            // every request, in ISSUE order
 
+  // THE TWO FILTER CONTRACTS, ENFORCED RATHER THAN ASSUMED.
+  //
+  // supabase-js `.in(column, values)` takes an ARRAY and formats the list
+  // itself. `.not(column, 'in', value)` appends its value VERBATIM and so needs
+  // the parenthesised string. R2 handed `.in()` the formatted string; postgrest
+  // -js ran `Array.from(new Set(values))` over it, got CHARACTERS, and the
+  // reaper's scope went on the wire as status=in.("(",q,u,e,d,…) — matching no
+  // row, returning 200 every time, and R2's zero-row classification read that as
+  // a healthy stale refusal and stayed silent.
+  //
+  // This stub modelled the same wrong contract, so 55 assertions and 23 mutants
+  // all passed against a reaper that could not touch a single row. It now
+  // REFUSES the wrong shape instead of accommodating it: an offline suite that
+  // guesses at the client's contract is not testing the client.
+  const inSet = (v) => {
+    if (!Array.isArray(v)) throw new Error(
+      '.in(column, values) takes an ARRAY — supabase-js formats the list itself. Got ' +
+      JSON.stringify(v) + ', which the real client iterates character by character.');
+    return v.map(String);
+  };
+  const notInSet = (v) => {
+    if (typeof v !== 'string' || v[0] !== '(' || v[v.length - 1] !== ')') throw new Error(
+      ".not(column, 'in', value) appends its value VERBATIM, so it needs the " +
+      'parenthesised string. Got ' + JSON.stringify(v));
+    return v.slice(1, -1).split(',');
+  };
+
   const matches = (row, filters) => filters.every((f) => {
     const [op, col] = f;
     if (op === 'eq')  return row[col] === f[2];
     if (op === 'lte') return typeof row[col] === 'number' && row[col] <= f[2];
     if (op === 'lt')  return typeof row[col] === 'number' && row[col] <  f[2];
-    if (op === 'in')  return String(f[2]).slice(1, -1).split(',').includes(String(row[col]));
-    if (op === 'not' && f[2] === 'in') return !String(f[3]).slice(1, -1).split(',').includes(String(row[col]));
+    if (op === 'in')  return inSet(f[2]).includes(String(row[col]));
+    if (op === 'not' && f[2] === 'in') return !notInSet(f[3]).includes(String(row[col]));
     throw new Error('unsupported filter in fixture store: ' + op);
   });
 
@@ -151,9 +178,25 @@ console.log('\n══ A lease job moves forward, or it does not move ══');
     yes('a terminal write carries no state guard', f(term).join(' ') === 'eq:id:' + JOB, f(term).join(' '));
     yes('    so a zero row would be a fault, not a refusal', term.guarded === false);
 
-    const reap = LJW.plan(job({ status: 'failed' }), { terminal: true, scopeActive: true });
+    const reap  = LJW.plan(job({ status: 'failed' }), { terminal: true, scopeActive: true });
+    const scope = reap.filters.find(x => x[0] === 'in');
     yes('the reaper is scoped to the state it observed',
-        f(reap).includes('in:status:(queued,processing)'), f(reap).join(' '));
+        !!scope && scope[1] === 'status', JSON.stringify(reap.filters));
+    // THE R2 DEFECT, PINNED AT THE POINT OF ARGUMENT CONSTRUCTION. Asserting on
+    // the joined filter string is what let the string form pass before: both
+    // shapes render as "in:status:queued,processing" once joined. So assert the
+    // TYPE.
+    yes('    and the scope reaches .in() as an ARRAY, never a preformatted string',
+        Array.isArray(scope && scope[2]),
+        'got ' + JSON.stringify(scope && scope[2]) + ' — a string here is the R2 defect');
+    yes('    holding exactly queued and processing, in order',
+        JSON.stringify(scope && scope[2]) === '["queued","processing"]',
+        JSON.stringify(scope && scope[2]));
+    // The OTHER contract is the opposite and must stay that way.
+    const notIn = LJW.plan(job({ progress: 72 }), {}).filters.find(x => x[0] === 'not');
+    yes("    while .not(col, 'in', v) still receives the parenthesised STRING",
+        typeof notIn[3] === 'string' && notIn[3] === '(completed,failed,review_required)',
+        JSON.stringify(notIn));
     yes('    and its zero row IS an expected refusal', reap.guarded === true);
 
     const rst = LJW.plan(job({ retry_count: 1, progress: 0 }), { reset: true });
@@ -167,6 +210,47 @@ console.log('\n══ A lease job moves forward, or it does not move ══');
     yes('an advance with no progress still guards the terminal set',
         f(advNoProg).join(' ') === 'eq:id:' + JOB + ' not:status:in:(completed,failed,review_required)',
         f(advNoProg).join(' '));
+  }
+
+  // ── 1a. What actually goes on the wire ────────────────────────────────────
+  //
+  // The defect was invisible to every assertion above because plan() looked
+  // right and the fixture store agreed with it. It was visible in exactly one
+  // place: the request URL in the Pilot edge log. So the URL is built here, by
+  // postgrest-js's own serialisation rather than a paraphrase of it —
+  //
+  //   in:   Array.from(new Set(values)).map(quoteIfSpecial).join(',')  →  in.(…)
+  //   not:  `not.${operator}.${value}`, the value appended verbatim
+  //
+  // — which is why a STRING passed to .in() decomposes: `new Set` over a string
+  // iterates its characters. That is not an analogy for the bug. It is the bug.
+  H('The filter PostgREST actually receives');
+  {
+    const quote = (s) => (typeof s === 'string' && /[,()]/.test(s)) ? '"' + s + '"' : String(s);
+    const wire = (filters) => filters.map((f) => {
+      if (f[0] === 'in')  return f[1] + '=in.(' + Array.from(new Set(f[2])).map(quote).join(',') + ')';
+      if (f[0] === 'not') return f[1] + '=not.' + f[2] + '.' + f[3];
+      return f[1] + '=' + f[0] + '.' + f[2];
+    }).join('&');
+
+    const reaped = wire(LJW.plan(job({ status: 'failed' }), { terminal: true, scopeActive: true }).filters);
+    yes('the reaper sends status=in.(queued,processing)',
+        reaped === 'id=eq.' + JOB + '&status=in.(queued,processing)', reaped);
+
+    // The observed pre-fix wire form, reproduced from the string the module
+    // used to build. If this ever stops differing from the line above, the
+    // defect is back.
+    const broken = wire([['in', 'status', '(queued,processing)']]);
+    yes('    and NOT the character soup the string form produced',
+        broken === 'status=in.("(",q,u,e,d,",",p,r,o,c,s,i,n,g,")")' &&
+        reaped.indexOf(broken.slice('status='.length)) === -1,
+        'serialiser drift — the pre-fix form no longer reproduces: ' + broken);
+
+    const advanced = wire(LJW.plan(job({ progress: 72 }), {}).filters);
+    yes('an advance sends status=not.in.(completed,failed,review_required)',
+        advanced.includes('status=not.in.(completed,failed,review_required)'), advanced);
+    yes('    with progress and generation pinned',
+        advanced.includes('progress=lte.72') && advanced.includes('retry_count=eq.0'), advanced);
   }
 
   // ── 1b. Insert: the one write whose row does not exist yet ────────────────
@@ -306,13 +390,24 @@ console.log('\n══ A lease job moves forward, or it does not move ══');
     yes('and the reaper did not log an error for a healthy refusal',
         errors.length === 0, JSON.stringify(errors));
   }
-  {
+  // THE OTHER HALF, WHICH NOTHING PROVED BEFORE. Every reaper assertion until
+  // now was that a job was NOT touched — and an inert reaper satisfies all of
+  // them. R2 shipped exactly that: the scope filter matched no row at all, so
+  // the sweep returned 200 and changed nothing, for two weeks, silently. A
+  // negative invariant needs a positive one beside it.
+  for (const seeded of ['processing', 'queued']) {
+    reset();
     const db = makeDb();
-    db.seed(job({ status: 'processing', stage: 'normalize', progress: 72 }));
+    db.seed(job({ status: seeded, stage: 'normalize', progress: 72 }));
     LJW.sync(db, job({ status: 'failed', stage: 'normalize', progress: 72 }),
              { terminal: true, scopeActive: true }, hooks);
     await db.flush();
-    yes('but a genuinely stuck job IS closed out', db.get(JOB).status === 'failed');
+    await db.flush();
+    const r = db.get(JOB);
+    yes(`a genuinely stuck '${seeded}' job IS closed out by the scoped write`,
+        r.status === 'failed', JSON.stringify(r));
+    yes('    and the write was not silently refused',
+        !errors.some(e => e.t === 'lease_job_sync_missing'), JSON.stringify(errors));
   }
 
   // ── 6. Zero rows: refused vs missing ──────────────────────────────────────
@@ -397,8 +492,12 @@ console.log('\n══ A lease job moves forward, or it does not move ══');
 
     let inFlight = 0, maxInFlight = 0;
     const order = [];
+    const lookups = [];
     const ctx = {
-      db: { from: () => ({ select: () => ({ in: () => Promise.resolve({ data: ctx.__rows, error: null }) }) }) },
+      db: { from: () => ({ select: () => ({ in: (c, v) => {
+        lookups.push([c, v]);
+        return Promise.resolve({ data: ctx.__rows, error: null });
+      } }) }) },
       console: { warn: () => {}, log: () => {}, error: () => {} },
       logError: () => {},
       _clearJobWatchdog: () => {},
@@ -434,6 +533,12 @@ console.log('\n══ A lease job moves forward, or it does not move ══');
     yes('never more than one write in flight — the await is real',
         maxInFlight === 1, 'peak concurrency was ' + maxInFlight);
     yes('and they are closed in the order they were found', order.join(',') === 'j1,j2,j3', order.join(','));
+    // The sweep's READ uses the same .in() contract as its write, and it was
+    // always correct — pin it so a "consistency" edit cannot break the half
+    // that works while fixing the half that does not.
+    yes('the sweep looks jobs up with an array, the same contract as the write',
+        lookups.length === 1 && lookups[0][0] === 'status' &&
+        JSON.stringify(lookups[0][1]) === '["queued","processing"]', JSON.stringify(lookups));
   }
 
   console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m\n`);

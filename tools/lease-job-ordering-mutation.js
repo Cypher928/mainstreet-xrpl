@@ -32,7 +32,7 @@ const MUTANTS = [
     to:   "  const TERMINAL = ['completed', 'failed'];" },
   { id: 'O03', file: MOD, why: 'the guard is inverted — only terminal jobs accept stage writes',
     from: "    filters.push(['not', 'status', 'in', _list(TERMINAL)]);",
-    to:   "    filters.push(['in', 'status', _list(TERMINAL)]);" },
+    to:   "    filters.push(['in', 'status', TERMINAL]);" },
 
   // ── the progress guard ───────────────────────────────────────────────────
   { id: 'O04', file: MOD, why: 'progress may move backward — an older stage overwrites a newer one',
@@ -63,8 +63,20 @@ const MUTANTS = [
 
   // ── the reaper's scope ───────────────────────────────────────────────────
   { id: 'O11', file: MOD, why: 'a stale reaper turns a job that has since completed into failed',
-    from: "        filters.push(['in', 'status', _list(ACTIVE)]);",
+    from: "        filters.push(['in', 'status', ACTIVE]);",
     to:   '' },
+  // THE R2 DEFECT ITSELF. `.in()` formats the list, so handing it the
+  // preformatted string makes postgrest-js iterate characters and the scope
+  // matches nothing — an inert reaper that returns 200 and reports success.
+  // Every assertion in the suite passed against this for two weeks.
+  { id: 'O11b', file: MOD, why: 'the reaper scope is preformatted again, so .in() iterates it as characters',
+    from: "        filters.push(['in', 'status', ACTIVE]);",
+    to:   "        filters.push(['in', 'status', _list(ACTIVE)]);" },
+  // And the mirror image: .not() appends verbatim, so an array there renders as
+  // `not.in.completed,failed,review_required` — no parentheses, malformed.
+  { id: 'O11c', file: MOD, why: 'the terminal guard hands .not() an array, which it would append verbatim',
+    from: "    filters.push(['not', 'status', 'in', _list(TERMINAL)]);",
+    to:   "    filters.push(['not', 'status', 'in', TERMINAL]);" },
   { id: 'O12', file: MOD, why: 'the reaper scope widens to include terminal states',
     from: "  const ACTIVE = ['queued', 'processing'];",
     to:   "  const ACTIVE = ['queued', 'processing', 'completed', 'failed', 'review_required'];" },
