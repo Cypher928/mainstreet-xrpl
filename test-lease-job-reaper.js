@@ -172,7 +172,12 @@ console.log('\n══ A reaped lease job carries its property with it ══');
         row.stage === 'normalize', String(row.stage));
     yes('progress comes from the real stage table', row.progress === 72, String(row.progress));
     yes('error_message explains what happened to a person',
-        typeof row.error_message === 'string' && /tab closed or was suspended/.test(row.error_message));
+        typeof row.error_message === 'string' && /did not reach a durable final state/.test(row.error_message));
+    // AND IT MUST NOT CLAIM MORE THAN THE REAPER KNOWS. The evidence says the
+    // pipeline usually HAD finished and the terminal write lost a race, so the
+    // old wording — the tab closed, re-upload — was false for most of the 68.
+    yes('and it does not blame the browser or demand a re-upload',
+        !/tab closed|suspended|Re-upload/i.test(row.error_message), row.error_message);
     yes('the diagnostic columns are written, not left null',
         row.confidence_level === 'failed' && row.confidence_score === 0 && row.extraction_route === 'text');
     yes('processing_completed_at is stamped', typeof row.processing_completed_at === 'string');

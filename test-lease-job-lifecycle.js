@@ -55,18 +55,44 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   await page.waitForTimeout(1500);
 
   // Intercept writes to lease_jobs so we can see exactly what reaches the DB.
+  //
+  // R2 replaced the bare upsert with a FILTERED update — the ordering guards are
+  // PostgREST predicates now — and kept upsert only for a brand-new row. So this
+  // stub accepts both, records the row either way, and exposes the filters that
+  // travelled with it. It also answers the module's existence probe, which fires
+  // after a guarded write matches nothing.
   await page.evaluate(() => {
-    window.__writes = [];
+    window.__writes = [];      // rows, in issue order
+    window.__filters = [];     // the predicate list for each write
     window.__failNext = 0;
+    window.__exists = true;    // what the existence probe should answer
     const origFrom = db.from.bind(db);
     db.from = (table) => {
       if (table !== 'lease_jobs') return origFrom(table);
-      return {
-        upsert: (row) => {
-          window.__writes.push(JSON.parse(JSON.stringify(row)));
-          if (window.__failNext > 0) { window.__failNext--; return Promise.resolve({ error: { message: 'simulated write failure' } }); }
+      const write = (row) => {
+        const filters = [];
+        window.__writes.push(JSON.parse(JSON.stringify(row)));
+        window.__filters.push(filters);
+        const answer = () => {
+          if (window.__failNext > 0) { window.__failNext--; return Promise.resolve({ data: null, error: { message: 'simulated write failure' } }); }
           return Promise.resolve({ data: [row], error: null });
-        },
+        };
+        const self = {
+          eq: () => self, lte: () => self, lt: () => self, in: () => self,
+          not: (c, op, v) => { filters.push('not:' + c + ':' + op + ':' + v); return self; },
+          select: answer,
+          then: (res, rej) => answer().then(res, rej),
+        };
+        // Record the guard-bearing filters for assertions.
+        ['eq', 'lte', 'lt', 'in'].forEach((op) => {
+          self[op] = (c, v) => { filters.push(op + ':' + c + ':' + v); return self; };
+        });
+        return self;
+      };
+      return {
+        upsert: write,
+        update: write,
+        select: () => ({ eq: (_c, id) => Promise.resolve({ data: window.__exists ? [{ id }] : [], error: null }) }),
       };
     };
   });
@@ -80,11 +106,24 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   }, fn);
 
   console.log('\n── A job absent from the in-memory map still reaches the database ──');
+  //
+  // The original contract was "the Map must not decide whether a terminal
+  // status is recorded". R1 sharpened it: the row must also be ATTRIBUTABLE,
+  // because lease_jobs_owner_all's WITH CHECK is
+  // `property_id IN member_property_ids()` and a NULL there yields NULL, which
+  // a policy reads as false. So a write-through row with no property_id was
+  // never reaching the database — it was producing a 403 and a retry. It is now
+  // refused locally and reported, which is the same loss made visible.
+  //
+  // Both halves are pinned below: with an attribution it writes; without one it
+  // is refused OUT LOUD rather than silently dropped.
   let w = await run(`
     _leaseJobs.delete('ghost-1');
+    _leaseJobs.set('ghost-1', { id:'ghost-1', property_id:'00000000-0000-4000-a000-00000000fixt',
+                                status:'processing', stage:'confidence', progress:88, retry_count:0 });
     finalizeLeaseJob('ghost-1', { norm:{}, conf:{level:'high',score:95}, meta:{extractionRoute:'text'}, tenantId:null });
   `);
-  w.length ? ok(`finalizeLeaseJob wrote ${w.length} row(s) despite no map entry`)
+  w.length ? ok(`finalizeLeaseJob wrote ${w.length} row(s)`)
            : bad('finalizeLeaseJob wrote nothing', 'terminal status would be lost');
   (w[0] && w[0].status === 'completed')
     ? ok(`status reached the database as "${w[0].status}"`)
@@ -95,17 +134,45 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
     ? ok('diagnostics (extraction_route, confidence_level) are carried, not null')
     : bad('diagnostic columns missing', JSON.stringify(w[0]));
 
+  // THE WRITE-THROUGH BRANCH, with no attribution available. This is the gap
+  // R1 exposed: finalizeLeaseJob takes no propertyId argument, so a job that
+  // has fallen out of the Map cannot complete. It must SAY SO, not vanish.
+  const ghostNoProp = await page.evaluate(async () => {
+    window.__writes = [];
+    const seen = [];
+    const origLog = window.logError;
+    window.logError = (t, e, c) => { seen.push({ t, m: e && e.message }); };
+    _leaseJobs.delete('ghost-3');
+    finalizeLeaseJob('ghost-3', { norm:{}, conf:{level:'high',score:95}, meta:{extractionRoute:'text'}, tenantId:null });
+    await new Promise(r => setTimeout(r, 200));
+    window.logError = origLog;
+    return { writes: window.__writes.length, seen };
+  });
+  (ghostNoProp.writes === 0)
+    ? ok('an unattributable terminal write issues no doomed request')
+    : bad('a row with no property_id was still sent', String(ghostNoProp.writes));
+  (ghostNoProp.seen.some(s => s.t === 'lease_job_sync_incomplete'))
+    ? ok('and it is reported — the loss is visible, not silent')
+    : bad('unattributable write vanished without a word', JSON.stringify(ghostNoProp.seen));
+
+  // failLeaseJob DOES take a propertyId (R1), so the reaper's path still works
+  // from outside the Map.
   w = await run(`
     _leaseJobs.delete('ghost-2');
-    failLeaseJob('ghost-2', new Error('boom'), 'extraction');
+    failLeaseJob('ghost-2', new Error('boom'), 'extraction', '00000000-0000-4000-a000-00000000fixt');
   `);
   (w[0] && w[0].status === 'failed' && /boom/.test(w[0].error_message || ''))
     ? ok(`failLeaseJob records the failure: "${w[0].error_message}"`)
     : bad('failure not recorded', JSON.stringify(w[0]));
+  (w[0] && w[0].property_id === '00000000-0000-4000-a000-00000000fixt')
+    ? ok('and the supplied property_id travels with it')
+    : bad('property_id lost on the write-through branch', JSON.stringify(w[0]));
 
   console.log('\n── A terminal write retries once when it fails ──');
   w = await page.evaluate(async () => {
     window.__writes = []; window.__failNext = 1;
+    _leaseJobs.set('retry-1', { id:'retry-1', property_id:'00000000-0000-4000-a000-00000000fixt',
+                                status:'processing', stage:'confidence', progress:88, retry_count:0 });
     finalizeLeaseJob('retry-1', { norm:{}, conf:{level:'high',score:90}, meta:{extractionRoute:'text'}, tenantId:null });
     await new Promise(r => setTimeout(r, 300));
     return window.__writes;
@@ -115,6 +182,8 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
 
   w = await page.evaluate(async () => {
     window.__writes = []; window.__failNext = 1;
+    _leaseJobs.set('mid-1', { id:'mid-1', property_id:'00000000-0000-4000-a000-00000000fixt',
+                              status:'processing', stage:'upload', progress:10, retry_count:0 });
     updateLeaseJob('mid-1', { stage: 'normalize' });
     await new Promise(r => setTimeout(r, 300));
     return window.__writes;
@@ -122,22 +191,51 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   (w.length === 1) ? ok('a non-terminal write is not retried — only the final status matters')
                    : bad('non-terminal write retried', `${w.length} attempt(s)`);
 
+  // R2: the guards that make ordering safe must actually travel on the wire.
+  console.log('\n── The ordering guards travel with the write (R2) ──');
+  const guards = await page.evaluate(async () => {
+    window.__writes = []; window.__filters = [];
+    _leaseJobs.set('g-1', { id:'g-1', property_id:'00000000-0000-4000-a000-00000000fixt',
+                            status:'processing', stage:'upload', progress:10, retry_count:0 });
+    updateLeaseJob('g-1', { stage: 'normalize', progress: 72 });
+    await new Promise(r => setTimeout(r, 150));
+    const advance = (window.__filters[0] || []).join(' ');
+    window.__writes = []; window.__filters = [];
+    updateLeaseJob('g-1', { status: 'completed', stage: 'completed', progress: 100 }, { terminal: true });
+    await new Promise(r => setTimeout(r, 150));
+    const terminal = (window.__filters[0] || []).join(' ');
+    return { advance, terminal };
+  });
+  /not:status:in:\(completed,failed,review_required\)/.test(guards.advance)
+    ? ok('a stage write refuses to overwrite a terminal job') : bad('terminal guard missing', guards.advance);
+  /lte:progress:72/.test(guards.advance)
+    ? ok('a stage write refuses to move progress backward') : bad('progress guard missing', guards.advance);
+  /eq:retry_count:0/.test(guards.advance)
+    ? ok('a stage write is pinned to its retry generation') : bad('generation guard missing', guards.advance);
+  !/not:status|lte:progress/.test(guards.terminal)
+    ? ok('a terminal write carries no state guard — finishing a job is the point')
+    : bad('terminal write was guarded', guards.terminal);
+
   console.log('\n── Normal in-map behaviour is unchanged ──');
   const inMap = await page.evaluate(async () => {
     window.__writes = [];
-    _leaseJobs.set('live-1', { id: 'live-1', status: 'processing', stage: 'upload', progress: 10 });
+    _leaseJobs.set('live-1', { id: 'live-1', property_id: '00000000-0000-4000-a000-00000000fixt', status: 'processing', stage: 'upload', progress: 10, retry_count: 0 });
     const returned = updateLeaseJob('live-1', { stage: 'extraction' });
     await new Promise(r => setTimeout(r, 200));
-    return { returned: !!returned, stage: _leaseJobs.get('live-1').stage, writes: window.__writes.length };
+    return { thenable: !!(returned && typeof returned.then === 'function'),
+             stage: _leaseJobs.get('live-1').stage, writes: window.__writes.length };
   });
-  inMap.returned ? ok('updateLeaseJob still returns the job when it is in the map') : bad('return value changed');
+  // R2: updateLeaseJob returns the WRITE now, not the map entry, so the
+  // reaper's `await` is genuinely sequential instead of awaiting a non-promise.
+  inMap.thenable ? ok('updateLeaseJob returns the write, so callers can await it')
+                 : bad('return value is not awaitable', 'the reaper await would be fake again');
   (inMap.stage === 'extraction') ? ok('the in-memory job is still mutated') : bad('map not updated', inMap.stage);
   (inMap.writes === 1) ? ok('still exactly one write for an in-map update') : bad('write count changed', String(inMap.writes));
 
   console.log('\n── In-memory-only fields never reach the database ──');
   const stripped = await page.evaluate(async () => {
     window.__writes = [];
-    _leaseJobs.set('live-2', { id: 'live-2', status: 'processing', _secret: 'do-not-persist' });
+    _leaseJobs.set('live-2', { id: 'live-2', property_id: '00000000-0000-4000-a000-00000000fixt', status: 'processing', progress: 10, retry_count: 0, _secret: 'do-not-persist' });
     updateLeaseJob('live-2', { stage: 'normalize', _alsoSecret: 1 });
     await new Promise(r => setTimeout(r, 200));
     return window.__writes[0];
@@ -149,7 +247,7 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   let w2 = await page.evaluate(async () => {
     window.__writes = [];
     _lastIngestTelemetry = { path: 'text', pages: 3, outcome: 'failure' };
-    failLeaseJob('diag-1', new Error('extraction exploded'), 'extraction');
+    failLeaseJob('diag-1', new Error('extraction exploded'), 'extraction', '00000000-0000-4000-a000-00000000fixt');
     await new Promise(r => setTimeout(r, 200));
     return window.__writes[0];
   });
@@ -166,6 +264,7 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   const wd = await page.evaluate(async () => {
     window.__writes = [];
     // Arm via a normal non-terminal update, then confirm a timer exists.
+    _leaseJobs.set('wd-1', { id:'wd-1', property_id: '00000000-0000-4000-a000-00000000fixt', status:'processing', stage:'upload', progress:10, retry_count:0 });
     updateLeaseJob('wd-1', { stage: 'extraction' });
     const armed = _jobWatchdogs.has('wd-1');
     // A terminal update must disarm it.
@@ -178,13 +277,20 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
 
   console.log('\n\u2500\u2500 Abandoned jobs are closed out at startup \u2500\u2500');
   const reap = await page.evaluate(async () => {
-    const stale = [{ id: 'stale-1', status: 'processing', stage: 'normalize', updated_at: '2020-01-01T00:00:00Z' }];
+    const stale = [{ id: 'stale-1', status: 'processing', stage: 'normalize', updated_at: '2020-01-01T00:00:00Z', property_id: '00000000-0000-4000-a000-00000000fixt' }];
     const origFrom = db.from.bind(db);
     db.from = (t) => {
       if (t !== 'lease_jobs') return origFrom(t);
       return {
-        select: () => ({ in: () => Promise.resolve({ data: stale, error: null }) }),
-        upsert: (row) => { window.__writes.push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ data: [row], error: null }); },
+        select: () => ({
+          in: () => Promise.resolve({ data: stale, error: null }),
+          eq: (_c, id) => Promise.resolve({ data: [{ id }], error: null }),
+        }),
+        update: (row) => { window.__writes.push(JSON.parse(JSON.stringify(row)));
+          const self = { eq: () => self, lte: () => self, lt: () => self, in: () => self, not: () => self,
+            select: () => Promise.resolve({ data: [row], error: null }),
+            then: (f, j) => Promise.resolve({ data: [row], error: null }).then(f, j) };
+          return self; },
       };
     };
     window.__writes = [];
@@ -194,7 +300,8 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   (reap.res && reap.res.reaped === 1) ? ok('one abandoned job found and closed out')
                                       : bad('reaper did not close the stale job', JSON.stringify(reap.res));
   const rw = reap.writes && reap.writes[0];
-  (rw && rw.status === 'failed' && /tab closed or was suspended/i.test(rw.error_message || ''))
+  (rw && rw.status === 'failed' && /did not reach a durable final state/i.test(rw.error_message || '')
+       && !/tab closed|Re-upload/i.test(rw.error_message || ''))
     ? ok(`reaped job explains itself: "${rw.error_message.slice(0, 58)}\u2026"`)
     : bad('reaped job lacks an explanation', JSON.stringify(rw));
 
@@ -216,6 +323,7 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
                     : bad('no heartbeat — a multi-batch extraction would be killed mid-run');
 
   const beat = await page.evaluate(async () => {
+    _leaseJobs.set('slow-1', { id:'slow-1', property_id: '00000000-0000-4000-a000-00000000fixt', status:'processing', stage:'upload', progress:10, retry_count:0 });
     updateLeaseJob('slow-1', { stage: 'extraction' });
     const armedAt = _jobWatchdogs.get('slow-1');
     // A telemetry mark is emitted per batch; it must reset the timer.

@@ -5018,8 +5018,13 @@ async function _reapStaleLeaseJobs() {
       j && j.updated_at && new Date(j.updated_at).getTime() < cutoffMs);
     for (const job of stale) {
       _clearJobWatchdog(job.id);
+      // It used to say the tab had closed and to re-upload. For 50 of the 68
+      // stuck pilot jobs the lease_documents row was written AFTER the job's
+      // last record — the pipeline HAD finished and the terminal write lost a
+      // race (R2), so that was false and the duplicate it invited was waste.
+      // This describes the job record, which is all the reaper knows.
       await failLeaseJob(job.id, new Error(
-        'Ingestion did not complete — the browser tab closed or was suspended before the lease finished processing. Re-upload to try again.'
+        'This lease processing job did not reach a durable final state. Some processing may have completed. Review the document and re-run processing if needed.'
       // Scoped to the state the sweep OBSERVED: by the time this lands the job
       // may have finished on its own, and turning that into a failure is worse
       // than leaving a stale row. The await is real now — updateLeaseJob
