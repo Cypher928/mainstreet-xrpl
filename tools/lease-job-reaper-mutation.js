@@ -27,11 +27,11 @@ const MUTANTS = [
 
   // ── passing it on ────────────────────────────────────────────────────────
   { id: 'R02', file: SCR, why: 'the reaper stops handing property_id to failLeaseJob',
-    from: "), job.stage || 'extraction', job.property_id);",
-    to:   "), job.stage || 'extraction');" },
+    from: "), job.stage || 'extraction', job.property_id, { scopeActive: true });",
+    to:   "), job.stage || 'extraction', undefined, { scopeActive: true });" },
   { id: 'R03', file: SCR, why: 'failLeaseJob drops the parameter, so the argument goes nowhere',
-    from: 'function failLeaseJob(jobId, err, stage, propertyId) {',
-    to:   'function failLeaseJob(jobId, err, stage) {\n  const propertyId = undefined;' },
+    from: 'function failLeaseJob(jobId, err, stage, propertyId, opts) {',
+    to:   'function failLeaseJob(jobId, err, stage, _propertyId, opts) {\n  const propertyId = undefined;' },
   { id: 'R04', file: SCR, why: 'the property_id never reaches the update payload',
     from: '    ...(propertyId ? { property_id: propertyId } : {}),',
     to:   '' },
@@ -39,36 +39,26 @@ const MUTANTS = [
     from: '    ...(propertyId ? { property_id: propertyId } : {}),',
     to:   '    property_id: propertyId,' },
 
-  // ── the guard ────────────────────────────────────────────────────────────
-  { id: 'R06', file: SCR, why: 'the guard is removed, so a doomed row is written and retried again',
-    from: "  if (!row.property_id) { logError('lease_job_sync_incomplete', new Error('no property_id on lease job ' + job.id), ctx); return Promise.resolve(false); }\n",
-    to:   '' },
-  { id: 'R07', file: SCR, why: 'the guard warns but still issues the write it just called doomed',
-    from: "return Promise.resolve(false); }",
-    to:   "} if (false) {" },
-  { id: 'R08', file: SCR, why: 'the guard stops reporting, so the refusal is as silent as the 403 was',
-    from: "logError('lease_job_sync_incomplete', new Error('no property_id on lease job ' + job.id), ctx); return Promise.resolve(false);",
-    to:   "return Promise.resolve(false);" },
-  { id: 'R09', file: SCR, why: 'the guard misses an explicit null because it tests presence, not value',
-    from: '  if (!row.property_id) {',
-    to:   "  if (!('property_id' in row)) {" },
-  { id: 'R10', file: SCR, why: 'the guard sits AFTER the upsert, so the request still goes out',
-    from: "  if (!row.property_id) { logError('lease_job_sync_incomplete', new Error('no property_id on lease job ' + job.id), ctx); return Promise.resolve(false); }\n  return Promise.resolve(db.from('lease_jobs').upsert(row))",
-    to:   "  return Promise.resolve(db.from('lease_jobs').upsert(row))" },
-  { id: 'R11', file: SCR, why: 'the guard throws instead of resolving, and every caller fires and forgets',
-    from: "return Promise.resolve(false); }\n  return Promise.resolve(db.from('lease_jobs').upsert(row))",
-    to:   "throw new Error('no property_id'); }\n  return Promise.resolve(db.from('lease_jobs').upsert(row))" },
+  // ── the guard, and the retry ladder, MOVED TO lease-job-write.js in R2 ───
+  //
+  // R06–R14 lived here and targeted _syncJobToDb's body: the property_id
+  // guard, its placement before the request, resolving rather than throwing,
+  // the terminal retry, and the underscore strip. R2 lifted that body into
+  // the module, so those anchors no longer exist in script.js.
+  //
+  // They are NOT dropped — they are owned by tools/lease-job-ordering-mutation.js,
+  // which mutates them in their new home and kills every one:
+  //   O22  the property_id guard is lost (was R06/R07)
+  //   O15  an expected stale refusal is reported as an error (was R08)
+  //   O16  a missing job is silently treated as a refusal (was R09/R10)
+  //   O17  an unguarded zero-row write is treated as success (was R11)
+  //   O10  terminal writes become guarded (was R12/R13)
+  //   O23  in-memory fields reach the wire (was R14)
+  //
+  // A retired mutant with a named, demonstrably-killing replacement is
+  // bookkeeping. One retired without is how coverage quietly rots.
 
   // ── what must NOT change ─────────────────────────────────────────────────
-  { id: 'R12', file: SCR, why: 'the terminal retry is lost — a final status could go unrecorded again',
-    from: '      if (!terminal) return false;',
-    to:   '      return false;' },
-  { id: 'R13', file: SCR, why: 'every failure retries, not just the terminal one',
-    from: '      if (!terminal) return false;',
-    to:   '      if (false) return false;' },
-  { id: 'R14', file: SCR, why: 'in-memory fields stop being stripped and reach the wire',
-    from: "  const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));",
-    to:   '  const row = Object.assign({}, job);' },
   { id: 'R15', file: SCR, why: 'the stage a job died at is overwritten with a default',
     from: "    stage:                   stage || 'extraction',",
     to:   "    stage:                   'extraction'," },

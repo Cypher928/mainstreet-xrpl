@@ -8375,6 +8375,10 @@
      the record — 27 pilot properties were left holding one session each. Both
      restore paths in script.js consult this, so it must precede script.js. -->
 <script src="timeline-merge.js"></script>
+<!-- Lease-job write ordering: a job's state moves forward or it does not move.
+     The guards are PostgREST filters, so a stale write is refused by Postgres
+     rather than by luck. Must precede script.js, which delegates to it. -->
+<script src="lease-job-write.js"></script>
 <!-- Where a lease field's value actually came from. getFieldConfidence decided
      "verified" from non-emptiness, so a cap typed by hand read exactly like one
      quoted off a lease — and so did one that genuinely carried a clause. The

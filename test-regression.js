@@ -36,6 +36,12 @@ const SUITES = [
   // per app load, and a job that could never reach a terminal state. The column
   // travels now, and an incomplete row is refused before the request.
   { label: 'Lease-job reaper keeps property_id', cmd: 'node test-lease-job-reaper.js' },
+  // Nine unordered writes per upload, none awaited. A slow stage write landing
+  // after the terminal one restored status='processing' and the job was stuck
+  // forever — 68 rows on the pilot. The guards are PostgREST predicates now, so
+  // a stale write is refused by Postgres whenever it arrives; this replays
+  // writes OUT OF ORDER, which is the only way to test that.
+  { label: 'Lease-job write ordering',           cmd: 'node test-lease-job-ordering.js' },
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },

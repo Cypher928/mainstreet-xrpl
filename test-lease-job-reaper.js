@@ -40,7 +40,8 @@ const path = require('path');
 const vm   = require('vm');
 const { fnSource } = require('./test-support/fn-source');
 
-const SCRIPT = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+const ROOT   = __dirname;
+const SCRIPT = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
 
 let pass = 0, fail = 0;
 const ok  = (m) => { console.log('  \x1b[32m✓\x1b[0m ' + m); pass++; };
@@ -63,22 +64,44 @@ const JOB2 = '5bbe0808-45ad-4f0e-83bc-673faf549588';   // "Pret A Porte.pdf",   
 function sandbox({ rows = [], upsertFails = false, seedMap = null } = {}) {
   const calls = { upserts: [], selects: [], errors: [], warns: [], watchdogsCleared: [], liveness: [] };
 
-  const upsert = (row) => {
+  // R2 turned every write into a FILTERED update (the ordering guards live in
+  // PostgREST predicates now), with an insert only for a brand-new job. This
+  // stub accepts both shapes and records the row either way — what this suite
+  // asserts is which COLUMNS travel, which is unchanged by that. The filters
+  // themselves are the subject of test-lease-job-ordering.js.
+  const write = (kind) => (row) => {
     calls.upserts.push(JSON.parse(JSON.stringify(row)));
-    return Promise.resolve(upsertFails
-      ? { error: { message: 'new row violates row-level security policy for table "lease_jobs"', code: '42501' } }
-      : { error: null });
+    const answer = () => Promise.resolve(upsertFails
+      ? { data: null, error: { message: 'new row violates row-level security policy for table "lease_jobs"', code: '42501' } }
+      : { data: [{ id: row.id }], error: null });
+    const self = {
+      eq: () => self, lte: () => self, lt: () => self, in: () => self, not: () => self,
+      select: answer,
+      then: (res, rej) => answer().then(res, rej),
+    };
+    void kind;
+    return self;
   };
 
   const db = {
     from: (table) => ({
-      select: (cols) => { calls.selects.push({ table, cols }); return { in: () => Promise.resolve({ data: rows, error: null }) }; },
-      upsert,
+      select: (cols) => {
+        calls.selects.push({ table, cols });
+        // Two readers share this: the reaper's `.in('status', …)` sweep, and
+        // the module's existence probe after a guarded zero-row result.
+        return {
+          in: () => Promise.resolve({ data: rows, error: null }),
+          eq: (_c, id) => Promise.resolve({ data: rows.some(r => r.id === id) ? [{ id }] : [], error: null }),
+        };
+      },
+      upsert: write('upsert'),
+      update: write('update'),
     }),
   };
 
   const ctx = {
     db,
+    LeaseJobWrite: require('./lease-job-write.js'),
     console: { warn: (...a) => calls.warns.push(a.join(' ')), log: () => {}, error: () => {} },
     logError: (type, err, c) => calls.errors.push({ type, message: err && err.message, ctx: c }),
     _leaseJobs: new Map(seedMap || []),
@@ -277,22 +300,29 @@ console.log('\n══ A reaped lease job carries its property with it ══');
     yes('the age filter is still applied in JS, not with .lt()',
         /\.in\('status', \['queued', 'processing'\]\)/.test(REAP) && !/\.lt\(/.test(nc(REAP)));
     yes('the reaped property_id is handed to failLeaseJob',
-        /failLeaseJob\([\s\S]*?job\.stage \|\| 'extraction', job\.property_id\)/.test(REAP),
+        /failLeaseJob\([\s\S]*?job\.stage \|\| 'extraction', job\.property_id/.test(REAP),
         'the fourth argument is missing, so the write-through branch loses it again');
 
     const FAIL = fnSource(SCRIPT, 'failLeaseJob');
-    yes('failLeaseJob accepts a propertyId', /function failLeaseJob\(jobId, err, stage, propertyId\)/.test(FAIL));
+    yes('failLeaseJob accepts a propertyId',
+        /function failLeaseJob\(jobId, err, stage, propertyId(, opts)?\)/.test(FAIL));
     yes('    and only sets property_id when it has one',
         /\.\.\.\(propertyId \? \{ property_id: propertyId \} : \{\}\)/.test(FAIL),
         'an unconditional spread would blank the Map copy with undefined');
 
+    // R2 MOVED THE GUARD, IT DID NOT REMOVE IT. _syncJobToDb is now a
+    // delegation, so the assertions follow the rule to lease-job-write.js
+    // rather than being dropped — the invariant is the same one.
     const SYNC = fnSource(SCRIPT, '_syncJobToDb');
-    yes('the guard sits before the upsert',
-        SYNC.indexOf('!row.property_id') < SYNC.indexOf("db.from('lease_jobs').upsert"));
+    yes('the monolith delegates the write', /LeaseJobWrite\.sync\(/.test(SYNC), SYNC.trim());
+
+    const MODULE = fs.readFileSync(path.join(ROOT, 'lease-job-write.js'), 'utf8');
+    yes('the guard sits before any request is issued',
+        MODULE.indexOf('!row.property_id') < MODULE.indexOf("db.from('lease_jobs')"));
     yes('and it resolves rather than throwing, since callers fire and forget',
-        /return Promise\.resolve\(false\)/.test(SYNC));
+        /return Promise\.resolve\(false\);\n    }/.test(MODULE));
     yes('no fallback property resolution was invented',
-        !/currentProperty\(|activePropId|_props\.find/.test(SYNC),
+        !/currentProperty\(|activePropId|_props\.find/.test(MODULE),
         'the guard must refuse, not guess');
   }
 

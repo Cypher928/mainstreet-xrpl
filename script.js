@@ -4928,7 +4928,7 @@ function createLeaseJob(file, propertyId) {
     _startMs: Date.now(),     // in-memory only
   };
   _leaseJobs.set(jobId, job);
-  _syncJobToDb(job);
+  _syncJobToDb(job, { insert: true });   // the row does not exist yet
   return jobId;
 }
 
@@ -4942,13 +4942,13 @@ function updateLeaseJob(jobId, updates, opts) {
     // forever with no error_message. Write straight through instead: the
     // database, not a Map, is what has to end up correct.
     _trackJobLiveness(jobId, updates);
-    _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
-    return null;
+    // The promise travels back out so a caller that awaits this — the reaper
+    // does — is genuinely sequential rather than only looking it.
+    return _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
   }
   _trackJobLiveness(jobId, updates);
   Object.assign(job, updates, { updated_at: new Date().toISOString() });
-  _syncJobToDb(job, opts);
-  return job;
+  return _syncJobToDb(job, opts);
 }
 
 // Every lifecycle write passes through updateLeaseJob, so the watchdog is armed
@@ -4963,24 +4963,11 @@ function _trackJobLiveness(jobId, updates) {
 // one write we cannot afford to lose — a job's final status — and retries it
 // once, because leaving a finished job looking like a running one is the
 // failure this whole path exists to prevent.
-function _syncJobToDb(job, { terminal = false } = {}) {
-  // Strip in-memory-only fields before sending to Supabase
-  const row = Object.fromEntries(Object.entries(job).filter(([k]) => !k.startsWith('_')));
-  const ctx = { jobId: job.id, stage: job.stage, terminal };
-  // lease_jobs_owner_all WITH CHECK is `property_id IN member_property_ids()`, and NULL IN (…) is NULL, which a policy reads as false. So an incomplete row is a 403 the caller then retries — say so once instead.
-  if (!row.property_id) { logError('lease_job_sync_incomplete', new Error('no property_id on lease job ' + job.id), ctx); return Promise.resolve(false); }
-  return Promise.resolve(db.from('lease_jobs').upsert(row))
-    .then(({ error } = {}) => {
-      if (!error) return true;
-      logError('lease_job_sync', error, ctx);
-      if (!terminal) return false;
-      return Promise.resolve(db.from('lease_jobs').upsert(row))
-        .then(({ error: retryError } = {}) => {
-          if (retryError) logError('lease_job_sync_retry', retryError, ctx);
-          return !retryError;
-        });
-    })
-    .catch(e => { logError('lease_job_sync', e, ctx); return false; });
+// A lease job's state moves forward or it does not move. The ordering rule, the
+// filters that enforce it in Postgres, the retry generation and the zero-row
+// classification all live in lease-job-write.js; this is the delegation.
+function _syncJobToDb(job, opts = {}) {
+  return LeaseJobWrite.sync(db, job, opts, { logError });
 }
 
 // Terminal statuses. A job in any other state is still considered in flight.
@@ -5033,7 +5020,11 @@ async function _reapStaleLeaseJobs() {
       _clearJobWatchdog(job.id);
       await failLeaseJob(job.id, new Error(
         'Ingestion did not complete — the browser tab closed or was suspended before the lease finished processing. Re-upload to try again.'
-      ), job.stage || 'extraction', job.property_id);
+      // Scoped to the state the sweep OBSERVED: by the time this lands the job
+      // may have finished on its own, and turning that into a failure is worse
+      // than leaving a stale row. The await is real now — updateLeaseJob
+      // returns the write — so these close out one at a time.
+      ), job.stage || 'extraction', job.property_id, { scopeActive: true });
     }
     if (stale.length) console.warn(`[reapStaleLeaseJobs] closed out ${stale.length} abandoned job(s)`);
     return { reaped: stale.length };
@@ -5062,7 +5053,7 @@ function _armJobWatchdog(jobId) {
   }, JOB_WATCHDOG_MS));
 }
 
-function failLeaseJob(jobId, err, stage, propertyId) {
+function failLeaseJob(jobId, err, stage, propertyId, opts) {
   // Every diagnostic column is written on failure. Leaving confidence_level and
   // extraction_route null made a failed job unreadable after the fact — the
   // columns needed to explain the failure were the ones not being set.
@@ -5080,7 +5071,7 @@ function failLeaseJob(jobId, err, stage, propertyId) {
     // Capture which ingestion path was in flight when it failed — the key
     // signal for "are large scans still failing?".
     debug_summary:           { ingest: _lastIngestTelemetry || null },
-  }, { terminal: true });
+  }, { terminal: true, ...(opts || {}) });   // the reaper adds scopeActive
 }
 
 // Returns true if the tenant row requires manual review before Supabase persistence.
@@ -5141,7 +5132,7 @@ async function retryLeaseJob(jobId) {
     confidence_level:        null,
     confidence_score:        null,
     tenant_id:               null,
-  });
+  }, { reset: true });   // the one legitimate move backward — guarded on retry_count
   job._startMs = Date.now();
 
   tenantData[i] = {
