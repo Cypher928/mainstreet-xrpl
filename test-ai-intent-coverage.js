@@ -301,7 +301,7 @@ const MUST_FALL_BACK = [
 
     const mgr = await ask('Who is the property manager?');
     eq(mgr.engine, 'Property Reference Record', 'manager answer names the reference record');
-    is(/Christy Alvarez/.test(mgr.text), 'and reads the manager off it', mgr.text.slice(0, 160));
+    is(/Demo Property Manager/.test(mgr.text), 'and reads the manager off it', mgr.text.slice(0, 160));
 
     // EACH QUESTION GETS ITS OWN FIELD. Asking about the parcel and being told
     // the manager is a confident wrong answer, and every one of these questions
@@ -311,11 +311,11 @@ const MUST_FALL_BACK = [
     const parcel = await ask('What is the parcel ID?');
     is(/Cascade Commons Holdings/.test(owner.text),
       'the owner question answers with the owner', owner.text.slice(0, 160));
-    is(!/Christy Alvarez/.test(owner.text),
+    is(!/Demo Property Manager/.test(owner.text),
       'and not with the property manager', owner.text.slice(0, 160));
     is(/TRAVIS-02-4417-0209/.test(parcel.text),
       'the parcel question answers with the parcel id', parcel.text.slice(0, 160));
-    is(!/Christy Alvarez|Cascade Commons Holdings/.test(parcel.text),
+    is(!/Demo Property Manager|Cascade Commons Holdings/.test(parcel.text),
       'and not with the manager or the owner', parcel.text.slice(0, 160));
 
     S('C. Billing readiness comes from the VERDICT, never the calculation status');

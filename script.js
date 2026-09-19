@@ -22166,7 +22166,10 @@ async function ensureDemoProperty() {
   // Reference samples (PropertyReference.demoPropertyDocuments) are NOT here:
   // they remain samples in their own labelled box and are never records.
   function demoCabinetRecords() {
-    const PM = 'Christy Alvarez';
+    // An unmistakably fictional author. The demo previously credited its
+    // records to a name one character away from a real pilot customer's,
+    // which a judge opening History would read as a real person.
+    const PM = 'Demo Property Manager';
     const DOC = 'assets/demo/records/';
     const rec = (slug, when, category, title, description, x) => {
       x = x || {};

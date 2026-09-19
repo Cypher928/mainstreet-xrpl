@@ -63,7 +63,7 @@
       propertyType:      'Retail — Neighborhood Strip Center',
       address:           '4820 Cascade Parkway, Austin, TX 78745',
       owner:             'Cascade Commons Holdings, LLC',
-      propertyManager:   'Christy Alvarez — Regional Property Manager',
+      propertyManager:   'Demo Property Manager — fictional demonstration contact',
       parcelId:          'TRAVIS-02-4417-0209',
       yearBuilt:         '2003 (renovated 2019)',
       grossSqft:         sqft,
