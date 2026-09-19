@@ -20,13 +20,28 @@
  * ever needs to establish first: which database am I talking to, and which
  * code is doing the talking.
  *
+ * THE ENDPOINT IS CURRENTLY ABSENT, ON PURPOSE
+ *
+ * api/build-info.js supplied the commit, read from the deployment's own
+ * environment. It was removed: the Vercel Hobby plan allows 12 Serverless
+ * Functions per deployment and it was the thirteenth, so EVERY deployment
+ * failed at patchBuild with exceeded_serverless_functions_per_deployment —
+ * including a commit that changed only Markdown. A diagnostic line is not worth
+ * making the project undeployable.
+ *
+ * So this now resolves to `commit unknown` and still prints the host, which is
+ * the half that mattered most: the pilot session that lost two hours was on the
+ * wrong HOSTNAME, and that is reported without any endpoint at all. The paths
+ * below already treated an unreachable endpoint as normal, so nothing else
+ * changed — a 404 takes the `!r.ok` branch.
+ *
  * WHAT IT IS NOT
  *
- * This identifies the DEPLOYMENT the page came from — api/build-info.js reads
- * the commit from the deployment's own environment. It does not fingerprint
- * each asset, so it cannot by itself catch one stale file among fresh ones.
- * That is the `Cache-Control: no-cache` rule on *.js in vercel.json, which
- * prevents the skew rather than reporting it. The two ship together.
+ * This identifies the DEPLOYMENT the page came from, never the individual
+ * assets, so it cannot by itself catch one stale file among fresh ones. That is
+ * the `Cache-Control: no-cache` rule on *.js in vercel.json, which PREVENTS the
+ * skew rather than reporting it, and which remains in force. It was always the
+ * load-bearing half.
  *
  * FAILS QUIET, NEVER FATAL. This runs before the app and must never be the
  * reason a page does not load, so every failure path still logs a line and

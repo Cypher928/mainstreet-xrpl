@@ -16,9 +16,9 @@
  *   A  every script index.html loads is covered by a Cache-Control rule in
  *      vercel.json, so a browser cannot serve one stale module beside fresh
  *      ones
- *   B  api/build-info.js reports the deployment's identity — and ONLY that.
- *      A file that reads process.env and answers over HTTP is one careless
- *      line away from being a secret leak, so the field list is pinned here.
+ *   B  api/ stays within the Hobby plan's 12-function limit. The endpoint that
+ *      once supplied the commit was the thirteenth and made every deployment
+ *      fail at patchBuild; the ceiling is pinned here so that cannot recur.
  *   C  build-stamp.js publishes window.__MS_BUILD, logs one line, and cannot
  *      be the reason a page fails to load
  *
@@ -35,7 +35,7 @@ const ROOT   = __dirname;
 const HTML   = fs.readFileSync(path.join(ROOT, 'index.html'),   'utf8');
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 const STAMP  = fs.readFileSync(path.join(ROOT, 'build-stamp.js'), 'utf8');
-const INFO   = fs.readFileSync(path.join(ROOT, 'api', 'build-info.js'), 'utf8');
+// api/build-info.js is deliberately gone — see §B. Nothing here reads it.
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -109,28 +109,39 @@ t('build-stamp.js loads immediately after supabase-config.js',
 t('build-stamp.js precedes script.js',
   HTML.indexOf('build-stamp.js') < HTML.indexOf('src="script.js"'));
 
-// ── B. The endpoint reports identity and nothing else ────────────────────────
-console.log('\n── B · api/build-info.js says only what it should ──');
+// ── B. The serverless function budget ────────────────────────────────────────
+//
+// THE HOBBY PLAN ALLOWS 12 SERVERLESS FUNCTIONS PER DEPLOYMENT. api/build-info.js
+// was the thirteenth, and every deployment after it was added failed at
+// patchBuild with exceeded_serverless_functions_per_deployment — build green,
+// deploy refused, including a commit that changed only Markdown. Four commits
+// went by before anyone looked at build state.
+//
+// So the ceiling is a test, not a memory. Vercel counts each non-underscore
+// file in api/ as a function; `_`-prefixed files are helpers and are not
+// deployed. Raising this number is a billing decision, not a code decision.
+console.log('\n── B · api/ stays inside the Hobby function limit ──');
 
-const envReads = [...INFO.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]).sort();
-const ALLOWED  = ['VERCEL_DEPLOYMENT_ID', 'VERCEL_ENV', 'VERCEL_GIT_COMMIT_REF', 'VERCEL_GIT_COMMIT_SHA'];
+const HOBBY_FUNCTION_LIMIT = 12;
+const fnFiles = fs.readdirSync(path.join(ROOT, 'api'))
+  .filter(f => f.endsWith('.js') && !f.startsWith('_'))
+  .sort();
 
-t('reads only the four public deployment variables',
-  JSON.stringify([...new Set(envReads)]) === JSON.stringify(ALLOWED),
-  `reads ${JSON.stringify([...new Set(envReads)])}`);
+t(`api/ has at most ${HOBBY_FUNCTION_LIMIT} serverless functions (${fnFiles.length})`,
+  fnFiles.length <= HOBBY_FUNCTION_LIMIT,
+  `${fnFiles.length} functions: ${fnFiles.join(', ')} — the 13th makes every ` +
+  'deployment fail at patchBuild. Removing one, or an approved plan change, is the fix');
 
-// The named shapes that must never appear here, whatever else changes.
-t('names no secret-shaped variable',
-  !/process\.env\.[A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|SERVICE_ROLE)/.test(INFO),
-  'a credential-shaped env var is referenced in a public endpoint');
+t('api/build-info.js is not present', !fnFiles.includes('build-info.js'),
+  'it was removed to get back under the limit; re-adding it costs the 13th slot');
 
-t('answers no-store', /Cache-Control['"]\s*,\s*['"]no-store/.test(INFO),
-  'an endpoint whose job is "which build is live" must never be cached');
-
-t('responds 200 with JSON', /res\.status\(200\)\.json\(/.test(INFO));
-
-t('exports a handler in the repository convention',
-  /module\.exports\s*=\s*async function handler\(req, res\)/.test(INFO));
+// The stamp must survive its endpoint being gone — that is now the normal case.
+t('build-stamp.js still tolerates an absent endpoint',
+  /r && r\.ok \? r\.json\(\) : null/.test(STAMP),
+  'a 404 must take the !ok branch and leave commit unknown, not throw');
+t('    and says so, rather than implying the endpoint exists',
+  /ENDPOINT IS CURRENTLY ABSENT/.test(STAMP),
+  'the file should not describe a dependency it no longer has');
 
 // ── C. The stamp publishes, logs, and never throws ───────────────────────────
 console.log('\n── C · build-stamp.js behaviour ──');
