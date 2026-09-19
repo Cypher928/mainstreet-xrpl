@@ -149,7 +149,60 @@
     return 'sync_restored:' + (propertyId == null ? '' : String(propertyId));
   }
 
-  const api = { mergeTimelines, eventKey, syncRestoredKey, MAX_EVENTS };
+  /** Same ceiling logActivity keeps on the live array — one policy, not two. */
+  const MAX_ACTIVITY = 200;
+
+  /**
+   * Union of two activity logs. The database wins every collision.
+   *
+   * THE INVARIANT: local state may ADD activity the database has not seen. It
+   * must never ERASE activity the database holds.
+   *
+   * loadPropertyData took `activityLog` from whichever side won a TENANT-COUNT
+   * comparison, while disputes and the timeline were each explicitly merged.
+   * So a local snapshot that had never seen an entry deleted it from the
+   * record — and because savePropertyData writes the whole array back, the
+   * next save made that deletion durable. Measured on the pilot: two
+   * audit_log_export entries written from one host were gone when the property
+   * was reopened from another, because localStorage is per-origin and the
+   * local copy happened to carry one more tenant.
+   *
+   * Identity is eventKey — the same function mergeTimelines uses, which is the
+   * reason there is not a second one here. An `id` when the entry has one
+   * (AuditService.shapeEvent assigns one from P0.5 onward), else
+   * type+timestamp+title joined on a unit separator. For an id-less legacy
+   * entry that means two entries merge only when they share a type, a title
+   * and a MILLISECOND — the same event by any definition available to us.
+   *
+   * Newest first, matching the order logActivity's unshift maintains and the
+   * order the stored blob is already in. Trimming drops the oldest, which is
+   * the same end logActivity trims; post-P0.5 entries survive that trim as
+   * property_events rows regardless, because 030 derived them on write.
+   */
+  function mergeActivityLogs(dbLog, lsLog, opts) {
+    const max = (opts && Number.isFinite(opts.max) && opts.max > 0) ? Math.floor(opts.max) : MAX_ACTIVITY;
+    const db  = Array.isArray(dbLog) ? dbLog.filter(e => e && typeof e === 'object') : [];
+    const ls  = Array.isArray(lsLog) ? lsLog.filter(e => e && typeof e === 'object') : [];
+
+    const seen = new Set();
+    for (const e of db) { const k = eventKey(e); if (k) seen.add(k); }
+
+    // Admitted keys join `seen`, so a local array holding the same entry twice
+    // contributes it once rather than passing both through.
+    const lsOnly = ls.filter(e => {
+      const k = eventKey(e);
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    // Sort is stable, so entries sharing a timestamp keep database-before-local
+    // order and the merge stays a function of its inputs alone.
+    const merged = [...db, ...lsOnly].sort((a, b) => _time(b) - _time(a));
+    return merged.length > max ? merged.slice(0, max) : merged;
+  }
+
+  const api = { mergeTimelines, mergeActivityLogs, eventKey, syncRestoredKey, MAX_EVENTS, MAX_ACTIVITY };
   if (root) root.TimelineMerge = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 

@@ -261,5 +261,112 @@ yes('saveProperty still writes the timeline to properties.data and nowhere else'
 yes('loadPropertyData still reads it from the same blob key',
     /timeline:\s*d\.timeline\s*\|\|\s*\[\]/.test(LOAD), 'the read path changed');
 
+// ── 12. The activity log obeys the same rule the timeline does ──────────────
+//
+// It did not. `activityLog` rode in on `...base`, and `base` is chosen on
+// TENANT COUNT — so a local snapshot carrying one more tenant deleted every
+// activity entry the database held that it had not seen, and the next save
+// made that deletion durable. Measured on the pilot: two audit_log_export
+// entries, written from one host, gone after the property was reopened from
+// another (localStorage is per-origin).
+//
+// The invariant, and the only one: local state may ADD activity. Local state
+// must never ERASE durable activity history.
+H('Activity: local may add, local may never erase');
+
+const act = (o) => Object.assign({
+  type: 'audit_log_export', title: 'Audit log exported (JSON)',
+  timestamp: '2026-01-01T00:00:00.000Z', severity: 'info', actor: 'User',
+}, o);
+const aids = (list) => list.map(e => e.id || '(none)');
+
+// THE REGRESSION ITSELF. An empty or absent local log is the case that erased
+// the pilot's entries; it must now change nothing about what the DB holds.
+const dbHas2 = [act({ id: 'ae-1', timestamp: '2026-01-01T00:00:00Z' }),
+                act({ id: 'ae-2', timestamp: '2026-01-02T00:00:00Z' })];
+yes('an EMPTY local log erases nothing',
+    TM.mergeActivityLogs(dbHas2, []).length === 2, aids(TM.mergeActivityLogs(dbHas2, [])).join(','));
+yes('an ABSENT local log erases nothing',
+    TM.mergeActivityLogs(dbHas2, null).length === 2 &&
+    TM.mergeActivityLogs(dbHas2, undefined).length === 2);
+yes('a local log that simply has not seen an entry erases nothing',
+    TM.mergeActivityLogs(dbHas2, [act({ id: 'ae-1' })]).length === 2);
+
+// The other half of the rule: local additions are kept.
+const withLocal = TM.mergeActivityLogs([act({ id: 'ae-1' })],
+                                       [act({ id: 'ae-local', timestamp: '2026-03-01T00:00:00Z' })]);
+yes('an entry only localStorage has is added, not dropped',
+    withLocal.length === 2 && aids(withLocal).includes('ae-local'), aids(withLocal).join(','));
+
+yes('an entry both sides hold appears exactly once',
+    TM.mergeActivityLogs([act({ id: 'ae-1' })], [act({ id: 'ae-1' })]).length === 1);
+yes('a local array holding the same entry twice still contributes it once',
+    TM.mergeActivityLogs([], [act({ id: 'ae-9' }), act({ id: 'ae-9' })]).length === 1);
+
+// Legacy identity — the pre-P0.5 entries, which have no id at all. eventKey's
+// composite fallback is what tells them apart, and it is the SAME function the
+// timeline uses; there is deliberately not a second identity system.
+yes('legacy id-less entries differing only by millisecond stay distinct',
+    TM.mergeActivityLogs([act({ timestamp: '2026-01-01T00:00:00.001Z' })],
+                         [act({ timestamp: '2026-01-01T00:00:00.002Z' })]).length === 2);
+yes('legacy id-less entries identical in type, title and timestamp collapse',
+    TM.mergeActivityLogs([act({})], [act({})]).length === 1);
+yes('legacy id-less entries differing only by title stay distinct',
+    TM.mergeActivityLogs([act({})], [act({ title: 'Something else' })]).length === 2);
+yes('a P0.5 id beats the composite — same id, different title, one entry',
+    TM.mergeActivityLogs([act({ id: 'ae-x' })], [act({ id: 'ae-x', title: 'edited' })]).length === 1);
+yes('and the database copy is the one kept',
+    TM.mergeActivityLogs([act({ id: 'ae-x', title: 'db' })],
+                         [act({ id: 'ae-x', title: 'ls' })])[0].title === 'db');
+
+// Order and ceiling: both match what logActivity already maintains, so a load
+// followed by a save does not reshuffle or grow the stored array.
+const ordered = TM.mergeActivityLogs(
+  [act({ id: 'old', timestamp: '2026-01-01T00:00:00Z' }), act({ id: 'new', timestamp: '2026-06-01T00:00:00Z' })],
+  [act({ id: 'mid', timestamp: '2026-03-01T00:00:00Z' })]);
+yes('newest first, matching logActivity\'s unshift order',
+    aids(ordered).join(',') === 'new,mid,old', aids(ordered).join(','));
+
+const manyAct = Array.from({ length: 250 }, (_, i) =>
+  act({ id: 'e' + i, timestamp: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString() }));
+const capped = TM.mergeActivityLogs(manyAct, []);
+yes('the 200-entry cap is kept, the same ceiling logActivity keeps',
+    capped.length === 200 && TM.MAX_ACTIVITY === 200, String(capped.length));
+yes('and the cap drops the OLDEST, not the newest',
+    capped[0].id === 'e249' && !aids(capped).includes('e0'));
+
+// Purity — the merge must not edit either store in place, and must not rewrite
+// an entry, or a reload-then-save would not reproduce the record byte for byte.
+const pureDb = [act({ id: 'p1' })], pureLs = [act({ id: 'p2' })];
+const pureOut = TM.mergeActivityLogs(pureDb, pureLs);
+yes('neither input array is mutated', pureDb.length === 1 && pureLs.length === 1);
+yes('entries come out as the same objects that went in',
+    pureOut.some(e => e === pureDb[0]) && pureOut.some(e => e === pureLs[0]));
+
+// Malformed input is what a partially-written save or a hand-edited blob looks
+// like. It must degrade, never throw — this runs on the load path.
+yes('null / undefined / non-array inputs are safe',
+    TM.mergeActivityLogs(null, undefined).length === 0 &&
+    TM.mergeActivityLogs('nope', 7).length === 0 &&
+    TM.mergeActivityLogs({}, {}).length === 0);
+yes('null and non-object members are dropped, real entries kept',
+    TM.mergeActivityLogs([null, 1, 'x', act({ id: 'ok' })], [undefined, act({ id: 'ok2' })]).length === 2);
+yes('an entry with no usable identity at all is not admitted from local',
+    TM.mergeActivityLogs([], [{ id: '   ' }]).length === 1,
+    'eventKey composites from type/timestamp/title, so a blank-id object still has one');
+
+// ── 13. script.js delegates, and the rule cannot be re-implemented there ────
+H('The monolith delegates the rule, it does not own it');
+yes('loadPropertyData carries the merged activity log into the returned object',
+    /activityLog:\s*_mergedAct/.test(LOAD), 'the merged activity log never reaches the caller');
+yes('    and _mergedAct comes from TimelineMerge, not a second local union',
+    /_mergedAct\s*=[\s\S]{0,260}?TimelineMerge\.mergeActivityLogs\(\s*dbData\.activityLog\s*,\s*lsData\.activityLog\s*\)/.test(LOAD),
+    'the delegation is missing or the arguments are reversed');
+yes('    with the database as the fallback when the module is absent',
+    /:\s*\(Array\.isArray\(dbData\.activityLog\)\s*\?\s*dbData\.activityLog\s*:\s*\[\]\)/.test(LOAD),
+    'the no-module fallback must be the DB copy — "never erase" is the safe direction');
+yes('activityLog is no longer taken from `base` by omission',
+    !/activityLog:\s*base\./.test(LOAD), 'something reintroduced the tenant-count pick');
+
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m\n`);
 process.exit(fail ? 1 : 0);

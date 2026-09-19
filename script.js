@@ -28994,11 +28994,19 @@ async function loadPropertyData(id) {
     ? TimelineMerge.mergeTimelines(_dbTl, _lsTl)
     : [..._dbTl, ..._lsTl.filter(e => !_dbTl.some(d => d && e && d.id === e.id))];
 
+  // Activity: local may ADD, it must never ERASE. TimelineMerge.mergeActivityLogs
+  // owns the rule and the identity; without the module, Supabase alone wins,
+  // because "never erase" is the safe direction to fail in.
+  const _mergedAct = (window.TimelineMerge && TimelineMerge.mergeActivityLogs)
+    ? TimelineMerge.mergeActivityLogs(dbData.activityLog, lsData.activityLog)
+    : (Array.isArray(dbData.activityLog) ? dbData.activityLog : []);
+
   console.groupCollapsed('[PIPELINE:4b] MERGE decision');
   console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
   console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
   console.log('[LANDLORD disputes]', { source: 'merge', dbDisputesLen: _dbDisps.length, lsDisputesLen: _lsDisps.length, lsOnlyLen: _lsOnlyDisps.length, mergedLen: _mergedDisps.length, dbDisputes: _dbDisps, lsDisputes: _lsDisps });
   console.log('[TIMELINE merge]', { source: 'db+ls', dbLen: _dbTl.length, lsLen: _lsTl.length, mergedLen: _mergedTl.length });
+  console.log('[ACTIVITY merge]', { source: 'db+ls', dbLen: (dbData.activityLog || []).length, lsLen: (lsData.activityLog || []).length, mergedLen: _mergedAct.length });
   console.groupEnd();
 
   // Reconciliation results and disputes: always prefer Supabase — both are
@@ -29008,6 +29016,7 @@ async function loadPropertyData(id) {
     ...base,
     disputes:          _mergedDisps,
     timeline:          _mergedTl,
+    activityLog:       _mergedAct,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
     camRefusal:        dbData.camRefusal        ?? base.camRefusal        ?? null,
