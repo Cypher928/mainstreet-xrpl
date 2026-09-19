@@ -24,6 +24,9 @@
   'use strict';
 
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
+  // The live demo runs in the pilot environment, separate from customer
+  // production, against demonstration property data.
+  var DEMO_URL = 'https://www.mainstreet-review.com';
   var ASSET = 'assets/landing/';
   var STYLE_ID = 'pf-styles';
 
@@ -248,7 +251,10 @@
           '<img class="pf-shot pf-shot--sharp msl-zoomin" src="' + ASSET + 'beat1-cap-catch.png" alt="">' +
           '<div class="pf-focus" style="--d:1.0s;--fx:60%;--fw2:14%"></div>' +
           '<div class="pf-callout pf-callout--top" style="--d:1.9s">Prevented by lease caps</div>' +
-          '<div class="pf-total" style="--d:2.9s"><b>$75,549</b> the lease didn’t allow — caught before billing</div>';
+          '<div class="pf-total" style="--d:2.9s"><b>$75,549</b> the lease didn’t allow — caught before billing' +
+            // The single largest catch, named. This is where $34,650 belongs:
+            // it is Whole Health Market's capped charge, not a ledger amount.
+            '<span class="pf-total-sub">Whole Health Market · $66,629 → <b>$34,650</b>, the cap the lease sets</span></div>';
       } },
 
     // HERO — the money, over the Command Center it was computed in.
@@ -355,7 +361,14 @@
             '<div class="msl-check-big">' + icon('verify') + '</div>' +
             '<div class="msl-oc-title">tesSUCCESS · XRPL mainnet</div>' +
             '<div class="msl-oc-rows">' +
-              [['Amount', '$34,650 RLUSD'], ['Ledger', 'validated'], ['Proof', 'publicly verifiable']]
+              // The card describes the transaction the Verify button opens,
+              // so it carries THAT transaction's amount. It used to show the
+              // Whole Health cap ceiling from the CAM story, transplanted onto
+              // a real 1-RLUSD proof-of-rail settlement — a judge who clicked
+              // through saw the mismatch. The cap figure now lives in the
+              // reconciliation beat, where it is true. test-site-claims.js
+              // holds this card to the ledger.
+              [['Amount', '1 RLUSD'], ['Ledger', 'validated'], ['Proof', 'publicly verifiable']]
               .map(function (r, i) { return '<div class="msl-oc-r" style="--d:' + (0.55 + i * 0.34) + 's"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>'; }).join('') +
             '</div>' +
           '</div>';
@@ -964,6 +977,8 @@
       '.pf-total{position:absolute;left:50%;bottom:5%;transform:translateX(-50%);font-size:1rem;color:var(--pa);',
       '  opacity:0;animation:pfUpC .8s var(--ez) both;animation-delay:var(--d,0s);white-space:nowrap;}',
       '.pf-total b{color:#7BE3A6;font-size:1.25rem;}',
+      '.pf-total-sub{display:block;font-size:.8rem;opacity:.85;margin-top:5px;}',
+      '.pf-total-sub b{font-size:1rem;}',
       // The "AI is working" affordance for the upload beat — the emphasis is the
       // reading, not the drop target.
       '.pf-worker{position:absolute;left:50%;bottom:13%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;',
@@ -1620,14 +1635,20 @@
 
   function showEnd() {
     endEl.innerHTML =
-      '<button class="msl-btn msl-btn--primary" id="pfEndPilot">Request a Pilot</button>' +
+      // The judge path: film \u2192 live demo \u2192 ledger. The demo is the primary
+      // action off the end card; the pilot request stays one click away.
+      '<button class="msl-btn msl-btn--primary" id="pfEndDemo">Explore the live demo \u2197</button>' +
       '<button class="msl-btn msl-btn--ghost" id="pfEndVerify">Verify on XRPL \u2197</button>' +
+      '<button class="msl-btn msl-btn--ghost" id="pfEndPilot">Request a Pilot</button>' +
       '<button class="msl-btn msl-btn--text" id="pfEndReplay">Replay</button>' +
       '<button class="msl-btn msl-btn--text" id="pfEndBack">\u2190 Back to site</button>';
     endEl.classList.add('msl-show');
+    endEl.querySelector('#pfEndDemo').addEventListener('click', function () { window.open(DEMO_URL, '_blank', 'noopener'); });
     endEl.querySelector('#pfEndPilot').addEventListener('click', function () {
       stop();
-      var cta = document.querySelector('a[href^="mailto:"]');
+      // home.html opens its request modal from any [data-pilot] element; the
+      // mailto: link is the older surface and the fallback.
+      var cta = document.querySelector('[data-pilot]') || document.querySelector('a[href^="mailto:"]');
       if (cta) cta.click();
     });
     endEl.querySelector('#pfEndVerify').addEventListener('click', function () { window.open(EXPLORER, '_blank', 'noopener'); });
