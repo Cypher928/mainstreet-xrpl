@@ -274,10 +274,20 @@
             // the next frame, so the number is already climbing before the
             // layer is legible.
             '<div class="msl-bignum-v" id="pfRecover">&nbsp;</div>' +
-            '<div class="msl-bignum-l">Recoverable revenue identified</div>' +
-            '<div class="msl-bignum-sub" style="--d:2.4s">Cap enforcement · exclusions · unbilled vacancy</div>' +
+            '<div class="msl-bignum-l">Value identified — Cascade Commons</div>' +
+            '<div class="msl-bignum-sub" style="--d:2.4s">Cap enforcement · exclusions · disputes upheld</div>' +
           '</div>';
-        countUp(document.getElementById('pfRecover'), 99542, 1600, '$');
+        // THE NUMBER IS THE DEMO'S, NOT THE FILM'S. LAUNCH_FILMS_PRODUCTION.md's
+        // capture rule: "if a number has moved, the film changes — not the
+        // number." It was 99,542 when the plates were shot (caps 75,549 +
+        // exclusions 5,145 + the 18,849 vacancy gap). The demo seed has since
+        // moved on: the product now reports Cascade Commons' value identified as
+        // $82,184 — caps $75,548.60 + disputes upheld $1,490.77 + exclusions
+        // $5,144.62 — on the portfolio-health card and the Recovered Revenue
+        // table alike, and no longer counts the vacancy gap in it. The label
+        // and the composition line name what the demo shows; the cap total in
+        // the previous beat ($75,549) and Whole Health's $34,650 still match.
+        countUp(document.getElementById('pfRecover'), 82184, 1600, '$');
       } },
 
     // HERO — the REAL Space, with callouts pinned to what matters in it.

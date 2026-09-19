@@ -691,13 +691,13 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         <dt>Source Tag</dt>
         <dd><span class="mono">2606290001</span> — carried on every MainStreet payment and trust line, so the project&rsquo;s activity is identifiable on-ledger</dd>
         <dt>Memo</dt>
-        <dd>A SHA-256 fingerprint of the settlement record. Anyone holding the record can recompute the hash and confirm the payment settled <em>this</em> reconciliation and no other.</dd>
+        <dd>A SHA-256 fingerprint of the settlement record — the destination, the amount and the network the payment was built from — with the amount alongside it in clear. Anyone with the record can recompute the hash and verify that it matches the fingerprint committed to the transaction.</dd>
       </dl>
       <div class="cta-row">
         <a class="btn btn--primary" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener">View on livenet.xrpl.org ↗</a>
         <a class="btn btn--ghost" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/scripts/verify-settlement.js" target="_blank" rel="noopener">Verify it yourself — the script ↗</a>
       </div>
-      <p class="cap" style="margin:14px 0 0">Six-point check against public XRPL nodes: validated result, sender, destination, currency and issuer, delivered amount, memo fingerprint.</p>
+      <p class="cap" style="margin:14px 0 0">Reads the transaction from public XRPL nodes and checks that it is a validated Payment (tesSUCCESS), sent from the settlement wallet, in RLUSD from Ripple&rsquo;s official issuer, and that it carries a memo. It prints the destination and the Source Tag for you to compare. It does not recompute the fingerprint — that is the arithmetic above.</p>
       <pre class="code" style="margin-top:10px">node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv</pre>
     </div>
 
@@ -707,7 +707,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
         <ul>
           <li><b>The RLUSD payment</b> from the settlement wallet to the landlord wallet, validated on mainnet.</li>
           <li><b>MainStreet&rsquo;s Source Tag</b> on the payment and on both trust lines.</li>
-          <li><b>A SHA-256 fingerprint</b> of the settlement record in the transaction memo.</li>
+          <li><b>A SHA-256 fingerprint</b> of the settlement record (destination, amount, network) in the transaction memo, with the amount in clear.</li>
           <li><b>Two funded wallets</b> with RLUSD trust lines to the official issuer.</li>
         </ul>
         <p class="cap" style="margin:12px 0 0">All of it verifiable on livenet.xrpl.org — infrastructure MainStreet does not control.</p>
@@ -776,13 +776,13 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <div class="jud">
       <a class="rv" href="https://www.mainstreet-review.com" data-demo><div class="jud-t">Live demo <span>↗</span></div><div class="jud-d">The current product, with Cascade Commons and Northgate Exchange seeded for you.</div></a>
       <a class="rv" href="index.html?demo=1"><div class="jud-t">The film <span>▶</span></div><div class="jud-d">Fifty seconds, narrated, in the real product. Plays right here.</div></a>
-      <a class="rv" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener"><div class="jud-t">The XRPL transaction <span>↗</span></div><div class="jud-d">1 RLUSD, validated on mainnet, Source Tag 2606290001, fingerprint in the memo.</div></a>
+      <a class="rv" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener"><div class="jud-t">The XRPL transaction <span>↗</span></div><div class="jud-d">1 RLUSD, validated on mainnet, Source Tag 2606290001, a SHA-256 fingerprint of the settlement record in the memo.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl" target="_blank" rel="noopener"><div class="jud-t">Source code <span>↗</span></div><div class="jud-d">Public repository. <span class="mono">main</span> is the frozen submission build; <span class="mono">pilot</span> is the build behind the live demo.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/README.md" target="_blank" rel="noopener"><div class="jud-t">README <span>↗</span></div><div class="jud-d">What it does, why XRPL, the mainnet settlement, how to run it.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/pilot/docs/XRPL_ARCHITECTURE.md" target="_blank" rel="noopener"><div class="jud-t">XRPL settlement architecture <span>↗</span></div><div class="jud-d">Wallets, transaction anatomy, verification, security decisions — and the honest list of limits.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/pilot/docs/MAINSTREET_ARCHITECTURE.md" target="_blank" rel="noopener"><div class="jud-t">System architecture <span>↗</span></div><div class="jud-d">How the evidence-first AI, the deterministic engines and the ledger fit together.</div></a>
       <a class="rv" href="assets/hackathon/pitch-deck.pdf" target="_blank" rel="noopener"><div class="jud-t">Pitch deck <span>PDF</span></div><div class="jud-d">The submitted deck.</div></a>
-      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/scripts/verify-settlement.js" target="_blank" rel="noopener"><div class="jud-t">Verify script <span>↗</span></div><div class="jud-d">Six on-ledger checks against public nodes. Run it against the settlement wallet.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/scripts/verify-settlement.js" target="_blank" rel="noopener"><div class="jud-t">Verify script <span>↗</span></div><div class="jud-d">Checks the transaction on public nodes — validated Payment, sender, RLUSD amount and official issuer, memo present. Run it against the settlement wallet.</div></a>
     </div>
     <p class="jud-note">Generative AI is used in exactly one place: reading documents. Allocation, caps, answers and verdicts are deterministic computation over verified data — ask twice, get the same answer twice. What is deliberately not built yet is stated above, not hidden.</p>
   </div></div>
