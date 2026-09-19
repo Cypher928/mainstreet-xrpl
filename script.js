@@ -26286,7 +26286,8 @@ async function selectProperty(id) {
       await savePropertyData();      // syncs DOM → leavingProp in _props
       clearTimeout(_saveDebounceTimer);
       _saveDebounceTimer = null;
-      saveProperty(leavingProp);     // fire-and-forget immediate write
+      // Fire-and-forget immediate write — forgotten, but not unwatched.
+      _saveFailed(saveProperty(leavingProp), leavingProp, 'leaving');
     }
   }
 
@@ -26492,8 +26493,8 @@ async function backToPortfolio() {
       clearTimeout(_saveDebounceTimer);
       // Always flush to localStorage synchronously before navigating away
       _lsSave(prop);
-      // Fire-and-forget the DB write
-      saveProperty(prop);
+      // Fire-and-forget the DB write — forgotten, but not unwatched.
+      _saveFailed(saveProperty(prop), prop, 'navigating');
     }
   }
 
@@ -28374,17 +28375,32 @@ async function uploadLeaseToStorage(file, propertyId) {
 
 // Save a property — localStorage first (instant), then Supabase.
 // INSERT when property has no id (new); UPSERT when it already has a UUID.
+// WHERE A FORGOTTEN SAVE'S FAILURE LANDS. A debounce timer, the property you
+// are leaving, the navigation away: none awaits saveProperty, so a rejection
+// had nowhere to go — no error, no log, no toast, and a save that did not
+// happen with nothing to say so. One sink, because three copies of a handler is
+// how one of them ends up subtly different.
+const _saveFailed = (promise, prop, where) => Promise.resolve(promise).catch(e => {
+  _setSyncStatus('error', e?.message || String(e));
+  logError('saveProperty:' + where, e, { propId: prop?.id, propName: prop?.name });
+});
+
 async function saveProperty(property) {
-  // Capture snapshot before mutating storage — enables recoverLastSnapshot().
-  _captureSnapshot(property);
   // Claim this save's generation. If a newer saveProperty fires before this one
   // resolves, gen will no longer equal _saveGeneration and this completion is stale.
+  // Outside the try because the catch reads it.
   const gen = ++_saveGeneration;
 
-  _lsSave(property);
-  _setSyncStatus('local'); // localStorage write complete; Supabase write pending
-
   try {
+    // INSIDE THE BOUNDARY. These ran before the try, and callers fire and
+    // forget, so a throw here was an unhandled rejection: no error, no log, no
+    // toast, no write, and nothing to say so. They now fail the way a failed
+    // Supabase write already does; nothing that succeeds behaves differently.
+    // Snapshot before mutating storage — enables recoverLastSnapshot().
+    _captureSnapshot(property);
+    _lsSave(property);
+    _setSyncStatus('local'); // localStorage write complete; Supabase write pending
+
     const stripped = _stripBlobs(property);
     const { id, name, totalSqft } = stripped;
 
@@ -28664,7 +28680,9 @@ async function savePropertyData() {
     // into a single DB write 800 ms after the last call.
     _setSyncStatus('pending');
     clearTimeout(_saveDebounceTimer);
-    _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+    // Nothing awaits a debounced save, so its rejection has nowhere to go but
+    // the floor. _saveFailed is the floor.
+    _saveDebounceTimer = setTimeout(() => _saveFailed(saveProperty(prop), prop, 'debounced'), 800);
 
     // The advisor surface is DERIVED state — recompute it whenever the record
     // it describes changes.

@@ -26,6 +26,11 @@ const SUITES = [
   // that fix — the *.js Cache-Control rule and the build stamp — to their
   // contract, so a suite below can be trusted to be testing this commit.
   { label: 'Build identity & asset freshness', cmd: 'node test-build-identity.js' },
+  // A save is fired and forgotten from a debounce timer, from the property you
+  // are leaving, and from the navigation away. A rejection in any of them used
+  // to go nowhere — no log, no toast, no write, and nothing to say so. This
+  // pins the error boundary and the sink that every approved call site uses.
+  { label: 'Save failures are visible',        cmd: 'node test-save-failure-visible.js' },
   { label: 'Allocation engine',       cmd: 'node test-allocation.js' },
   { label: 'Tenant dispute pipeline', cmd: 'node test-disputes.js' },
   { label: 'Extraction quality',      cmd: 'node test-extraction.js' },
