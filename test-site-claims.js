@@ -156,7 +156,8 @@ t('the steps describe the no-account demo, not an account-first journey',
 t('only one "Explore the live demo" button remains below the hero',
   (TEXT.match(/Explore the live demo/g) || []).length <= 3,
   (TEXT.match(/Explore the live demo/g) || []).length + ' occurrences');
-t('the film link beside it is untouched', /Watch the film first/.test(TEXT));
+t('the film is the first featured action, still played in place',
+  /class="jud-hero rv" href="index\.html\?demo=1"/.test(HTML));
 t('the demo is described as read-only and unsaved',
   /read-only copy of demonstration data/i.test(TEXT) && /nothing you do is saved/i.test(TEXT));
 t('the demo environment is named plainly', /pilot environment/i.test(TEXT) && /demonstration data/i.test(TEXT));
@@ -192,7 +193,7 @@ t('clicking the card plays that player instead of downloading the file',
 t('the existing film card is untouched',
   /<div class="jud-t">The film <span>▶<\/span><\/div>/.test(HTML) && /href="index\.html\?demo=1"/.test(HTML));
 t('the existing live-demo card still opens the interactive demo',
-  /href="https:\/\/www\.mainstreet-review\.com\/demo"[^>]*data-demo><div class="jud-t">Live demo/.test(HTML));
+  /href="https:\/\/www\.mainstreet-review\.com\/demo"[^>]*data-demo[^>]*>[\s\S]{0,600}?<div class="jud-t">Live demo/.test(HTML));
 t('the film is reachable from the judges section', /id="judges"[\s\S]*index\.html\?demo=1/.test(HTML));
 t('all film links use the one in-place href (no /app?demo=1 detour)',
   !/href="\/app\?demo=1"/.test(HTML) && (HTML.match(/href="index\.html\?demo=1"/g) || []).length >= 3);
@@ -215,8 +216,67 @@ t('Production /app is not credited with pilot-only capabilities',
 t('"Log in" points at the app root, not an inert query', /href="\/app">Log in</.test(HTML));
 t('the pilot request modal is intact', /id="pilotModal"/.test(HTML) && /\/api\/pilot-request/.test(HTML));
 t('the positioning line is the H1', /<h1>The <span class="accent">verified memory<\/span> for every commercial property\.<\/h1>/.test(HTML));
-t('the six-step progression is present, in order',
-  /Upload[\s\S]*Read with evidence[\s\S]*Reconcile[\s\S]*Remember[\s\S]*Settle[\s\S]*Verify/.test(TEXT));
+t('the seven-part strip names what the record holds, in order',
+  /Leases[\s\S]*Documents[\s\S]*Tenants &(amp;)? Spaces[\s\S]*Invoices[\s\S]*CAM[\s\S]*History[\s\S]*Ask/.test(TEXT));
+
+// ── F. The story: one question, worked through the records ─────────────────
+// Every figure in the interactive section is what the product computes from
+// the seeded Cascade Commons data, and the lease clause is quoted as written
+// in assets/demo/lease-whole-health-market.pdf. If the seed changes, this is
+// where the page and the demo would drift apart.
+console.log('\n── F · the story ──');
+const ASK = (HTML.match(/<section id="ask"[\s\S]*?<\/section>/) || [''])[0];
+const ASK_TEXT = ASK.replace(/<[^>]+>/g, ' ').replace(/&rsquo;/g, "'").replace(/&hellip;/g, '…').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+t('the interactive section exists and sits directly after the strip',
+  /id="how"[\s\S]*?<section id="ask"/.test(HTML) && HTML.indexOf('id="ask"') < HTML.indexOf('id="judges"'));
+t('the judges section follows the explanation and precedes the deeper chapters',
+  HTML.indexOf('id="judges"') < HTML.indexOf('id="memory"'));
+t('the heading is the question-and-answer framing',
+  /A property manager has a question\.<br>MainStreet finds the answer\./.test(ASK));
+for (const q of ['Where did that number come from?', 'What does this lease actually require?',
+                 'What needs my attention?', 'Are we recovering everything we should?'])
+  t(`question offered: ${q}`, ASK_TEXT.includes(q));
+t('the questions are real buttons with tab semantics',
+  (ASK.match(/<button class="ask-q[^>]*role="tab"/g) || []).length === 4);
+t('the default question is the concrete one', /<button class="ask-q is-on"[^>]*data-q="number"/.test(ASK));
+t('only the default pane is visible without JavaScript',
+  (ASK.match(/<div class="ask-pane"[^>]*hidden>/g) || []).length === 3 && /<div class="ask-pane is-on"[^>]*data-q="number">/.test(ASK));
+// The worked example, figure by figure. 9,200 / 26,000 sf = 35.38%;
+// 35.38% of $188,300 = $66,629.23; $33,000 × 1.05 = $34,650.
+t('the example is the Whole Health Market cap', ASK_TEXT.includes("Why can't we bill Whole Health Market more than $34,650?"));
+t('the reader finds the 5% cap and the $33,000 base', /5% cap/.test(ASK_TEXT) && /\$33,000/.test(ASK_TEXT));
+t('the expenses are the seeded 26 invoices totalling $188,300', /\$188,300 across 26 invoices/.test(ASK_TEXT));
+t('the uncapped share is stated so the cap has something to prevent', /35\.38% share comes to \$66,629\.23/.test(ASK_TEXT));
+t('the answer is $34,650 and the excess is named', /\$34,650/.test(ASK_TEXT) && /\$31,979\.23/.test(ASK_TEXT));
+t('the cap clause is quoted as the lease has it',
+  /shall not increase by more than five percent \(5%\)/.test(ASK_TEXT) && /shall be borne solely by Landlord/.test(ASK_TEXT));
+t('the base-amount clause is quoted as the lease has it', /Thirty-Three Thousand and 00\/100 Dollars \(\$33,000\.00\)/.test(ASK_TEXT));
+t('the clause is placed on its real page', /Page 2 of 3 · §6\.4 · §6\.5/.test(ASK_TEXT));
+t('the lease is called a demonstration lease, not a real one', /demonstration lease/i.test(ASK_TEXT));
+t('the verdict pane matches the demo: 3 of 5 billable', /3 of 5 billable/.test(ASK_TEXT) && /3 of 5 ready to bill/.test(ASK_TEXT));
+t('the plain-English CAM sentence is present, verbatim',
+  ASK_TEXT.includes("CAM reconciliation is the process of figuring out how much of a property's shared operating costs each tenant actually owes, according to their lease."));
+t('and is followed by what MainStreet does about it',
+  ASK_TEXT.includes('MainStreet does that work for you, and shows you why the answer is correct.'));
+t('CAM is placed as one question among many, not the product', /CAM is one question MainStreet can answer/.test(ASK_TEXT));
+t('the section carries no library and no timers',
+  !/setInterval|setTimeout/.test((HTML.match(/data-ask[\s\S]*?\}\)\(\);/) || [''])[0]) && !/<script[^>]+src="https?:/.test(HTML));
+// The featured actions, in the order to take them.
+const LEAD = (HTML.match(/<div class="jud-lead">[\s\S]*?<\/div>\s*<!-- THE RECORDED/) || [''])[0];
+t('three featured actions', (LEAD.match(/class="jud-hero rv"/g) || []).length === 3);
+t('in the order film → walkthrough → live demo',
+  /The film[\s\S]*Product walkthrough[\s\S]*Live demo/.test(LEAD));
+t('each carries its one-line purpose',
+  /Understand MainStreet\./.test(LEAD) && /See it working\./.test(LEAD) && /Try it yourself\./.test(LEAD));
+t('the section heading is the four verbs', /Understand it\. See it\. Try it\. Verify it\./.test(TEXT));
+t('the walkthrough player never autoplays and loads only metadata',
+  !/<video[^>]*autoplay/.test(HTML) && /<video[^>]*preload="metadata"/.test(HTML));
+t('the player is hidden until the walkthrough card asks for it',
+  /<figure class="shot-wrap demo-film" id="walkFigure" hidden>/.test(HTML) && /walkFigure\.hidden = false/.test(HTML));
+// The lower chapters must not contradict the story above them.
+t('the Cascade caption describes the current demo state, not the old blocked one',
+  !/none with a source document/.test(TEXT) && /every one with its source document/.test(TEXT) && /Three of five statements are ready/.test(TEXT));
+t('the Cascade audit alt text matches', !/26 of 26 invoices are missing/.test(HTML) && /\$66,629\.23 to \$34,650\.00/.test(HTML));
 
 console.log('\n' + '─'.repeat(62));
 if (fail) { console.log(`\x1b[31mRESULT: ${pass} passed, ${fail} failed\x1b[0m`); failures.forEach(f => console.log('  · ' + f)); process.exit(1); }
