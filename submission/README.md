@@ -3,9 +3,9 @@
 Drafts of everything needed to submit MainStreet to XRPL Commons **Make Waves**. The mainnet
 settlement is now live and its details are filled in throughout (TX
 `7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A`, settlement wallet
-`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`). The only tokens still to fill are the **demo-video URL**,
-the **registration date**, and the **attribution reference** (confirm the Make Waves mechanism).
-The token table below remains as the reference for those.
+`rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`). Attribution is verified: Make Waves **Source Tag
+`2606290001`**, set on every settlement Payment and TrustSet (per T&C §5/§7) and present on the
+first mainnet settlement. The token table below remains as the reference for the rest.
 
 ## Files
 - `DEMO_SCRIPT.md` — spoken narration for the 2–3 minute demo video
@@ -23,7 +23,7 @@ The token table below remains as the reference for those.
 | `<<SETTLEMENT_DATE>>` | Date of the first settlement |
 | `<<DEMO_VIDEO_URL>>` | The published demo-video link |
 | `<<REGISTRATION_DATE>>` | The date you registered for Make Waves |
-| `<<ATTRIBUTION_REF>>` | The program's attribution reference, if any — e.g. registered wallet address, Source Tag, Destination Tag, or memo convention (confirm the actual mechanism from Make Waves rules; not yet verified) |
+| `<<ATTRIBUTION_REF>>` | Resolved — Make Waves **Source Tag `2606290001`**, set on every settlement Payment and TrustSet (per T&C §5/§7); verifiable on-chain via the transaction's `SourceTag` field |
 
 > **Accuracy note:** I could not load the live Make Waves submission form from this
 > environment (network-blocked), so `SUBMISSION_ANSWERS.md` is organized around the fields

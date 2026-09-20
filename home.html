@@ -3,15 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MainStreet — The AI Operating System for Commercial Real Estate</title>
-<meta name="description" content="MainStreet is the AI operating system for commercial real estate — the verified memory for every property. It reads every lease, reconciles every CAM charge, remembers everything that happens to a space, and proves it with clause-level citations.">
+<title>MainStreet — The verified memory for every commercial property</title>
+<meta name="description" content="MainStreet is property intelligence for commercial real estate: the leases, documents, spaces, CAM reconciliations and history of a building in one verified record — with the clause, the page and the proof behind every number, and settlement proven on the XRP Ledger.">
 <meta name="theme-color" content="#050709">
+<!-- The one URL that serves this page without a redirect. The apex 308s to www,
+     and vercel.json redirects "/" to "/home" before the filesystem is consulted
+     (see test-routing.js), so www + /home is the only hop-free address. Every
+     other canonical signal — sitemap.xml, robots.txt — must name this exact URL. -->
+<link rel="canonical" href="https://www.mainstreetcam.com/home">
 <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png">
 <meta property="og:title" content="MainStreet — The verified memory for every commercial property">
-<meta property="og:description" content="The AI operating system for commercial real estate. Reads every lease, reconciles every charge, remembers every space — and proves it.">
-<meta property="og:image" content="assets/brand/og-image.png">
+<meta property="og:description" content="Property intelligence for commercial real estate. Leases, documents, spaces, CAM and history in one verified record — proven on the XRP Ledger.">
+<!-- Absolute, not relative. OpenGraph resolves image URLs against nothing —
+     a relative path here is why the preview card rendered blank everywhere. -->
+<meta property="og:image" content="https://www.mainstreetcam.com/assets/brand/og-image.png">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://www.mainstreetcam.com/home">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -31,42 +40,32 @@
    Brand identity preserved: obsidian surfaces + the MainStreet gold accent.
    Design intent: clarity over decoration. Every element earns its place; the
    value proposition is legible in under ten seconds; nothing is claimed that
-   the product cannot demonstrate.
+   the product cannot demonstrate — and every screenshot on this page comes
+   from the build behind the live demo, rendered against demonstration data.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root{
-  /* Champagne on layered obsidian. The previous gold (#D8B872) leaned orange
-     and sat on near-flat black; this palette lifts the metal toward champagne
-     and separates the surfaces so depth comes from tone, not borders. */
-  /* Elevation ladder. The page measured six of seven sections rendering at
-     luminance 0 — every surface was the page itself, which is exactly why it
-     read as flat rather than dark. Each rung is ~4 luminance apart: far enough
-     to separate, close enough that nothing looks grey. */
   --bg:#050709;        /* e0 — the page                       L  6.7 */
   --bg-2:#090C10;      /* e1 — a section that steps forward   L 11.7 */
   --panel:#0B0F15;     /* e1.5 — chapter panels               L 14.4 */
   --card:#111721;      /* e2 — a card on a panel              L 21.6 */
   --card-hi:#161D28;   /* e3 — the same card, lifted          L 28.1 */
   --line:255,255,255;
-  /* Depth comes from light as well as tone: a hairline top highlight on every
-     raised surface, and shadow underneath it. */
   --edge:inset 0 1px 0 rgba(255,255,255,.045);
   --lift-1:0 1px 2px rgba(0,0,0,.4), 0 12px 30px -18px rgba(0,0,0,.85);
   --lift-2:0 2px 4px rgba(0,0,0,.45), 0 28px 60px -26px rgba(0,0,0,.9);
   --lift-3:0 40px 90px -30px rgba(0,0,0,.92), 0 0 0 1px rgba(255,255,255,.04);
   --gold:#D8B872; --gold-deep:#A8813E; --gold-soft:rgba(216,184,114,.09);
   --gold-grad:linear-gradient(120deg,#EBD49A 0%,#C9A254 55%,#E4C57F 100%);
+  --ok:#5FD3A0; --ok-soft:rgba(95,211,160,.10);
   --t1:#F4F6F9; --t2:#CFD7E1; --t3:#98A4B3; --t4:#68727F;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --max:1180px; --r:16px;
 }
-/* The container grew with the screen. At a fixed 1140px the page was 44% of a
-   1440p display and 33% of an ultrawide — a column on a billboard. Copy is
-   still bounded by .lede{max-width:37em}, so the extra width goes to the
-   screenshots and the panels rather than to line length. */
 @media (min-width:1600px){ :root{ --max:1360px } }
 @media (min-width:1900px){ :root{ --max:1500px } }
 @media (min-width:2300px){ :root{ --max:1620px } }
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 body{
   margin:0; background:var(--bg); color:var(--t2);
   font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -79,19 +78,11 @@ img{max-width:100%;display:block}
 
 /* ── Type scale ─────────────────────────────────────────────────────────── */
 h1,h2,h3{color:var(--t1);margin:0;letter-spacing:-.028em;line-height:1.08;font-weight:800}
-/* Sized to the column it actually sits in. At 4.35rem the hero headline broke
-   to five lines in a 515px column and orphaned "for" on its own line; balance
-   distributes the remaining words instead of leaving a runt. */
-h1{font-size:clamp(2.35rem,5.1vw,3.55rem);text-wrap:balance}
+h1{font-size:clamp(2.1rem,3.9vw,3.15rem);text-wrap:balance}
 h2{font-size:clamp(1.9rem,3.6vw,2.6rem);text-wrap:balance}
 h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
-/* Four distinct levels, each separated by size AND colour so the ranking is
-   readable at a glance: heading (t1) / lede (t3, larger) / body (t4, smaller) /
-   caption (t4, smallest, letterspaced). */
 .lede{font-size:clamp(1.05rem,1.75vw,1.24rem);color:var(--t3);line-height:1.68;max-width:37em}
 .cap{font-size:.78rem;letter-spacing:.04em;color:var(--t4);line-height:1.55}
-/* The eyebrow is the one place gold is allowed to be decorative — it labels the
-   chapter. Everywhere else it must point at an action or a number. */
 .eyebrow{
   display:inline-flex;align-items:center;gap:8px;
   font-size:.68rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
@@ -105,6 +96,7 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
   background:var(--gold-grad);
   -webkit-background-clip:text;background-clip:text;color:transparent;
 }
+.mono{font-family:var(--mono);font-size:.86em;letter-spacing:0}
 
 /* ── Nav ────────────────────────────────────────────────────────────────── */
 .nav{
@@ -122,6 +114,8 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 .nav-sp{flex:1}
 .nav-link{color:var(--t3);font-size:.9rem;font-weight:500;padding:8px 4px}
 .nav-link:hover{color:var(--t1)}
+.nav-link--gold{color:var(--gold);font-weight:600}
+.nav-link--gold:hover{color:#EBD49A}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   border-radius:12px;font-weight:700;font-size:.92rem;cursor:pointer;letter-spacing:.005em;
@@ -141,13 +135,20 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 .btn-sub{display:block;font-size:.74rem;font-weight:500;opacity:.72;margin-top:2px}
 
 /* ── Hero ───────────────────────────────────────────────────────────────── */
-.hero{position:relative;padding:clamp(60px,9vw,110px) 0 clamp(40px,6vw,64px);overflow:hidden}
-.hero::before{
-  content:"";position:absolute;inset:-30% 30% auto -20%;height:620px;
-  background:radial-gradient(closest-side,rgba(216,184,114,.09),transparent 72%);
-  pointer-events:none;
+/* The property photograph runs edge to edge across the top and carries the
+   headline; the MainStreet layer overlaps its lower edge and resolves into the
+   organized Cascade Commons card, so the building is the foundation and the
+   product is what organizes it. A deeper slate here (rather than the page's
+   near-black) is what lets both the photograph and the champagne card lift. */
+.hero{
+  position:relative;padding:0 0 clamp(28px,4vw,44px);overflow:visible;
+  background:
+    radial-gradient(56% 60% at 78% 34%, rgba(216,184,114,.10), transparent 64%),
+    linear-gradient(180deg,#16202C 0%,#121A26 40%,#0A0F16 74%,#050709 100%);
 }
-.hero-in{position:relative;display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:clamp(30px,5vw,62px);align-items:center}
+/* One column: the photograph, then the layer that organizes what is behind it,
+   then the calls to action. Nothing competes for the same row. */
+.hero-in{position:relative;display:block;padding-top:0}
 .badge{
   display:inline-flex;align-items:center;gap:9px;font-size:.68rem;font-weight:700;
   color:var(--gold);background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);
@@ -156,10 +157,89 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 }
 .badge i{width:6px;height:6px;border-radius:50%;background:var(--gold);flex:none}
 .hero h1{margin-bottom:20px}
-.hero .lede{margin-bottom:30px}
-.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:34px}
-.hero-note{font-size:.8rem;color:var(--t4);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.hero-note b{color:var(--t3);font-weight:600}
+.hero .lede{margin-bottom:18px}
+/* 1 · the photograph, edge to edge */
+.cine{position:relative;width:100vw;margin-left:calc(50% - 50vw);
+  height:clamp(320px,30vw,430px);overflow:hidden;isolation:isolate}
+.cine-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 30%;
+  filter:brightness(1.22) contrast(1.1) saturate(1.08)}
+/* Dark enough on the left for the headline, clear enough on the right that the
+   golden hour and the architecture still read. */
+.cine-scrim{position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(90deg,rgba(6,9,14,.9) 0%,rgba(6,9,14,.76) 27%,rgba(6,9,14,.26) 52%,rgba(6,9,14,0) 74%,rgba(6,9,14,.06) 100%),
+    linear-gradient(180deg,rgba(6,9,14,.3) 0%,rgba(6,9,14,0) 32%,rgba(8,12,18,.24) 78%,#101826 100%);}
+.cine-head{position:absolute;left:0;right:0;bottom:clamp(72px,8vw,104px);z-index:2}
+.cine-head .badge{margin-bottom:16px}
+/* A text-shadow paints BEHIND background-clip:text glyphs and shows straight
+   through them, which turned the champagne gold olive. drop-shadow applies to
+   the clipped result instead, so the gradient stays clean. */
+.cine-head .accent{background:linear-gradient(120deg,#F8E7BE 0%,#E7CA92 52%,#F6E3B4 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:none;filter:drop-shadow(0 2px 12px rgba(0,0,0,.6))}
+.cine-head h1{margin:0;max-width:24ch;text-shadow:0 2px 30px rgba(0,0,0,.8), 0 1px 4px rgba(0,0,0,.55)}
+/* One line under the headline. Deliberately short: the chips and the card
+   below say what the categories and the figures are. */
+.cine-sub{
+  margin:14px 0 0;max-width:34ch;font-size:clamp(1rem,1.45vw,1.18rem);line-height:1.5;
+  font-weight:500;color:#E9EFF7;text-shadow:0 2px 20px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.6);
+}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:30px}
+.hero .cta-row{margin:clamp(18px,2.4vw,24px) 0 0}
+/* ── The convergence layer: categories → MainStreet → organized property ── */
+/* Pulled up so the chips straddle the photograph's lower edge and the card
+   breaks out of it into the slate below. */
+.cw{position:relative;z-index:3;margin-top:-44px}
+/* 2 · the six categories. Blue-gray glass against the photograph, with a warm
+   edge; only the monograms are champagne, tying them to the headline and card. */
+.cw-chips{display:flex;gap:10px}
+/* Category labels, not buttons: no lift, no gold control border, no pointer,
+   no tap highlight — they name what the record holds, they do nothing. */
+.cw-chips span{
+  flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:9px;
+  padding:11px 10px;border-radius:12px;
+  background:linear-gradient(180deg,rgba(38,52,71,.86) 0%,rgba(24,35,50,.9) 100%);
+  backdrop-filter:blur(18px) saturate(150%);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:none;
+  cursor:default;pointer-events:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+  font-size:.8rem;font-weight:700;color:#F6F9FD;letter-spacing:.01em;white-space:nowrap;
+}
+.cw-chips i{
+  width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex:none;font-style:normal;
+  font-weight:800;font-size:.58rem;color:#2A2318;
+  background:linear-gradient(180deg,#F4E5C2 0%,#E3C88F 100%);
+  border:1px solid rgba(216,184,114,.6);
+}
+/* 3 · into MainStreet */
+.cw-flow{position:relative;height:54px}
+.cw-flow svg{position:absolute;inset:0;width:100%;height:38px}
+.cw-flow path{fill:none;stroke:url(#cwg);stroke-width:1.15}
+.cw-mark{
+  position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+  width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
+  background:var(--gold-grad);color:#07090C;font-weight:900;font-size:.9rem;
+  box-shadow:0 14px 32px -8px rgba(216,184,114,.7), inset 0 1px 0 rgba(255,255,255,.5);
+}
+/* 4 · the organized property, on champagne so it lifts off the photograph */
+.cw-ws{
+  margin-top:10px;border-radius:18px;padding:clamp(16px,2vw,22px) clamp(20px,2.8vw,30px);
+  display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:clamp(18px,3vw,40px);align-items:center;
+  background:linear-gradient(180deg,#F8F0DE 0%,#EFE2C7 100%);color:#2B2419;
+  border:1px solid rgba(216,184,114,.62);
+  box-shadow:0 34px 70px -28px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.55), 0 16px 44px -20px rgba(216,184,114,.58);
+}
+.cw-id b{display:block;color:#19140C;font-size:clamp(1.2rem,1.9vw,1.55rem);font-weight:800;letter-spacing:-.015em;margin-bottom:10px}
+.cw-stats{display:flex;gap:7px;flex-wrap:wrap}
+.cw-stats span{font-size:.72rem;font-weight:800;color:#453A24;background:rgba(150,116,52,.11);
+  border:1px solid rgba(150,116,52,.26);border-radius:999px;padding:5px 11px;white-space:nowrap}
+.cw-rows{display:grid;gap:11px}
+.cw-rows > div{display:flex;align-items:center;gap:11px;color:#19140C;font-size:.92rem;font-weight:700}
+.cw-rows i{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font-style:normal;font-size:.68rem;font-weight:800;background:#1E9C6B;color:#fff}
+/* Held, not verified: an open dispute is neither good news nor an error. */
+.cw-rows i.hold{background:rgba(120,92,42,.22);color:#6B5B3C}
+.cw-cap{margin:10px 4px 0;font-size:.7rem;color:var(--t4);line-height:1.5;text-align:center}
 
 /* Product frame — a real screenshot, not an illustration */
 .shot{
@@ -173,9 +253,6 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
     0 -30px 60px -40px rgba(216,184,114,.16) inset;
   transition:box-shadow .35s ease, transform .35s ease;
 }
-/* A rim of champagne light behind the frame. The screenshot is the strongest
-   thing on the page, so it gets the only real glow — separation by light rather
-   than by making it bigger. */
 .shot::after{
   content:"";position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
   background:linear-gradient(160deg,rgba(216,184,114,.22),transparent 34%,transparent 68%,rgba(216,184,114,.10));
@@ -183,7 +260,6 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
   -webkit-mask-composite:xor;mask-composite:exclude;padding:1px;
 }
 .shot-wrap{position:relative;padding:clamp(6px,1.4vw,18px)}
-/* The pool of light the frame sits in. */
 .shot-wrap::before{
   content:"";position:absolute;left:6%;right:6%;bottom:-6%;height:44%;pointer-events:none;
   background:radial-gradient(closest-side,rgba(216,184,114,.10),transparent 76%);
@@ -198,46 +274,39 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
   margin-left:8px;font-size:.72rem;color:var(--t4);font-weight:600;letter-spacing:.02em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
+.shot-tag{margin-left:auto;font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);white-space:nowrap}
 .shot img{width:100%;height:auto}
 .shot--float{animation:float 7s ease-in-out infinite}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
-
-/* ── Trust strip — verifiable capabilities, not borrowed logos ──────────── */
-/* The bottom border is gone. A full-width rule with empty space under it is a
-   terminus: it told visitors the page had ended, right where the fold lands on
-   a large screen. The strip now fades out downward instead, and the first
-   chapter panel is pulled up so its top edge shows above the fold. */
-.trust{border-top:1px solid rgba(var(--line),.06);
-  background:linear-gradient(180deg,var(--bg-2) 0%,var(--bg-2) 62%,var(--bg) 100%)}
-.trust-in{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px;padding:40px 0}
-.trust-item{display:flex;gap:13px;align-items:flex-start}
-.trust-ic{
-  width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;
-  background:var(--gold-soft);border:1px solid rgba(216,184,114,.22);color:var(--gold);font-size:.95rem;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+/* A tall screenshot in a bounded frame: show the top, fade the bottom. */
+.shot--crop{max-height:640px}
+.shot--crop img{object-fit:cover;object-position:top}
+.shot--crop::before{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:90px;z-index:1;pointer-events:none;
+  background:linear-gradient(180deg,transparent,var(--card));
 }
-.trust-t{color:var(--t1);font-weight:700;font-size:.94rem;margin-bottom:2px}
-.trust-d{font-size:.85rem;color:var(--t4);line-height:1.55}
+
+/* ── What the record holds — seven parts, one line each ─────────────────── */
+.flow{border-top:1px solid rgba(var(--line),.06);
+  background:linear-gradient(180deg,var(--bg-2) 0%,var(--bg-2) 62%,var(--bg) 100%)}
+.flow-in{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:16px;padding:40px 0}
+.flow-item{position:relative;padding-left:14px;border-left:1px solid rgba(var(--line),.10)}
+.flow-n{font-size:.64rem;font-weight:800;letter-spacing:.16em;color:var(--gold);margin-bottom:6px}
+.flow-t{color:var(--t1);font-weight:700;font-size:.94rem;margin-bottom:3px}
+.flow-d{font-size:.82rem;color:var(--t4);line-height:1.5}
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
-/* Rhythm: every section used to carry identical 104px padding, so scrolling was
-   one uninterrupted surface. Panelled chapters get tighter outer padding
-   (their own inset supplies the air) and open sections get more. */
 section{padding:clamp(72px,10vw,116px) 0}
 section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
-/* On a tall screen the hero + strip left a dead band before the first chapter.
-   Tightening the hero's tail and the first panel's lead-in brings that panel's
-   top edge into view, which is the strongest "keep going" cue there is. */
+/* On a tall screen the hero + progression strip must leave the first
+   chapter's top edge visible above the fold, or the fold reads as the end of
+   the page. The six-step strip is taller than the three-item strip it replaced;
+   measured at 1920x1080 the panel landed 22px below the fold. */
 @media (min-height:900px){
-  .hero{padding-bottom:clamp(24px,2.4vw,36px)}
-  .trust-in{padding:26px 0}
-  /* Measured at 2560x1440: the first panel's top edge landed at 1445px against
-     a 1440px fold — five pixels short of visible. These reclaim 44px so it
-     clears, and the visitor sees a chapter beginning rather than a rule with
-     nothing under it. */
-  section.is-panelled:first-of-type{padding-top:14px}
+  .hero{padding-bottom:12px}
+  .flow-in{padding:14px 0}
+  section.is-panelled:first-of-type{padding-top:12px}
 }
-/* A quiet scroll affordance, only where the page is taller than the screen. */
 .scroll-cue{
   display:flex;justify-content:center;margin-top:clamp(22px,3vw,38px);
   color:var(--t4);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;
@@ -249,12 +318,10 @@ section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
 }
 @keyframes cueDrop{0%,100%{transform:scaleY(.6);opacity:.5}50%{transform:scaleY(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){ .scroll-cue i{animation:none} }
-.sec-head{text-align:center;max-width:680px;margin:0 auto clamp(44px,5.5vw,64px)}
+.sec-head{text-align:center;max-width:720px;margin:0 auto clamp(44px,5.5vw,64px)}
 .sec-head .lede{margin:16px auto 0}
 
-/* ── Chapter panel ──────────────────────────────────────────────────────────
-   A raised surface with a hairline edge and a light source above it. This is
-   what turns one continuous dark page into chapters you scroll through. */
+/* ── Chapter panel ────────────────────────────────────────────────────────── */
 .panel{
   position:relative;
   background:
@@ -265,49 +332,29 @@ section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
   padding:clamp(34px,5vw,68px) clamp(22px,4vw,56px);
   box-shadow:var(--lift-2), var(--edge);
 }
-/* A soft champagne bloom on the panels that carry the product, so the eye is
-   drawn to the screenshots rather than to the chrome. */
 .panel--warm::before{
   content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   background:radial-gradient(70% 55% at 78% 6%, rgba(216,184,114,.055), transparent 66%);
 }
 .panel > *{position:relative}
 
-/* Three steps */
-.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;position:relative}
-.step{
-  background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);
-  padding:30px 26px;position:relative;box-shadow:var(--lift-1), var(--edge);
-  transition:border-color .2s ease,transform .2s ease,background .2s ease,box-shadow .2s ease;
-}
-.step:hover{border-color:rgba(216,184,114,.34);transform:translateY(-3px);
-  background:var(--card-hi);box-shadow:var(--lift-2), var(--edge)}
-.step-n{
-  font-size:.7rem;font-weight:800;color:var(--t4);letter-spacing:.14em;margin-bottom:18px;
-}
-.step-ic{
-  width:46px;height:46px;border-radius:12px;display:grid;place-items:center;margin-bottom:16px;
-  background:var(--gold-soft);border:1px solid rgba(216,184,114,.26);color:var(--gold);font-size:1.2rem;
-}
-.step h3{margin-bottom:8px}
-.step p{margin:0;font-size:.92rem;color:var(--t4);line-height:1.6}
-
 /* Split feature */
-/* The product gets the larger half. Prominence through framing and space, not
-   by scaling the image up. */
-/* minmax(0,…), not 1fr. A `1fr` track is minmax(auto,1fr) and `auto` floors at
-   min-content — which for an image is its INTRINSIC width. The screenshots were
-   therefore forcing a 405px track inside a 310px box on a phone, pushing the
-   whole page 71px wider than the viewport. body{overflow-x:hidden} hid the
-   scrollbar, so it showed up only as everything being slightly too big. */
 .split{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(30px,5vw,68px);align-items:center}
-.split > *,.hero-in > *,.steps > *,.cards > *,.trust-in > *{min-width:0}
+.split > *,.hero-in > *,.cards > *,.flow-in > *,.two > *,.jud > *,.jud-lead > *,.ask > *,.ask-pane > *,.tiles > *{min-width:0}
 .split--rev .split-copy{order:2}
 .proof{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:34px}
 .proof-item{border-left:2px solid rgba(var(--line),.12);padding-left:15px;transition:border-color .2s ease}
 .proof-item:hover{border-left-color:rgba(216,184,114,.55)}
 .proof-t{color:var(--t1);font-weight:700;font-size:.92rem;margin-bottom:3px}
 .proof-d{font-size:.84rem;color:var(--t4);line-height:1.5}
+.see{display:inline-flex;align-items:center;gap:6px;margin-top:26px;font-size:.88rem;font-weight:700;color:var(--gold)}
+.see:hover{text-decoration:underline}
+
+/* Two screenshots side by side, with captions */
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:clamp(28px,4vw,44px)}
+.two figcaption{margin:12px 4px 0;font-size:.84rem;color:var(--t3);line-height:1.5}
+.two figcaption b{color:var(--t1)}
+figure{margin:0}
 
 /* Watch band */
 .band{
@@ -343,6 +390,225 @@ section.is-panelled{padding:clamp(26px,3.5vw,40px) 0}
 .card h3{margin-bottom:7px}
 .card p{margin:0;font-size:.875rem;color:var(--t4);line-height:1.62}
 
+/* ── XRPL proof ───────────────────────────────────────────────────────────── */
+.proofcard{
+  background:var(--card);border:1px solid rgba(var(--line),.08);border-radius:var(--r);
+  padding:clamp(20px,3vw,30px);box-shadow:var(--lift-1), var(--edge);margin-top:clamp(28px,4vw,40px);
+}
+.proofcard-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 12px;
+  font-size:.7rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  background:var(--ok-soft);color:var(--ok);border:1px solid rgba(95,211,160,.3);
+}
+.pill i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 22px;font-size:.9rem;align-items:baseline;margin:0}
+.kv dt{color:var(--t4);font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0}
+.kv dd{margin:0;color:var(--t2);overflow-wrap:anywhere}
+.kv dd b{color:var(--t1)}
+.kv .mono{color:var(--t1)}
+.hash{display:block;font-family:var(--mono);font-size:.8rem;color:var(--t1);background:var(--bg);
+  border:1px solid rgba(var(--line),.1);border-radius:10px;padding:10px 12px;overflow-wrap:anywhere;line-height:1.5}
+.proofcard .cta-row{margin:20px 0 0}
+.onchain{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;margin-top:22px}
+.onchain > div{background:var(--bg-2);border:1px solid rgba(var(--line),.07);border-radius:14px;padding:20px 22px}
+.onchain h3{margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.onchain h3 i{width:8px;height:8px;border-radius:50%;flex:none}
+.onchain ul{margin:0;padding-left:18px;font-size:.88rem;color:var(--t3);line-height:1.6}
+.onchain li{margin-bottom:6px}
+.onchain li b{color:var(--t1);font-weight:600}
+.code{font-family:var(--mono);font-size:.8rem;color:var(--t2);background:var(--bg);border:1px solid rgba(var(--line),.1);
+  border-radius:10px;padding:10px 12px;overflow-x:auto;white-space:pre;margin:0}
+
+/* ── See it in action ─────────────────────────────────────────────────────── */
+/* Three columns: the questions, MainStreet thinking it through, the evidence.
+   Switching a question swaps all three at once. The only motion is a short
+   stagger on the four steps so the trail reads as a sequence, and it is off
+   under reduced motion. No library, no timers. */
+.ask{display:grid;grid-template-columns:minmax(0,.58fr) minmax(0,1.42fr);gap:clamp(18px,3vw,36px);align-items:start}
+.ask-qs{display:grid;gap:10px}
+.ask-q{
+  display:flex;align-items:center;gap:12px;text-align:left;width:100%;min-height:56px;
+  padding:12px 14px;border-radius:12px;font:inherit;font-weight:600;font-size:.94rem;line-height:1.35;
+  color:var(--t1);background:#141D2C;border:1px solid rgba(128,158,205,.30);cursor:pointer;
+  box-shadow:var(--lift-1), inset 0 1px 0 rgba(255,255,255,.06);
+  transition:border-color .2s ease,background .2s ease,color .2s ease,transform .15s ease;
+}
+.ask-q i{
+  width:32px;height:32px;border-radius:9px;flex:none;display:grid;place-items:center;
+  font-style:normal;font-weight:800;font-size:.9rem;
+  background:rgba(128,158,205,.12);border:1px solid rgba(128,158,205,.26);color:#B9CCE8;
+}
+.ask-q::after{content:"›";margin-left:auto;color:#8FA6C7;font-weight:600;font-size:1.1rem;line-height:1}
+.ask-q.is-on::after{color:#0B0804;opacity:.6}
+.ask-q:hover{border-color:rgba(160,186,224,.55);background:#1A2537;transform:translateY(-1px)}
+.ask-q.is-on{
+  background:var(--gold-grad);color:#0B0804;border-color:rgba(255,255,255,.16);
+  box-shadow:0 10px 26px -12px rgba(216,184,114,.5), inset 0 1px 0 rgba(255,255,255,.4);
+}
+.ask-q.is-on i{background:rgba(0,0,0,.14);border-color:rgba(0,0,0,.1);color:#0B0804}
+.ask-q:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.ask-pane{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.94fr);gap:clamp(18px,3vw,32px);align-items:start}
+.ask-pane[hidden]{display:none}
+.ask-bubble{
+  display:inline-block;background:#E8EEF6;color:#0F1620;font-weight:600;font-size:1rem;line-height:1.45;
+  padding:12px 16px;border-radius:16px 16px 16px 4px;margin:0 0 18px;box-shadow:var(--lift-1);
+}
+.ask-trail{list-style:none;margin:0;padding:0 0 0 20px;border-left:1px solid rgba(var(--line),.12);display:grid;gap:14px}
+.ask-trail li{position:relative;font-size:.9rem;color:var(--t3);line-height:1.5}
+.ask-trail li::before{
+  content:"";position:absolute;left:-25px;top:7px;width:9px;height:9px;border-radius:50%;
+  background:var(--ok);box-shadow:0 0 0 3px rgba(95,211,160,.18);
+}
+.ask-trail b{display:block;color:var(--t1);font-size:.95rem;margin-bottom:1px}
+.ask-answer{
+  display:flex;gap:12px;align-items:flex-start;margin-top:18px;padding:14px 16px;border-radius:12px;
+  background:var(--ok-soft);border:1px solid rgba(95,211,160,.35);font-size:.9rem;color:var(--t2);line-height:1.5;
+}
+.ask-answer i{
+  width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--ok);color:#06231A;font-style:normal;font-weight:800;font-size:.85rem;margin-top:2px;
+}
+.ask-answer b{display:block;color:var(--t1);font-size:1.08rem}
+.js-rv .ask-pane.is-on .ask-trail li{animation:askIn .38s cubic-bezier(.2,.7,.3,1) both;animation-delay:calc(var(--i,0) * .11s)}
+.js-rv .ask-pane.is-on .ask-answer{animation:askIn .38s cubic-bezier(.2,.7,.3,1) both;animation-delay:.48s}
+@keyframes askIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+/* The evidence: a page of the lease, or a short list from the record. */
+.ask-doc{margin:0;padding-top:4px}
+.doc-paper{
+  position:relative;background:#F6F3EC;color:#2A2622;border-radius:10px;padding:22px 22px 18px;
+  box-shadow:var(--lift-2);font-size:.8rem;line-height:1.55;transform:none;
+}
+.doc-paper--dark{background:var(--card);color:var(--t2);border:1px solid rgba(var(--line),.09);transform:rotate(0)}
+.doc-head{
+  font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:.92rem;letter-spacing:.02em;text-transform:uppercase;
+  margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(0,0,0,.14);
+}
+.doc-paper--dark .doc-head{font-family:inherit;color:var(--t1);border-bottom-color:rgba(var(--line),.09);letter-spacing:.06em;font-size:.8rem}
+.doc-head span{display:block;font-weight:400;font-size:.72rem;letter-spacing:.06em;color:#6A625A;margin-top:3px;text-transform:none}
+.doc-paper--dark .doc-head span{color:var(--t4)}
+.doc-line{margin:0 0 10px;font-family:Georgia,"Times New Roman",serif}
+.doc-line mark{background:rgba(216,184,114,.6);color:inherit;padding:1px 2px;border-radius:2px}
+.doc-tag{
+  display:inline-block;font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:#6A625A;border:1px solid rgba(0,0,0,.18);border-radius:999px;padding:4px 9px;margin-top:8px;
+}
+.doc-paper--dark .doc-tag{color:var(--t3);border-color:rgba(var(--line),.14)}
+.doc-rows{display:grid}
+.doc-row{
+  display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.25fr) auto;gap:10px;align-items:baseline;
+  padding:7px 0;border-bottom:1px solid rgba(0,0,0,.08);font-size:.8rem;
+}
+.doc-paper--dark .doc-row{border-bottom-color:rgba(var(--line),.07)}
+.doc-row:last-child{border-bottom:0}
+.doc-row b{font-weight:700}
+.doc-paper--dark .doc-row b{color:var(--t1)}
+.doc-row em{font-style:normal;color:#5A524A;font-size:.68rem;letter-spacing:.04em;white-space:nowrap}
+.doc-row--3{grid-template-columns:auto minmax(0,1fr)}
+.doc-row em.ok{color:var(--ok);font-weight:700}
+.doc-row em.warn{color:var(--t1);font-weight:700}
+.doc-row em.hold{color:#F0A28C;font-weight:700}
+.ask-chip{
+  position:relative;z-index:1;margin:-16px 6px 0 auto;width:max-content;max-width:100%;
+  background:var(--card);border:1px solid rgba(216,184,114,.35);border-radius:12px;padding:10px 14px;
+  box-shadow:var(--lift-2);font-size:.8rem;color:var(--t3);
+}
+.ask-chip b{display:block;color:var(--gold);font-size:.86rem}
+.ask-doc figcaption{margin:12px 4px 0;font-size:.78rem;color:var(--t4);line-height:1.5}
+/* CAM, in one breath */
+.cam-def{margin:clamp(34px,5vw,52px) auto 0;max-width:800px;text-align:center}
+.cam-def p{margin:14px 0 0;font-size:clamp(1.05rem,1.7vw,1.24rem);color:var(--t2);line-height:1.6}
+.cam-def p+p{margin-top:10px;color:var(--t1);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:26px}
+.tile{
+  display:flex;gap:14px;align-items:flex-start;background:var(--card);border:1px solid rgba(var(--line),.07);
+  border-radius:14px;padding:18px;box-shadow:var(--lift-1), var(--edge);
+}
+.tile .card-ic{margin:0;flex:none;color:var(--t2);background:rgba(var(--line),.05);border-color:rgba(var(--line),.09)}
+.tile b{display:block;color:var(--t1);font-size:.94rem;margin-bottom:3px}
+.tile p{margin:0;font-size:.84rem;color:var(--t4);line-height:1.5}
+.ask-more{margin:22px auto 0;max-width:760px;text-align:center;font-size:.9rem;color:var(--t3);line-height:1.6}
+
+/* ── The walkthrough player ──────────────────────────────────────────────── */
+/* Wears the same frame as the screenshots so the page reads as one surface,
+   and sits in .shot-wrap like they do — the depth suite requires every .shot
+   to be framed and pooled in its own light. Hidden until the walkthrough card
+   asks for it, so the recording is on the page once. The file itself is not
+   in this repository: it is 58 MB, and the next largest asset here is 2 MB,
+   so it is served from Vercel Blob storage. */
+.demo-film{margin:22px 0 0}
+.demo-film[hidden]{display:none}
+.demo-film video{
+  display:block;width:100%;background:#000;
+  /* THE BOX IS FIXED BEFORE ANYTHING LOADS. With height:auto the element takes
+     the POSTER's proportions until the video's metadata arrives and then jumps
+     to the video's — a visible reflow partway down the page. Declaring the ratio
+     holds one box from first paint: the poster fills it, the video replaces the
+     poster inside it, nothing moves. `contain` rather than `cover` because the
+     recording's exact proportions are the studio's to decide; if it is not 16:9
+     it letterboxes on black instead of silently cropping the frame. */
+  aspect-ratio:16/9;height:auto;object-fit:contain;
+  /* The frame already rounds and clips; a video with its own radius double-draws. */
+  border:0;border-radius:0;
+}
+.demo-film figcaption{
+  margin-top:14px;font-size:.92rem;color:var(--t3);line-height:1.6;text-align:center;
+}
+
+/* ── Judges & resources ───────────────────────────────────────────────────── */
+/* Three featured actions, in the order to take them, then the proof links in
+   the existing grid. The featured cards are the same card with a thumbnail,
+   a number and one line more — not a new component. */
+.jud-lead{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+/* The three things to experience first sit on the same champagne as the
+   Cascade Commons card in the hero, so they lift off the dark panel; the
+   proof links beneath stay on the dark card and read as the technical layer. */
+.jud-hero{
+  position:relative;display:block;color:#2B2419;
+  background:linear-gradient(180deg,#F8F0DE 0%,#EFE2C7 100%);border:1px solid rgba(216,184,114,.62);
+  border-radius:var(--r);padding:16px 18px 20px;
+  box-shadow:0 30px 60px -26px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.55), 0 14px 40px -20px rgba(216,184,114,.5);
+  transition:border-color .2s ease,transform .2s ease,background .2s ease;
+}
+.jud-hero:hover{border-color:rgba(216,184,114,.95);background:linear-gradient(180deg,#FBF5E8 0%,#F3E7D0 100%);transform:translateY(-3px)}
+.jud-n{
+  position:absolute;top:26px;left:28px;z-index:2;width:30px;height:30px;border-radius:9px;
+  display:grid;place-items:center;background:var(--gold-grad);color:#0B0804;font-weight:800;font-size:.86rem;
+  box-shadow:0 6px 16px -6px rgba(0,0,0,.7);
+}
+.jud-shot{
+  position:relative;aspect-ratio:16/9;border-radius:10px;overflow:hidden;margin-bottom:14px;
+  border:1px solid rgba(60,44,20,.28);background:var(--bg);
+  box-shadow:0 10px 24px -14px rgba(0,0,0,.6);
+}
+.jud-shot img{width:100%;height:100%;object-fit:cover;object-position:top;opacity:.78;transition:opacity .2s ease}
+.jud-hero:hover .jud-shot img{opacity:1}
+.jud-shot i{
+  position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;
+  display:grid;place-items:center;background:rgba(5,7,9,.72);border:1px solid rgba(255,255,255,.22);
+  color:#fff;font-style:normal;font-size:1.1rem;backdrop-filter:blur(4px);
+}
+.jud-hero .jud-t{font-size:1.12rem;color:#19140C}
+.jud-hero .jud-t span{color:#A8842F}   /* the gold, deepened to read on champagne */
+.jud-k{color:#453A24;font-weight:600;font-size:.92rem;margin-top:6px}
+.jud-hero .jud-d{margin-top:6px;color:#5A4F3B}
+.jud-demo{
+  margin:22px 0 0;padding:14px 16px;border-radius:12px;background:var(--bg-2);
+  border:1px solid rgba(var(--line),.08);font-size:.84rem;color:var(--t3);line-height:1.55;
+}
+.jud-demo b{color:var(--t1);font-weight:600}
+.jud-sub{margin:clamp(26px,4vw,36px) 0 0;font-size:.72rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--t4)}
+.jud{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:14px}
+.jud a{
+  display:block;background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:14px;padding:18px 20px;
+  transition:border-color .2s ease,transform .2s ease,background .2s ease;
+}
+.jud a:hover{border-color:rgba(216,184,114,.4);background:var(--card-hi);transform:translateY(-2px)}
+.jud-t{color:var(--t1);font-weight:700;font-size:.94rem;display:flex;justify-content:space-between;gap:10px}
+.jud-t span{color:var(--gold);font-weight:600}
+.jud-d{font-size:.82rem;color:var(--t4);margin-top:4px;line-height:1.5}
+.jud-note{font-size:.82rem;color:var(--t4);margin:18px 0 0;line-height:1.55}
+
 /* Footer */
 footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(--bg-2)}
 .foot{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
@@ -351,10 +617,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 .foot-links a{font-size:.84rem;color:var(--t3)}
 .foot-links a:hover{color:var(--gold)}
 
-/* ── Pilot request modal ────────────────────────────────────────────────────
-   All three Request a Pilot buttons used to be mailto: links. A mailto: hands
-   off to whichever application owns the mail protocol — which is why clicking
-   one opened an unrelated browser. Nothing here leaves the page. */
+/* ── Pilot request modal ──────────────────────────────────────────────────── */
 .pm{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
 .pm.on{display:flex}
 .pm-bd{position:absolute;inset:0;background:rgba(3,5,8,.78);backdrop-filter:blur(6px);animation:pmFade .25s ease both}
@@ -411,32 +674,56 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width:1100px){
+  .flow-in{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .ask-pane{grid-template-columns:minmax(0,1fr)}
+  .ask-doc{padding-top:8px}
+}
 @media (max-width:960px){
   .hero-in,.split{grid-template-columns:minmax(0,1fr);gap:42px}
+  /* Stacked, the convergence layer follows the copy instead of overlapping the
+     photograph, so nothing lands on top of the headline. */
+  .cw{margin-top:-34px}
+  .cine-head h1{max-width:none}
+  .cw-chips{flex-wrap:wrap}
+  .cw-chips span{flex:0 0 calc(33.33% - 7px)}
+  .cw-ws{grid-template-columns:minmax(0,1fr);gap:18px}
   .split--rev .split-copy{order:0}
-  .steps{grid-template-columns:minmax(0,1fr)}
   .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .trust-in{grid-template-columns:minmax(0,1fr);gap:22px;padding:30px 0}
+  .two,.onchain,.ask,.tiles,.jud-lead{grid-template-columns:minmax(0,1fr)}
+  .ask-qs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .jud{grid-template-columns:repeat(2,minmax(0,1fr))}
   .nav-hide{display:none}
+}
+@media (max-width:760px){
+  .flow-in{grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* Narrow screens crop the photograph tighter, so the lit facade sits under
+     the badge and headline; carry more scrim to keep both legible. */
+  .cine-scrim{background:
+    linear-gradient(90deg,rgba(6,9,14,.9) 0%,rgba(6,9,14,.7) 48%,rgba(6,9,14,.34) 100%),
+    linear-gradient(180deg,rgba(6,9,14,.5) 0%,rgba(6,9,14,.2) 34%,rgba(8,12,18,.36) 76%,#101826 100%);}
 }
 @media (max-width:560px){
   body{font-size:16px}
   .wrap{padding:0 16px}
-  .cards,.proof{grid-template-columns:minmax(0,1fr)}
+  .cards,.proof,.jud,.ask-qs{grid-template-columns:minmax(0,1fr)}
+  .cw-chips span{flex:0 0 calc(50% - 5px);font-size:.74rem}
+  .cw-chips i{width:22px;height:22px}
+  .doc-paper{transform:none;padding:18px 16px 14px}
+  .doc-row{grid-template-columns:minmax(0,1fr);gap:2px}
+  .doc-row--3{grid-template-columns:auto minmax(0,1fr);gap:10px}
+  .ask-chip{margin:12px 0 0}
+  .flow-in{grid-template-columns:minmax(0,1fr);gap:18px;padding:30px 0}
   .cta-row .btn{width:100%}
   .band{gap:22px;padding:30px 22px}
   .band .btn{width:100%}
-  /* The panel inset costs 44px of a 390px screen. The screenshots take it back
-     — they are the reason anyone is on this page. */
   .panel{padding-left:16px;padding-right:16px;border-radius:18px}
   .panel .shot-wrap{margin-left:-16px;margin-right:-16px;padding-left:0;padding-right:0}
   .panel .shot{border-radius:12px}
-  /* Every link is a tap target on a phone, including the ones that are only
-     text on the desktop. Measured: six of twelve were under 44px tall. */
-  /* :not(.nav-hide) matters — this rule sits after .nav-hide{display:none} and
-     setting display here un-hid the whole desktop nav, which then overflowed
-     the phone by 192px. */
-  .nav-link:not(.nav-hide),.foot-links a{min-height:44px;display:inline-flex;align-items:center}
+  .shot-tag{display:none}
+  .kv{grid-template-columns:minmax(0,1fr);gap:4px 0}
+  .kv dd{margin-bottom:8px}
+  .nav-link:not(.nav-hide),.foot-links a,.see,.hero-note a{min-height:44px;display:inline-flex;align-items:center}
   .nav .btn--sm{min-height:44px;padding:11px 16px}
   .brand{min-height:44px}
   .foot-links{gap:6px 22px}
@@ -451,190 +738,473 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
   <div class="wrap nav-in">
     <a class="brand" href="./"><span class="brand-mk">M</span>MainStreet</a>
     <div class="nav-sp"></div>
-    <a class="nav-link nav-hide" href="#how">How it works</a>
-    <a class="nav-link nav-hide" href="#evidence">Evidence</a>
-    <a class="nav-link nav-hide" href="#spaces">Spaces</a>
-    <a class="nav-link nav-hide" href="#platform">Platform</a>
-    <a class="nav-link" href="index.html">Log in</a>
-    <a class="btn btn--primary btn--sm" href="#pilot" data-pilot>Request a Pilot</a>
+    <a class="nav-link nav-hide" href="#ask">How it works</a>
+    <a class="nav-link nav-hide" href="#memory">Memory</a>
+    <a class="nav-link nav-hide" href="#reconcile">CAM</a>
+    <a class="nav-link nav-hide" href="#xrpl">XRPL</a>
+    <a class="nav-link nav-link--gold nav-hide" href="#judges">Judges</a>
+    <a class="nav-link" href="/app">Log in</a>
+    <a class="nav-link nav-hide" href="#pilot" data-pilot>Request a Pilot</a>
+    <a class="btn btn--primary btn--sm" href="https://www.mainstreet-review.com/demo" data-demo>Explore the live demo</a>
   </div>
 </nav>
 
 <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
 <header class="hero">
-  <div class="wrap hero-in">
-    <div class="rv">
-      <div class="badge"><i></i>The AI Operating System for Commercial Real Estate</div>
-      <h1>The <span class="accent">verified memory</span> for every commercial property.</h1>
-      <p class="lede">
-        MainStreet reads every lease, reconciles every CAM charge, and remembers
-        everything that happens to a property — with the clause, the page, and the
-        proof behind every number. Nothing lives in email threads anymore.
-      </p>
-      <div class="cta-row">
-        <a class="btn btn--primary" href="#pilot" data-pilot>
-          <span>Request a Pilot<span class="btn-sub">Your property, your leases, real results</span></span>
-        </a>
-        <a class="btn btn--ghost" href="index.html?demo=1">
-          <span>▶ Watch MainStreet in Action<span class="btn-sub">A 40-second product film</span></span>
-        </a>
-      </div>
-      <div class="hero-note"><b>No slides.</b> The film runs the real product — no mockups, no reenactments.</div>
-      <div class="scroll-cue" aria-hidden="true"><i></i>See how it works</div>
-    </div>
-
-    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--float">
-      <div class="shot-bar">
-        <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
-        <span class="shot-cap">MainStreet — AI Command Center</span>
-      </div>
-      <img src="assets/landing/ui-command-center.png" alt="The MainStreet AI Command Center: value identified, today&#39;s priorities, and the next step for each." loading="eager" width="1440" height="1840">
+  <!-- 1 · THE PROPERTY, edge to edge. A representative photograph, not a
+       photograph of Cascade Commons — that property is fictional, and the
+       caption under the card says so rather than letting the building imply
+       otherwise. WebP with a JPEG fallback; the 2.2 MB source PNG is not
+       shipped. -->
+  <div class="cine">
+    <picture>
+      <source srcset="assets/landing/cascade-hero.webp" type="image/webp">
+      <img class="cine-img" src="assets/landing/cascade-hero.jpg" alt=""
+           width="1168" height="784" fetchpriority="high" decoding="async">
+    </picture>
+    <div class="cine-scrim"></div>
+    <div class="wrap cine-head">
+      <div class="badge rv"><i></i>Commercial real estate, simplified</div>
+      <h1 class="rv">AI-powered <span class="accent">property management</span>, made simpler.</h1>
+      <p class="cine-sub rv">Everything about your property, connected in one place.</p>
     </div>
   </div>
+
+  <div class="wrap hero-in">
+
+    <!-- 2 · ITS INFORMATION  3 · MAINSTREET  4 · THE ORGANIZED PROPERTY.
+         Not a screenshot: no single product screen shows a property's records
+         converging into one organized workspace, so this composes that moment.
+         Every figure is one already verified elsewhere on this page — see
+         section F of test-site-claims.js: 26,000 sf, 5 tenants and 26 invoices
+         for Cascade Commons, the 4 caps the audit applies, the 3-of-5 billable
+         verdict and its 2 open disputes. Nothing here is invented. -->
+    <div class="cw rv" style="transition-delay:.1s" role="img" aria-label="Cascade Commons' leases, tenants, invoices, documents, expenses and important dates converging into MainStreet and becoming one organized property workspace: 26,000 square feet, 5 tenants, 26 invoices, 3 of 5 tenants billable, 4 CAM caps applied, 2 open disputes.">
+      <div class="cw-chips">
+        <span><i>LE</i>Leases</span>
+        <span><i>TE</i>Tenants</span>
+        <span><i>IN</i>Invoices</span>
+        <span><i>DO</i>Documents</span>
+        <span><i>EX</i>Expenses</span>
+        <span><i>ID</i>Important Dates</span>
+      </div>
+      <div class="cw-flow">
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <defs><linearGradient id="cwg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(255,255,255,.14)"/>
+            <stop offset="1" stop-color="rgba(216,184,114,.75)"/>
+          </linearGradient></defs>
+          <path d="M8.33 0 C8.33 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M25.00 0 C25.00 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M41.67 0 C41.67 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M58.33 0 C58.33 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M75.00 0 C75.00 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M91.67 0 C91.67 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <span class="cw-mark">M</span>
+      </div>
+      <div class="cw-ws">
+        <div class="cw-id">
+          <b>Cascade Commons</b>
+          <div class="cw-stats"><span>26,000 SF</span><span>5 Tenants</span><span>26 Invoices</span></div>
+        </div>
+        <div class="cw-rows">
+          <div><i>✓</i>3 of 5 tenants billable</div>
+          <div><i>✓</i>4 CAM caps applied</div>
+          <div><i class="hold">!</i>2 open disputes</div>
+        </div>
+      </div>
+      <p class="cw-cap">Representative property photograph. Cascade Commons is a fictional property; every figure shown is its demonstration data.</p>
     </div>
+
+    <div class="cta-row rv">
+      <a class="btn btn--ghost" href="index.html?demo=1">
+        <span>▶ See how it works<span class="btn-sub">A 50-second product film</span></span>
+      </a>
+      <a class="btn btn--primary" href="https://www.mainstreet-review.com/demo" data-demo>
+        <span>Explore the live demo →<span class="btn-sub">Demonstration property data · no setup</span></span>
+      </a>
+    </div>
+    <div class="scroll-cue" aria-hidden="true"><i></i>Scroll to explore</div>
+  </div>
 </header>
 
-<!-- ── Trust: what we can actually demonstrate ──────────────────────────── -->
-<div class="trust">
-  <div class="wrap trust-in">
-    <div class="trust-item rv">
-      <div class="trust-ic">◆</div>
-      <div>
-        <div class="trust-t">Every figure has a receipt</div>
-        <div class="trust-d">Each number links to the lease clause or invoice it came from — page and quote included.</div>
-      </div>
-    </div>
-    <div class="trust-item rv" style="transition-delay:.08s">
-      <div class="trust-ic">⛊</div>
-      <div>
-        <div class="trust-t">Audit-ready by default</div>
-        <div class="trust-d">Every upload, edit, reconciliation and resolution is recorded in a tamper-evident history.</div>
-      </div>
-    </div>
-    <div class="trust-item rv" style="transition-delay:.16s">
-      <div class="trust-ic">↗</div>
-      <div>
-        <div class="trust-t">Settlement you can verify</div>
-        <div class="trust-d">Balances settle in RLUSD on the XRP Ledger, publicly verifiable on-chain.</div>
-      </div>
-    </div>
+<!-- ── What MainStreet holds ─────────────────────────────────────────────── -->
+<!-- Carries the `trust` class the depth suite measures: this strip took over
+     the trust strip's slot below the hero, and like it, it ends without a rule.
+     Seven items, one line each: the parts of a property MainStreet keeps, in
+     the order a manager meets them. CAM is one of seven on purpose. -->
+<div class="flow trust" id="how">
+  <div class="wrap flow-in">
+    <div class="flow-item rv"><div class="flow-n">01</div><div class="flow-t">Leases</div><div class="flow-d">Read and understood, with the clause behind each term.</div></div>
+    <div class="flow-item rv" style="transition-delay:.04s"><div class="flow-n">02</div><div class="flow-t">Documents</div><div class="flow-d">Filed where a manager would look. Scans included.</div></div>
+    <div class="flow-item rv" style="transition-delay:.08s"><div class="flow-n">03</div><div class="flow-t">Tenants &amp; Spaces</div><div class="flow-d">Who occupies what, and what each lease requires.</div></div>
+    <div class="flow-item rv" style="transition-delay:.12s"><div class="flow-n">04</div><div class="flow-t">Invoices</div><div class="flow-d">Every cost, with its source document.</div></div>
+    <div class="flow-item rv" style="transition-delay:.16s"><div class="flow-n">05</div><div class="flow-t">CAM</div><div class="flow-d">Reconciled, capped and checked against the lease.</div></div>
+    <div class="flow-item rv" style="transition-delay:.2s"><div class="flow-n">06</div><div class="flow-t">History</div><div class="flow-d">Dates, disputes and decisions, never rewritten.</div></div>
+    <div class="flow-item rv" style="transition-delay:.24s"><div class="flow-n">07</div><div class="flow-t">Ask</div><div class="flow-d">Answers from the property&rsquo;s own records, with proof.</div></div>
   </div>
 </div>
 
+<!-- ── See it in action ─────────────────────────────────────────────────── -->
+<!-- The page used to explain MainStreet in paragraphs; a reader who did not
+     already know CRE could finish them and still not know what it does. This
+     shows it instead: one question a property manager actually asks, worked
+     through the records of one demonstration property, to an answer with its
+     evidence. Every figure here is what the product computes from the seeded
+     Cascade Commons data — the lease clause is quoted as written in
+     assets/demo/lease-whole-health-market.pdf. Nothing is illustrative. -->
+<section id="ask" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm">
+    <div class="sec-head rv" style="max-width:820px">
+      <div class="eyebrow">See it in action</div>
+      <h2 style="margin-top:12px">A property manager has a question.<br>MainStreet finds the answer.</h2>
+      <p class="lede">Pick a question. Everything below comes from one demonstration property, Cascade Commons, and its own records.</p>
+    </div>
 
-<!-- ── Spaces: the memory of a space ────────────────────────────────────── -->
-<section id="spaces" class="is-panelled">
+    <div class="ask rv" data-ask>
+      <div class="ask-qs" role="tablist" aria-label="Questions a property manager asks" aria-orientation="vertical">
+        <button class="ask-q is-on" type="button" role="tab" id="askTabNumber" aria-selected="true" aria-controls="askNumber" data-q="number"><i>$</i>Where did that number come from?</button>
+        <button class="ask-q" type="button" role="tab" id="askTabLease" aria-selected="false" aria-controls="askLease" data-q="lease" tabindex="-1"><i>▤</i>What does this lease actually require?</button>
+        <button class="ask-q" type="button" role="tab" id="askTabAttention" aria-selected="false" aria-controls="askAttention" data-q="attention" tabindex="-1"><i>!</i>What needs my attention?</button>
+        <button class="ask-q" type="button" role="tab" id="askTabRecover" aria-selected="false" aria-controls="askRecover" data-q="recover" tabindex="-1"><i>◆</i>Are we recovering everything we should?</button>
+      </div>
+
+      <div class="ask-panes">
+        <!-- 1 · Where did that number come from? (default) -->
+        <div class="ask-pane is-on" id="askNumber" role="tabpanel" aria-labelledby="askTabNumber" data-q="number">
+          <div class="ask-think">
+            <p class="ask-bubble">Why can&rsquo;t we bill Whole Health Market more than $34,650?</p>
+            <ol class="ask-trail">
+              <li style="--i:0"><b>Reads the lease</b><span>A 5% cap on the tenant&rsquo;s share. Last year: $33,000.</span></li>
+              <li style="--i:1"><b>Checks the expenses</b><span>$188,300 across 26 invoices, each with its source document.</span></li>
+              <li style="--i:2"><b>Applies the tenant&rsquo;s rules</b><span>A 35.38% share comes to $66,629.23 before the cap.</span></li>
+              <li style="--i:3"><b>Finds the answer</b><span>$33,000 plus 5% is $34,650. The lease keeps the rest with the landlord.</span></li>
+            </ol>
+            <div class="ask-answer"><i>✓</i><div><b>$34,650</b>Capped by lease §6.4. The $31,979.23 above it is not recoverable.</div></div>
+          </div>
+          <figure class="ask-doc">
+            <div class="doc-paper">
+              <div class="doc-head">Retail Lease Agreement<span>Cascade Commons · Whole Health Market</span></div>
+              <p class="doc-line"><b>6.4 Cap on Common Area Maintenance Costs.</b> &hellip; Tenant&rsquo;s Proportionate Share of Common Area Maintenance Costs payable in respect of any calendar year <mark>shall not increase by more than five percent (5%)</mark> over the amount &hellip; payable in respect of the immediately preceding calendar year. Any Common Area Maintenance Costs in excess of the foregoing cap <mark>shall be borne solely by Landlord</mark> &hellip;</p>
+              <p class="doc-line"><b>6.5 Base Amount.</b> &hellip; Tenant&rsquo;s Proportionate Share &hellip; for the immediately preceding calendar year was <mark>Thirty-Three Thousand and 00/100 Dollars ($33,000.00)</mark>.</p>
+              <div class="doc-tag">Page 2 of 3 · §6.4 · §6.5</div>
+            </div>
+            <div class="ask-chip"><b>5% cap applied</b>Maximum recoverable $34,650</div>
+            <figcaption>A demonstration lease, quoted as written. The clause is the evidence.</figcaption>
+          </figure>
+        </div>
+
+        <!-- 2 · What does this lease actually require? -->
+        <div class="ask-pane" id="askLease" role="tabpanel" aria-labelledby="askTabLease" data-q="lease" hidden>
+          <div class="ask-think">
+            <p class="ask-bubble">What does the Whole Health Market lease actually require?</p>
+            <ol class="ask-trail">
+              <li style="--i:0"><b>Reads the document</b><span>Three pages, read in full — a scanned copy would do.</span></li>
+              <li style="--i:1"><b>Finds each term</b><span>Premises, share, term, lease type, the CAM cap, the exclusions.</span></li>
+              <li style="--i:2"><b>Keeps the source</b><span>Every term carries the section it came from and the words it came from.</span></li>
+              <li style="--i:3"><b>Says how sure it is</b><span>A confidence score on what was read. A gap is reported, never filled.</span></li>
+            </ol>
+            <div class="ask-answer"><i>✓</i><div><b>Seven terms</b>Each with the clause it came from. Nothing guessed.</div></div>
+          </div>
+          <figure class="ask-doc">
+            <div class="doc-paper">
+              <div class="doc-head">Lease terms, as read<span>Cascade Commons · Whole Health Market</span></div>
+              <div class="doc-rows">
+                <div class="doc-row"><b>Premises</b><span>Suite 100 · 9,200 rentable sf</span><em>§1.1 · 97%</em></div>
+                <div class="doc-row"><b>Building</b><span>26,000 rentable sf</span><em>§1.2</em></div>
+                <div class="doc-row"><b>Share</b><span>35.38%</span><em>§1.3</em></div>
+                <div class="doc-row"><b>Term</b><span>Jan 1, 2021 – Dec 31, 2028</span><em>§1.4–1.5</em></div>
+                <div class="doc-row"><b>Lease type</b><span>Triple net (NNN)</span><em>§1.6 · 96%</em></div>
+                <div class="doc-row"><b>CAM cap</b><span>5% over the prior year, from $33,000</span><em>§6.4–6.5 · 95%</em></div>
+                <div class="doc-row"><b>Exclusions</b><span>None</span><em>§6.6</em></div>
+              </div>
+              <div class="doc-tag">3 pages · 7 terms · 3 scored</div>
+            </div>
+            <figcaption>The percentages are the reader&rsquo;s confidence in what it read. Where none is shown, the term was confirmed against the page.</figcaption>
+          </figure>
+        </div>
+
+        <!-- 3 · What needs my attention? -->
+        <div class="ask-pane" id="askAttention" role="tabpanel" aria-labelledby="askTabAttention" data-q="attention" hidden>
+          <div class="ask-think">
+            <p class="ask-bubble">What should I look at today at Cascade Commons?</p>
+            <ol class="ask-trail">
+              <li style="--i:0"><b>Reads the disputes</b><span>Two open. Each names the invoice it questions.</span></li>
+              <li style="--i:1"><b>Checks the reconciliation</b><span>One statement held, one waiting on a confirmation.</span></li>
+              <li style="--i:2"><b>Checks the review queue</b><span>One lease flagged for a second look.</span></li>
+              <li style="--i:3"><b>Puts it in one list</b><span>Each item opens the record that raised it.</span></li>
+            </ol>
+            <div class="ask-answer"><i>✓</i><div><b>Five items today</b>Nothing typed in twice, nothing remembered by hand.</div></div>
+          </div>
+          <figure class="ask-doc">
+            <div class="doc-paper doc-paper--dark">
+              <div class="doc-head">Needs attention<span>Cascade Commons · today</span></div>
+              <div class="doc-rows">
+                <div class="doc-row doc-row--3"><em class="hold">Dispute</em><span><b>Whole Health Market</b> asks for itemized receipts on $17,100 of work orders</span></div>
+                <div class="doc-row doc-row--3"><em class="hold">Dispute</em><span><b>Summit Coffee &amp; Provisions</b> questions an emergency HVAC repair — common area?</span></div>
+                <div class="doc-row doc-row--3"><em class="hold">Held</em><span><b>ProActive Physical Therapy</b> — Modified Gross lease; confirm what CAM covers before billing</span></div>
+                <div class="doc-row doc-row--3"><em class="warn">Confirm</em><span><b>Summit Coffee &amp; Provisions</b> — parking is excluded by lease and not yet applied</span></div>
+                <div class="doc-row doc-row--3"><em class="warn">Review</em><span>One lease flagged for review</span></div>
+              </div>
+              <div class="doc-tag">2 disputes · 2 statements waiting · 1 review</div>
+            </div>
+            <figcaption>The list is built from the records, not from a to-do app. Resolve the record and the item goes.</figcaption>
+          </figure>
+        </div>
+
+        <!-- 4 · Are we recovering everything we should? -->
+        <div class="ask-pane" id="askRecover" role="tabpanel" aria-labelledby="askTabRecover" data-q="recover" hidden>
+          <div class="ask-think">
+            <p class="ask-bubble">Is the 2025 CAM reconciliation for Cascade Commons ready to bill?</p>
+            <ol class="ask-trail">
+              <li style="--i:0"><b>Reads five leases</b><span>Four caps, two exclusions, one Modified Gross lease.</span></li>
+              <li style="--i:1"><b>Checks 26 invoices</b><span>$188,300, every invoice with its source document.</span></li>
+              <li style="--i:2"><b>Applies each tenant&rsquo;s rules</b><span>Share, cap and exclusions, tenant by tenant.</span></li>
+              <li style="--i:3"><b>Gives a verdict per tenant</b><span>Three ready. Two held, with the reason named.</span></li>
+            </ol>
+            <div class="ask-answer"><i>✓</i><div><b>3 of 5 ready to bill</b>Nothing goes out that the records can&rsquo;t support.</div></div>
+          </div>
+          <figure class="ask-doc">
+            <div class="doc-paper doc-paper--dark">
+              <div class="doc-head">Tenant results<span>Cascade Commons · 2025 CAM</span></div>
+              <div class="doc-rows">
+                <div class="doc-row"><b>Whole Health Market</b><span>$34,650.00 · cap applied</span><em class="ok">Ready</em></div>
+                <div class="doc-row"><b>FitZone Athletics</b><span>Share applied</span><em class="ok">Ready</em></div>
+                <div class="doc-row"><b>Harbor Nail &amp; Beauty Studio</b><span>Share applied, no cap on file</span><em class="ok">Ready</em></div>
+                <div class="doc-row"><b>Summit Coffee &amp; Provisions</b><span>Parking exclusion to confirm</span><em class="warn">Confirm</em></div>
+                <div class="doc-row"><b>ProActive Physical Therapy</b><span>Modified Gross lease to confirm</span><em class="hold">Held</em></div>
+              </div>
+              <div class="doc-tag">3 of 5 billable · $188,300 in expenses</div>
+            </div>
+            <figcaption>Held is a verdict, not a failure. A statement the lease can&rsquo;t support does not go out.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+
+    <!-- CAM, in one breath. Then what MainStreet does about it. -->
+    <div class="cam-def rv">
+      <div class="eyebrow">What is CAM reconciliation?</div>
+      <p>CAM reconciliation is the process of figuring out how much of a property&rsquo;s shared operating costs each tenant actually owes, according to their lease.</p>
+      <p>MainStreet does that work for you, and shows you why the answer is correct.</p>
+    </div>
+    <div class="tiles rv">
+      <div class="tile"><div class="card-ic">▦</div><div><b>It&rsquo;s shared expenses</b><p>Tenants pay a share of a property&rsquo;s common area costs: parking, lighting, landscaping, snow, security.</p></div></div>
+      <div class="tile"><div class="card-ic">▤</div><div><b>Each lease has rules</b><p>Leases define how much each tenant owes: their share, any caps, and what is excluded.</p></div></div>
+      <div class="tile"><div class="card-ic">✓</div><div><b>MainStreet does the work</b><p>Reads the leases and the invoices, applies the rules, and shows what can be recovered, with the evidence behind it.</p></div></div>
+    </div>
+    <p class="ask-more rv">CAM is one question MainStreet can answer. The same record answers questions about leases, documents, tenants, spaces, invoices, disputes, important dates, warranties and history.</p>
+  </div></div>
+</section>
+
+<!-- ── Judges ───────────────────────────────────────────────────────────── -->
+<!-- Directly after the explanation, so a reviewer who now understands the idea
+     is offered the three ways to see it in the order they should take them.
+     The proof links sit beneath, unchanged. -->
+<section id="judges" class="is-panelled">
+  <div class="wrap"><div class="panel">
+    <div class="sec-head rv" style="max-width:800px">
+      <div class="eyebrow">For judges &amp; reviewers</div>
+      <h2 style="margin-top:12px">Understand it. See it. Try it. Verify it.</h2>
+      <p class="lede">Built for the XRPL Commons Make Waves challenge. Start with the film, watch the walkthrough, then open the demo. The ledger and the code are here for anyone who wants to check.</p>
+    </div>
+
+    <div class="jud-lead">
+      <a class="jud-hero rv" href="index.html?demo=1">
+        <div class="jud-n">1</div>
+        <div class="jud-shot"><img src="assets/landing/pilot/property-cabinet.png" alt="" loading="lazy" width="1360" height="1364"><i>▶</i></div>
+        <div class="jud-t">The film <span>▶</span></div>
+        <div class="jud-k">Understand MainStreet.</div>
+        <div class="jud-d">Fifty seconds, narrated, in the real product. Plays right here.</div>
+      </a>
+      <!-- The recorded walkthrough. The href is the real file so the link is
+           honest and copyable, but the click is intercepted below and the
+           player under this row is revealed and played in place: a bare .mp4
+           link is at the mercy of the host's Content-Disposition, and an
+           `attachment` answer downloads 58 MB instead of playing it. -->
+      <a class="jud-hero rv" id="judWalkthrough" href="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4" target="_blank" rel="noopener" style="transition-delay:.06s">
+        <div class="jud-n">2</div>
+        <div class="jud-shot"><img src="assets/landing/pilot/important-dates.png" alt="" loading="lazy" width="1360" height="761"><i>▶</i></div>
+        <div class="jud-t">Product walkthrough <span>▶</span></div>
+        <div class="jud-k">See it working.</div>
+        <div class="jud-d">A short walkthrough of MainStreet in Cascade Commons — from property history to CAM, tenant decisions, and verified settlement.</div>
+      </a>
+      <a class="jud-hero rv" href="https://www.mainstreet-review.com/demo" data-demo style="transition-delay:.12s">
+        <div class="jud-n">3</div>
+        <div class="jud-shot"><img src="assets/landing/ui-command-center.png" alt="" loading="lazy" width="1312" height="1240"><i>↗</i></div>
+        <div class="jud-t">Live demo <span>↗</span></div>
+        <div class="jud-k">Try it yourself.</div>
+        <div class="jud-d">Opens inside Cascade Commons. No account, no sign-in, nothing to set up.</div>
+      </a>
+    </div>
+
+    <!-- THE RECORDED WALKTHROUGH, hidden until the card above asks for it.
+         Deliberately NOT autoplay: this is a narrated walkthrough, not a silent
+         loop, and a page that starts talking at a judge is a page they close.
+         `controls` and a poster, so it begins when they decide it begins.
+         preload="metadata" fetches only the header — the file is 58 MB and must
+         not compete with the rest of the page for bandwidth before it is asked
+         for. The class is deliberately not `hero-film`: that name belongs to the
+         hero autoplay contract in test-hero-video.js, which this is not. -->
+    <figure class="shot-wrap demo-film" id="walkFigure" hidden>
+      <div class="shot">
+        <div class="shot-bar">
+          <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
+          <span class="shot-cap">MainStreet — product walkthrough</span>
+          <span class="shot-tag">recorded in the pilot · demonstration data</span>
+        </div>
+        <video controls playsinline webkit-playsinline preload="metadata"
+               poster="assets/landing/pilot/important-dates.png"
+               width="1312" height="738">
+          <source src="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4" type="video/mp4">
+          <p>Your browser cannot play this video.
+            <a href="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4">Open the walkthrough directly</a>.</p>
+        </video>
+      </div>
+      <figcaption>See MainStreet work a property from lease document to verified decision.</figcaption>
+    </figure>
+
+    <div class="jud-demo rv">
+      <b>The demo is a read-only copy of demonstration data</b>, served by MainStreet&rsquo;s pilot environment and kept separate from customer production. Two fictional properties: <b>Cascade Commons</b> (26,000 sf, 5 tenants, 26 invoices, the reconciliation above) and <b>Northgate Exchange</b> (24,000 sf, 5 leases, 16 invoices, one recorded vacancy). It runs entirely in your browser: no account, no database behind it, and nothing you do is saved — reload and it is back as it was. The settlement it shows is the real RLUSD transaction on XRPL mainnet; the demo cannot sign or move funds, and neither can the app.
+    </div>
+
+    <div class="jud-sub rv">Verify it</div>
+    <div class="jud">
+      <a class="rv" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener"><div class="jud-t">The XRPL transaction <span>↗</span></div><div class="jud-d">1 RLUSD, validated on mainnet, Source Tag 2606290001, a SHA-256 fingerprint of the settlement record in the memo.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl" target="_blank" rel="noopener"><div class="jud-t">Source code <span>↗</span></div><div class="jud-d">Public repository. <span class="mono">main</span> is the frozen submission build; <span class="mono">pilot</span> is the build behind the live demo.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/README.md" target="_blank" rel="noopener"><div class="jud-t">README <span>↗</span></div><div class="jud-d">What it does, why XRPL, the mainnet settlement, how to run it.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/pilot/docs/XRPL_ARCHITECTURE.md" target="_blank" rel="noopener"><div class="jud-t">XRPL settlement architecture <span>↗</span></div><div class="jud-d">Wallets, transaction anatomy, verification, security decisions — and the honest list of limits.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/pilot/docs/MAINSTREET_ARCHITECTURE.md" target="_blank" rel="noopener"><div class="jud-t">System architecture <span>↗</span></div><div class="jud-d">How the evidence-first AI, the deterministic engines and the ledger fit together.</div></a>
+      <a class="rv" href="assets/hackathon/pitch-deck.pdf" target="_blank" rel="noopener"><div class="jud-t">Pitch deck <span>PDF</span></div><div class="jud-d">The submitted deck.</div></a>
+      <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/scripts/verify-settlement.js" target="_blank" rel="noopener"><div class="jud-t">Verify script <span>↗</span></div><div class="jud-d">Checks the transaction on public nodes — validated Payment, sender, RLUSD amount and official issuer, memo present. Run it against the settlement wallet.</div></a>
+    </div>
+    <p class="jud-note">Generative AI is used in exactly one place: reading documents. Allocation, caps, answers and verdicts are deterministic computation over verified data — ask twice, get the same answer twice. What is deliberately not built yet is stated below, not hidden.</p>
+  </div></div>
+</section>
+
+<!-- ── Memory ───────────────────────────────────────────────────────────── -->
+<section id="memory" class="is-panelled">
   <div class="wrap"><div class="panel panel--warm split">
     <div class="split-copy rv">
-      <div class="eyebrow">Spaces</div>
-      <h2 style="margin:12px 0 16px">Every space<br>remembers.</h2>
+      <div class="eyebrow">Remember</div>
+      <h2 style="margin:12px 0 16px">The <span class="accent">verified memory</span> for every commercial property.</h2>
       <p class="lede">
-        Open any suite and its whole story is there — the lease and its terms, CAM
-        allocated and its status, open disputes, photos, documents, and a timeline
-        of everything that ever happened. One record per space, grounded in the
-        documents behind it.
+        Open a building and its organised record is there: taxes, insurance, financing,
+        agreements, building systems, invoices and history — filed where a manager
+        would look, each record linked to the documents behind it.
       </p>
       <div class="proof">
         <div class="proof-item">
-          <div class="proof-t">The lease, on file</div>
-          <div class="proof-d">Terms extracted from the document itself — type, area, term, CAM cap.</div>
+          <div class="proof-t">A filing cabinet, not a feed</div>
+          <div class="proof-d">Records land in the drawer they belong to, with the year and the vendor they came from.</div>
         </div>
         <div class="proof-item">
-          <div class="proof-t">CAM, in context</div>
-          <div class="proof-d">The space's allocation and status, one tap from the full reconciliation.</div>
+          <div class="proof-t">Important dates, derived</div>
+          <div class="proof-d">Renewals, expiries, inspections and maturities come from the records — never typed in twice.</div>
         </div>
         <div class="proof-item">
-          <div class="proof-t">Disputes, surfaced</div>
-          <div class="proof-d">Open issues appear where a manager actually looks — on the space.</div>
+          <div class="proof-t">Spaces as living records</div>
+          <div class="proof-d">Each suite carries its lease, its CAM share, its disputes and its own activity.</div>
         </div>
         <div class="proof-item">
-          <div class="proof-t">Act on it</div>
-          <div class="proof-d">Review the record, then take action — grounded in it, not from memory.</div>
+          <div class="proof-t">History that is never rewritten</div>
+          <div class="proof-d">Every act on a property is recorded with who did it. Entries are added, never edited away.</div>
         </div>
       </div>
+      <a class="see" href="https://www.mainstreet-review.com/demo" data-demo>See it in the live demo →</a>
     </div>
-    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--crop">
       <div class="shot-bar">
         <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
-        <span class="shot-cap">A Space — lease, CAM, disputes, documents, timeline</span>
+        <span class="shot-cap">Cascade Commons — Property</span>
+        <span class="shot-tag">live demo</span>
       </div>
-      <img src="assets/landing/ui-space-modal.png" alt="A MainStreet Space: lease terms on file, CAM allocated with status, an open dispute, photos and documents, ready to act on." loading="lazy" width="1440" height="1400">
+      <img src="assets/landing/pilot/property-cabinet.png" alt="The Property tab for the demonstration property Cascade Commons: what needs attention, then the filing cabinet — Real Estate Taxes, Insurance, Invoices, Mortgage &amp; Financing, Property Financials, Agreements, Building &amp; Systems, Important Dates and History." loading="lazy" width="1360" height="1364">
     </div></div>
+  </div></div>
+  <div class="wrap two">
+    <figure class="rv shot-wrap">
+      <div class="shot"><div class="shot-bar"><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-cap">Important Dates</span><span class="shot-tag">live demo</span></div>
+      <img src="assets/landing/pilot/important-dates.png" alt="Important Dates for Cascade Commons — twelve upcoming dates derived from the record: an insurance renewal, an inspection, lease ends, a loan maturity, a roof warranty expiry — each pointing at its source record." loading="lazy" width="1360" height="761"></div>
+      <figcaption><b>Dates come from records.</b> An insurance renewal, an inspection, a loan maturity, a roof warranty — each one points back at the record it was derived from.</figcaption>
+    </figure>
+    <figure class="rv shot-wrap" style="transition-delay:.08s">
+      <div class="shot"><div class="shot-bar"><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-cap">Spaces</span><span class="shot-tag">live demo</span></div>
+      <img src="assets/landing/pilot/spaces.png" alt="The Spaces list for Cascade Commons: five suites with tenant, lease type, square footage, lease end, status and record counts — and a note that 2,600 square feet is under no loaded lease and not recorded vacant." loading="lazy" width="1286" height="413"></div>
+      <figcaption><b>Every space accounted for.</b> Square footage under no lease is named, not assumed — a vacant space is never billed, and its share of CAM is the landlord&rsquo;s.</figcaption>
+    </figure>
   </div>
-</div>
-</section>
-
-<!-- ── How it works ─────────────────────────────────────────────────────── -->
-<section id="how" class="is-panelled">
-  <div class="wrap"><div class="panel">
-    <div class="sec-head rv">
-      <div class="eyebrow">How it works</div>
-      <h2 style="margin-top:12px">From lease to recovery in three steps</h2>
-      <p class="lede">No implementation project. Upload what you already have and MainStreet does the reading.</p>
-    </div>
-    <div class="steps">
-      <div class="step rv">
-        <div class="step-n">STEP 01</div>
-        <div class="step-ic">↑</div>
-        <h3>Upload</h3>
-        <p>Drop in leases, CAM statements and vendor invoices — including scanned copier PDFs. MainStreet handles the file so you don't have to think about format or size.</p>
-      </div>
-      <div class="step rv" style="transition-delay:.09s">
-        <div class="step-n">STEP 02</div>
-        <div class="step-ic">✦</div>
-        <h3>AI analysis</h3>
-        <p>Lease terms, caps and exclusions are extracted and reviewed. Every charge is checked against what the lease actually permits — with a confidence score and a human review gate.</p>
-      </div>
-      <div class="step rv" style="transition-delay:.18s">
-        <div class="step-n">STEP 03</div>
-        <div class="step-ic">$</div>
-        <h3>Recover revenue</h3>
-        <p>Under-billed recoveries surface with the evidence attached. Generate the tenant statement, resolve disputes, and settle — with the full trail preserved.</p>
-      </div>
-    </div>
-  </div>
-</div>
 </section>
 
 <!-- ── Evidence ─────────────────────────────────────────────────────────── -->
 <section id="evidence" class="is-panelled">
-  <div class="wrap"><div class="panel panel--warm split">
+  <div class="wrap"><div class="panel panel--warm split split--rev">
     <div class="split-copy rv">
-      <div class="eyebrow">Explainability</div>
-      <h2 style="margin:12px 0 16px">Every number.<br>Every explanation.</h2>
+      <div class="eyebrow">Read with evidence</div>
+      <h2 style="margin:12px 0 16px">Every number.<br>Every source.</h2>
       <p class="lede">
-        MainStreet doesn't hand you a total and ask you to trust it. Open any figure
-        and you see the clause it came from, the page it sits on, and the language
-        that supports it.
+        Every term MainStreet reads from a lease keeps the quote it came from, the page
+        it sits on and a confidence score. When the clause isn&rsquo;t there, it says so
+        — it never fills the gap.
       </p>
       <div class="proof">
         <div class="proof-item">
-          <div class="proof-t">Clause-level citations</div>
-          <div class="proof-d">Jump from a charge to the exact lease language behind it.</div>
+          <div class="proof-t">Quote and page on every field</div>
+          <div class="proof-d">A CAM cap, a term, an exclusion — each traces to the lease language that authorises it.</div>
         </div>
         <div class="proof-item">
           <div class="proof-t">Confidence, stated</div>
-          <div class="proof-d">Low-confidence extractions are flagged for review, never hidden.</div>
-        </div>
-        <div class="proof-item">
-          <div class="proof-t">Complete history</div>
-          <div class="proof-d">A property's full timeline: documents, reconciliations, disputes, payments.</div>
+          <div class="proof-d">A missing score is not a high score. Low confidence is flagged for review, never hidden.</div>
         </div>
         <div class="proof-item">
           <div class="proof-t">Honest gaps</div>
-          <div class="proof-d">When a document isn't on file, MainStreet says so rather than guessing.</div>
+          <div class="proof-d">&ldquo;Clause not captured&rdquo; is an answer. So is &ldquo;no cap on file.&rdquo;</div>
+        </div>
+        <div class="proof-item">
+          <div class="proof-t">Ask anything, get a citation</div>
+          <div class="proof-d">Answers come from the property&rsquo;s own documents and analyses — or MainStreet says it can&rsquo;t answer.</div>
         </div>
       </div>
     </div>
-    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot">
+    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--crop">
       <div class="shot-bar">
         <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
-        <span class="shot-cap">AI Workspace — grounded answers about your portfolio</span>
+        <span class="shot-cap">AI Workspace — &ldquo;Which leases have CAM caps?&rdquo;</span>
+        <span class="shot-tag">live demo</span>
       </div>
-      <img src="assets/landing/ui-workspace.png" alt="The MainStreet AI Workspace answering questions about a portfolio from its own records." loading="lazy" width="1440" height="492">
+      <img src="assets/landing/pilot/ai-workspace.png" alt="The MainStreet AI Workspace answering which leases at Cascade Commons carry a CAM cap: four leases listed with their cap and base, one lease flagged as having no cap on file, the source of each answer named, and a confidence of 92%." loading="lazy" width="1100" height="949">
     </div></div>
-  </div>
-</div>
+  </div></div>
+</section>
+
+<!-- ── Reconcile ────────────────────────────────────────────────────────── -->
+<section id="reconcile" class="is-panelled">
+  <div class="wrap"><div class="panel">
+    <div class="sec-head rv">
+      <div class="eyebrow">Reconcile</div>
+      <h2 style="margin-top:12px">CAM as a workflow, not a spreadsheet</h2>
+      <p class="lede">Prepare → Calculate → Tenant Results → AI Audit Review. Every tenant gets a billing verdict — and when a statement can&rsquo;t go out, MainStreet names the reason and holds it.</p>
+    </div>
+    <div class="two" style="margin-top:0">
+      <figure class="rv shot-wrap">
+        <div class="shot shot--crop"><div class="shot-bar"><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-cap">Northgate Exchange — Tenant Results</span><span class="shot-tag">live demo</span></div>
+        <img src="assets/landing/pilot/cam-results-northgate.png" alt="Tenant Results for the demonstration property Northgate Exchange: 5 of 5 tenants billable, $84,882.25 billed from a $107,900 pool, two CAM caps applied from the lease documents, coverage 83.8% documented and 16.3% confirmed vacant, each tenant line marked Calc Verified and Billable." loading="lazy" width="1360" height="860"></div>
+        <figcaption><b>Northgate bills.</b> Five of five tenants billable. Two caps applied, each with its source named. The vacant share stays with the landlord and says so.</figcaption>
+      </figure>
+      <figure class="rv shot-wrap" style="transition-delay:.08s">
+        <div class="shot shot--crop"><div class="shot-bar"><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-cap">Cascade Commons — AI Audit Review</span><span class="shot-tag">live demo</span></div>
+        <img src="assets/landing/pilot/cam-audit-cascade.png" alt="The AI Audit Review for Cascade Commons: one blocking finding, an auditor narrative, and a Not ready to bill verdict because one tenant cannot be billed yet; the key findings name the CAM cap for Whole Health Market, reducing its raw allocation of $66,629.23 to $34,650.00." loading="lazy" width="1360" height="760"></div>
+        <figcaption><b>Cascade is checked.</b> Twenty-six invoices, every one with its source document. Three of five statements are ready; one waits on a confirmation and one is held — and the audit names both. Knowing when <em>not</em> to bill is the product.</figcaption>
+      </figure>
+    </div>
+    <div class="proof" style="margin-top:38px">
+      <div class="proof-item rv"><div class="proof-t">Caps from the lease</div><div class="proof-d">A cap is applied only with a stated base, and the reduction names the clause it came from.</div></div>
+      <div class="proof-item rv"><div class="proof-t">Exclusions honoured</div><div class="proof-d">A lease that excludes management from CAM is struck from that pool — and the audit says so.</div></div>
+      <div class="proof-item rv"><div class="proof-t">Coverage, in two numbers</div><div class="proof-d">Documented by lease versus confirmed vacant — never one figure that hides the difference.</div></div>
+      <div class="proof-item rv"><div class="proof-t">Stale results marked</div><div class="proof-d">Change an input after a run and the results say they no longer describe it.</div></div>
+    </div>
+  </div></div>
 </section>
 
 <!-- ── Watch band ───────────────────────────────────────────────────────── -->
@@ -643,13 +1213,78 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <div class="band rv">
       <div class="band-ic">▶</div>
       <div class="band-copy">
-        <h2>Run your first property through it</h2>
-        <p>A pilot is your real property and your real leases — uploaded, reconciled, and provable. Or watch the product run a full reconciliation first, upload to settlement, in about forty seconds.</p>
+        <h2>See it run, then open it</h2>
+        <p>Fifty seconds from a lease landing to a settlement verified on the ledger. Then open the live demo and walk the same two properties yourself.</p>
       </div>
-      <a class="btn btn--primary" href="#pilot" data-pilot>Request a Pilot</a>
-      <a class="btn btn--ghost" href="index.html?demo=1">▶&nbsp; Watch the demo</a>
+      <a class="btn btn--primary" href="index.html?demo=1">▶&nbsp; Watch the film</a>
+      <a class="btn btn--ghost" href="https://www.mainstreet-review.com/demo" data-demo>Explore the live demo →</a>
     </div>
   </div>
+</section>
+
+<!-- ── XRPL ─────────────────────────────────────────────────────────────── -->
+<section id="xrpl" class="is-panelled">
+  <div class="wrap"><div class="panel panel--warm">
+    <div class="sec-head rv">
+      <div class="eyebrow">Settle &amp; verify</div>
+      <h2 style="margin-top:12px">Proven on the XRP Ledger</h2>
+      <p class="lede">MainStreet settles in RLUSD — Ripple&rsquo;s US-dollar stablecoin — on the XRP Ledger mainnet, and the first settlement is already on the public ledger. Here it is.</p>
+    </div>
+
+    <div class="proofcard rv">
+      <div class="proofcard-h">
+        <span class="pill"><i></i>Validated · XRPL mainnet</span>
+        <span class="cap">Payment · RLUSD · tesSUCCESS</span>
+      </div>
+      <dl class="kv">
+        <dt>Transaction</dt>
+        <dd><code class="hash" id="xrplTx">7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A</code></dd>
+        <dt>Amount</dt>
+        <dd><b>1 RLUSD</b> — a proof-of-rail settlement, deliberately small. The amount on the ledger is the amount you see here.</dd>
+        <dt>From → To</dt>
+        <dd><span class="mono">rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv</span> (settlement wallet) → <span class="mono">rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX</span> (landlord wallet)</dd>
+        <dt>RLUSD issuer</dt>
+        <dd><span class="mono">rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De</span> — Ripple&rsquo;s official mainnet issuer; both wallets hold a trust line to it</dd>
+        <dt>Source Tag</dt>
+        <dd><span class="mono">2606290001</span> — carried on every MainStreet payment and trust line, so the project&rsquo;s activity is identifiable on-ledger</dd>
+        <dt>Memo</dt>
+        <dd>A SHA-256 fingerprint of the settlement record — the destination, the amount and the network the payment was built from — with the amount alongside it in clear. Anyone with the record can recompute the hash and verify that it matches the fingerprint committed to the transaction.</dd>
+      </dl>
+      <div class="cta-row">
+        <a class="btn btn--primary" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener">View on livenet.xrpl.org ↗</a>
+        <a class="btn btn--ghost" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/scripts/verify-settlement.js" target="_blank" rel="noopener">Verify it yourself — the script ↗</a>
+      </div>
+      <p class="cap" style="margin:14px 0 0">Reads the transaction from public XRPL nodes and checks that it is a validated Payment (tesSUCCESS), sent from the settlement wallet, in RLUSD from Ripple&rsquo;s official issuer, and that it carries a memo. It prints the destination and the Source Tag for you to compare. It does not recompute the fingerprint — that is the arithmetic above.</p>
+      <pre class="code" style="margin-top:10px">node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv</pre>
+    </div>
+
+    <div class="onchain rv">
+      <div>
+        <h3><i style="background:var(--ok)"></i>What is on the ledger today</h3>
+        <ul>
+          <li><b>The RLUSD payment</b> from the settlement wallet to the landlord wallet, validated on mainnet.</li>
+          <li><b>MainStreet&rsquo;s Source Tag</b> on the payment and on both trust lines.</li>
+          <li><b>A SHA-256 fingerprint</b> of the settlement record (destination, amount, network) in the transaction memo, with the amount in clear.</li>
+          <li><b>Two funded wallets</b> with RLUSD trust lines to the official issuer.</li>
+        </ul>
+        <p class="cap" style="margin:12px 0 0">All of it verifiable on livenet.xrpl.org — infrastructure MainStreet does not control.</p>
+      </div>
+      <div>
+        <h3><i style="background:var(--gold)"></i>What is not — yet</h3>
+        <ul>
+          <li><b>In-app payment.</b> Settlement is signed by an operator from a local script. The web app reads the ledger; it cannot sign. Keys never touch a server.</li>
+          <li><b>Records on-chain.</b> Leases, reconciliations and property history stay off-chain. Only the settlement and its fingerprint are recorded — no private data is published.</li>
+          <li><b>One wallet per property.</b> One settlement wallet serves the demo today. Per-property wallets and tenant-initiated payment are the roadmap the transaction format was designed for.</li>
+        </ul>
+      </div>
+    </div>
+
+    <figure class="rv shot-wrap" style="margin-top:22px">
+      <div class="shot"><div class="shot-bar"><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-cap">The settlement journey, in the product</span><span class="shot-tag">live demo</span></div>
+      <img src="assets/landing/pilot/settlement-journey.png" alt="The settlement journey card in the product: Tenant pays, Settled in RLUSD, On the XRP Ledger, Verify on-ledger — headed Verifiable payment settlement on the XRP Ledger (RLUSD), live on XRPL Mainnet." loading="lazy" width="1360" height="176"></div>
+      <figcaption class="cap" style="margin:10px 4px 0">A reconciled statement shows where it stands on that path. A statement with no transaction says so — a live rail is never evidence that <em>this</em> charge was paid.</figcaption>
+    </figure>
+  </div></div>
 </section>
 
 <!-- ── Platform ─────────────────────────────────────────────────────────── -->
@@ -662,37 +1297,53 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <div class="cards">
       <div class="card rv">
         <div class="card-ic">⛊</div>
-        <h3>Enterprise security</h3>
-        <p>Row-level access control, encrypted storage, and a full audit log of every action taken on a property.</p>
+        <h3>Security by construction</h3>
+        <p>Row-level access per organisation, private document storage behind signed links, and AI instructions owned by the server — never by the caller.</p>
       </div>
       <div class="card rv" style="transition-delay:.07s">
         <div class="card-ic">▤</div>
         <h3>Document intelligence</h3>
-        <p>Leases, amendments, invoices and certificates are read, organised and searchable — scans included.</p>
+        <p>Leases, amendments, invoices and certificates are read, organised and searchable — scans included, with the page cited.</p>
       </div>
       <div class="card rv" style="transition-delay:.14s">
         <div class="card-ic">◷</div>
         <h3>Property memory</h3>
-        <p>A complete timeline of everything that happened at a property, and at every tenant space within it.</p>
+        <p>An append-only history of everything that happened at a property and at every space within it, with who did it.</p>
       </div>
       <div class="card rv" style="transition-delay:.21s">
         <div class="card-ic">↗</div>
-        <h3>Settlement support</h3>
-        <p>Close the loop with RLUSD settlement on the XRP Ledger and a verifiable record of the transaction.</p>
+        <h3>Settlement proof</h3>
+        <p>RLUSD on the XRP Ledger mainnet, with a public transaction anyone can verify. Operator-signed today; the app itself only reads the ledger.</p>
       </div>
     </div>
+  </div></div>
+</section>
+
+<!-- ── Pilot band ───────────────────────────────────────────────────────── -->
+<section>
+  <div class="wrap">
+    <div class="band rv">
+      <div class="band-ic">◆</div>
+      <div class="band-copy">
+        <h2>Run your first property through it</h2>
+        <p>A pilot is your real property and your real leases — uploaded, reconciled, and provable. We reply personally.</p>
+      </div>
+      <a class="btn btn--primary" href="#pilot" data-pilot>Request a Pilot</a>
+    </div>
   </div>
-</div>
 </section>
 
 <!-- ── Footer ───────────────────────────────────────────────────────────── -->
 <footer>
   <div class="wrap foot">
     <a class="brand" href="./"><span class="brand-mk">M</span>MainStreet</a>
-    <p>The AI operating system for commercial real estate.</p>
+    <p>The verified memory for every commercial property.</p>
     <div class="foot-links">
-      <a href="index.html?demo=1">Watch the demo</a>
-      <a href="index.html">Log in</a>
+      <a href="https://www.mainstreet-review.com/demo" data-demo>Live demo</a>
+      <a href="index.html?demo=1">Watch the film</a>
+      <a href="/app">Log in</a>
+      <a href="#pilot" data-pilot>Request a Pilot</a>
+      <a href="https://github.com/Cypher928/mainstreet-xrpl" target="_blank" rel="noopener">GitHub</a>
       <a href="privacy-policy.html">Privacy</a>
       <a href="terms-of-service.html">Terms</a>
     </div>
@@ -740,13 +1391,8 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       </div>
       <p class="pm-note">We reply personally. No sales sequence, no drip campaign.</p>
     </form>
-    <!-- OUTSIDE the form, deliberately. This lived inside it, and the success
-         handler hides the form before showing this — so a visitor who submitted
-         successfully watched the form disappear and got NOTHING in its place:
-         the card collapsed to its heading and the request looked like it had
-         evaporated. Measured, the node was display:block with a 0x0 box because
-         its parent was display:none. The error path only ever looked right by
-         accident, because that path leaves the form on screen. -->
+    <!-- OUTSIDE the form, deliberately: the success handler hides the form and
+         then shows this, so it must not live inside what gets hidden. -->
     <div class="pm-msg" id="pmMsg" role="status" aria-live="polite"></div>
   </div>
 </div>
@@ -772,15 +1418,10 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 </script>
 <script src="product-film.js"></script>
 <script>
-/* Play the film in place. The click is the user gesture that permits audio —
-   browsers do not carry user activation across a navigation, so the previous
-   hop to index.html?demo=1 could never autoplay narration. Falls back to the
-   old navigation if the module fails to load, so the CTA is never dead. */
 (function () {
   // ── Pilot request modal ───────────────────────────────────────────────────
   // Every "Request a Pilot" opens this. There is exactly one destination and it
-  // is on this page — the previous mailto: links handed off to whichever app
-  // owns the mail protocol, which is why one of them opened another browser.
+  // is on this page.
   (function () {
     var modal = document.getElementById('pilotModal');
     if (!modal) return;
@@ -817,7 +1458,6 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     document.addEventListener('keydown', function (e) {
       if (!modal.classList.contains('on')) return;
       if (e.key === 'Escape') { close(); return; }
-      // Keep tabbing inside the dialog while it is open.
       if (e.key !== 'Tab') return;
       var f = modal.querySelectorAll('input,select,button,a[href]');
       if (!f.length) return;
@@ -828,7 +1468,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     if (fileIn) fileIn.addEventListener('change', function () {
       var f = fileIn.files && fileIn.files[0];
       fileName.textContent = f ? f.name + ' · ' + Math.round(f.size / 1024) + ' KB'
-                               : 'PDF or DOCX, up to 8\u00a0MB';
+                               : 'PDF or DOCX, up to 8 MB';
     });
 
     var MAX = 8 * 1024 * 1024;
@@ -864,8 +1504,6 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
           })
           .catch(function (err) {
             submit.disabled = false; submit.textContent = 'Request Pilot';
-            // Never a silent failure and never a mailto: the address is text so
-            // it can be copied without handing off to another application.
             say('err', 'We could not send that just now (' + String(err.message).slice(0, 90) +
                        ').<br>Please email <b>lynnie928@me.com</b> and we will pick it up.');
           });
@@ -881,10 +1519,12 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     });
   })();
 
+  // ── The film, in place ────────────────────────────────────────────────────
+  // The click is the user gesture that permits audio — browsers do not carry
+  // user activation across a navigation, so the old hop to index.html?demo=1
+  // could never autoplay narration. Falls back to the navigation if the module
+  // fails to load, so the CTA is never dead.
   var links = document.querySelectorAll('a[href="index.html?demo=1"]');
-  // Warm the narration on intent, not on click. The first line is due at 0ms,
-  // so loading it when the film opens makes it late — and the schedule is
-  // absolute, so a late line eats the gap before the next one.
   var warm = function () { if (window.ProductFilm) window.ProductFilm.preload(); };
   Array.prototype.forEach.call(links, function (a) {
     a.addEventListener('pointerenter', warm, { once: true });
@@ -896,6 +1536,80 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       window.ProductFilm.play();
     });
   });
+
+  // The live demo opens in a new tab so this page — and the film — stay put.
+  Array.prototype.forEach.call(document.querySelectorAll('a[data-demo]'), function (a) {
+    a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener');
+  });
+
+  // ── See it in action: one question at a time ─────────────────────────────
+  // Plain buttons with tab semantics. Switching swaps the three columns at
+  // once; the CSS stagger on the trail is the only motion. Without JS the
+  // default question is shown and the others stay hidden — nothing breaks.
+  (function () {
+    var root = document.querySelector('[data-ask]');
+    if (!root) return;
+    var tabs = Array.prototype.slice.call(root.querySelectorAll('.ask-q'));
+    var panes = Array.prototype.slice.call(root.querySelectorAll('.ask-pane'));
+    function pick(q, focus) {
+      tabs.forEach(function (b) {
+        var on = b.getAttribute('data-q') === q;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+        if (on && focus) b.focus();
+      });
+      panes.forEach(function (p) {
+        var on = p.getAttribute('data-q') === q;
+        p.hidden = !on;
+        p.classList.toggle('is-on', on);
+      });
+    }
+    tabs.forEach(function (b, i) {
+      b.addEventListener('click', function () { pick(b.getAttribute('data-q')); });
+      b.addEventListener('keydown', function (e) {
+        var d = (e.key === 'ArrowDown' || e.key === 'ArrowRight') ? 1
+              : (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        pick(tabs[(i + d + tabs.length) % tabs.length].getAttribute('data-q'), true);
+      });
+    });
+  })();
+
+  // The judges' walkthrough card reveals and plays the recording that is
+  // ALREADY on this page instead of navigating to the file. A bare .mp4 link
+  // depends on how the host answers Content-Disposition, and `attachment`
+  // would hand a judge a 58 MB download rather than a video. The player sits
+  // directly under the featured row, hidden until asked for, so the recording
+  // is on the page exactly once.
+  //
+  // The href stays the real URL: with JavaScript off the link still resolves,
+  // and right-click-copy gives something that works.
+  var walk = document.getElementById('judWalkthrough');
+  var walkFigure = document.getElementById('walkFigure');
+  var walkPlayer = walkFigure && walkFigure.querySelector('video');
+  if (walk && walkPlayer) {
+    walk.addEventListener('click', function (e) {
+      e.preventDefault();
+      walkFigure.hidden = false;
+      // iOS Safari refuses play() on a media element that was display:none at
+      // the moment of the gesture unless it has been laid out first, and it
+      // will not have fetched metadata for a hidden element. Force the layout,
+      // (re)start the load, then play — all still inside the tap.
+      void walkPlayer.offsetHeight;
+      if (walkPlayer.readyState === 0) { try { walkPlayer.load(); } catch (_) {} }
+      walkPlayer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // The click IS the user gesture, so autoplay policy allows sound. If the
+      // inline player still refuses (it never does on desktop from a click),
+      // hand the tap to the device's own player via the card's real href —
+      // the same place a no-JS visitor already goes.
+      try {
+        var r = walkPlayer.play();
+        if (r && r.catch) r.catch(function () { window.open(walk.href, '_blank', 'noopener'); });
+      } catch (_) { window.open(walk.href, '_blank', 'noopener'); }
+    });
+  }
 })();
 </script>
 
