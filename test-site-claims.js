@@ -36,7 +36,19 @@ const ISSUER    = 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De';
 const WALLET    = 'rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv';
 const LANDLORD  = 'rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX';
 const SOURCE_TAG= '2606290001';
-const DEMO_URL  = 'https://www.mainstreet-review.com';
+// WHERE A JUDGE ACTUALLY LANDS, WHICH IS NOT THE SAME AS WHERE THE PILOT LIVES.
+//
+// The bare origin redirects to /home — the pilot's OWN marketing page — so
+// "Explore the live demo" answered a pitch with a second pitch. /app is the
+// product. `?signin=1` is the pilot's own documented path for someone who has
+// already decided: landing-experience.js `maybeShow()` returns early on it, so
+// the pre-login hero never mounts, and script.js `_maybeShowLoginFromIntent()`
+// reveals the auth card with the email field focused. Its comment names the
+// failure this avoids — "Marketing page → hero → form is the three-screen
+// sign-in. Explicit intent wins over the pitch."
+const DEMO_ORIGIN = 'https://www.mainstreet-review.com';
+const DEMO_URL    = DEMO_ORIGIN + '/app?signin=1';
+const rx = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const REPO      = 'https://github.com/Cypher928/mainstreet-xrpl';
 const OG_IMAGE  = 'https://www.mainstreetcam.com/assets/brand/og-image.png';
 const CANONICAL = 'https://www.mainstreetcam.com/home';
@@ -101,7 +113,13 @@ t('the verify card keeps Ledger · validated and Proof · publicly verifiable',
 const reconScene = FILM.slice(FILM.indexOf("id: 'recon'"), FILM.indexOf("id: 'recover'"));
 t('$34,650 lives in the cap story, where it belongs', /34,650/.test(reconScene));
 t('the film verify button opens the real transaction', FILM.includes(`'${EXPLORER}'`));
-t('the film end card offers the live demo', /pfEndDemo/.test(FILM) && FILM.includes(DEMO_URL));
+// MATCHED ON THE ORIGIN, NOT THE FULL PATH. The film is a separate surface and
+// its end card still carries the bare origin, so it drops a viewer on the pilot
+// marketing page the way every page link used to. That is a known outstanding
+// item, deliberately left for a decision rather than changed inside a task
+// scoped to the page. Asserting the origin keeps the link covered without
+// declaring the current destination correct.
+t('the film end card offers the live demo', /pfEndDemo/.test(FILM) && FILM.includes(DEMO_ORIGIN));
 t('the film end card "Request a Pilot" reaches the modal, not a mailto',
   /querySelector\('\[data-pilot\]'\)/.test(FILM));
 t('the film runtime on the page is stated as ~50 seconds, not 40',
@@ -111,8 +129,20 @@ t('the film runtime on the page is stated as ~50 seconds, not 40',
 console.log('\n── D · the judge path ──');
 t('the live demo is linked', HTML.includes(`href="${DEMO_URL}"`));
 t('every live-demo link is marked data-demo (opens in a new tab)',
-  (HTML.match(new RegExp(`href="${DEMO_URL}"`, 'g')) || []).every(Boolean) &&
-  !new RegExp(`href="${DEMO_URL}"(?![^>]*data-demo)`).test(HTML));
+  (HTML.match(new RegExp(`href="${rx(DEMO_URL)}"`, 'g')) || []).every(Boolean) &&
+  !new RegExp(`href="${rx(DEMO_URL)}"(?![^>]*data-demo)`).test(HTML));
+// THE DETOUR MUST NOT COME BACK. A link to the bare origin lands a judge on
+// the pilot's marketing homepage, which is the bug this guards: every
+// live-demo link goes to the product, or none of them can be trusted to.
+t('no live-demo link drops a judge on the pilot marketing homepage',
+  !new RegExp(`href="${rx(DEMO_ORIGIN)}/?"`).test(HTML),
+  'the bare origin redirects to /home — the pilot pitch, not the product');
+t('every live-demo link enters the product at /app',
+  (HTML.match(/href="https:\/\/www\.mainstreet-review\.com[^"]*"/g) || [])
+    .every(h => h.includes('/app')),
+  (HTML.match(/href="https:\/\/www\.mainstreet-review\.com[^"]*"/g) || []).join(' '));
+t('the steps no longer promise an account-first journey that starts on a pitch',
+  !/Go to the live demo and create an account/i.test(TEXT) && /no marketing page in between/i.test(TEXT));
 t('the demo environment is named plainly', /pilot environment/i.test(TEXT) && /demonstration data/i.test(TEXT));
 t('the demo properties are the fictional pair', /Cascade Commons/.test(TEXT) && /Northgate Exchange/.test(TEXT));
 t('the judges section exists', /id="judges"/.test(HTML));
