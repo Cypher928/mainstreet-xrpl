@@ -47,7 +47,12 @@ const SOURCE_TAG= '2606290001';
 // failure this avoids — "Marketing page → hero → form is the three-screen
 // sign-in. Explicit intent wins over the pitch."
 const DEMO_ORIGIN = 'https://www.mainstreet-review.com';
-const DEMO_URL    = DEMO_ORIGIN + '/app?signin=1';
+// /demo is the public read-only route: the real product shell booting from a
+// frozen snapshot with no account, no database and no writes. /app?signin=1 —
+// the previous destination — still exists for someone who wants their OWN copy,
+// but it is not what a judge is sent to, because it asks them to make an
+// account first and the demo data is seeded per user.
+const DEMO_URL    = DEMO_ORIGIN + '/demo';
 const rx = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const REPO      = 'https://github.com/Cypher928/mainstreet-xrpl';
 const OG_IMAGE  = 'https://www.mainstreetcam.com/assets/brand/og-image.png';
@@ -137,12 +142,23 @@ t('every live-demo link is marked data-demo (opens in a new tab)',
 t('no live-demo link drops a judge on the pilot marketing homepage',
   !new RegExp(`href="${rx(DEMO_ORIGIN)}/?"`).test(HTML),
   'the bare origin redirects to /home — the pilot pitch, not the product');
-t('every live-demo link enters the product at /app',
+t('every live-demo link enters the product directly, at /demo or /app',
   (HTML.match(/href="https:\/\/www\.mainstreet-review\.com[^"]*"/g) || [])
-    .every(h => h.includes('/app')),
+    .every(h => h.includes('/demo') || h.includes('/app')),
   (HTML.match(/href="https:\/\/www\.mainstreet-review\.com[^"]*"/g) || []).join(' '));
-t('the steps no longer promise an account-first journey that starts on a pitch',
-  !/Go to the live demo and create an account/i.test(TEXT) && /no marketing page in between/i.test(TEXT));
+t('the steps describe the no-account demo, not an account-first journey',
+  !/Go to the live demo and create an account/i.test(TEXT)
+  && !/Choose <em>Create Account<\/em>/i.test(HTML)
+  && /No account, no sign-in/i.test(TEXT));
+// ONE primary invitation, not two. The demo section carried a second
+// "Explore the live demo" directly below the band's, so the page asked the
+// reader to choose between the same thing twice.
+t('only one "Explore the live demo" button remains below the hero',
+  (TEXT.match(/Explore the live demo/g) || []).length <= 3,
+  (TEXT.match(/Explore the live demo/g) || []).length + ' occurrences');
+t('the film link beside it is untouched', /Watch the film first/.test(TEXT));
+t('the demo is described as read-only and unsaved',
+  /read-only copy of demonstration data/i.test(TEXT) && /nothing you do is saved/i.test(TEXT));
 t('the demo environment is named plainly', /pilot environment/i.test(TEXT) && /demonstration data/i.test(TEXT));
 t('the demo properties are the fictional pair', /Cascade Commons/.test(TEXT) && /Northgate Exchange/.test(TEXT));
 t('the judges section exists', /id="judges"/.test(HTML));
