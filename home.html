@@ -828,6 +828,13 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <div class="jud">
       <a class="rv" href="https://www.mainstreet-review.com/demo" data-demo><div class="jud-t">Live demo <span>↗</span></div><div class="jud-d">The current product, with Cascade Commons and Northgate Exchange seeded for you.</div></a>
       <a class="rv" href="index.html?demo=1"><div class="jud-t">The film <span>▶</span></div><div class="jud-d">Fifty seconds, narrated, in the real product. Plays right here.</div></a>
+      <!-- The recorded walkthrough. Same file as the player in the Live demo
+           section above — this is a way to reach it from the judges' grid, not
+           a second copy of it. The href is the real URL so the link is honest
+           and copyable, but the click is intercepted below and played in place:
+           a bare .mp4 link is at the mercy of the host's Content-Disposition,
+           and an `attachment` answer downloads 58 MB instead of playing it. -->
+      <a class="rv" id="judWalkthrough" href="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4" target="_blank" rel="noopener"><div class="jud-t">Product walkthrough <span>▶</span></div><div class="jud-d">A short walkthrough of MainStreet in Cascade Commons — from property history to CAM, tenant decisions, and verified settlement.</div></a>
       <a class="rv" href="https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A" target="_blank" rel="noopener"><div class="jud-t">The XRPL transaction <span>↗</span></div><div class="jud-d">1 RLUSD, validated on mainnet, Source Tag 2606290001, a SHA-256 fingerprint of the settlement record in the memo.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl" target="_blank" rel="noopener"><div class="jud-t">Source code <span>↗</span></div><div class="jud-d">Public repository. <span class="mono">main</span> is the frozen submission build; <span class="mono">pilot</span> is the build behind the live demo.</div></a>
       <a class="rv" href="https://github.com/Cypher928/mainstreet-xrpl/blob/main/README.md" target="_blank" rel="noopener"><div class="jud-t">README <span>↗</span></div><div class="jud-d">What it does, why XRPL, the mainnet settlement, how to run it.</div></a>
@@ -1094,6 +1101,26 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
   Array.prototype.forEach.call(document.querySelectorAll('a[data-demo]'), function (a) {
     a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener');
   });
+
+  // The judges' walkthrough card plays the recording that is ALREADY on this
+  // page instead of navigating to the file. Two reasons. A bare .mp4 link
+  // depends on how the host answers Content-Disposition, and `attachment` would
+  // hand a judge a 58 MB download rather than a video. And the player exists a
+  // few sections up, so sending them to it is the one behaviour that does not
+  // put a second copy of the same recording on the page.
+  //
+  // The href stays the real URL: with JavaScript off the link still resolves,
+  // and right-click-copy gives something that works.
+  var walk = document.getElementById('judWalkthrough');
+  var walkPlayer = document.querySelector('.demo-film video');
+  if (walk && walkPlayer) {
+    walk.addEventListener('click', function (e) {
+      e.preventDefault();
+      walkPlayer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // The click IS the user gesture, so autoplay policy allows sound.
+      try { var r = walkPlayer.play(); if (r && r.catch) r.catch(function () {}); } catch (_) {}
+    });
+  }
 })();
 </script>
 

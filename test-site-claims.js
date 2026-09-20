@@ -169,6 +169,30 @@ for (const [what, href] of [
   ['pitch deck', 'assets/hackathon/pitch-deck.pdf'],
 ]) t(`judges link: ${what}`, HTML.includes(`href="${href}"`));
 t('the pitch deck file is present', fs.existsSync(path.join(ROOT, 'assets/hackathon/pitch-deck.pdf')));
+
+// ── the walkthrough card ─────────────────────────────────────────────────────
+// It points at the SAME recording the Live demo section embeds, and it plays
+// that player rather than navigating to the file: a bare .mp4 link depends on
+// the host's Content-Disposition, and `attachment` hands a judge a 58 MB
+// download instead of a video.
+const WALKTHROUGH = 'https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4';
+t('the judges grid carries a Product walkthrough card', /id="judWalkthrough"/.test(HTML));
+t('it names the walkthrough', /<div class="jud-t">Product walkthrough/.test(HTML));
+t('it describes the Cascade Commons journey',
+  /from property history to CAM, tenant decisions, and verified settlement/.test(TEXT));
+t('it points at the same recording the demo section embeds',
+  (HTML.match(new RegExp(rx(WALKTHROUGH), 'g')) || []).length >= 2,
+  'the card and the embedded <source> must be the same file');
+t('there is still only ONE video player on the page',
+  (HTML.match(/<video[\s>]/g) || []).length === 1,
+  'the card is a link to the recording above, not a second copy of it');
+t('clicking the card plays that player instead of downloading the file',
+  /judWalkthrough[\s\S]{0,900}preventDefault\(\)[\s\S]{0,300}walkPlayer\.play\(\)/.test(HTML),
+  'without this a judge gets a 58 MB download if the host answers attachment');
+t('the existing film card is untouched',
+  /<div class="jud-t">The film <span>▶<\/span><\/div>/.test(HTML) && /href="index\.html\?demo=1"/.test(HTML));
+t('the existing live-demo card still opens the interactive demo',
+  /href="https:\/\/www\.mainstreet-review\.com\/demo"[^>]*data-demo><div class="jud-t">Live demo/.test(HTML));
 t('the film is reachable from the judges section', /id="judges"[\s\S]*index\.html\?demo=1/.test(HTML));
 t('all film links use the one in-place href (no /app?demo=1 detour)',
   !/href="\/app\?demo=1"/.test(HTML) && (HTML.match(/href="index\.html\?demo=1"/g) || []).length >= 3);
