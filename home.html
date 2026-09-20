@@ -78,7 +78,7 @@ img{max-width:100%;display:block}
 
 /* ── Type scale ─────────────────────────────────────────────────────────── */
 h1,h2,h3{color:var(--t1);margin:0;letter-spacing:-.028em;line-height:1.08;font-weight:800}
-h1{font-size:clamp(2.35rem,5.1vw,3.55rem);text-wrap:balance}
+h1{font-size:clamp(2.1rem,3.9vw,3.15rem);text-wrap:balance}
 h2{font-size:clamp(1.9rem,3.6vw,2.6rem);text-wrap:balance}
 h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 .lede{font-size:clamp(1.05rem,1.75vw,1.24rem);color:var(--t3);line-height:1.68;max-width:37em}
@@ -114,6 +114,8 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 .nav-sp{flex:1}
 .nav-link{color:var(--t3);font-size:.9rem;font-weight:500;padding:8px 4px}
 .nav-link:hover{color:var(--t1)}
+.nav-link--gold{color:var(--gold);font-weight:600}
+.nav-link--gold:hover{color:#EBD49A}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   border-radius:12px;font-weight:700;font-size:.92rem;cursor:pointer;letter-spacing:.005em;
@@ -133,13 +135,20 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 .btn-sub{display:block;font-size:.74rem;font-weight:500;opacity:.72;margin-top:2px}
 
 /* ── Hero ───────────────────────────────────────────────────────────────── */
-.hero{position:relative;padding:clamp(60px,9vw,110px) 0 clamp(40px,6vw,64px);overflow:hidden}
-.hero::before{
-  content:"";position:absolute;inset:-30% 30% auto -20%;height:620px;
-  background:radial-gradient(closest-side,rgba(216,184,114,.09),transparent 72%);
-  pointer-events:none;
+/* The property photograph runs edge to edge across the top and carries the
+   headline; the MainStreet layer overlaps its lower edge and resolves into the
+   organized Cascade Commons card, so the building is the foundation and the
+   product is what organizes it. A deeper slate here (rather than the page's
+   near-black) is what lets both the photograph and the champagne card lift. */
+.hero{
+  position:relative;padding:0 0 clamp(28px,4vw,44px);overflow:visible;
+  background:
+    radial-gradient(56% 60% at 78% 34%, rgba(216,184,114,.10), transparent 64%),
+    linear-gradient(180deg,#16202C 0%,#121A26 40%,#0A0F16 74%,#050709 100%);
 }
-.hero-in{position:relative;display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:clamp(30px,5vw,62px);align-items:center}
+/* One column: the photograph, then the layer that organizes what is behind it,
+   then the calls to action. Nothing competes for the same row. */
+.hero-in{position:relative;display:block;padding-top:0}
 .badge{
   display:inline-flex;align-items:center;gap:9px;font-size:.68rem;font-weight:700;
   color:var(--gold);background:var(--gold-soft);border:1px solid rgba(216,184,114,.24);
@@ -148,11 +157,86 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 }
 .badge i{width:6px;height:6px;border-radius:50%;background:var(--gold);flex:none}
 .hero h1{margin-bottom:20px}
-.hero .lede{margin-bottom:30px}
-.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:34px}
-.hero-note{font-size:.8rem;color:var(--t4);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.hero-note b{color:var(--t3);font-weight:600}
-.hero-note a{color:var(--gold)}
+.hero .lede{margin-bottom:18px}
+/* 1 · the photograph, edge to edge */
+.cine{position:relative;width:100vw;margin-left:calc(50% - 50vw);
+  height:clamp(320px,30vw,430px);overflow:hidden;isolation:isolate}
+.cine-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 30%;
+  filter:brightness(1.22) contrast(1.1) saturate(1.08)}
+/* Dark enough on the left for the headline, clear enough on the right that the
+   golden hour and the architecture still read. */
+.cine-scrim{position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(90deg,rgba(6,9,14,.9) 0%,rgba(6,9,14,.76) 27%,rgba(6,9,14,.26) 52%,rgba(6,9,14,0) 74%,rgba(6,9,14,.06) 100%),
+    linear-gradient(180deg,rgba(6,9,14,.3) 0%,rgba(6,9,14,0) 32%,rgba(8,12,18,.24) 78%,#101826 100%);}
+.cine-head{position:absolute;left:0;right:0;bottom:clamp(72px,8vw,104px);z-index:2}
+.cine-head .badge{margin-bottom:16px}
+/* A text-shadow paints BEHIND background-clip:text glyphs and shows straight
+   through them, which turned the champagne gold olive. drop-shadow applies to
+   the clipped result instead, so the gradient stays clean. */
+.cine-head .accent{background:linear-gradient(120deg,#F8E7BE 0%,#E7CA92 52%,#F6E3B4 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:none;filter:drop-shadow(0 2px 12px rgba(0,0,0,.6))}
+.cine-head h1{margin:0;max-width:24ch;text-shadow:0 2px 30px rgba(0,0,0,.8), 0 1px 4px rgba(0,0,0,.55)}
+/* One line under the headline. Deliberately short: the chips and the card
+   below say what the categories and the figures are. */
+.cine-sub{
+  margin:14px 0 0;max-width:34ch;font-size:clamp(1rem,1.45vw,1.18rem);line-height:1.5;
+  font-weight:500;color:#E9EFF7;text-shadow:0 2px 20px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.6);
+}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:30px}
+.hero .cta-row{margin:clamp(18px,2.4vw,24px) 0 0}
+/* ── The convergence layer: categories → MainStreet → organized property ── */
+/* Pulled up so the chips straddle the photograph's lower edge and the card
+   breaks out of it into the slate below. */
+.cw{position:relative;z-index:3;margin-top:-44px}
+/* 2 · the six categories. Blue-gray glass against the photograph, with a warm
+   edge; only the monograms are champagne, tying them to the headline and card. */
+.cw-chips{display:flex;gap:10px}
+.cw-chips span{
+  flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:9px;
+  padding:11px 10px;border-radius:12px;
+  background:linear-gradient(180deg,rgba(38,52,71,.86) 0%,rgba(24,35,50,.9) 100%);
+  backdrop-filter:blur(18px) saturate(150%);
+  border:1px solid rgba(216,184,114,.38);
+  box-shadow:0 16px 34px -14px rgba(0,0,0,.92), inset 0 1px 0 rgba(255,255,255,.14);
+  font-size:.8rem;font-weight:700;color:#F6F9FD;letter-spacing:.01em;white-space:nowrap;
+}
+.cw-chips i{
+  width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex:none;font-style:normal;
+  font-weight:800;font-size:.58rem;color:#2A2318;
+  background:linear-gradient(180deg,#F4E5C2 0%,#E3C88F 100%);
+  border:1px solid rgba(216,184,114,.6);
+}
+/* 3 · into MainStreet */
+.cw-flow{position:relative;height:54px}
+.cw-flow svg{position:absolute;inset:0;width:100%;height:38px}
+.cw-flow path{fill:none;stroke:url(#cwg);stroke-width:1.15}
+.cw-mark{
+  position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+  width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
+  background:var(--gold-grad);color:#07090C;font-weight:900;font-size:.9rem;
+  box-shadow:0 14px 32px -8px rgba(216,184,114,.7), inset 0 1px 0 rgba(255,255,255,.5);
+}
+/* 4 · the organized property, on champagne so it lifts off the photograph */
+.cw-ws{
+  margin-top:10px;border-radius:18px;padding:clamp(16px,2vw,22px) clamp(20px,2.8vw,30px);
+  display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:clamp(18px,3vw,40px);align-items:center;
+  background:linear-gradient(180deg,#F8F0DE 0%,#EFE2C7 100%);color:#2B2419;
+  border:1px solid rgba(216,184,114,.62);
+  box-shadow:0 34px 70px -28px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.55), 0 16px 44px -20px rgba(216,184,114,.58);
+}
+.cw-id b{display:block;color:#19140C;font-size:clamp(1.2rem,1.9vw,1.55rem);font-weight:800;letter-spacing:-.015em;margin-bottom:10px}
+.cw-stats{display:flex;gap:7px;flex-wrap:wrap}
+.cw-stats span{font-size:.72rem;font-weight:800;color:#453A24;background:rgba(150,116,52,.11);
+  border:1px solid rgba(150,116,52,.26);border-radius:999px;padding:5px 11px;white-space:nowrap}
+.cw-rows{display:grid;gap:11px}
+.cw-rows > div{display:flex;align-items:center;gap:11px;color:#19140C;font-size:.92rem;font-weight:700}
+.cw-rows i{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font-style:normal;font-size:.68rem;font-weight:800;background:#1E9C6B;color:#fff}
+/* Held, not verified: an open dispute is neither good news nor an error. */
+.cw-rows i.hold{background:rgba(120,92,42,.22);color:#6B5B3C}
+.cw-cap{margin:10px 4px 0;font-size:.7rem;color:var(--t4);line-height:1.5;text-align:center}
 
 /* Product frame — a real screenshot, not an illustration */
 .shot{
@@ -343,16 +427,18 @@ figure{margin:0}
 .ask-q{
   display:flex;align-items:center;gap:12px;text-align:left;width:100%;min-height:56px;
   padding:12px 14px;border-radius:12px;font:inherit;font-weight:600;font-size:.94rem;line-height:1.35;
-  color:var(--t2);background:var(--card);border:1px solid rgba(var(--line),.08);cursor:pointer;
-  box-shadow:var(--lift-1), var(--edge);
-  transition:border-color .2s ease,background .2s ease,color .2s ease;
+  color:var(--t1);background:#141D2C;border:1px solid rgba(128,158,205,.30);cursor:pointer;
+  box-shadow:var(--lift-1), inset 0 1px 0 rgba(255,255,255,.06);
+  transition:border-color .2s ease,background .2s ease,color .2s ease,transform .15s ease;
 }
 .ask-q i{
   width:32px;height:32px;border-radius:9px;flex:none;display:grid;place-items:center;
   font-style:normal;font-weight:800;font-size:.9rem;
-  background:rgba(var(--line),.05);border:1px solid rgba(var(--line),.08);color:var(--t3);
+  background:rgba(128,158,205,.12);border:1px solid rgba(128,158,205,.26);color:#B9CCE8;
 }
-.ask-q:hover{border-color:rgba(216,184,114,.35);background:var(--card-hi);color:var(--t1)}
+.ask-q::after{content:"›";margin-left:auto;color:#8FA6C7;font-weight:600;font-size:1.1rem;line-height:1}
+.ask-q.is-on::after{color:#0B0804;opacity:.6}
+.ask-q:hover{border-color:rgba(160,186,224,.55);background:#1A2537;transform:translateY(-1px)}
 .ask-q.is-on{
   background:var(--gold-grad);color:#0B0804;border-color:rgba(255,255,255,.16);
   box-shadow:0 10px 26px -12px rgba(216,184,114,.5), inset 0 1px 0 rgba(255,255,255,.4);
@@ -585,6 +671,13 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 }
 @media (max-width:960px){
   .hero-in,.split{grid-template-columns:minmax(0,1fr);gap:42px}
+  /* Stacked, the convergence layer follows the copy instead of overlapping the
+     photograph, so nothing lands on top of the headline. */
+  .cw{margin-top:-34px}
+  .cine-head h1{max-width:none}
+  .cw-chips{flex-wrap:wrap}
+  .cw-chips span{flex:0 0 calc(33.33% - 7px)}
+  .cw-ws{grid-template-columns:minmax(0,1fr);gap:18px}
   .split--rev .split-copy{order:0}
   .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
   .two,.onchain,.ask,.tiles,.jud-lead{grid-template-columns:minmax(0,1fr)}
@@ -594,11 +687,18 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 }
 @media (max-width:760px){
   .flow-in{grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* Narrow screens crop the photograph tighter, so the lit facade sits under
+     the badge and headline; carry more scrim to keep both legible. */
+  .cine-scrim{background:
+    linear-gradient(90deg,rgba(6,9,14,.9) 0%,rgba(6,9,14,.7) 48%,rgba(6,9,14,.34) 100%),
+    linear-gradient(180deg,rgba(6,9,14,.5) 0%,rgba(6,9,14,.2) 34%,rgba(8,12,18,.36) 76%,#101826 100%);}
 }
 @media (max-width:560px){
   body{font-size:16px}
   .wrap{padding:0 16px}
   .cards,.proof,.jud,.ask-qs{grid-template-columns:minmax(0,1fr)}
+  .cw-chips span{flex:0 0 calc(50% - 5px);font-size:.74rem}
+  .cw-chips i{width:22px;height:22px}
   .doc-paper{transform:none;padding:18px 16px 14px}
   .doc-row{grid-template-columns:minmax(0,1fr);gap:2px}
   .doc-row--3{grid-template-columns:auto minmax(0,1fr);gap:10px}
@@ -632,7 +732,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     <a class="nav-link nav-hide" href="#memory">Memory</a>
     <a class="nav-link nav-hide" href="#reconcile">CAM</a>
     <a class="nav-link nav-hide" href="#xrpl">XRPL</a>
-    <a class="nav-link nav-hide" href="#judges">Judges</a>
+    <a class="nav-link nav-link--gold nav-hide" href="#judges">Judges</a>
     <a class="nav-link" href="/app">Log in</a>
     <a class="nav-link nav-hide" href="#pilot" data-pilot>Request a Pilot</a>
     <a class="btn btn--primary btn--sm" href="https://www.mainstreet-review.com/demo" data-demo>Explore the live demo</a>
@@ -641,36 +741,81 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
 
 <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
 <header class="hero">
+  <!-- 1 · THE PROPERTY, edge to edge. A representative photograph, not a
+       photograph of Cascade Commons — that property is fictional, and the
+       caption under the card says so rather than letting the building imply
+       otherwise. WebP with a JPEG fallback; the 2.2 MB source PNG is not
+       shipped. -->
+  <div class="cine">
+    <picture>
+      <source srcset="assets/landing/cascade-hero.webp" type="image/webp">
+      <img class="cine-img" src="assets/landing/cascade-hero.jpg" alt=""
+           width="1168" height="784" fetchpriority="high" decoding="async">
+    </picture>
+    <div class="cine-scrim"></div>
+    <div class="wrap cine-head">
+      <div class="badge rv"><i></i>Commercial real estate, simplified</div>
+      <h1 class="rv">AI-powered <span class="accent">property management</span>, made simpler.</h1>
+      <p class="cine-sub rv">Everything about your property, connected in one place.</p>
+    </div>
+  </div>
+
   <div class="wrap hero-in">
-    <div class="rv">
-      <div class="badge"><i></i>Property intelligence for commercial real estate</div>
-      <h1>The <span class="accent">verified memory</span> for every commercial property.</h1>
-      <p class="lede">
-        MainStreet brings a property&rsquo;s leases, documents, tenants, spaces,
-        invoices, CAM, disputes, and history into one verified system. Ask a question
-        and get an answer grounded in the property&rsquo;s own records — with the
-        evidence behind it.
-      </p>
-      <div class="cta-row">
-        <a class="btn btn--ghost" href="index.html?demo=1">
-          <span>▶ Watch the film<span class="btn-sub">A 50-second product film</span></span>
-        </a>
-        <a class="btn btn--primary" href="https://www.mainstreet-review.com/demo" data-demo>
-          <span>Explore the live demo →<span class="btn-sub">Demonstration property data · no setup</span></span>
-        </a>
+
+    <!-- 2 · ITS INFORMATION  3 · MAINSTREET  4 · THE ORGANIZED PROPERTY.
+         Not a screenshot: no single product screen shows a property's records
+         converging into one organized workspace, so this composes that moment.
+         Every figure is one already verified elsewhere on this page — see
+         section F of test-site-claims.js: 26,000 sf, 5 tenants and 26 invoices
+         for Cascade Commons, the 4 caps the audit applies, the 3-of-5 billable
+         verdict and its 2 open disputes. Nothing here is invented. -->
+    <div class="cw rv" style="transition-delay:.1s" role="img" aria-label="Cascade Commons' leases, tenants, invoices, documents, expenses and important dates converging into MainStreet and becoming one organized property workspace: 26,000 square feet, 5 tenants, 26 invoices, 3 of 5 tenants billable, 4 CAM caps applied, 2 open disputes.">
+      <div class="cw-chips">
+        <span><i>LE</i>Leases</span>
+        <span><i>TE</i>Tenants</span>
+        <span><i>IN</i>Invoices</span>
+        <span><i>DO</i>Documents</span>
+        <span><i>EX</i>Expenses</span>
+        <span><i>ID</i>Important Dates</span>
       </div>
-      <div class="hero-note"><b>Built in the open.</b> One real RLUSD settlement, verified on the XRP Ledger mainnet — <a href="#xrpl">see the transaction</a>.</div>
-      <div class="scroll-cue" aria-hidden="true"><i></i>See how it works</div>
+      <div class="cw-flow">
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <defs><linearGradient id="cwg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(255,255,255,.14)"/>
+            <stop offset="1" stop-color="rgba(216,184,114,.75)"/>
+          </linearGradient></defs>
+          <path d="M8.33 0 C8.33 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M25.00 0 C25.00 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M41.67 0 C41.67 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M58.33 0 C58.33 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M75.00 0 C75.00 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+          <path d="M91.67 0 C91.67 24 50 16 50 40" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <span class="cw-mark">M</span>
+      </div>
+      <div class="cw-ws">
+        <div class="cw-id">
+          <b>Cascade Commons</b>
+          <div class="cw-stats"><span>26,000 SF</span><span>5 Tenants</span><span>26 Invoices</span></div>
+        </div>
+        <div class="cw-rows">
+          <div><i>✓</i>3 of 5 tenants billable</div>
+          <div><i>✓</i>4 CAM caps applied</div>
+          <div><i class="hold">!</i>2 open disputes</div>
+        </div>
+      </div>
+      <p class="cw-cap">Representative property photograph. Cascade Commons is a fictional property; every figure shown is its demonstration data.</p>
     </div>
 
-    <div class="rv shot-wrap" style="transition-delay:.1s"><div class="shot shot--float">
-      <div class="shot-bar">
-        <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
-        <span class="shot-cap">MainStreet — AI Command Center</span>
-        <span class="shot-tag">live demo · demonstration data</span>
-      </div>
-      <img src="assets/landing/ui-command-center.png" alt="The MainStreet AI Command Center for a two-property demonstration portfolio: value identified, today&#39;s priorities, and the next step for each." loading="eager" width="1312" height="1240">
-    </div></div>
+    <div class="cta-row rv">
+      <a class="btn btn--ghost" href="index.html?demo=1">
+        <span>▶ See how it works<span class="btn-sub">A 50-second product film</span></span>
+      </a>
+      <a class="btn btn--primary" href="https://www.mainstreet-review.com/demo" data-demo>
+        <span>Explore the live demo →<span class="btn-sub">Demonstration property data · no setup</span></span>
+      </a>
+    </div>
+    <div class="scroll-cue" aria-hidden="true"><i></i>Scroll to explore</div>
   </div>
 </header>
 
@@ -933,7 +1078,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
   <div class="wrap"><div class="panel panel--warm split">
     <div class="split-copy rv">
       <div class="eyebrow">Remember</div>
-      <h2 style="margin:12px 0 16px">Every property<br>remembers.</h2>
+      <h2 style="margin:12px 0 16px">The <span class="accent">verified memory</span> for every commercial property.</h2>
       <p class="lede">
         Open a building and its organised record is there: taxes, insurance, financing,
         agreements, building systems, invoices and history — filed where a manager

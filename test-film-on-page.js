@@ -109,7 +109,7 @@ const srv = http.createServer((rq, rs) => {
   (navs.length === navsBeforeClose) ? ok('closing does not reload the page') : bad('close navigated');
   !after.on ? ok('the film layer is dismissed') : bad('film still showing');
   after.bodyFree ? ok('scrolling is restored') : bad('page left locked');
-  /verified memory/i.test(after.h1) ? ok('the viewer is back on the marketing page, scroll position intact') : bad('page state lost', after.h1);
+  /property management/i.test(after.h1) ? ok('the viewer is back on the marketing page, scroll position intact') : bad('page state lost', after.h1);
 
   console.log('\n── One implementation, not two ──');
   const le = fs.readFileSync(path.join(ROOT, 'landing-experience.js'), 'utf8');

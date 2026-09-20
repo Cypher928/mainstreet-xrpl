@@ -200,10 +200,14 @@ t('all film links use the one in-place href (no /app?demo=1 detour)',
 // The hero keeps its historical filename because the film's recover beat uses
 // the same file as its blurred context plate (and test-hero-video.js pins the
 // name). The FILE is the pilot capture — the same one the other shots come from.
+// The hero photograph is not a product screenshot — it is a representative
+// building, labelled as such — so it is named here rather than being forced to
+// look like a capture from the pilot build.
+const HERO_PHOTO = /^assets\/landing\/cascade-hero\.(jpg|webp)$/;
 const PILOT_SHOT = /^assets\/landing\/(pilot\/[^"]+|ui-command-center\.png)$/;
 const shots = (HTML.match(/<img[^>]+src="(assets\/landing\/[^"]+)"/g) || []).map(s => s.match(/src="([^"]+)"/)[1]);
 t('every screenshot on the page comes from the pilot capture set',
-  shots.length >= 6 && shots.every(s => PILOT_SHOT.test(s)),
+  shots.length >= 6 && shots.every(s => PILOT_SHOT.test(s) || HERO_PHOTO.test(s)),
   'old-build screenshots must not sit beside the live-demo link: ' + shots.filter(s => !PILOT_SHOT.test(s)).join(', '));
 for (const img of shots) t(`screenshot exists: ${img}`, fs.existsSync(path.join(ROOT, img)));
 
@@ -215,7 +219,70 @@ t('Production /app is not credited with pilot-only capabilities',
   !/production (has|now has|includes)/i.test(TEXT));
 t('"Log in" points at the app root, not an inert query', /href="\/app">Log in</.test(HTML));
 t('the pilot request modal is intact', /id="pilotModal"/.test(HTML) && /\/api\/pilot-request/.test(HTML));
-t('the positioning line is the H1', /<h1>The <span class="accent">verified memory<\/span> for every commercial property\.<\/h1>/.test(HTML));
+t('the H1 says what MainStreet is, in plain words',
+  /<h1[^>]*>AI-powered <span class="accent">property management<\/span>, made simpler\.<\/h1>/.test(HTML));
+t('the hero badge matches the new positioning',
+  /<div class="badge[^"]*"><i><\/i>Commercial real estate, simplified<\/div>/.test(HTML));
+t('the hero subline is the approved sentence, verbatim',
+  /<p class="cine-sub[^"]*">Everything about your property, connected in one place\.<\/p>/.test(HTML));
+t('the hero carries no descriptive paragraph — the photograph and the card do the work',
+  !/<p class="lede"/.test((HTML.match(/<header class="hero[^"]*">[\s\S]*?<\/header>/) || [''])[0]));
+t('the six categories appear exactly once on the page, as the chips',
+  ['Leases', 'Tenants', 'Invoices', 'Documents', 'Expenses', 'Important Dates']
+    .every(c => (HTML.match(new RegExp('<span><i>[A-Z]{2}<\\/i>' + c + '<\\/span>', 'g')) || []).length === 1));
+t('the hero CTAs read exactly "See how it works" and "Explore the live demo →"',
+  /▶ See how it works<span class="btn-sub">A 50-second product film/.test(HTML) &&
+  /Explore the live demo →<span class="btn-sub">/.test(HTML));
+t('the film/live-demo CTA destinations are unchanged',
+  /href="index\.html\?demo=1">\s*<span>▶ See how it works/.test(HTML) &&
+  /href="https:\/\/www\.mainstreet-review\.com\/demo" data-demo>\s*<span>Explore the live demo/.test(HTML));
+t('the old CAM hairline block is gone from the hero (moved into the interactive section only)',
+  !/class="hero-cam"/.test(HTML));
+t('the hero does not present MainStreet as an accounting/PMS replacement',
+  !/replace(s)? (Yardi|your accounting|your PMS)/i.test(TEXT));
+// Hoisted: F2 cross-checks the hero's figures against the interactive section.
+const ASK = (HTML.match(/<section id="ask"[\s\S]*?<\/section>/) || [''])[0];
+const ASK_TEXT = ASK.replace(/<[^>]+>/g, ' ').replace(/&rsquo;/g, "'").replace(/&hellip;/g, '…').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+console.log('\n── F2 · the hero visual carries no invented data ──');
+const HERO = (HTML.match(/<header class="hero[^"]*">[\s\S]*?<\/header>/) || [''])[0];
+t('the old composed Whole Health cap-story hero visual is gone',
+  !/class="hero-moment"/.test(HERO) && !/lease cap reached/.test(HERO));
+t('the hero is anchored by the property photograph, full width',
+  /<div class="cine">/.test(HERO) && /class="cine-img"/.test(HERO));
+t('the photograph ships as WebP with a JPEG fallback, not the source PNG',
+  /<source srcset="assets\/landing\/cascade-hero\.webp" type="image\/webp">/.test(HERO) &&
+  /src="assets\/landing\/cascade-hero\.jpg"/.test(HERO) && !/cascade-hero\.png/.test(HTML));
+t('both encodes exist and are small enough to ship',
+  ['assets/landing/cascade-hero.webp','assets/landing/cascade-hero.jpg'].every(f => {
+    const fp = path.join(ROOT, f);
+    return fs.existsSync(fp) && fs.statSync(fp).size < 400 * 1024;
+  }));
+t('the convergence layer runs categories → MainStreet → organized property',
+  /class="cw-chips"/.test(HERO) && /class="cw-mark">M</.test(HERO) && /class="cw-ws"/.test(HERO));
+t('all six categories cross the photograph, in the approved order',
+  /<span><i>LE<\/i>Leases<\/span>[\s\S]*?<span><i>TE<\/i>Tenants<\/span>[\s\S]*?<span><i>IN<\/i>Invoices<\/span>[\s\S]*?<span><i>DO<\/i>Documents<\/span>[\s\S]*?<span><i>EX<\/i>Expenses<\/span>[\s\S]*?<span><i>ID<\/i>Important Dates<\/span>/.test(HERO));
+t('the fictional-property disclosure sits with the photograph',
+  /Representative property photograph\. Cascade Commons is a fictional property/.test(HERO));
+t('the hero visual carries only figures already verified elsewhere on this page',
+  /5 Tenants/.test(HERO) && /26 Invoices/.test(HERO) && /26,000 SF/.test(HERO) &&
+  /3 of 5 tenants billable/.test(HERO) && /2 open disputes/.test(HERO) &&
+  /4 CAM caps applied/.test(HERO) && /Four caps/.test(ASK_TEXT) &&   // the ask pane says the same
+  /<div><i>✓<\/i>3 of 5 tenants billable<\/div>/.test(HERO) &&
+  /<div><i>✓<\/i>4 CAM caps applied<\/div>/.test(HERO) &&
+  /<div><i class="hold">!<\/i>2 open disputes<\/div>/.test(HERO) &&   // held, not verified
+  HTML.includes('26,000 sf, 5 tenants, 26 invoices') &&  // the jud-demo note this reuses
+  /3 of 5 billable/.test(HTML));                          // the ask-pane verdict this reuses
+t('no invented figures from the design-reference mockup made it into the hero',
+  !/\b142\b/.test(HERO) && !/42,000/.test(HERO) && !/Built in 2018|Built 2018/.test(HERO));
+t('the CAM figure is NOT the hero focal point — it belongs to the section below',
+  !/34,650/.test(HERO) && /Why can't we bill Whole Health Market more than \$34,650\?/.test(ASK_TEXT));
+t('the positioning line survives, lower, in its own style',
+  /<h2[^>]*>The <span class="accent">verified memory<\/span> for every commercial property\.<\/h2>/.test(HTML)
+  && HTML.indexOf('verified memory</span> for every commercial property.</h2>') > HTML.indexOf('id="judges"'));
+t('"Properties run better with a memory" is not in the hero',
+  !/Properties run better with a memory/i.test(HERO));
+t('Judges is the one gold item in the nav',
+  (HTML.match(/nav-link--gold/g) || []).length === 3 && /nav-link nav-link--gold nav-hide" href="#judges">Judges/.test(HTML));
 t('the seven-part strip names what the record holds, in order',
   /Leases[\s\S]*Documents[\s\S]*Tenants &(amp;)? Spaces[\s\S]*Invoices[\s\S]*CAM[\s\S]*History[\s\S]*Ask/.test(TEXT));
 
@@ -225,8 +292,6 @@ t('the seven-part strip names what the record holds, in order',
 // in assets/demo/lease-whole-health-market.pdf. If the seed changes, this is
 // where the page and the demo would drift apart.
 console.log('\n── F · the story ──');
-const ASK = (HTML.match(/<section id="ask"[\s\S]*?<\/section>/) || [''])[0];
-const ASK_TEXT = ASK.replace(/<[^>]+>/g, ' ').replace(/&rsquo;/g, "'").replace(/&hellip;/g, '…').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
 t('the interactive section exists and sits directly after the strip',
   /id="how"[\s\S]*?<section id="ask"/.test(HTML) && HTML.indexOf('id="ask"') < HTML.indexOf('id="judges"'));
 t('the judges section follows the explanation and precedes the deeper chapters',
