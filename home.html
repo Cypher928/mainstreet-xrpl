@@ -334,6 +334,28 @@ figure{margin:0}
   border-radius:10px;padding:10px 12px;overflow-x:auto;white-space:pre;margin:0}
 
 /* ── Live demo ────────────────────────────────────────────────────────────── */
+/* The product walkthrough. Wears the same frame as the screenshots either side
+   of it so the page reads as one surface, and sits in .shot-wrap like they do —
+   the depth suite requires every .shot to be framed and pooled in its own light.
+   The file itself is not in this repository: it is 58 MB, and the next largest
+   asset here is 2 MB, so it is served from Vercel Blob storage. */
+.demo-film{margin:28px 0 0}
+.demo-film video{
+  display:block;width:100%;background:#000;
+  /* THE BOX IS FIXED BEFORE ANYTHING LOADS. With height:auto the element takes
+     the POSTER's proportions until the video's metadata arrives and then jumps
+     to the video's — a visible reflow partway down the page. Declaring the ratio
+     holds one box from first paint: the poster fills it, the video replaces the
+     poster inside it, nothing moves. `contain` rather than `cover` because the
+     recording's exact proportions are the studio's to decide; if it is not 16:9
+     it letterboxes on black instead of silently cropping the frame. */
+  aspect-ratio:16/9;height:auto;object-fit:contain;
+  /* The frame already rounds and clips; a video with its own radius double-draws. */
+  border:0;border-radius:0;
+}
+.demo-film figcaption{
+  margin-top:14px;font-size:.92rem;color:var(--t3);line-height:1.6;text-align:center;
+}
 .demo-props{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-top:28px}
 .demo-prop{background:var(--card);border:1px solid rgba(var(--line),.07);border-radius:var(--r);padding:24px;box-shadow:var(--lift-1), var(--edge)}
 .demo-prop h3{margin-bottom:6px}
@@ -738,6 +760,33 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
       <h2 style="margin-top:12px">Explore MainStreet using demonstration property data</h2>
       <p class="lede">Two fictional properties, seeded for you the moment you sign in. One bills cleanly. One is held — on purpose.</p>
     </div>
+
+    <!-- THE RECORDED WALKTHROUGH.
+         Deliberately NOT autoplay: this is a narrated walkthrough, not a silent
+         loop, and a page that starts talking at a judge is a page they close.
+         `controls` and a poster, so it begins when they decide it begins.
+         preload="metadata" fetches only the header — the file is 58 MB and must
+         not compete with the rest of the page for bandwidth before it is asked
+         for. The class is deliberately not `hero-film`: that name belongs to the
+         hero autoplay contract in test-hero-video.js, which this is not. -->
+    <figure class="rv shot-wrap demo-film" style="transition-delay:.06s">
+      <div class="shot">
+        <div class="shot-bar">
+          <span class="shot-dot"></span><span class="shot-dot"></span><span class="shot-dot"></span>
+          <span class="shot-cap">MainStreet — product walkthrough</span>
+          <span class="shot-tag">recorded in the pilot · demonstration data</span>
+        </div>
+        <video controls playsinline preload="metadata"
+               poster="assets/landing/pilot/important-dates.png"
+               width="1312" height="738">
+          <source src="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4" type="video/mp4">
+          <p>Your browser cannot play this video.
+            <a href="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4">Open the walkthrough directly</a>.</p>
+        </video>
+      </div>
+      <figcaption>See MainStreet work a property from lease document to verified decision.</figcaption>
+    </figure>
+
     <div class="demo-props">
       <div class="demo-prop rv">
         <h3>Cascade Commons</h3>
