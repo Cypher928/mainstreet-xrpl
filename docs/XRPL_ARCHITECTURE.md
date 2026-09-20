@@ -57,11 +57,11 @@ sequenceDiagram
     App->>App: "Ready to settle" surfaced (overview, Command Center, Workspace)
     Op->>Op: scripts/send-settlement.js — seed via hidden prompt
     Op->>Op: DRY RUN (default): builds + validates, does not submit
-    Op->>XRPL: --live: RLUSD Payment (SourceTag 2606290001, SHA-256 memo)
+    Op->>XRPL: --yes: RLUSD Payment (SourceTag 2606290001, SHA-256 memo)
     XRPL-->>Op: validated tx hash
     Op->>App: settlement record saved on the property
     App->>App: green verified flow — landlord + tenant see<br/>View Transaction → livenet.xrpl.org
-    Op->>XRPL: scripts/verify-settlement.js — 6-point check
+    Op->>XRPL: scripts/verify-settlement.js — read-only on-ledger check
 ```
 
 The settlement record persisted on the property:
@@ -85,26 +85,41 @@ Every settlement Payment carries:
 - **Amount:** issued-currency object `{currency: RLUSD hex, issuer, value}`.
 - **SourceTag `2606290001`** — identifies MainStreet/Make Waves traffic
   on-ledger; attached to Payments **and** TrustSets.
-- **Memo: SHA-256 fingerprint** of the reconciliation payload — binds the
-  on-ledger transaction to the exact off-ledger reconciliation it settles.
-  Anyone holding the reconciliation data can recompute the hash and confirm
-  the match; nobody can forge a different reconciliation for the same tx.
+- **Memo: SHA-256 fingerprint of the settlement record.** The record is
+  `{destination, amountUsd, network}` — the destination, the amount and the
+  network the payment was built from — and the memo carries that hash together
+  with the amount in clear: `MemoType MainStreet/RLUSDSettlement`,
+  `MemoFormat application/json`, `MemoData {dataHash, amountUsd}`
+  (`rlusd-integration.js`, `buildSettlementPaymentTx`). Anyone holding the
+  settlement record can recompute the hash and confirm it matches the
+  fingerprint committed to the transaction. The reconciliation itself — leases,
+  invoices, allocations, disputes — stays off-ledger; the memo does not hash
+  it. (Anchoring a reconciliation fingerprint is the separate, testnet-only
+  `xrpl-integration.js` prototype, not wired into production.)
 - Standard XRPL fields (Fee, Sequence, LastLedgerSequence) handled by xrpl.js
   autofill.
 
 ## 6. Verification — trust nothing, check the ledger
 
-`scripts/verify-settlement.js` performs an independent **6-point on-ledger
-verification** against public XRPL endpoints (multi-endpoint fallback; reads
-`result.tx_json`; auto-classifies args so a wallet address vs tx hash "just
-works"):
+`scripts/verify-settlement.js` is a read-only check against public XRPL
+endpoints (multi-endpoint fallback; reads `result.tx_json`; auto-classifies
+args so a wallet address vs tx hash "just works"). It **asserts**:
 
-1. Transaction exists and is **validated** (`tesSUCCESS`).
-2. Correct **sender** (settlement wallet).
-3. Correct **destination** (landlord wallet).
-4. Correct **currency + issuer** (RLUSD from the official issuer).
-5. Correct **delivered amount**.
-6. **Memo fingerprint** matches the reconciliation SHA-256.
+1. The transaction is a **Payment**.
+2. Its on-ledger result is **`tesSUCCESS`**.
+3. It was **sent from the settlement wallet** — when a wallet address is
+   supplied.
+4. The amount is **RLUSD**, and the **issuer is Ripple's official issuer**.
+5. It **carries a memo** (absence is reported, not failed).
+
+It **prints, for you to compare against the explorer** — it does not assert
+them: the destination, the delivered RLUSD value, the Source Tag and any
+Destination Tag.
+
+It does **not** recompute or compare the memo fingerprint. Confirming the
+fingerprint means recomputing SHA-256 over the settlement record in §5 and
+comparing it to `dataHash` in the decoded memo — arithmetic anyone can do from
+the explorer, but not something this script does for you.
 
 In-app, `api/rlusd-settlement.js` exposes a **read-only `status`** action and
 every settlement surface links to the public explorer
@@ -117,7 +132,7 @@ MainStreet doesn't control.
 |---|---|
 | **Seeds never touch the server, the repo, or the browser.** | Signing happens only in operator-run CLI scripts; seeds are entered via hidden prompts (readline, no echo), never as CLI args (shell history) and never in env files. |
 | **The web app cannot move money.** | `api/rlusd-settlement.js` is read-only. There is no signing key in any deployed environment; a full server compromise cannot spend funds. |
-| **Dry-run by default.** | `send-settlement.js` builds and validates without submitting unless `--live` is explicit. |
+| **Dry-run by default.** | `send-settlement.js` builds and validates without submitting unless `--yes` is explicit. |
 | **Wallet rotation on compromise.** | When a seed was exposed, the wallet (`rG2Za…NPrn`) was drained-to-safe, abandoned, and replaced; new seeds generated locally (`generate-settlement-wallet.js` writes to a private file, never stdout-logs the seed). |
 | **Sanity scripts.** | `wallet-address.js` verifies a seed↔address match before anything is sent; `setup-trust-line.js` and `send-xrp.js` isolate one-time setup steps. |
 | **Public verifiability over private assurance.** | Explorer links + independent verify script mean no party has to trust MainStreet's database about whether money moved. |
