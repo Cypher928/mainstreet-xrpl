@@ -6,16 +6,16 @@
 
 ## 👋 For Judges — Start Here
 
-**Live demo:** [mainstreetcam.com](https://mainstreetcam.com)
+**Live demo:** [mainstreet-review.com/demo](https://www.mainstreet-review.com/demo) — read-only, no signup, seeded demonstration data
 
 **🎥 Demo video:** [Watch the full walkthrough](https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0)
 
 **Fastest way to see the product (under 3 minutes):**
 
-1. Open the live demo link above.
-2. **Sign up** with any email — it's free and takes a few seconds (signup is required so your data persists, but no credit card and no setup).
-3. Click **"Try Live Demo"** — this loads a fully seeded example property (*Cascade Commons*) with real tenants, leases, invoices, a completed CAM reconciliation, and a resolved tenant dispute.
-4. Open the property and walk through the workspace tabs: **Overview → CAM → Reserves → Reports**. Everything is populated — no empty states to set up.
+1. Open the live demo link above. No account, no sign-in, nothing to set up — it opens straight inside a seeded property.
+2. It is a **read-only copy of demonstration data**, served by MainStreet's pilot environment and kept separate from customer production. It runs entirely in your browser: nothing you do is saved — reload and it is back as it was.
+3. Two fictional properties are seeded: *Cascade Commons* (26,000 sf, 5 tenants, 26 invoices, a completed CAM reconciliation and open disputes) and *Northgate Exchange* (24,000 sf, 5 leases, 16 invoices, one recorded vacancy).
+4. Walk the property: its records and documents, spaces and tenants, important dates, the CAM reconciliation and the decisions behind it. Everything is populated — no empty states to set up.
 5. To see the XRPL value proposition: open a completed reconciliation and look for the **"Settlement verified on XRPL — view transaction"** surface, and the tenant portal's settlement-transparency card.
 
 **What to look at:**
@@ -50,7 +50,7 @@ MainStreet automates the full Common Area Maintenance (CAM) reconciliation workf
 | **Tenant Statements** | Per-tenant printable statements showing their share, eligible invoices, and reconciliation status |
 | **AI Confidence Scoring** | Every extracted field is scored 0–100; low-confidence fields flagged for manual review |
 | **Duplicate Detection** | Cross-batch duplicate invoices caught automatically with vendor + amount + date matching |
-| **RLUSD Settlement (XRPL)** | Tenant payments settled in RLUSD on the XRP Ledger as a transparent, verifiable proof-of-settlement layer |
+| **RLUSD Settlement (XRPL)** | CAM settlements are executed in RLUSD on XRPL mainnet from the settlement wallet, carrying the settlement fingerprint in the memo; landlord and tenant both see the verified transaction in-app |
 
 ---
 
@@ -58,7 +58,7 @@ MainStreet automates the full Common Area Maintenance (CAM) reconciliation workf
 
 CAM reconciliation involves significant money and significant disputes. XRPL gives MainStreet a public, tamper-proof settlement trail that neither party can alter after the fact — paired with cryptographic audit fingerprints for the underlying records.
 
-- **RLUSD settlement on XRPL Mainnet** — tenant payments are settled in RLUSD on the XRP Ledger and surfaced in-app as "Settlement verified on XRPL — view transaction," not hidden behind the scenes
+- **RLUSD settlement on XRPL Mainnet** — CAM settlements are executed in RLUSD on XRPL mainnet from the settlement wallet, carrying the settlement fingerprint in the memo; landlord and tenant both see the verified transaction in-app as "Settlement verified on XRPL — view transaction," not hidden behind the scenes
 - **Settlement fingerprint in the transaction memo** — each settlement embeds a SHA-256 fingerprint of the settlement record in its on-ledger memo, so the payment and what it settled are publicly verifiable together
 - **Local cryptographic audit fingerprints** — every reconciliation and dispute resolution gets a SHA-256 fingerprint computed in-app, so any later change to the record is detectable
 - **Privacy by design, with optional future anchoring** — reconciliation and lease records stay off-chain to protect tenant and landlord confidentiality; the architecture is built to *optionally* anchor a finalized record's fingerprint to XRPL in future, without putting any private data on-chain
@@ -102,11 +102,11 @@ Traditional CAM reconciliation takes weeks, involves outside firms, and produces
 
 ## Quick Start
 
-1. Open [mainstreetcam.com](https://mainstreetcam.com)
-2. Sign up with any email (free, no card required)
-3. Click **"Try Live Demo"** to load the seeded *Cascade Commons* property
-4. Explore the workspace tabs, open a reconciliation, and review a tenant dispute
-5. To run your own: add a property, upload leases and invoices (or import a Yardi CSV), and click **Run CAM Allocation**
+1. Open [mainstreet-review.com/demo](https://www.mainstreet-review.com/demo) — read-only, no signup, seeded demonstration data
+2. It opens inside the seeded *Cascade Commons* property; *Northgate Exchange* is seeded alongside it
+3. Explore the property's records, open the CAM reconciliation, and review a tenant dispute
+4. Nothing you do is saved — the demo cannot write, and it cannot sign or move funds
+5. To run your own: add a property, upload leases and invoices (or import a Yardi CSV), and click **Run CAM Allocation** in the full app
 
 ---
 

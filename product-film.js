@@ -26,7 +26,7 @@
   var EXPLORER = 'https://livenet.xrpl.org/transactions/7FA730B2B78819AE34B3D1B458721FBC52B9CD25E980ED42DD1B15E9F9FC724A';
   // The live demo runs in the pilot environment, separate from customer
   // production, against demonstration property data.
-  var DEMO_URL = 'https://www.mainstreet-review.com';
+  var DEMO_URL = 'https://www.mainstreet-review.com/demo';
   var ASSET = 'assets/landing/';
   var STYLE_ID = 'pf-styles';
 

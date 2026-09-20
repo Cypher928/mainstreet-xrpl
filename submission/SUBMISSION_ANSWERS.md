@@ -65,13 +65,13 @@ MainStreet is live on XRPL mainnet. First settlement transaction:
 - **Settlement wallet:** `rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`
 - **Landlord (destination) wallet:** `rw97rJThBJtoVRqR4DsoK5kW2taftzQvAX`
 - **RLUSD issuer (mainnet):** `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`
-- **On-chain proof:** Payment · `tesSUCCESS` · RLUSD from Ripple's official issuer · SHA-256 fingerprint in the tx memo. Verify with `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`.
+- **On-chain proof:** Payment · `tesSUCCESS` · RLUSD from Ripple's official issuer · SHA-256 fingerprint of the settlement record in the tx memo. Run `node scripts/verify-settlement.js rHLDysh6p6TcJM7QXU15YRLG4mERF5h5pv`: the script checks the Payment type, transaction result, RLUSD issuer, sender when supplied, and presence of a memo. It prints the destination, amount, and Source Tag for comparison with the explorer.
 - **Attribution reference (per program rules):** Make Waves **Source Tag `2606290001`** — assigned by XRPL Commons at registration; set on every settlement Payment and TrustSet (per T&C §5/§7), so on-chain activity is attributable to the project. Verify on-chain via the transaction's `SourceTag` field.
 
 ### Live demo
-- **App:** https://mainstreetcam.com (sign up free → "Try Live Demo" → seeded
-  Cascade Commons property)
-- **Demo video:** `<<DEMO_VIDEO_URL>>`
+- **Demo:** https://www.mainstreet-review.com/demo — read-only, no signup, seeded
+  demonstration data; opens inside the seeded Cascade Commons property
+- **Demo video:** https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4
 
 ### Tech stack
 Vanilla JS frontend; Vercel serverless functions; Supabase (auth + Postgres); Claude API for
@@ -98,10 +98,10 @@ settlement volume during the challenge window; harden the settlement pipeline fo
 property-management use.
 
 ### Registration / eligibility notes (for our own tracking, not the form)
-- Registered: `<<REGISTRATION_DATE>>`
+- Registered: the exact date is not recorded in this repository; the Mainnet Gate was
+  demonstrated to XRPL Commons.
 - Mainnet launch must be within 30 days of registration — **verify this window against the
   official page**; the first settlement must land inside it.
-- Attribution mechanism **not yet verified** — confirm from Make Waves rules / registration /
-  XRPL Commons Discord how on-chain activity is attributed (registered wallet address, Source
-  Tag, Destination Tag, or memo). Apply it before/at the first settlement (go-live checklist
-  step 5). Do not assume a Source Tag.
+- Attribution is **resolved**: Make Waves Source Tag `2606290001`, set on every settlement Payment
+  and TrustSet (per T&C §5/§7) and present on the first mainnet settlement — verifiable on-chain
+  via the transaction's `SourceTag` field.

@@ -254,12 +254,12 @@
     <section class="slide" data-i="4">
       <div class="anim eyebrow"><span class="n">05</span> Why XRPL</div>
       <h2 class="anim">Not bolted on — it's the audit layer.</h2>
-      <p class="anim lede">A wire moves money but can't prove <em class="brass">what for</em>. An RLUSD payment carries a SHA-256 fingerprint of the exact reconciliation in its memo — anyone can verify it, on infrastructure no one party controls.</p>
+      <p class="anim lede">A wire moves money but can't prove <em class="brass">what for</em>. An RLUSD payment carries a SHA-256 fingerprint of the settlement record in its memo — the payment and its memo are verifiable by anyone, on infrastructure no one party controls.</p>
       <ul class="anim list">
         <li><span class="m">RLUSD</span><span><b>Dollar settlement.</b> A regulated stablecoin — no volatility, the currency CAM is actually owed in.</span></li>
         <li><span class="m">FAST</span><span><b>3–5 second finality</b> at sub-cent fees. No settlement float, no chargebacks.</span></li>
         <li><span class="m">PROOF</span><span><b>Publicly verifiable.</b> Landlord, tenant, and auditor check the same ledger entry.</span></li>
-        <li><span class="m">PRIV</span><span><b>Sensitive lease data stays off-chain.</b> Only a one-way hash goes on-ledger — never names or amounts.</span></li>
+        <li><span class="m">PRIV</span><span><b>Lease and reconciliation data stay off-chain.</b> The ledger carries the payment, its amount, and a SHA-256 fingerprint of the settlement record — never tenant names or lease terms.</span></li>
       </ul>
     </section>
 
@@ -302,9 +302,9 @@
     <section class="slide" data-i="8">
       <div class="anim eyebrow"><span class="n">09</span> Thank You</div>
       <h2 class="anim">See it settle for yourself.</h2>
-      <p class="anim lede">Live product, real mainnet settlement, open source.</p>
+      <p class="anim lede">Live product, real mainnet settlement, public code.</p>
       <div class="anim close-links">
-        <a class="lrow" href="https://mainstreetcam.com" target="_blank" rel="noopener"><span class="ic">Live Demo</span><span class="u">mainstreetcam.com</span><span class="go">↗</span></a>
+        <a class="lrow" href="https://www.mainstreet-review.com/demo" target="_blank" rel="noopener"><span class="ic">Live Demo</span><span class="u">mainstreet-review.com/demo — read-only, no signup</span><span class="go">↗</span></a>
         <a class="lrow" href="https://github.com/Cypher928/mainstreet-xrpl" target="_blank" rel="noopener"><span class="ic">GitHub</span><span class="u">github.com/Cypher928/mainstreet-xrpl</span><span class="go">↗</span></a>
         <a class="lrow" href="https://1drv.ms/v/c/8adf809cf83a844a/IQAcJhs_Il5hSIlU2PJLiVVPAWmxCY7Fvc3QBzTiSrZsJo0" target="_blank" rel="noopener"><span class="ic">Demo Video</span><span class="u">3-minute walkthrough</span><span class="go">↗</span></a>
       </div>
