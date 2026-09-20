@@ -188,8 +188,17 @@ t('there is still only ONE video player on the page',
   (HTML.match(/<video[\s>]/g) || []).length === 1,
   'the card is a link to the recording above, not a second copy of it');
 t('clicking the card plays that player instead of downloading the file',
-  /judWalkthrough[\s\S]{0,900}preventDefault\(\)[\s\S]{0,300}walkPlayer\.play\(\)/.test(HTML),
+  /judWalkthrough[\s\S]{0,900}preventDefault\(\)[\s\S]{0,900}walkPlayer\.play\(\)/.test(HTML),
   'without this a judge gets a 58 MB download if the host answers attachment');
+// The device's own player is the fallback ONLY when inline play() rejects (iOS);
+// a resolved play() must never also open the file in a new tab.
+t('the native-player fallback is reached only through a rejected play()', (() => {
+  const s = HTML.indexOf("walk.addEventListener('click'"); if (s < 0) return false;
+  const handler = HTML.slice(s, HTML.indexOf('\n    });', s));
+  if (!handler.includes('walkPlayer.play()')) return false;
+  const opens = handler.split('window.open(').slice(0, -1);   // text preceding each window.open(
+  return opens.length >= 1 && opens.every(pre => /\.catch\(function \(\) \{ $|catch \(_\) \{ $/.test(pre));
+})(), 'window.open on a successful inline play would double-play on desktop');
 t('the existing film card is untouched',
   /<div class="jud-t">The film <span>▶<\/span><\/div>/.test(HTML) && /href="index\.html\?demo=1"/.test(HTML));
 t('the existing live-demo card still opens the interactive demo',

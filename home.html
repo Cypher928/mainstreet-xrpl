@@ -193,13 +193,16 @@ h3{font-size:1.06rem;letter-spacing:-.012em;font-weight:700;line-height:1.35}
 /* 2 · the six categories. Blue-gray glass against the photograph, with a warm
    edge; only the monograms are champagne, tying them to the headline and card. */
 .cw-chips{display:flex;gap:10px}
+/* Category labels, not buttons: no lift, no gold control border, no pointer,
+   no tap highlight — they name what the record holds, they do nothing. */
 .cw-chips span{
   flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:9px;
   padding:11px 10px;border-radius:12px;
   background:linear-gradient(180deg,rgba(38,52,71,.86) 0%,rgba(24,35,50,.9) 100%);
   backdrop-filter:blur(18px) saturate(150%);
-  border:1px solid rgba(216,184,114,.38);
-  box-shadow:0 16px 34px -14px rgba(0,0,0,.92), inset 0 1px 0 rgba(255,255,255,.14);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:none;
+  cursor:default;pointer-events:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
   font-size:.8rem;font-weight:700;color:#F6F9FD;letter-spacing:.01em;white-space:nowrap;
 }
 .cw-chips i{
@@ -474,7 +477,7 @@ figure{margin:0}
 .ask-doc{margin:0;padding-top:4px}
 .doc-paper{
   position:relative;background:#F6F3EC;color:#2A2622;border-radius:10px;padding:22px 22px 18px;
-  box-shadow:var(--lift-2);font-size:.8rem;line-height:1.55;transform:rotate(-1.2deg);
+  box-shadow:var(--lift-2);font-size:.8rem;line-height:1.55;transform:none;
 }
 .doc-paper--dark{background:var(--card);color:var(--t2);border:1px solid rgba(var(--line),.09);transform:rotate(0)}
 .doc-head{
@@ -1051,7 +1054,7 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
           <span class="shot-cap">MainStreet — product walkthrough</span>
           <span class="shot-tag">recorded in the pilot · demonstration data</span>
         </div>
-        <video controls playsinline preload="metadata"
+        <video controls playsinline webkit-playsinline preload="metadata"
                poster="assets/landing/pilot/important-dates.png"
                width="1312" height="738">
           <source src="https://ehwfstdnmnq37s40.public.blob.vercel-storage.com/MainStreet_Demo_Final.mp4" type="video/mp4">
@@ -1590,9 +1593,21 @@ footer{border-top:1px solid rgba(var(--line),.07);padding:44px 0;background:var(
     walk.addEventListener('click', function (e) {
       e.preventDefault();
       walkFigure.hidden = false;
+      // iOS Safari refuses play() on a media element that was display:none at
+      // the moment of the gesture unless it has been laid out first, and it
+      // will not have fetched metadata for a hidden element. Force the layout,
+      // (re)start the load, then play — all still inside the tap.
+      void walkPlayer.offsetHeight;
+      if (walkPlayer.readyState === 0) { try { walkPlayer.load(); } catch (_) {} }
       walkPlayer.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      // The click IS the user gesture, so autoplay policy allows sound.
-      try { var r = walkPlayer.play(); if (r && r.catch) r.catch(function () {}); } catch (_) {}
+      // The click IS the user gesture, so autoplay policy allows sound. If the
+      // inline player still refuses (it never does on desktop from a click),
+      // hand the tap to the device's own player via the card's real href —
+      // the same place a no-JS visitor already goes.
+      try {
+        var r = walkPlayer.play();
+        if (r && r.catch) r.catch(function () { window.open(walk.href, '_blank', 'noopener'); });
+      } catch (_) { window.open(walk.href, '_blank', 'noopener'); }
     });
   }
 })();
