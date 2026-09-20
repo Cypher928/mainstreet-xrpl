@@ -64,6 +64,14 @@
        resolved to when this pin was taken, so pinning changed nothing today; it
        only stops tomorrow from changing by itself. Bump deliberately. -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1"></script>
+  <!-- PUBLIC READ-ONLY DEMO (/demo only; both files no-op on every other route).
+       Order is the contract: script.js:46 destructures createClient off
+       window.supabase at load, so the stand-in has to be installed before it,
+       and the snapshot has to exist before the stand-in reads it. On any route
+       but /demo these two add a pair of cached files and nothing else — no
+       behaviour, no listeners, no network. See docs/PUBLIC_DEMO.md. -->
+  <script src="demo-snapshot.js"></script>
+  <script src="demo-store.js"></script>
   <!-- Host-based Supabase routing: production domain → prod project; previews (incl. pilot) → pilot project. Must precede script.js. -->
   <script src="supabase-config.js"></script>
   <!-- ONE definition of how large a request body may be, shared byte-for-byte with
@@ -8456,6 +8464,10 @@
 <script src="onboarding-experience.js"></script>
 <!-- Dev-only role switcher — activates only on localhost, no-op elsewhere -->
 <script src="dev-switcher.js"></script>
+<!-- Public demo shell — banner, open-on-Cascade, and the refusals that keep a
+     judge from believing they changed something. Last, so the whole app is
+     defined before it runs. /demo only; no-op everywhere else. -->
+<script src="demo-shell.js"></script>
 
 <footer style="max-width:min(1440px,calc(100% - 48px));margin:32px auto 0;padding:18px 24px;background:var(--theme-card);border-radius:12px;border:1px solid rgba(var(--line-rgb), 0.07);box-shadow:0 2px 20px rgba(0,0,0,0.4);display:flex;align-items:flex-start;gap:14px;">
   <span style="font-size:1.1rem;flex-shrink:0;">&#x1F512;</span>
