@@ -557,12 +557,17 @@ figure{margin:0}
    the existing grid. The featured cards are the same card with a thumbnail,
    a number and one line more — not a new component. */
 .jud-lead{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+/* The three things to experience first sit on the same champagne as the
+   Cascade Commons card in the hero, so they lift off the dark panel; the
+   proof links beneath stay on the dark card and read as the technical layer. */
 .jud-hero{
-  position:relative;display:block;background:var(--card);border:1px solid rgba(216,184,114,.22);
-  border-radius:var(--r);padding:16px 18px 20px;box-shadow:var(--lift-2), var(--edge);
+  position:relative;display:block;color:#2B2419;
+  background:linear-gradient(180deg,#F8F0DE 0%,#EFE2C7 100%);border:1px solid rgba(216,184,114,.62);
+  border-radius:var(--r);padding:16px 18px 20px;
+  box-shadow:0 30px 60px -26px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.55), 0 14px 40px -20px rgba(216,184,114,.5);
   transition:border-color .2s ease,transform .2s ease,background .2s ease;
 }
-.jud-hero:hover{border-color:rgba(216,184,114,.55);background:var(--card-hi);transform:translateY(-3px)}
+.jud-hero:hover{border-color:rgba(216,184,114,.95);background:linear-gradient(180deg,#FBF5E8 0%,#F3E7D0 100%);transform:translateY(-3px)}
 .jud-n{
   position:absolute;top:26px;left:28px;z-index:2;width:30px;height:30px;border-radius:9px;
   display:grid;place-items:center;background:var(--gold-grad);color:#0B0804;font-weight:800;font-size:.86rem;
@@ -570,7 +575,8 @@ figure{margin:0}
 }
 .jud-shot{
   position:relative;aspect-ratio:16/9;border-radius:10px;overflow:hidden;margin-bottom:14px;
-  border:1px solid rgba(var(--line),.08);background:var(--bg);
+  border:1px solid rgba(60,44,20,.28);background:var(--bg);
+  box-shadow:0 10px 24px -14px rgba(0,0,0,.6);
 }
 .jud-shot img{width:100%;height:100%;object-fit:cover;object-position:top;opacity:.78;transition:opacity .2s ease}
 .jud-hero:hover .jud-shot img{opacity:1}
@@ -579,9 +585,10 @@ figure{margin:0}
   display:grid;place-items:center;background:rgba(5,7,9,.72);border:1px solid rgba(255,255,255,.22);
   color:#fff;font-style:normal;font-size:1.1rem;backdrop-filter:blur(4px);
 }
-.jud-hero .jud-t{font-size:1.12rem}
-.jud-k{color:var(--t2);font-weight:600;font-size:.92rem;margin-top:6px}
-.jud-hero .jud-d{margin-top:6px}
+.jud-hero .jud-t{font-size:1.12rem;color:#19140C}
+.jud-hero .jud-t span{color:#A8842F}   /* the gold, deepened to read on champagne */
+.jud-k{color:#453A24;font-weight:600;font-size:.92rem;margin-top:6px}
+.jud-hero .jud-d{margin-top:6px;color:#5A4F3B}
 .jud-demo{
   margin:22px 0 0;padding:14px 16px;border-radius:12px;background:var(--bg-2);
   border:1px solid rgba(var(--line),.08);font-size:.84rem;color:var(--t3);line-height:1.55;
