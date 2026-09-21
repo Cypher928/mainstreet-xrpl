@@ -93,8 +93,34 @@ when the original is not on file — too large, or the upload failed.
 keeps its row and its `error_message` rather than vanishing. `intake_kind`
 records which upload control the file came through and is **not** a
 classification — document type, families and versions are P1-3.
-`unique (review_id, file_name)` makes one file one row, so the intake's two
-writes (on arrival, then on extraction) update rather than duplicate.
+`unique (review_id, intake_id)` makes one UPLOAD one row, so the intake's two
+writes (on arrival, then on extraction) update rather than duplicate. That key
+was `(review_id, file_name)` until migration 024: re-uploading a file whose
+name was already used replaced the row, and that source left the record even
+though its object was still in the bucket. `intake_id` is minted once when a
+file is taken in and reused by that upload's second write; the earlier row is
+marked `superseded_by_document_id` and keeps everything it had (D-14).
+
+**Classification, families and versions (migration 024, P1-3).**
+`doc_type` is what the document is — the lease values match
+`LeaseIntelligence.DOC_TYPE_TIER` so P1-4 reasons with the function that
+already exists — and NULL or `unknown` is an ordinary state. `doc_type_status`
+∈ `unclassified · proposed · confirmed · corrected` with `doc_type_source` ∈
+`ai · human · intake_kind`: a model's reading is only ever `proposed`, and a
+**trigger refuses any confirmed status whose `confirmed_by` is NULL**.
+`doc_date` is the document's own effective date, which is what orders a family
+(`created_at` is when it was uploaded). `classification_history` is an
+append-only jsonb array of every proposal and correction with its actor and
+time. `family_id` → `acquisition_document_families` is the leasehold, with
+`family_status` ∈ `unfiled · proposed · confirmed`; a check plus the trigger
+keep those two from disagreeing. `parent_document_id` + `relationship` is what
+the document changes **in law**; `superseded_by_document_id` is a fact about a
+file being uploaded twice and is deliberately not a `relationship` value.
+**All three pointers are composite on `user_id`**, so nothing can point across
+owners, and their `ON DELETE SET NULL` carries a column list — without one a
+composite key nulls `user_id` too, and deleting a family would fail.
+`acquisition_document_families` carries the same owner-only RLS, no anon
+policy, and the same composite key to `acquisition_reviews`.
 
 **Written from the browser, like `acquisition_reviews`.** There is no endpoint
 in front of this table: RLS (`acq_docs_owner_all`, `user_id = auth.uid()`, no
@@ -199,6 +225,7 @@ acquisition review the same way.
 | 008 (+008b) | Database hardening + verification queries | Indexes, constraints, checks |
 | 009 | Atomic tenant resync | Prevent partial tenant-table states |
 | 023 | `acquisition_documents` (+ a unique `(id, user_id)` on `acquisition_reviews` for the composite FK) | Acquisition Review keeps every source it is given (P1-2). Pilot only; rollback in `023_..._rollback.sql`; executed end-to-end by `tools/verify-migration-023.js` |
+| 024 | classification / family / version columns on `acquisition_documents`, `acquisition_document_families`, the `intake_id` identity swap and the coherence trigger | What each source IS, which leasehold it belongs to, what it changed, and what replaced it (P1-3). Answers D-14 so a re-upload keeps both sources. Pilot only; rollback in `024_..._rollback.sql`, which **refuses** to restore 023's unique key while that would mean destroying a preserved source; executed end-to-end by `tools/verify-migration-024.js` |
 
 Migrations are plain SQL applied via the Supabase SQL editor (no migration
 runner in-repo). New migrations: next number, idempotent

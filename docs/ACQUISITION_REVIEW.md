@@ -87,7 +87,7 @@ Each is small, separately approved, and verified before the next starts.
 |---|---|---|
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
-| P1-3 | Document Intake II — classification, families, versions (server-owned `document_classification` task; families grouped, never guessed; human confirms) | planned |
+| P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
 | P1-4 | Lease Intelligence — abstraction per family, governing terms with state `verified · ai_extracted · missing · conflicting · unclear`; per-field confirm/correct as appended snapshots | planned |
 | P1-5 | Financial Intake — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion | planned |
@@ -304,6 +304,111 @@ be an explicit archive workflow with its own column and its own approval
 
 ---
 
+## 4c. P1-3 — what each source is, and what it belongs to (shipped)
+
+P1-2 kept every file. P1-3 turns the flat list into
+**Review → Document → Type → Family → Relationship**, and the whole increment
+turns on those being *proposals* until a person confirms them.
+
+### The smallest architecture that carries it
+
+Classification is one-per-document, so it is **columns on
+`acquisition_documents`** rather than a join table for a 1:1 relationship. A
+family is an entity that gets renamed, merged and abstracted per-family in
+P1-4, and two families can legitimately share a tenant name — so it is a
+**table**, `acquisition_document_families`, with documents pointing at it.
+Ordering inside a family is **derived, not stored**: tier then date, by the
+function that already exists.
+
+Migration 024 adds all of it. Nothing about P1-2's storage flow changed, and no
+serverless function was added — `document_classification` joins the existing
+`/api/claude` task registry, and both tables are written from the browser under
+RLS the way P1-2 established.
+
+### The vocabulary is LeaseIntelligence's
+
+`original_lease · amendment · renewal · extension · assignment · guaranty ·
+side_letter · snda · estoppel` belong to a leasehold; `psa · rent_roll ·
+financial_statement · invoice · other · unknown` belong to the review.
+
+The first four names and their tiers are **exactly**
+`LeaseIntelligence.DOC_TYPE_TIER` (`side_letter 4, estoppel 3, amendment 2,
+original_lease 1`), so P1-4 feeds `reasonMultiDocumentLease` rather than a
+second reasoner written to match a new table. `renewal`, `extension`,
+`assignment` and `guaranty` join amendment at tier 2 — they modify a lease the
+same way. The tier lives in code, not in a constraint, because it is a reading
+rule and a constraint would have to be migrated to change it.
+
+### A proposal is never a fact
+
+| what | who may say it | recorded as |
+|---|---|---|
+| a model's reading | `/api/claude` `document_classification` | `proposed`, with its confidence and the quote that decided it |
+| a person's agreement | the Confirm control | `confirmed`, with `confirmed_by` |
+| a person's correction | the type control | `corrected`, with `confirmed_by`, and the reading it replaced is kept |
+| the lane a file came through | the invoice picker | `proposed`, source `intake_kind` |
+
+Migration 024's trigger **refuses** a confirmed status with no `confirmed_by`,
+and `buildPayload` refuses it too, so a broken caller is a named error rather
+than a 500. `classification_history` keeps every act, appended and bounded, and
+it is in the list's column set — a trail that is written but never read back is
+truncated to whatever happened last, which is not an audit record.
+
+### What it declines to decide
+
+The failure this increment exists to avoid is a plausible guess stored as fact,
+so `proposeFamily` and `proposeRelationship` mostly say no:
+
+- an **amendment whose tenant has no lease on file** is classified and left
+  unfiled — what it amends is not known;
+- **two families naming one tenant** proposes neither;
+- a **family with two leases** proposes no parent;
+- a document the model cannot read stays `unknown` and stays visible;
+- only an **original lease** may begin a family.
+
+Tenant matching normalises case, punctuation and company form (`Coastal
+Outfitters, L.L.C.` is `Coastal Outfitters Inc.`) and nothing beyond that.
+There is no fuzzy or substring matching: anything further is a difference, and
+differences are for people.
+
+### Families
+
+A family is **one leasehold** — a space and the chain of documents governing
+it. An assignment stays in the family when the tenant changes, because what the
+family tracks is the leasehold and not the counterparty. Non-lease documents
+get no family in P1-3; `family_kind` exists so grouping financials later needs
+no migration.
+
+### D-14 — the same file name, uploaded twice
+
+023 keyed a document on `(review_id, file_name)`, so a re-upload **replaced**
+the row and that source left the record. Object storage was never the problem:
+`/api/upload` names objects `acq_<review>_<timestamp>-<file>`, so both files
+were always kept — only the row pointing at the older one was overwritten.
+
+A document's identity is now **`intake_id`**, minted once when a file is taken
+in and reused by that upload's second write, with `unique (review_id,
+intake_id)` as the upsert's conflict key. One upload is one row; two uploads
+are two rows even when they share a name. The older row is marked
+`superseded_by_document_id` and keeps its own object, text and classification,
+and the panel still shows it, still openable, marked replaced.
+
+Supersession is deliberately **not** a value of `relationship`: that column is
+for what a document does to another in law, and folding a stale upload into it
+would make it read as a governing-document link. There is no version number —
+order is tier and date, and amendments do not obey a total order. P1-4 gets the
+current set from one predicate, `superseded_by_document_id is null`.
+
+### The panel
+
+The same panel, in three groups: **Needs review** first (unclassified, unfiled,
+or a lease document with no lease to belong to), then one group per leasehold
+with its documents in governing order, then the review's own documents. Each
+row says what the document is, how settled that is, and what it changes —
+named by the document it changes rather than by an id.
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,
@@ -356,6 +461,36 @@ P1-2:
   contract, the data layer, the intake and the migration SQL itself.
 - `test-security.js` gains the acquisition Documents panel as a
   document-bearing surface (§9), rendered through the real renderer.
+
+P1-3:
+
+- `test-acquisition-classification.js` — drives the model for real: the tiers
+  match `lease-intelligence.js`'s own table (asserted against that file, not
+  against a copy of it), an unrecognised type becomes `unknown` rather than
+  something plausible, a null confidence is not stored as zero confidence, and
+  every branch of `proposeFamily` / `proposeRelationship` that should decline
+  does. Plus the confirmation guard, the audit trail, supersession, the
+  grouping, and source-pinned checks that AI never writes a confirmation and
+  nothing deletes a source.
+- `test-e2e-acquisition-classification.js` — the walk, against a Supabase
+  stand-in that enforces what migration 024 enforces (the owner policy, the
+  composite keys, the coherence trigger, the `confirmed_by` rule and the
+  column defaults): a lease begins its leasehold, an amendment joins it and
+  names what it amends, an amendment with no lease on file is **not placed**, a
+  rent roll gets no family, an unreadable scan stays unknown, confirming
+  records the person, correcting keeps the reading it replaced, and a
+  re-upload of a used file name leaves **both** sources on file with the older
+  one still openable.
+- `tools/verify-migration-024.js` — **executes** migration 024 against a
+  throwaway PostgreSQL cluster on top of 000 + 006 + 023: it applies and
+  re-applies, backfills `intake_id` for rows that already existed, swaps the
+  identity, keeps both sources when a file name repeats, refuses a confirmation
+  with no confirmer, refuses every cross-owner pointer, unfiles a document
+  whose family is deleted rather than deleting it, and rolls back — **refusing
+  to restore 023's unique key while doing so would mean destroying a preserved
+  source**, which is the one case that cannot be undone cleanly.
+- `tools/acquisition-classification-mutation.js` — 33 mutants across the model,
+  the data layer, the migration SQL and the classifier's prompt.
 - Every suite above is registered in `test-regression.js`.
 
 ---
@@ -378,5 +513,7 @@ Each belongs to the increment that needs it; none is decided here.
 | D-11 | **Large scans vs "preserve sources".** Still open. Originals over the upload limit are read, and the row now says the original is not on file with its reason — honest, but the source is still not kept. Raising it needs chunked or direct-to-storage upload. | a later increment |
 | D-12 | **Stage gating and auto-advance.** Which stage requires what, and whether any act (analysis run, documents added) should move the stage. P1-1 keeps the stage a manual marker. | P1-6 |
 | D-13 | **Existing Pilot reviews.** They upgrade in memory on load and on disk with their next change. Reading their count or shape means touching the Pilot database, which needs authorization. | open |
-| D-14 | **Same file name, different file.** The upsert key `(review_id, file_name)` means re-uploading a different document under a name already used replaces the row — the convention `lease_documents` already follows. Versions are P1-3's, and this is the case they have to answer. | P1-3 |
-| D-15 | **`review.data.documents[]`** — the empty array P1-1 added is still unused; the table is the one home. P1-3 either fills it with derived family structure or removes it. | P1-3 |
+| ~~D-14~~ | **RESOLVED** — a document's identity is `intake_id`, minted once per upload, and the upsert keys on `(review_id, intake_id)`. A second upload of a used file name is its own row; the earlier one is marked `superseded_by_document_id` and keeps its object, its text and its classification. Object storage never lost anything — only the row pointing at it did. Supersession is its own column, not a `relationship` value, and there is no version number. | P1-3 · done |
+| ~~D-15~~ | **RESOLVED** — `review.data.documents[]` stays as a vestigial empty array and is never written to; `acquisition_documents` is the one home. Removing the key would contradict `upgradeReview`'s first rule (an upgrade never removes a key), so it is left and documented instead. | P1-3 · done |
+| D-16 | **Confirming a whole family at once.** P1-3 confirms a document at a time, which is right for a handful and tedious for a data room. Whether a family-level "confirm all" is wanted, and whether it should record one act or one per document, is undecided. | P1-4 or later |
+| D-17 | **Moving a document between families, and merging two.** P1-3 can unfile a document by correcting its type, but has no control for "this belongs to that other leasehold" or "these two families are one". The table supports both; the workflow is not designed. Related and also open: correcting a lease to a review-level type leaves the amendments that named it as their parent still pointing at it — a proposal that is visible and wrong rather than hidden, but nothing re-proposes them. | P1-4 |

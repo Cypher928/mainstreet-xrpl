@@ -371,8 +371,13 @@ function leaseText(tenant, marker) {
   const writes = (await dbCalls()).filter(c => c.table === 'acquisition_documents' && c.op === 'upsert');
   check('no serverless function was called for any of this',
         endpointHits.length === 0, endpointHits.join(', ') || 'none');
-  check('the write upserts on (review_id, file_name)',
-        writes.length > 0 && writes.every(w => w.conflict === 'review_id,file_name'),
+  // P1-3 (D-14) moved this key. It was (review_id, file_name), which made a
+  // re-upload of the same name REPLACE its predecessor and drop that source
+  // from the record. The identity of a document is now its intake, so the two
+  // writes of ONE upload still collapse into one row — which is what this
+  // assertion has always been about — while two uploads stay two rows.
+  check('the write upserts on (review_id, intake_id) — one upload, one row',
+        writes.length > 0 && writes.every(w => w.conflict === 'review_id,intake_id'),
         writes.map(w => w.conflict).join(' | ') || 'no write recorded');
   check('and it never asks the database for the document text back',
         writes.every(w => w.select && !/extracted_text/.test(w.select)),

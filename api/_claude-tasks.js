@@ -190,6 +190,63 @@ Prioritize vendor name when obvious (e.g. insurance companies → insurance).
 Return JSON:
 { "category": "...", "confidence": 0.0-1.0 }`;
 
+// Acquisition Review P1-3 — what a document IS, and who it is between.
+//
+// It classifies and NOTHING ELSE. It does not read terms, does not decide what
+// a document changes, and does not put a document in a family: those are
+// decisions made from the classification, by code that can be tested, and by a
+// person who confirms them. Adding term extraction here would make this a
+// second lease contract beside lease_extraction, which the roadmap (D-6)
+// explicitly refuses.
+//
+// "unknown" IS AN ANSWER. A model that must choose from a list will choose
+// from a list, and a confidently wrong document type propagates into families,
+// governing terms and a report. The instruction to return unknown rather than
+// guess is the most important line in this prompt.
+const DOCUMENT_CLASSIFICATION_SYSTEM = `You classify a commercial real estate document for an acquisition review.
+This may be a scanned image — tolerate OCR noise and spacing issues.
+Return ONLY valid JSON. No explanation. No markdown.
+
+{
+  "docType": string,
+  "docDate": "YYYY-MM-DD" or null,
+  "tenantName": string or null,
+  "suite": string or null,
+  "confidence": 0.0-1.0,
+  "evidence": string or null
+}
+
+docType MUST be exactly one of:
+  original_lease      a lease that creates a tenancy
+  amendment           changes an existing lease
+  renewal             extends a term under an existing renewal right
+  extension           extends a term without exercising a renewal option
+  assignment          transfers a lease to a new tenant
+  guaranty            a third party guarantees a tenant's obligations
+  side_letter         a side agreement modifying or clarifying a lease
+  snda                subordination, non-disturbance and attornment
+  estoppel            a tenant's certificate of the lease's current state
+  psa                 purchase and sale agreement for the property
+  rent_roll           a schedule of tenants, rents and terms
+  financial_statement operating statement, income statement, GL, budget
+  invoice             a bill from a vendor
+  other               a real document that is none of the above
+  unknown             you cannot tell
+
+RULES:
+- If you are not confident, return "unknown". Do NOT pick the closest match.
+  A wrong document type is worse than an absent one — it flows into lease
+  families and governing terms and is expensive to undo.
+- docDate: the document's OWN effective/commencement/execution date, not a date
+  it refers to and not today. Null if you cannot find one.
+- tenantName: the TENANT, not the landlord, owner, guarantor or agent. For an
+  assignment, name the ASSIGNEE (the incoming tenant). Null if unclear.
+- suite: the suite or unit identifier if the document states one.
+- confidence: your confidence in docType only, 0.0 to 1.0.
+- evidence: the short phrase from the document that decided docType — quoted
+  verbatim, at most 200 characters. Null if nothing specific decided it.
+- Never infer a document type from the file name. Read the document.`;
+
 /**
  * SEC-2 + AI-3 — extraction reads customer documents, so the boundary rule
  * applies here as much as it does to Ask-the-Lease. A lease is a document one
@@ -212,6 +269,9 @@ const CLAUDE_TASKS = {
   escrow_extraction: { system: _withBoundary(ESCROW_EXTRACTION_SYSTEM), maxTokens: 2400 },
   invoice_extraction:       { system: _withBoundary(INVOICE_EXTRACTION_SYSTEM),       maxTokens: 1024 },
   category_classification:  { system: _withBoundary(CATEGORY_CLASSIFICATION_SYSTEM),  maxTokens: 64   },
+  // Acquisition Review P1-3. Six small fields and a short quote; 400 is room
+  // for that and not for an abstraction.
+  document_classification:  { system: _withBoundary(DOCUMENT_CLASSIFICATION_SYSTEM),  maxTokens: 400  },
 };
 
 /**

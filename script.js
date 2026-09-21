@@ -30253,11 +30253,20 @@ function _acqDocCache(reviewId, row) {
 
 function _AD() { return window.AcquisitionDocuments; }
 
-// The table is not there. Say so once, where the person can see it, and keep
-// reading files — an absent migration must not cost anyone their extraction.
-function _acqDocsMissing(table, { toast } = {}) {
+// The schema is behind the code. Say so once, where the person can see it, and
+// keep reading files — an absent migration must not cost anyone their
+// extraction.
+//
+// The file named is decided by the ERROR, not by the table being read: a
+// missing table is the one that table's migration creates, but a missing
+// COLUMN means the table is there and a later migration is not, and sending an
+// operator to a migration they have already run is the wrong-file bug P1-2's
+// mutation run caught once already.
+let _acqSchemaGapFile = null;
+function _acqDocsMissing(table, { toast, error } = {}) {
   _acqDocsUnavailable = true;
-  const file = _AD().migrationFor(table);
+  const file = _AD().migrationForError(error, table);
+  _acqSchemaGapFile = file;
   console.warn('[acq] documents unavailable — run ' + file);
   if (toast) {
     showToast('⚠️ Documents are being read but not filed — run ' + file + ' in Supabase.',
@@ -30283,7 +30292,7 @@ async function _acqLoadDocuments(reviewId) {
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
     if (error) {
-      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents'); return []; }
+      if (_AD().schemaGap(error)) { _acqDocsMissing('acquisition_documents', { error }); return []; }
       console.warn('[acq] could not load documents:', error.message);
       return [];
     }
@@ -30322,7 +30331,7 @@ async function _acqSaveDocument(fields) {
       .select(_AD().LIST_SELECT);
 
     if (error) {
-      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents', { toast: true }); return null; }
+      if (_AD().schemaGap(error)) { _acqDocsMissing('acquisition_documents', { toast: true, error }); return null; }
       console.error('[acq] document save failed:', error.message, '| code:', error.code);
       return null;
     }
@@ -30333,6 +30342,208 @@ async function _acqSaveDocument(fields) {
     console.warn('[acq] _acqSaveDocument failed:', e && e.message);
     return null;
   }
+}
+
+// ── Document classification, families and versions (P1-3) ────────────────────
+// Every source is still preserved exactly as P1-2 left it. What is added is
+// what each source IS, which leasehold it belongs to, and what it changed —
+// each of them a PROPOSAL until a person confirms it, and each of them able to
+// say "not known" instead of guessing.
+
+const _acqFamilies = new Map();   // reviewId → family rows
+
+function _acqFamilyRows(reviewId) {
+  const rows = _acqFamilies.get(reviewId);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// The identity of ONE UPLOAD (D-14).
+//
+// Minted here, at the moment a file is taken in, and reused by both writes of
+// that upload — the row on arrival and the row when its extraction lands — so
+// the two collapse into one row. A second upload of the same file name mints a
+// different one and becomes its own row, which is the whole point: P1-2 keyed
+// on the name and so a re-upload replaced its predecessor and that source left
+// the record.
+function _acqMintIntakeId() {
+  return 'ik-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+async function _acqLoadFamilies(reviewId) {
+  if (!reviewId) return [];
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return [];
+    const { data, error } = await db
+      .from('acquisition_document_families')
+      .select(_AD().FAMILY_SELECT)
+      .eq('review_id', reviewId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true });
+    if (error) {
+      if (_AD().schemaGap(error)) { _acqDocsMissing('acquisition_document_families', { error }); return []; }
+      console.warn('[acq] could not load families:', error.message);
+      return [];
+    }
+    _acqFamilies.set(reviewId, Array.isArray(data) ? data : []);
+    return _acqFamilyRows(reviewId);
+  } catch (e) {
+    console.warn('[acq] _acqLoadFamilies failed:', e && e.message);
+    return [];
+  }
+}
+
+// Create or update one family. Same ownership story as a document: user_id
+// from the session, and migration 024's composite key means a family can only
+// ever belong to a review its owner owns.
+async function _acqSaveFamily(reviewId, fields) {
+  if (_acqDocsUnavailable) return null;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const built = _AD().buildFamilyPayload(reviewId, user.id, fields);
+    if (!built.ok) { console.error('[acq] family refused:', built.error); return null; }
+    const { data, error } = await db
+      .from('acquisition_document_families')
+      .upsert(built.payload, { onConflict: 'id' })
+      .select(_AD().FAMILY_SELECT);
+    if (error) {
+      if (_AD().schemaGap(error)) { _acqDocsMissing('acquisition_document_families', { toast: true, error }); return null; }
+      console.error('[acq] family save failed:', error.message, '| code:', error.code);
+      return null;
+    }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row) {
+      const rows = _acqFamilyRows(reviewId).slice();
+      const i = rows.findIndex(r => r && r.id === row.id);
+      if (i >= 0) rows[i] = row; else rows.push(row);
+      _acqFamilies.set(reviewId, rows);
+    }
+    return row;
+  } catch (e) {
+    console.warn('[acq] _acqSaveFamily failed:', e && e.message);
+    return null;
+  }
+}
+
+// A new upload has taken a file name that a document in this review already
+// has. The OLDER row is marked superseded — and marked, not removed: it keeps
+// its own stored original, its own text and its own classification, and the
+// panel goes on showing it. That is what makes this different from P1-2's
+// replace, where the older source simply left the record.
+async function _acqSupersedePrevious(reviewId, fileName, intakeId, newDocId) {
+  const previous = _AD().findSuperseded(_acqDocRows(reviewId), fileName, intakeId);
+  if (!previous || !newDocId || previous.id === newDocId) return null;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .update({ superseded_by_document_id: newDocId })
+      .eq('id', previous.id)
+      .eq('user_id', user.id)
+      .select(_AD().LIST_SELECT);
+    if (error) { console.warn('[acq] could not mark the previous upload:', error.message); return null; }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row) _acqDocCache(reviewId, row);
+    return { previous: row, inherit: previous };
+  } catch (e) {
+    console.warn('[acq] _acqSupersedePrevious failed:', e && e.message);
+    return null;
+  }
+}
+
+// Ask what this document is. The text was already stored by P1-2, so nothing
+// is re-uploaded and nothing is read from the original a second time.
+//
+// A failure here is not a failure of the intake: the document stays on file,
+// unclassified, and a person can say what it is. Classification is an
+// improvement to a preserved source, never a gate on preserving it.
+async function _acqClassifyDocument(text, fileName) {
+  const body = String(text || '').trim();
+  if (body.length < 40) return null;
+  try {
+    const data = await claudeFetch({
+      task: 'document_classification',
+      max_tokens: 400,
+      messages: [{ role: 'user', content:
+        // The file name is given as context and the prompt is told not to
+        // classify from it — a file called "amendment.pdf" is not an amendment.
+        `File name (context only, do not classify from it): ${fileName || 'unknown'}\n\n` +
+        `Document text:\n${body.slice(0, 12000)}`
+      }],
+    });
+    if (!data || !data.docType) return null;
+    return data;
+  } catch (e) {
+    console.warn('[acq] classification failed:', fileName, e && e.message);
+    return null;
+  }
+}
+
+// Turn a reading into stored proposals — the type, then the family, then what
+// the document changed. Each step can decline, and declining is recorded as
+// the honest state rather than as a weaker version of a decision.
+async function _acqApplyClassification(reviewId, docRow, reading, opts = {}) {
+  if (!docRow || !reading) return null;
+  const AD    = _AD();
+  const type  = AD.DOC_TYPES[reading.docType] ? reading.docType : 'unknown';
+  const hist  = AD.appendHistory(docRow.classification_history, {
+    action: 'proposed', field: 'doc_type', from: docRow.doc_type || null, to: type,
+    source: 'ai', model: reading._extractionModel || null,
+    confidence: reading.confidence, evidence: reading.evidence,
+  });
+
+  const fields = {
+    reviewId, intakeId: docRow.intake_id, fileName: docRow.file_name,
+    docType: type,
+    docTypeStatus: type === 'unknown' ? 'unclassified' : 'proposed',
+    docTypeSource: 'ai',
+    docTypeConfidence: reading.confidence,
+    docDate: reading.docDate || null,
+    classificationHistory: hist,
+  };
+
+  // WHERE IT BELONGS. proposeFamily declines far more often than it proposes,
+  // and every decline leaves the document visible under "Needs review".
+  const families = _acqFamilyRows(reviewId);
+  const fam = AD.proposeFamily({ doc_type: type, tenant_hint: reading.tenantName }, families);
+  let familyId = null;
+  if (fam.kind === 'existing') {
+    familyId = fam.familyId;
+  } else if (fam.kind === 'new' && fam.label) {
+    const created = await _acqSaveFamily(reviewId, {
+      label: fam.label, tenantHint: fam.tenantHint, suiteHint: reading.suite || null, familyKind: 'lease',
+    });
+    familyId = created ? created.id : null;
+  }
+  if (familyId) {
+    fields.familyId = familyId;
+    // Never `confirmed`, whichever way it got here. A replacement upload
+    // inherits where its predecessor was filed, but not the human act of
+    // having put it there — somebody still says yes to the new file.
+    fields.familyStatus = 'proposed';
+    fields.familySource = opts.inheritedFamily ? 'inherited' : 'ai';
+    fields.classificationHistory = AD.appendHistory(fields.classificationHistory, {
+      action: opts.inheritedFamily ? 'inherited' : 'proposed', field: 'family',
+      to: familyId, source: opts.inheritedFamily ? 'inherited' : 'ai',
+    });
+
+    // WHAT IT CHANGED. Only when the family holds exactly one lease it could
+    // be — two leases is a question for a person, not a coin toss.
+    const siblings = _acqDocRows(reviewId).filter(r => r.family_id === familyId);
+    const rel = AD.proposeRelationship({ id: docRow.id, doc_type: type }, siblings);
+    if (rel.kind === 'proposed') {
+      fields.parentDocumentId  = rel.parentDocumentId;
+      fields.relationship      = rel.relationship;
+      fields.relationshipStatus = 'proposed';
+      fields.classificationHistory = AD.appendHistory(fields.classificationHistory, {
+        action: 'proposed', field: 'relationship', to: rel.relationship, source: 'ai',
+      });
+    }
+  }
+
+  return _acqSaveDocument(fields);
 }
 
 // Put the original in the private `leases` bucket.
@@ -30410,8 +30621,10 @@ function _renderAcqDocuments() {
   }
 
   if (_acqDocsUnavailable) {
-    el.innerHTML = '<div class="acq-docs-warn">Documents are being read but <strong>not filed</strong> — the document table is not set up on this project. '
-      + 'Run <code>migrations/023_acquisition_documents.sql</code> in Supabase to keep the originals.</div>';
+    // Whichever migration is actually missing — see _acqDocsMissing.
+    const gapFile = _acqSchemaGapFile || 'migrations/023_acquisition_documents.sql';
+    el.innerHTML = '<div class="acq-docs-warn">Documents are being read but <strong>not filed</strong> — this project’s database is behind the app. '
+      + 'Run <code>' + esc(gapFile) + '</code> in Supabase to keep the originals.</div>';
     return;
   }
   if (!rows.length) {
@@ -30419,10 +30632,19 @@ function _renderAcqDocuments() {
     return;
   }
 
-  el.innerHTML = rows.map(r => {
+  const AD     = _AD();
+  const groups = AD.groupDocuments(rows, _acqFamilyRows(_activeAcqId));
+  const byId   = new Map(rows.map(r => [r.id, r]));
+
+  // One document. The classification says what it is AND how settled that is,
+  // every time it is shown — a proposal that renders like a fact is the thing
+  // this increment exists to prevent.
+  const docHtml = (r) => {
     const st       = _ACQ_DOC_STATUS[r.parsing_status] || { label: r.parsing_status || 'Unknown', cls: 'warn' };
     const produced = _acqProducedLabel(r);
     const size     = _acqDocSize(r.byte_size);
+    const cls      = AD.describeClassification(r);
+    const current  = AD.isCurrent(r);
     const opener   = r.storage_path && window.docLinkHtml
       ? docLinkHtml(r.storage_path, '&#x1F4C4; Open original',
           { className: 'acq-doc-open', title: 'Open ' + (r.file_name || 'the original') })
@@ -30431,20 +30653,146 @@ function _renderAcqDocuments() {
       ? `<div class="acq-doc-err">${esc(r.error_message)}</div>` : '';
     const note = r.parsing_status !== 'failed' && r.error_message
       ? `<div class="acq-doc-note">${esc(r.error_message)}</div>` : '';
+
+    // What this document does to another one, named by the document it does it
+    // to rather than by an id nobody can read.
+    let rel = '';
+    if (r.parent_document_id && r.relationship) {
+      const parent = byId.get(r.parent_document_id);
+      rel = `<div class="acq-doc-rel${r.relationship_status === 'proposed' ? ' proposed' : ''}">`
+          + esc(r.relationship) + ' ' + esc(parent ? (parent.file_name || 'another document') : 'another document')
+          + (r.relationship_status === 'proposed' ? ' <span class="acq-doc-unconf">proposed</span>' : '')
+          + '</div>';
+    }
+
+    // D-14 on screen: the replaced upload is still here, still openable, and
+    // says what happened to it.
+    const supersededNote = current ? '' :
+      `<div class="acq-doc-superseded">Replaced by a newer upload of this file name — kept on record.</div>`;
+
+    const typeControl = `
+      <select class="acq-doc-type" data-doc-id="${esc(r.id)}" title="What this document is">
+        ${AD.DOC_TYPE_NAMES.map(n =>
+          `<option value="${esc(n)}"${r.doc_type === n ? ' selected' : ''}>${esc(AD.docTypeLabel(n))}</option>`).join('')}
+      </select>`;
+    const confirmBtn = (cls.status === 'proposed')
+      ? `<button class="acq-doc-confirm" data-doc-id="${esc(r.id)}" title="${esc(cls.note)}">Confirm</button>` : '';
+
     return `
-    <div class="acq-doc-row" data-doc-id="${esc(r.id)}">
+    <div class="acq-doc-row${current ? '' : ' superseded'}" data-doc-id="${esc(r.id)}" data-doc-type="${esc(r.doc_type || '')}" data-doc-status="${esc(cls.status)}">
       <span class="acq-doc-kind ${esc(r.intake_kind || 'other')}">${esc(r.intake_kind || 'other')}</span>
       <div class="acq-doc-main">
         <div class="acq-doc-name">${esc(r.file_name || '(unnamed)')}</div>
         <div class="acq-doc-meta">
-          <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>
-          ${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
+          <span class="acq-doc-class ${cls.verified ? 'confirmed' : 'proposed'}" title="${esc(cls.note)}">${esc(cls.label)}</span>
+          ${cls.verified ? '' : '<span class="acq-doc-unconf">not confirmed</span>'}
+          · <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>
+          ${r.doc_date ? ' · ' + esc(r.doc_date) : ''}${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
         </div>
-        ${err}${note}
+        ${rel}${supersededNote}${err}${note}
       </div>
+      <div class="acq-doc-actions">${typeControl}${confirmBtn}</div>
       ${opener}
     </div>`;
-  }).join('');
+  };
+
+  const section = (title, sub, body, cls) => body
+    ? `<div class="acq-doc-group ${cls || ''}">
+         <div class="acq-doc-group-head"><span class="acq-doc-group-title">${esc(title)}</span>`
+       + (sub ? `<span class="acq-doc-group-sub">${esc(sub)}</span>` : '') + `</div>${body}</div>` : '';
+
+  const parts = [];
+
+  // FIRST, not buried: what nobody has placed yet.
+  parts.push(section(
+    'Needs review',
+    groups.needsReview.length + ' document' + (groups.needsReview.length === 1 ? '' : 's') + ' not yet placed',
+    groups.needsReview.map(docHtml).join(''), 'needs-review'));
+
+  groups.families.forEach(g => {
+    const c = g.counts;
+    const sub = [
+      c.total + ' document' + (c.total === 1 ? '' : 's'),
+      c.proposed ? c.proposed + ' unconfirmed' : '',
+      c.superseded ? c.superseded + ' replaced' : '',
+    ].filter(Boolean).join(' · ');
+    parts.push(section(g.family.label, sub, g.documents.map(docHtml).join(''), 'family'));
+  });
+
+  parts.push(section(
+    'Review documents',
+    'Belong to the purchase rather than to one lease',
+    groups.reviewLevel.map(docHtml).join(''), 'review-level'));
+
+  el.innerHTML = parts.filter(Boolean).join('');
+  _acqBindDocControls(el);
+}
+
+// The panel is re-rendered wholesale, so the controls inside it are reached by
+// delegation from the container, bound once.
+function _acqBindDocControls(el) {
+  if (!el || el._acqBound) return;
+  el._acqBound = true;
+  el.addEventListener('click', (ev) => {
+    const btn = ev.target.closest && ev.target.closest('.acq-doc-confirm');
+    if (btn) { ev.preventDefault(); acqConfirmDocType(btn.getAttribute('data-doc-id')); }
+  });
+  el.addEventListener('change', (ev) => {
+    const sel = ev.target.closest && ev.target.closest('.acq-doc-type');
+    if (sel) acqSetDocType(sel.getAttribute('data-doc-id'), sel.value);
+  });
+}
+
+// ── Saying yes, or saying otherwise ──────────────────────────────────────────
+// Both write `confirmed_by`, because migration 024's trigger refuses a settled
+// status that names nobody, and because a confirmation whose author is unknown
+// is not a confirmation.
+
+async function acqConfirmDocType(docId) {
+  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  if (!row || !row.doc_type) return;
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return;
+  await _acqSaveDocument({
+    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    docType: row.doc_type, docTypeStatus: 'confirmed', docTypeSource: 'human',
+    confirmedBy: user.id, confirmedAt: new Date().toISOString(),
+    // A confirmed type settles where it was filed too — the person saw both.
+    ...(row.family_id ? { familyId: row.family_id, familyStatus: 'confirmed', familySource: 'human' } : {}),
+    classificationHistory: _AD().appendHistory(row.classification_history, {
+      action: 'confirmed', field: 'doc_type', from: row.doc_type, to: row.doc_type,
+      source: 'human', actor: _acqActor(),
+    }),
+  });
+  _renderAcqDocuments();
+}
+
+async function acqSetDocType(docId, nextType) {
+  const AD  = _AD();
+  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  if (!row || !AD.DOC_TYPES[nextType] || nextType === row.doc_type) return;
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return;
+
+  const fields = {
+    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    docType: nextType, docTypeStatus: 'corrected', docTypeSource: 'human',
+    docTypeConfidence: null,
+    confirmedBy: user.id, confirmedAt: new Date().toISOString(),
+    classificationHistory: AD.appendHistory(row.classification_history, {
+      action: 'corrected', field: 'doc_type', from: row.doc_type || null, to: nextType,
+      source: 'human', actor: _acqActor(),
+    }),
+  };
+
+  // A type that no longer belongs to a leasehold leaves the family it was in,
+  // and takes its relationship with it — a rent roll does not amend a lease.
+  if (!AD.isFamilyType(nextType) && row.family_id) {
+    fields.familyId = null; fields.familyStatus = 'unfiled'; fields.familySource = null;
+    fields.parentDocumentId = null; fields.relationship = null; fields.relationshipStatus = null;
+  }
+  await _acqSaveDocument(fields);
+  _renderAcqDocuments();
 }
 
 async function _loadAcqReviews() {
@@ -30699,8 +31047,12 @@ function selectAcquisitionReview(id) {
 
   // The documents this review was given. Rendered from the cache at once so the
   // panel is never blank on a revisit, then refreshed from the database.
+  // Families first, so the documents that arrive are grouped on their first
+  // paint rather than appearing loose and then jumping into place.
   _renderAcqDocuments();
-  _acqLoadDocuments(id).then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });
+  _acqLoadFamilies(id)
+    .then(() => _acqLoadDocuments(id))
+    .then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });
 
   if (d.analysis) {
     _renderAcqReport(d.analysis, document.getElementById('acqReportContainer'));
@@ -31028,12 +31380,17 @@ async function acqHandleLeaseFiles(fileList) {
     _renderAcqLeaselist();
 
     // THE ROW FIRST. That this file arrived is a fact, and a tab closed
-    // mid-extraction must not lose it. Everything after this updates that row.
+    // mid-extraction must not lose it. Everything after this updates that row,
+    // keyed on the intake id so it stays ONE row (D-14).
+    const intakeId = _acqMintIntakeId();
     const docRow = await _acqSaveDocument({
-      reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
       byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
     });
     if (docRow) placeholder._documentId = docRow.id;
+    // If this name was already used, the earlier upload is marked superseded —
+    // kept, with its own original and text, not overwritten.
+    const replaced = docRow ? await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id) : null;
     _renderAcqDocuments();
 
     let storage = { ref: null, reason: null };
@@ -31071,8 +31428,8 @@ async function acqHandleLeaseFiles(fileList) {
       Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
       if (docRow) placeholder._documentId = docRow.id;
 
-      await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+      const saved = await _acqSaveDocument({
+        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
         byteSize: file.size, contentType: file.type || null,
         storagePath: storage.ref, extractedText: storedText || null,
         // 'partial' is the honest word for "the fields were read, the text was
@@ -31082,6 +31439,17 @@ async function acqHandleLeaseFiles(fileList) {
         usedPdfDirect, errorMessage: storage.reason,
         producedKind: 'tenant', producedId: normalized.id || null,
       });
+
+      // WHAT IT IS (P1-3). Read from the text already stored, after the source
+      // is safe — a classification that fails costs the review nothing.
+      if (saved && storedText) {
+        const reading = await _acqClassifyDocument(storedText, file.name);
+        if (reading) {
+          await _acqApplyClassification(review.id, saved, reading,
+            { inheritedFamily: !!(replaced && replaced.inherit && replaced.inherit.family_id) });
+        }
+        _renderAcqDocuments();
+      }
     } catch (e) {
       console.warn('[acq] lease extraction failed:', file.name, e.message);
       placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
@@ -31091,7 +31459,7 @@ async function acqHandleLeaseFiles(fileList) {
       // given to the review, and the row says so — with the original attached
       // when it reached storage, so the manager can open what was uploaded.
       await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
         byteSize: file.size, contentType: file.type || null,
         storagePath: storage.ref, parsingStatus: 'failed',
         errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
@@ -31135,11 +31503,13 @@ async function acqHandleInvoiceFiles(fileList) {
     _renderAcqInvoiceList();
 
     // The row first — see acqHandleLeaseFiles.
+    const intakeId = _acqMintIntakeId();
     const docRow = await _acqSaveDocument({
-      reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
       byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
     });
     if (docRow) placeholder._documentId = docRow.id;
+    if (docRow) await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id);
     _renderAcqDocuments();
 
     let storage = { ref: null, reason: null };
@@ -31165,12 +31535,20 @@ async function acqHandleInvoiceFiles(fileList) {
         });
         // An invoice has no text layer to keep — the fields ARE what was read,
         // so a successful extraction is 'success' rather than 'partial'.
+        // An invoice's type is a fact of the lane it came through, not a
+        // reading — so it is classified from the intake control, recorded as
+        // `intake_kind` provenance, and never dressed up as an AI proposal.
         await _acqSaveDocument({
-          reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+          reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
           byteSize: file.size, contentType: file.type || null,
           storagePath: storage.ref, parsingStatus: 'success',
           errorMessage: storage.reason,
           producedKind: 'invoice', producedId: placeholder.id,
+          docType: 'invoice', docTypeStatus: 'proposed', docTypeSource: 'intake_kind',
+          docDate: /^\d{4}-\d{2}-\d{2}$/.test(d.invoiceDate || '') ? d.invoiceDate : null,
+          classificationHistory: _AD().appendHistory(docRow && docRow.classification_history, {
+            action: 'proposed', field: 'doc_type', to: 'invoice', source: 'intake_kind',
+          }),
         });
       } else {
         throw new Error('Extraction returned null');
@@ -31180,7 +31558,7 @@ async function acqHandleInvoiceFiles(fileList) {
       placeholder._status = 'error';
       placeholder._error  = e.message;
       await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
         byteSize: file.size, contentType: file.type || null,
         storagePath: storage.ref, parsingStatus: 'failed',
         errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),

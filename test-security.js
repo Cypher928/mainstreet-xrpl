@@ -52,7 +52,8 @@ sec('SEC-2 · /api/claude owns its extraction prompts');
   const names = Object.keys(CLAUDE_TASKS);
 
   assert('every /api/claude call site has a task',
-    ['lease_extraction', 'escrow_extraction', 'invoice_extraction', 'category_classification']
+    ['lease_extraction', 'escrow_extraction', 'invoice_extraction', 'category_classification',
+     'document_classification']
       .every(n => names.includes(n)), names.join(', '));
   assert('each task carries a real system prompt',
     names.every(n => typeof CLAUDE_TASKS[n].system === 'string' && CLAUDE_TASKS[n].system.length > 200));

@@ -71,7 +71,13 @@ const OWNER  = 'user-owner-0001';
 const OTHER  = 'user-other-0002';
 const REVIEW = 'rev-0000-0000-0001';
 
-const build = (fields, reviewId = REVIEW, userId = OWNER) => AD.buildPayload(reviewId, userId, fields);
+// Every row needs the identity of its upload (P1-3, D-14), so these helpers
+// supply one unless the case under test is about it. That the identity is
+// REQUIRED is asserted on its own below, and again in
+// test-acquisition-classification.js where it belongs.
+const INTAKE = 'ik-test-0001';
+const build = (fields, reviewId = REVIEW, userId = OWNER) =>
+  AD.buildPayload(reviewId, userId, Object.assign({ intakeId: INTAKE }, fields));
 const payloadOf = fields => { const r = build(fields); ok(r.ok, 'build refused: ' + r.error); return r.payload; };
 
 (async () => {
@@ -168,6 +174,11 @@ t('a whitespace-only fileName is refused — not a row named " "', () => {
   ok(!build({ fileName: '   ' }).ok);
 });
 
+t('no intake identity is refused — the upsert keys on it', () => {
+  const r = AD.buildPayload(REVIEW, OWNER, { fileName: 'l.pdf' });
+  ok(!r.ok && /intakeId/i.test(r.error), JSON.stringify(r));
+});
+
 sec('the list, the key, and a table that is not there');
 
 t('the list does NOT ask for the document text', () => {
@@ -182,8 +193,12 @@ t('but it asks for everything the panel shows', () => {
   }
 });
 
-t('one file is one row — the conflict key is (review_id, file_name)', () => {
-  eq(AD.CONFLICT_KEY, 'review_id,file_name');
+// P1-3 (D-14) moved this key off the file name. What it has always guaranteed
+// — the two writes of one upload land on ONE row — is unchanged; what it no
+// longer does is treat a re-upload of the same name as the same document and
+// drop the earlier source from the record.
+t('one UPLOAD is one row — the conflict key is (review_id, intake_id)', () => {
+  eq(AD.CONFLICT_KEY, 'review_id,intake_id');
 });
 
 t('a missing table is recognised by its code', () => {
@@ -271,8 +286,11 @@ sec('the data layer writes the table itself, under the rules the database keeps'
   });
 
   t('both halves recognise a missing table and say so', () => {
-    ok(/isMissingTable\(error\)/.test(load0) && /_acqDocsMissing\(/.test(load0), 'the read does not');
-    ok(/isMissingTable\(error\)/.test(save0) && /_acqDocsMissing\(/.test(save0), 'the write does not');
+    // P1-3 widened this from "the table is missing" to "the schema is behind
+    // the code", which also covers a column an unapplied migration has not
+    // added yet. The product behaviour it guards is unchanged.
+    ok(/schemaGap\(error\)/.test(load0) && /_acqDocsMissing\(/.test(load0), 'the read does not');
+    ok(/schemaGap\(error\)/.test(save0) && /_acqDocsMissing\(/.test(save0), 'the write does not');
     ok(/toast: true/.test(save0), 'nobody is told when a document is not filed');
   });
 
@@ -426,10 +444,11 @@ t('the panel offers a control that opens a stored original (ARCH §9)', () => {
 t('a missing table is said on screen, not shown as "no documents"', () => {
   const r = fnBody(S, '_renderAcqDocuments');
   ok(/_acqDocsUnavailable/.test(r), 'the panel does not know the table can be absent');
-  ok(/023_acquisition_documents\.sql/.test(r), 'it does not name the migration');
+  ok(/_acqSchemaGapFile/.test(r) && /023_acquisition_documents\.sql/.test(r),
+     'it does not name a migration to run');
   const load = fnBody(S, '_acqLoadDocuments');
-  ok(/isMissingTable\(error\)/.test(load), 'the loader does not recognise the state');
-  ok(/_acqDocsMissing\('acquisition_documents'\)/.test(load), 'the loader does not record it');
+  ok(/schemaGap\(error\)/.test(load), 'the loader does not recognise the state');
+  ok(/_acqDocsMissing\('acquisition_documents'/.test(load), 'the loader does not record it');
 });
 
 t('uploads keep working when the table is absent — extraction is not held hostage', () => {

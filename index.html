@@ -6156,6 +6156,37 @@
     .acq-doc-open:hover { border-color: #475569; color: var(--text-1); }
     .acq-doc-nofile { flex-shrink: 0; font-size: 0.72rem; color: var(--text-5); font-style: italic; }
 
+    /* Classification, families and versions (P1-3). The panel is the same
+       panel; what is added is a heading per leasehold, what each document is,
+       and how settled that reading is. An unconfirmed reading never renders
+       like a confirmed one. */
+    .acq-doc-group { margin-bottom: 14px; }
+    .acq-doc-group:last-child { margin-bottom: 0; }
+    .acq-doc-group-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+      padding: 0 2px 6px; border-bottom: 1px solid var(--theme-surface); margin-bottom: 6px; }
+    .acq-doc-group-title { font-size: 0.8rem; font-weight: 600; color: var(--text-2); }
+    .acq-doc-group-sub { font-size: 0.7rem; color: var(--text-5); }
+    .acq-doc-group.needs-review .acq-doc-group-title { color: var(--c-fbbf24, #fbbf24); }
+    .acq-doc-group.needs-review .acq-doc-row { border-color: rgba(251, 191, 36, 0.28); }
+
+    .acq-doc-class { font-weight: 600; color: var(--text-3); }
+    .acq-doc-class.confirmed { color: var(--c-4ade80); }
+    .acq-doc-class.proposed  { color: var(--c-fbbf24, #fbbf24); }
+    .acq-doc-unconf { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--c-fbbf24, #fbbf24); border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: 8px; padding: 0 5px; margin-left: 5px; }
+    .acq-doc-rel { font-size: 0.72rem; color: var(--text-4); margin-top: 3px; }
+    .acq-doc-rel.proposed { font-style: italic; }
+    .acq-doc-superseded { font-size: 0.72rem; color: var(--text-5); margin-top: 3px; font-style: italic; }
+    .acq-doc-row.superseded { opacity: 0.62; border-style: dashed; }
+
+    .acq-doc-actions { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+    .acq-doc-type { background: var(--theme-surface); color: var(--text-3); font-size: 0.72rem;
+      border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; max-width: 150px; }
+    .acq-doc-confirm { background: none; border: 1px solid var(--c-4ade80); color: var(--c-4ade80);
+      padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; }
+    .acq-doc-confirm:hover { background: rgba(74, 222, 128, 0.12); }
+
     /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */
     .acq-stage-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       margin: -12px 0 22px; }

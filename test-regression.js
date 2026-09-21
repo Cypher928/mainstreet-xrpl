@@ -431,6 +431,16 @@ const SUITES = [
   // on a review the signed-in user does not own.
   { label: 'Acquisition documents (P1-2)',              cmd: 'node test-acquisition-documents.js' },
   { label: 'Acquisition documents walk (e2e, P1-2)',    cmd: 'node test-e2e-acquisition-documents.js' },
+  // P1-3. The pile becomes a structure — what each document IS, which
+  // leasehold it belongs to, what it changed — and every one of those is a
+  // PROPOSAL until a person confirms it. Most of what these suites defend is
+  // the model declining to decide: an amendment with no lease on file is not
+  // placed, two families naming one tenant propose neither, and a reading
+  // nobody confirmed never renders as confirmed. They also pin D-14: a second
+  // upload of a used file name keeps BOTH sources.
+  { label: 'Acquisition classification (P1-3)',         cmd: 'node test-acquisition-classification.js' },
+  { label: 'Acquisition classification walk (e2e, P1-3)', cmd: 'node test-e2e-acquisition-classification.js' },
+  { label: 'Migration 024 applies and rolls back',      cmd: 'node tools/verify-migration-024.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
