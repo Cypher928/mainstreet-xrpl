@@ -94,11 +94,19 @@ keeps its row and its `error_message` rather than vanishing. `intake_kind`
 records which upload control the file came through and is **not** a
 classification — document type, families and versions are P1-3.
 `unique (review_id, file_name)` makes one file one row, so the intake's two
-writes (on arrival, then on extraction) update rather than duplicate. RLS is
-owner-only with no anon policy; reached only through `/api/acquisition-documents`,
-which checks the review's owner and has **no delete**. Isolated from
-`lease_documents` on purpose: that table is property-scoped, and a review has
-no property until it is converted. See `docs/ACQUISITION_REVIEW.md` §4b.
+writes (on arrival, then on extraction) update rather than duplicate.
+
+**Written from the browser, like `acquisition_reviews`.** There is no endpoint
+in front of this table: RLS (`acq_docs_owner_all`, `user_id = auth.uid()`, no
+anon policy) decides what a signed-in client may read and write, and the
+composite foreign key refuses a document whose review is not that same user's.
+`script.js` writes `user_id` from the session and never from a caller-supplied
+field, so naming someone else's review produces a pair the parent table does
+not have and the write fails with `23503`. There is **no delete** path in the
+data layer and no control for one. `acquisition-documents.js` holds the write
+allow-list and the list's column set. Isolated from `lease_documents` on
+purpose: that table is property-scoped, and a review has no property until it
+is converted. See `docs/ACQUISITION_REVIEW.md` §4b.
 
 **`data` shape and writes (Acquisition Review P1-1).** `acquisition-workspace.js`
 owns the layout (`schemaVersion: 2`, `stage`, `activity[]`, `documents[]`,

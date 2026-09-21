@@ -22,10 +22,15 @@
 //   7. With migration 023 not run, uploads still extract and the product SAYS
 //      the documents are not being filed.
 //
+//   8. A document naming a review the signed-in user does not own is REFUSED
+//      by the database, which is where that rule now lives.
+//
 // The stand-ins are honest: /api/upload flattens the object name exactly as the
-// real endpoint does, and /api/acquisition-documents upserts on
-// (review_id, file_name) — so a test cannot pass by filing two rows for one
-// file, and the asserted storage path is the one the product would really get.
+// real endpoint does, and the Supabase stand-in upserts on (review_id,
+// file_name), enforces the owner policy and the composite foreign key, and
+// returns only the columns a query asked for — so a test cannot pass by filing
+// two rows for one file, and the asserted storage path is the one the product
+// would really get.
 //
 // Run: node test-e2e-acquisition-documents.js
 // ============================================================================
@@ -48,48 +53,154 @@ function check(name, ok, detail) {
 const UID       = 'u1';
 const REVIEW_ID = 'ddddddd1-0000-4000-b000-000000000001';
 
-// The supabase stand-in: the same conditional-update shape P1-1 needs.
+// The supabase stand-in.
+//
+// P1-2 originally reached acquisition_documents through a serverless function,
+// and this suite stubbed that endpoint. There is no endpoint now — the browser
+// writes the table directly — so the rules it used to enforce have to be
+// modelled HERE, or the walk would prove nothing about them:
+//
+//   · row-level security: a row whose user_id is not the signed-in user is
+//     refused (42501), and a read only ever sees that user's rows;
+//   · the composite foreign key: a document naming a review that does not
+//     belong to that same user is refused (23503) — which is the ownership
+//     check the endpoint used to make in JavaScript;
+//   · the unique key (review_id, file_name): the upsert lands on ONE row;
+//   · the select list: what a query asked for is recorded, so "the list does
+//     not ask for the document text" is checked against the real query.
+//
+// It also keeps the conditional-update shape P1-1 needs.
 const DB = `
 (function(){
   var U = { id: '${UID}', email: 'pm@example.com' };
-  var STORE = { acquisition_reviews: [], properties: [], tenants: [] };
+  var STORE = { acquisition_reviews: [], acquisition_documents: [], properties: [], tenants: [] };
   var _seq = 0;
+  window.__docsMissing = false;   // migration 023 not run
+  window.__dbCalls = [];
   function P(v) { return Promise.resolve(v); }
   function tbl(n) { STORE[n] = STORE[n] || []; return STORE[n]; }
+  function clone(o) { var c = {}; for (var k in o) c[k] = o[k]; return c; }
+
+  // What the caller asked for is what it gets back — so a column left out of
+  // the select is a column the screen never receives.
+  function project(arr, sel) {
+    if (!sel || sel.indexOf('*') >= 0) return arr.map(clone);
+    var cols = sel.split(',').map(function (s) { return s.trim(); });
+    return arr.map(function (r) { var o = {}; cols.forEach(function (c) { if (c in r) o[c] = r[c]; }); return o; });
+  }
+
   function q(name) {
-    var filters = [], pending = null;
-    function rows() { return tbl(name).filter(function (r) { return filters.every(function (f) { return r[f[0]] === f[1]; }); }); }
+    var filters = [], pending = null, sel = null, ord = null;
+    var isDocs = (name === 'acquisition_documents');
+    function absent() {
+      return (isDocs && window.__docsMissing)
+        ? { data: null, error: { code: '42P01', message: 'relation "public.' + name + '" does not exist' } }
+        : null;
+    }
+    function rows() {
+      var out = tbl(name).filter(function (r) { return filters.every(function (f) { return r[f[0]] === f[1]; }); });
+      // RLS: these tables are owner-scoped, and a read never crosses owners.
+      if (isDocs) out = out.filter(function (r) { return r.user_id === U.id; });
+      if (ord) {
+        out = out.slice().sort(function (a, b) {
+          var x = a[ord[0]], y = b[ord[0]];
+          return (x === y ? 0 : (x > y ? 1 : -1)) * (ord[1] ? 1 : -1);
+        });
+      }
+      return out;
+    }
+    // The recorded call is the object itself, not a snapshot: on a write the
+    // select list is chosen AFTER the upsert (…upsert(row).select(cols)), so it
+    // is filled in when it arrives.
+    var myCall = null;
+    function record(op, extra) {
+      var c = { table: name, op: op, select: sel, order: ord, filters: filters.slice() };
+      for (var k in (extra || {})) c[k] = extra[k];
+      window.__dbCalls.push(c);
+      myCall = c;
+      return c;
+    }
     function run() {
+      var gone = absent(); if (gone) { record('select'); return P(gone); }
       if (pending) {
         var changed = rows();
         changed.forEach(function (r) { Object.assign(r, pending); r.updated_at = 'rev-' + (++_seq); });
-        return P({ data: changed, error: null });
+        record('update');
+        return P({ data: isDocs ? project(changed, sel) : changed, error: null });
       }
-      return P({ data: rows(), error: null });
+      record('select');
+      return P({ data: isDocs ? project(rows(), sel) : rows(), error: null });
     }
     var api = {
-      select: function () { return api; },
+      select: function (cols) { sel = (typeof cols === 'string' && cols) ? cols : null; return api; },
       eq: function (k, v) { filters.push([k, v]); return api; },
       neq: function () { return api; }, is: function () { return api; }, not: function () { return api; },
-      in: function () { return api; }, order: function () { return api; }, limit: function () { return api; },
+      in: function () { return api; },
+      order: function (col, opts) { ord = [col, !opts || opts.ascending !== false]; return api; },
+      limit: function () { return api; },
       ilike: function () { return api; },
-      single: function () { return run().then(function (r) { return { data: (r.data || [])[0] || null, error: null }; }); },
-      maybeSingle: function () { return run().then(function (r) { return { data: (r.data || [])[0] || null, error: null }; }); },
+      single: function () { return run().then(function (r) { return { data: (r.data || [])[0] || null, error: r.error || null }; }); },
+      maybeSingle: function () { return run().then(function (r) { return { data: (r.data || [])[0] || null, error: r.error || null }; }); },
       update: function (patch) { pending = patch; return api; },
       insert: function (r) { var arr = Array.isArray(r) ? r : [r];
         arr.forEach(function (x) { if (!x.id) x.id = 'row-' + (++_seq); tbl(name).push(x); });
         var p = P({ data: arr, error: null });
         p.select = function () { var s = P({ data: arr, error: null }); s.single = function () { return P({ data: arr[0], error: null }); }; return s; };
         return p; },
-      upsert: function (r) { var arr = Array.isArray(r) ? r : [r], t = tbl(name);
-        arr.forEach(function (x) { var i = t.findIndex(function (y) { return y.id === x.id; }); if (i >= 0) Object.assign(t[i], x); else t.push(x); });
-        var p = P({ data: arr, error: null });
-        p.select = function () { return P({ data: arr, error: null }); };
-        return p; },
+      upsert: function (r, opts) {
+        var arr = Array.isArray(r) ? r : [r], t = tbl(name);
+        var key = (opts && opts.onConflict) ? String(opts.onConflict).split(',').map(function (s) { return s.trim(); }) : ['id'];
+        var gone = absent();
+        if (gone) { record('upsert', { conflict: key.join(',') }); return _wrap(P(gone)); }
+        var out = [], err = null;
+        arr.forEach(function (x) {
+          if (err) return;
+          if (isDocs) {
+            // RLS WITH CHECK — a row must name its own writer.
+            if (x.user_id !== U.id) {
+              err = { code: '42501', message: 'new row violates row-level security policy for table "' + name + '"' };
+              return;
+            }
+            // The composite foreign key: the review must exist AND be this user's.
+            var parent = tbl('acquisition_reviews').filter(function (p) {
+              return p.id === x.review_id && p.user_id === x.user_id;
+            })[0];
+            if (!parent) {
+              err = { code: '23503', message: 'insert or update on table "' + name
+                + '" violates foreign key constraint "acquisition_documents_review_fk"' };
+              return;
+            }
+          }
+          var i = -1;
+          for (var n = 0; n < t.length; n++) {
+            if (key.every(function (k) { return t[n][k] === x[k]; })) { i = n; break; }
+          }
+          var stamp = new Date(Date.now() + (++_seq)).toISOString();
+          if (i >= 0) { Object.assign(t[i], x); t[i].updated_at = stamp; out.push(t[i]); }
+          else {
+            var row = Object.assign({ id: 'row-' + (++_seq), created_at: stamp, updated_at: stamp }, x);
+            t.push(row); out.push(row);
+          }
+        });
+        record('upsert', { conflict: key.join(',') });
+        if (err) return _wrap(P({ data: null, error: err }));
+        return _wrap(P({ data: out, error: null }), out);
+      },
       delete: function () { return { eq: function (k, v) { STORE[name] = tbl(name).filter(function (x) { return x[k] !== v; }); return P({ error: null }); },
                                      in: function () { return P({ error: null }); } }; },
       then: function (res, rej) { return run().then(res, rej); },
     };
+    function _wrap(p, out) {
+      p.select = function (cols) {
+        sel = (typeof cols === 'string' && cols) ? cols : null;
+        if (myCall) myCall.select = sel;
+        return p.then(function (r) {
+          if (r.error) return r;
+          return { data: isDocs ? project(out || r.data || [], sel) : (out || r.data), error: null };
+        });
+      };
+      return p;
+    }
     return api;
   }
   window.__store = STORE;
@@ -142,40 +253,22 @@ function leaseText(tenant, marker) {
   page.on('pageerror', e => errs.push(String(e.message).split('\n')[0]));
   page.on('dialog', d => d.dismiss().catch(() => {}));
 
-  // ── the document store, behind the endpoint the product really calls ─────
-  // Upserts on (review_id, file_name), the way migration 023 constrains it.
-  const docStore = [];
-  let docsMigrationMissing = false;
-  let seq = 0;
+  // The document rows live in the Supabase stand-in above — there is no
+  // endpoint to intercept. These read them back out of the page.
+  const docs     = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__store.acquisition_documents)));
+  const docNamed = async n => (await docs()).find(r => r.file_name === n) || null;
+  const dbCalls  = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__dbCalls)));
 
   await page.route('**cdnjs**',    r => r.fulfill({ status: 200, body: '/*x*/' }));
   await page.route('**jsdelivr**', r => r.fulfill({ status: 200, body: '/*x*/' }));
   await page.route('**fonts.g**',  r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
 
+  // Nothing may reach a serverless function for these rows: the whole point of
+  // this rework is that there is no thirteenth function to deploy.
+  const endpointHits = [];
   await page.route('**/api/acquisition-documents**', async route => {
-    if (docsMigrationMissing) {
-      return route.fulfill({ status: 503, contentType: 'application/json',
-        body: JSON.stringify({ error: 'acquisition_documents table not found — run migrations/023_acquisition_documents.sql in Supabase SQL Editor', code: 'migration_missing' }) });
-    }
-    const req = route.request();
-    if (req.method() === 'POST') {
-      const b = JSON.parse(req.postData() || '{}');
-      const i = docStore.findIndex(r => r.review_id === b.reviewId && r.file_name === b.fileName);
-      const row = i >= 0 ? docStore[i] : { id: 'doc-' + (++seq), review_id: b.reviewId, created_at: new Date(Date.now() + seq).toISOString() };
-      const MAP = { fileName: 'file_name', intakeKind: 'intake_kind', byteSize: 'byte_size', contentType: 'content_type',
-                    storagePath: 'storage_path', parsingStatus: 'parsing_status', extractionModel: 'extraction_model',
-                    usedPdfDirect: 'used_pdf_direct', errorMessage: 'error_message',
-                    producedKind: 'produced_kind', producedId: 'produced_id' };
-      for (const [c, s] of Object.entries(MAP)) if (b[c] !== undefined) row[s] = b[c];
-      // extracted_text is stored but never echoed back, as the endpoint does.
-      if (b.extractedText !== undefined) row._text = b.extractedText;
-      if (i < 0) docStore.push(row);
-      const { _text, ...clean } = row;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: [clean] }) });
-    }
-    const rid = new URL(req.url()).searchParams.get('reviewId');
-    const rows = docStore.filter(r => r.review_id === rid).map(({ _text, ...r }) => r);
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: rows }) });
+    endpointHits.push(route.request().url());
+    return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"no such endpoint"}' });
   });
 
   // /api/upload, flattening the name exactly as api/upload.js does, so the
@@ -247,7 +340,7 @@ function leaseText(tenant, marker) {
   // Poll while the extraction is still in flight.
   let pendingSeen = null;
   for (let i = 0; i < 40 && !pendingSeen; i++) {
-    const row = docStore.find(r => r.file_name === 'coastal-outfitters-lease.txt');
+    const row = await docNamed('coastal-outfitters-lease.txt');
     if (row && row.parsing_status === 'pending') pendingSeen = { ...row };
     await new Promise(r => setTimeout(r, 50));
   }
@@ -261,16 +354,38 @@ function leaseText(tenant, marker) {
   claudeDelayMs = 0;
   await page.waitForTimeout(400);
 
-  const afterFirst = docStore.find(r => r.file_name === 'coastal-outfitters-lease.txt');
+  const all1 = await docs();
+  const afterFirst = all1.find(r => r.file_name === 'coastal-outfitters-lease.txt');
   check('when the extraction lands the SAME row is updated, not a second one filed',
-        docStore.filter(r => r.file_name === 'coastal-outfitters-lease.txt').length === 1,
-        String(docStore.filter(r => r.file_name === 'coastal-outfitters-lease.txt').length) + ' rows');
+        all1.filter(r => r.file_name === 'coastal-outfitters-lease.txt').length === 1,
+        String(all1.filter(r => r.file_name === 'coastal-outfitters-lease.txt').length) + ' rows');
   check('the row reads success and carries the text that was read',
-        afterFirst.parsing_status === 'success' && typeof afterFirst._text === 'string' && /Coastal Outfitters/.test(afterFirst._text),
+        afterFirst.parsing_status === 'success' && typeof afterFirst.extracted_text === 'string' && /Coastal Outfitters/.test(afterFirst.extracted_text),
         afterFirst.parsing_status);
   check('and it names the tenant it produced',
         afterFirst.produced_kind === 'tenant' && !!afterFirst.produced_id,
         `${afterFirst.produced_kind} / ${afterFirst.produced_id}`);
+
+  // ── the shape of the writes themselves ───────────────────────────────────
+  // With the endpoint gone, these are the rules that used to be its job.
+  const writes = (await dbCalls()).filter(c => c.table === 'acquisition_documents' && c.op === 'upsert');
+  check('no serverless function was called for any of this',
+        endpointHits.length === 0, endpointHits.join(', ') || 'none');
+  check('the write upserts on (review_id, file_name)',
+        writes.length > 0 && writes.every(w => w.conflict === 'review_id,file_name'),
+        writes.map(w => w.conflict).join(' | ') || 'no write recorded');
+  check('and it never asks the database for the document text back',
+        writes.every(w => w.select && !/extracted_text/.test(w.select)),
+        writes.map(w => w.select).join(' | ').slice(0, 90));
+  const reads = (await dbCalls()).filter(c => c.table === 'acquisition_documents' && c.op === 'select');
+  check('the list is scoped to the review AND the signed-in user',
+        reads.length > 0 && reads.every(r =>
+          r.filters.some(f => f[0] === 'review_id') && r.filters.some(f => f[0] === 'user_id' && f[1] === UID)),
+        JSON.stringify((reads[0] || {}).filters || null));
+  check('the list is ordered oldest first and leaves the text behind',
+        reads.every(r => r.order && r.order[0] === 'created_at' && r.order[1] === true
+                         && r.select && !/extracted_text/.test(r.select)),
+        JSON.stringify((reads[0] || {}).order || null));
 
   // ── 3 · the original, and how it is addressed ────────────────────────────
   check('the original went to the private leases bucket',
@@ -300,8 +415,9 @@ function leaseText(tenant, marker) {
   await page.waitForFunction(() => document.querySelectorAll('#acqDocsList .acq-doc-row').length >= 3, null, { timeout: 45000 }).catch(() => {});
   await page.waitForTimeout(500);
 
-  const failed = docStore.find(r => r.file_name === 'unreadable-lease.txt');
-  check('three files in, three rows on file', docStore.length === 3, String(docStore.length));
+  const all3  = await docs();
+  const failed = all3.find(r => r.file_name === 'unreadable-lease.txt');
+  check('three files in, three rows on file', all3.length === 3, String(all3.length));
   check('the file whose extraction failed still has a row', !!failed);
   // The message is the one the extraction path produced — callClaudeForLease
   // reports the transport failure rather than the upstream body — and what
@@ -340,7 +456,7 @@ function leaseText(tenant, marker) {
   await page.waitForFunction(() => document.querySelectorAll('#acqDocsList .acq-doc-row').length >= 4, null, { timeout: 45000 }).catch(() => {});
   await page.waitForTimeout(500);
 
-  const inv = docStore.find(r => r.file_name === 'atlas-landscaping-june.pdf');
+  const inv = await docNamed('atlas-landscaping-june.pdf');
   check('the invoice is filed in its own lane', !!inv && inv.intake_kind === 'invoice', inv ? inv.intake_kind : 'no row');
   check('it names the invoice it produced', !!inv && inv.produced_kind === 'invoice' && !!inv.produced_id,
         inv ? `${inv.produced_kind} / ${inv.produced_id}` : '');
@@ -366,7 +482,7 @@ function leaseText(tenant, marker) {
   await page.waitForFunction(() => document.querySelectorAll('#acqDocsList .acq-doc-row').length >= 5, null, { timeout: 60000 }).catch(() => {});
   await page.waitForTimeout(600);
 
-  const huge = docStore.find(r => r.file_name === 'huge-scan.txt');
+  const huge = await docNamed('huge-scan.txt');
   check('a file too large to store still gets a row', !!huge);
   check('its original is recorded as NOT on file', !!huge && (huge.storage_path === null || huge.storage_path === undefined),
         huge ? String(huge.storage_path) : '');
@@ -382,10 +498,29 @@ function leaseText(tenant, marker) {
         !!hugeRow && /not on file/i.test(hugeRow.text) && hugeRow.opens === false,
         hugeRow ? hugeRow.text.slice(0, 90) : 'row not rendered');
 
+  // ── 8 · a review the user does not own ───────────────────────────────────
+  // The endpoint used to check this in JavaScript. It is now the composite
+  // foreign key, so the walk asks the database directly: write a document
+  // naming a review that belongs to somebody else and it must be refused.
+  const foreign = await page.evaluate(async () => {
+    __store.acquisition_reviews.push({
+      id: 'ffffffff-0000-4000-b000-00000000000f', user_id: 'someone-else',
+      name: "Another manager's review", status: 'draft', data: {},
+    });
+    const before = __store.acquisition_documents.length;
+    const row = await _acqSaveDocument({
+      reviewId: 'ffffffff-0000-4000-b000-00000000000f',
+      fileName: 'not-mine.pdf', intakeKind: 'lease', parsingStatus: 'pending',
+    });
+    return { row: row, added: __store.acquisition_documents.length - before };
+  });
+  check('a document on someone else\'s review is refused by the database',
+        foreign.row === null && foreign.added === 0,
+        `row ${JSON.stringify(foreign.row)} / ${foreign.added} added`);
+
   // ── 7 · migration 023 not run ────────────────────────────────────────────
-  docsMigrationMissing = true;
   const tenantsBeforeGap = await page.evaluate(() => {
-    window.__toasts = []; _acqDocsUnavailable = false;
+    window.__toasts = []; _acqDocsUnavailable = false; window.__docsMissing = true;
     return _acqTenants.filter(t => t._status === 'ok').length;
   });
   await page.setInputFiles('#acqLeaseInput', [{
@@ -406,6 +541,20 @@ function leaseText(tenant, marker) {
         gap.toasts.join(' | ').slice(0, 120) || 'no toast');
   check('extraction still works — the workflow is not held hostage by the migration',
         gap.tenants === tenantsBeforeGap + 1, `${tenantsBeforeGap} → ${gap.tenants}`);
+
+  // The READ path meets the same absent table, and must reach the same verdict
+  // on its own — a review opened fresh, before anything is uploaded, would
+  // otherwise render as a review with no documents at all.
+  const readGap = await page.evaluate(async (rid) => {
+    _acqDocsUnavailable = false; _acqDocs.clear();
+    const rows = await _acqLoadDocuments(rid);
+    _renderAcqDocuments();
+    return { flag: _acqDocsUnavailable, rows: rows.length,
+             panel: (document.getElementById('acqDocsList') || {}).innerText || '' };
+  }, REVIEW_ID);
+  check('and opening a review against the absent table says the same thing',
+        readGap.flag === true && readGap.rows === 0 && /not filed/i.test(readGap.panel),
+        `flag ${readGap.flag} · ${readGap.panel.replace(/\s+/g, ' ').slice(0, 70)}`);
 
   check('no uncaught errors across the walk', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');
 

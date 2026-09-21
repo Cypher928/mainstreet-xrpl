@@ -30218,10 +30218,20 @@ function _acqRecord(review, entry) {
 // `leases` bucket, its text in a row, and a row even when extraction fails.
 // Before this, acqHandleLeaseFiles read each file in the browser and threw the
 // source away — no upload, no stored text, and a failed extraction left nothing
-// at all. The rows live in acquisition_documents (migration 023), reached only
-// through /api/acquisition-documents, which checks the review's owner.
+// at all. The rows live in acquisition_documents (migration 023), reached the
+// way acquisition_reviews has always been reached: browser to Supabase, signed
+// in, under row-level security.
+//
+// There is no endpoint in front of this table. The one P1-2 first shipped was
+// api/acquisition-documents.js, and it was the thirteenth function in api/,
+// which the Hobby plan will not deploy. Nothing was lost with it: it checked
+// that the caller owned the review, and that check is migration 023's composite
+// foreign key (review_id, user_id) → acquisition_reviews (id, user_id), which
+// the writes below cannot get around because `user_id` is written from the
+// session and a review the user does not own has no matching pair. RLS decides
+// what these reads may see. See acquisition-documents.js.
 
-const _acqDocs = new Map();     // reviewId → rows, as the list endpoint returns them
+const _acqDocs = new Map();     // reviewId → rows, in created_at order
 // The table is not there (migration 023 not run). Uploads still extract — the
 // workflow is not held hostage — but the product must say the documents are not
 // being filed rather than showing a review with none.
@@ -30241,23 +30251,42 @@ function _acqDocCache(reviewId, row) {
   _acqDocs.set(reviewId, rows);
 }
 
+function _AD() { return window.AcquisitionDocuments; }
+
+// The table is not there. Say so once, where the person can see it, and keep
+// reading files — an absent migration must not cost anyone their extraction.
+function _acqDocsMissing(table, { toast } = {}) {
+  _acqDocsUnavailable = true;
+  const file = _AD().migrationFor(table);
+  console.warn('[acq] documents unavailable — run ' + file);
+  if (toast) {
+    showToast('⚠️ Documents are being read but not filed — run ' + file + ' in Supabase.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 9000 });
+  }
+}
+
+// List one review's documents, oldest first — the order they were given.
+//
+// Scoped to the signed-in user as well as the review. RLS already refuses
+// anything else; saying it here too means a change to the policy cannot quietly
+// widen what this screen reads. The document text is not asked for: it is the
+// largest column in the table and the panel does not show it.
 async function _acqLoadDocuments(reviewId) {
   if (!reviewId) return [];
   try {
-    const resp = await fetch(`/api/acquisition-documents?reviewId=${encodeURIComponent(reviewId)}`, {
-      headers: await _authHeaders(),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      if (err.code === 'migration_missing') {
-        _acqDocsUnavailable = true;
-        console.warn('[acq] documents unavailable — run migrations/023_acquisition_documents.sql');
-        return [];
-      }
-      console.warn('[acq] could not load documents:', err.error || resp.status);
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return [];
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .select(_AD().LIST_SELECT)
+      .eq('review_id', reviewId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true });
+    if (error) {
+      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents'); return []; }
+      console.warn('[acq] could not load documents:', error.message);
       return [];
     }
-    const { data } = await resp.json();
     _acqDocsUnavailable = false;
     _acqDocs.set(reviewId, Array.isArray(data) ? data : []);
     return _acqDocRows(reviewId);
@@ -30267,29 +30296,37 @@ async function _acqLoadDocuments(reviewId) {
   }
 }
 
-// Write (or update) one document row. Keyed on (review, file name) server-side,
-// so calling it twice for the same file — once when it arrives, once when the
-// extraction lands — updates one row rather than filing two.
+// Write (or update) one document row.
+//
+// Keyed on (review_id, file_name) in the database, so calling this twice for
+// the same file — once when it arrives, once when the extraction lands —
+// updates one row rather than filing two. The columns this send does not carry
+// keep the values the first send gave them.
+//
+// `user_id` comes from the session and never from `fields`; buildPayload drops
+// every key that is not in its allow-list. That is what makes the composite
+// foreign key an ownership check: a review this user does not own has no
+// (id, user_id) pair to match, so the write is refused by the database rather
+// than by a line of JavaScript a browser could be persuaded to skip.
 async function _acqSaveDocument(fields) {
   if (_acqDocsUnavailable) return null;
   try {
-    const resp = await fetch('/api/acquisition-documents', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-      body:    JSON.stringify(fields),
-    });
-    const result = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      if (result.code === 'migration_missing') {
-        _acqDocsUnavailable = true;
-        showToast('⚠️ Documents are being read but not filed — run migrations/023_acquisition_documents.sql in Supabase.',
-          { color: '#92400e', textColor: '#fef3c7', duration: 9000 });
-      } else {
-        console.error('[acq] document save failed:', result.error || resp.status);
-      }
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const built = _AD().buildPayload(fields && fields.reviewId, user.id, fields);
+    if (!built.ok) { console.error('[acq] document save refused:', built.error); return null; }
+
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .upsert(built.payload, { onConflict: _AD().CONFLICT_KEY })
+      .select(_AD().LIST_SELECT);
+
+    if (error) {
+      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents', { toast: true }); return null; }
+      console.error('[acq] document save failed:', error.message, '| code:', error.code);
       return null;
     }
-    const row = Array.isArray(result.data) ? result.data[0] : null;
+    const row = Array.isArray(data) ? data[0] : null;
     if (row) _acqDocCache(fields.reviewId, row);
     return row;
   } catch (e) {

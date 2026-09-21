@@ -86,7 +86,7 @@ Each is small, separately approved, and verified before the next starts.
 | # | Increment | Status |
 |---|---|---|
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
-| P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), `/api/acquisition-documents`, originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
+| P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | Document Intake II — classification, families, versions (server-owned `document_classification` task; families grouped, never guessed; human confirms) | planned |
 | P1-4 | Lease Intelligence — abstraction per family, governing terms with state `verified · ai_extracted · missing · conflicting · unclear`; per-field confirm/correct as appended snapshots | planned |
 | P1-5 | Financial Intake — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
@@ -201,6 +201,39 @@ in `acquisition_documents`, its original goes to the private `leases` bucket,
 and the review's Documents panel lists all of them with a control that opens
 each stored original.
 
+### Who enforces ownership, and why there is no endpoint
+
+P1-2 first shipped `api/acquisition-documents.js`: a serverless function
+holding the service-role key, checking the review's owner before every read and
+write, and writing `user_id` from the verified token. **It does not exist.** It
+was the thirteenth function in `api/`, and Vercel's Hobby plan deploys twelve —
+the build succeeded and the deployment was refused outright
+(`exceeded_serverless_functions_per_deployment`). It was removed, and
+`acquisition_documents` is now written the way `acquisition_reviews` always has
+been: browser to Supabase, signed in, under row-level security.
+
+Nothing was given up, because the endpoint's rule was already the database's:
+
+| the rule | where it lives now |
+|---|---|
+| a caller sees only their own documents | RLS policy `acq_docs_owner_all`, `user_id = auth.uid()`; **no anon policy** |
+| a document may not name an owner its review does not have | the composite foreign key `(review_id, user_id)` → `acquisition_reviews (id, user_id)` |
+| one file is one row on a review | `unique (review_id, file_name)`, the upsert's conflict key |
+| a status or kind outside the list is refused | the `check` constraints, plus normalisation before the write |
+
+`user_id` is written from the session and never from the fields offered, so a
+caller who names somebody else's review produces a `(review_id, user_id)` pair
+that does not exist in the parent table and the write is refused with `23503`.
+That check now happens below the JavaScript rather than inside it, which is
+what the composite key was added for in the first place.
+
+`acquisition-documents.js` (a pure module, loaded before `script.js`) holds what
+a write may set, which columns a list asks for, and how an absent table is
+recognised. `script.js`'s `_acqLoadDocuments` and `_acqSaveDocument` apply it
+through the authenticated client. Later increments need no function either:
+P1-3's classification extends `/api/claude` with a task, and P1-9's Q&A extends
+`/api/ask-lease`.
+
 ### The order, which is the point
 
 1. **The row first**, `parsing_status: 'pending'`. That a file arrived is a
@@ -251,16 +284,23 @@ chunked or direct-to-storage upload, which is not this increment (D-11).
 
 ### When migration 023 has not been run
 
-`/api/acquisition-documents` answers `503` with `code: 'migration_missing'`
-naming the file. Uploads still extract — the workflow is not held hostage — and
-the panel says documents are **not being filed**, so a review never looks as
-though it simply has none.
+PostgREST reports the absent relation as `42P01`, which
+`AcquisitionDocuments.isMissingTable` recognises on both the read and the write.
+Uploads still extract — the workflow is not held hostage — and the panel says
+documents are **not being filed**, naming `migrations/023_acquisition_documents.sql`,
+so a review never looks as though it simply has none.
+
+The file named is the file that is actually missing: `migrationFor()` maps the
+table to its migration, because the reviews list can meet the same error and
+`006_acquisition_reviews.sql` is what an operator would need then. Mutation
+testing found that exact confusion in the endpoint before it was removed.
 
 ### No delete
 
-There is none, by design: preserving every source is the increment. `DELETE`
-answers 405 and says so. A removal would be an explicit archive workflow with
-its own column and its own approval (ARCHITECTURE_PRINCIPLES §4).
+There is none, by design: preserving every source is the increment. The data
+layer has no remove path and the panel has no control for one. A removal would
+be an explicit archive workflow with its own column and its own approval
+(ARCHITECTURE_PRINCIPLES §4).
 
 ---
 
@@ -282,21 +322,29 @@ its own column and its own approval (ARCHITECTURE_PRINCIPLES §4).
 
 P1-2:
 
-- `test-acquisition-documents.js` — drives `/api/acquisition-documents` for
-  real with Supabase stubbed at `fetch`: a caller may touch a document only
-  through a review they own, `user_id` comes from the token and never from the
-  body, unknown keys are dropped, the list does not ask for the text, `DELETE`
-  is 405, and a missing table is 503 naming migration 023. Plus source-pinned
-  checks that the row is written before extraction, a failure leaves a row, the
-  stored value is a reference, and the panel offers an opener.
-- `test-e2e-acquisition-documents.js` — the walk, against stand-ins that
-  flatten the object name exactly as `/api/upload` does and upsert on
-  `(review_id, file_name)` as the table constrains: the row is visible while
-  the extraction is still running, three files leave three rows with the
-  failure's reason on screen, the original is addressed under the owner's id,
-  re-opening the review reads them back, an oversize file says its original is
-  not on file, and with the table absent the panel says documents are not being
-  filed while extraction continues.
+- `test-acquisition-documents.js` — drives `acquisition-documents.js` for real:
+  `user_id` comes from the session and never from the fields offered, an id or an
+  unknown key is dropped, an out-of-list status or kind is normalised, a
+  nameless document is refused, the list does not ask for the text, the conflict
+  key is `(review_id, file_name)`, and a missing table is recognised and names
+  the migration for the table that is actually absent. It also checks the
+  endpoint is **gone** and `api/` holds no more than 12 deployable functions,
+  and pins the data layer: both halves go through the authenticated client, the
+  read is scoped to the review and the signed-in user and ordered oldest first,
+  and neither half asks for the document text. Plus the source-pinned intake
+  checks — the row is written before extraction, a failure leaves a row, the
+  stored value is a reference, the panel offers an opener.
+- `test-e2e-acquisition-documents.js` — the walk, against a Supabase stand-in
+  that enforces what the database enforces (the owner policy, the composite
+  foreign key, the unique key, and a projection to the columns the query asked
+  for) and an `/api/upload` stand-in that flattens the object name exactly as
+  the real endpoint does: the row is visible while the extraction is still
+  running, three files leave three rows with the failure's reason on screen, the
+  original is addressed under the owner's id, re-opening the review reads them
+  back, an oversize file says its original is not on file, **a document on
+  someone else's review is refused by the database**, no serverless function is
+  called at any point, and with the table absent the panel says documents are
+  not being filed while extraction continues.
 - `tools/verify-migration-023.js` — **executes** the migration against a
   throwaway PostgreSQL cluster (no Supabase project is contacted): it applies,
   re-applies unchanged, enforces RLS with no anon policy, isolates one user's
@@ -304,8 +352,8 @@ P1-2:
   owner, cascades on review deletion, rejects a duplicate file name and
   out-of-list values, moves `updated_at` on update, and rolls back cleanly —
   after which it applies again.
-- `tools/acquisition-documents-mutation.js` — 25 mutants across the endpoint,
-  the intake and the migration SQL itself.
+- `tools/acquisition-documents-mutation.js` — 32 mutants across the write
+  contract, the data layer, the intake and the migration SQL itself.
 - `test-security.js` gains the acquisition Documents panel as a
   document-bearing surface (§9), rendered through the real renderer.
 - Every suite above is registered in `test-regression.js`.

@@ -8482,6 +8482,8 @@
 <script src="acquisition-engine.js"></script>
 <!-- Acquisition Review Phase 1 (P1-1): the review record's shape, stage and activity — pure; script.js applies it. -->
 <script src="acquisition-workspace.js"></script>
+<!-- Acquisition Review Phase 1 (P1-2): what may be written about a document and which columns a list asks for — pure; script.js writes it through the authenticated Supabase client, and migration 023's RLS and composite foreign key are what actually enforce ownership. -->
+<script src="acquisition-documents.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>

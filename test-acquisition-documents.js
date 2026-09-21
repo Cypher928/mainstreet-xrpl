@@ -4,20 +4,32 @@
  *
  *   node test-acquisition-documents.js
  *
- * Two halves. The first DRIVES /api/acquisition-documents — the real handler,
- * with Supabase's REST API stubbed — because the ownership rule and the write
- * allow-list are this endpoint's security boundary: a caller may touch a
- * document only through a review they own, `user_id` comes from the verified
- * token and never from the body, and a missing table says so rather than
- * looking like a review with no documents. The second reads script.js,
- * index.html and the migration as text (through code(), which strips comments
- * so a fix's own explanation cannot satisfy an assertion) and pins the intake
- * to the rules this increment exists for: the row is written BEFORE extraction,
- * a failed extraction still leaves a row, what is stored is a reference and
- * never a public URL, and the panel offers a control that opens the original.
+ * Two halves. The first DRIVES acquisition-documents.js — the real module —
+ * because what a caller may write is the boundary that matters: `user_id` comes
+ * from the session and never from the fields offered, an unknown key is dropped
+ * rather than written, an out-of-list value is normalised before a column
+ * constraint ever sees it, a list never asks for the document text, and a
+ * missing table is recognised and names the right migration.
  *
- * The browser half of this increment is test-e2e-acquisition-documents.js; the
- * migration itself is executed by tools/verify-migration-023.js.
+ * There is no endpoint. P1-2 first shipped api/acquisition-documents.js and it
+ * was the thirteenth Serverless Function in api/, one past what the Hobby plan
+ * deploys. The table is now written straight from the browser, the way
+ * acquisition_reviews always has been, and the ownership rule it enforced is
+ * migration 023's RLS policy and composite foreign key — which is where it was
+ * already enforced. This suite therefore also checks that the endpoint is GONE
+ * and that api/ is back inside its budget.
+ *
+ * The second half reads script.js, index.html and the migration as text
+ * (through code(), which strips comments so a fix's own explanation cannot
+ * satisfy an assertion) and pins the intake to the rules this increment exists
+ * for: the row is written BEFORE extraction, a failed extraction still leaves a
+ * row, what is stored is a reference and never a public URL, and the panel
+ * offers a control that opens the original.
+ *
+ * The browser half of this increment is test-e2e-acquisition-documents.js,
+ * which drives the real data layer against a Supabase stand-in that enforces
+ * the owner policy and the foreign key; the migration itself is executed by
+ * tools/verify-migration-023.js.
  */
 const fs   = require('fs');
 const path = require('path');
@@ -50,252 +62,226 @@ function fnBody(src, name) {
   return src.slice(i, j === -1 ? undefined : j + 2);
 }
 
-// ── the endpoint, driven for real ───────────────────────────────────────────
-// Supabase is stubbed at fetch(). Every request it receives is recorded, so the
-// assertions are about what the handler actually asked the database for.
+// ── the module, driven for real ──────────────────────────────────────────────
+// No network, no stubs: this is the code the browser runs, deciding what a
+// document row may contain.
+const AD = require('./acquisition-documents.js');
+
 const OWNER  = 'user-owner-0001';
 const OTHER  = 'user-other-0002';
 const REVIEW = 'rev-0000-0000-0001';
 
-let calls = [];
-let sbBehaviour = 'normal';   // 'normal' | 'missing_table'
-
-function installFetch() {
-  global.fetch = async (url, opts = {}) => {
-    const u = String(url);
-    calls.push({ url: u, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null,
-                 headers: opts.headers || {} });
-
-    if (u.includes('/auth/v1/user')) {
-      const auth = (opts.headers && (opts.headers.Authorization || opts.headers.authorization)) || '';
-      const tok  = auth.replace(/^Bearer\s+/, '');
-      if (tok === 'token-owner') return { ok: true, json: async () => ({ id: OWNER, email: 'owner@example.com' }) };
-      if (tok === 'token-other') return { ok: true, json: async () => ({ id: OTHER, email: 'other@example.com' }) };
-      return { ok: false, json: async () => ({}) };
-    }
-
-    if (sbBehaviour === 'missing_table' && u.includes('/acquisition_documents')) {
-      return { status: 404, text: async () => JSON.stringify({ code: '42P01', message: 'relation "public.acquisition_documents" does not exist' }) };
-    }
-
-    if (u.includes('/acquisition_reviews')) {
-      if (sbBehaviour === 'missing_reviews') {
-        return { status: 404, text: async () => JSON.stringify({ code: '42P01', message: 'relation "public.acquisition_reviews" does not exist' }) };
-      }
-      // The handler asks: does this review belong to this user?
-      const ownedByOwner = u.includes(`user_id=eq.${OWNER}`) && u.includes(`id=eq.${REVIEW}`);
-      return { status: 200, text: async () => JSON.stringify(ownedByOwner ? [{ id: REVIEW }] : []) };
-    }
-
-    if (u.includes('/acquisition_documents')) {
-      if ((opts.method || 'GET') === 'POST') {
-        const sent = JSON.parse(opts.body);
-        return { status: 201, text: async () => JSON.stringify([{ id: 'doc-1', extracted_text: 'SHOULD NOT BE ECHOED', ...sent }]) };
-      }
-      return { status: 200, text: async () => JSON.stringify([{ id: 'doc-1', file_name: 'lease.pdf' }]) };
-    }
-    return { status: 500, text: async () => '{}' };
-  };
-}
-
-function mkRes() {
-  const res = { statusCode: null, body: null, headers: {} };
-  res.status = c => { res.statusCode = c; return res; };
-  res.json   = b => { res.body = b; return res; };
-  res.setHeader = (k, v) => { res.headers[k] = v; };
-  return res;
-}
-async function call(method, { token = 'token-owner', body = null, query = null } = {}) {
-  calls = [];
-  const res = mkRes();
-  await handler({ method, headers: token ? { authorization: 'Bearer ' + token } : {}, body, query }, res);
-  return res;
-}
-
-process.env.ANTHROPIC_API_KEY = 'sk-test-not-a-real-key';
-installFetch();
-const handler = require('./api/acquisition-documents.js');
+const build = (fields, reviewId = REVIEW, userId = OWNER) => AD.buildPayload(reviewId, userId, fields);
+const payloadOf = fields => { const r = build(fields); ok(r.ok, 'build refused: ' + r.error); return r.payload; };
 
 (async () => {
 
 console.log('\n══ Acquisition documents — P1-2 ══');
 
-sec('the endpoint — authentication and ownership');
+sec('what a write may set');
 
-await ta('no token is 401', async () => {
-  const r = await call('GET', { token: null, query: { reviewId: REVIEW } });
-  eq(r.statusCode, 401);
+t('user_id comes from the session, never from the fields offered', () => {
+  const p = payloadOf({ fileName: 'lease.pdf', user_id: OTHER, userId: OTHER, uid: OTHER });
+  eq(p.user_id, OWNER, 'a field overrode the session');
 });
 
-await ta('an unrecognised token is 401', async () => {
-  const r = await call('GET', { token: 'token-nobody', query: { reviewId: REVIEW } });
-  eq(r.statusCode, 401);
+t('review_id comes from the review being viewed, not from the fields', () => {
+  const p = payloadOf({ fileName: 'lease.pdf', review_id: 'some-other-review', reviewId: 'yet-another' });
+  eq(p.review_id, REVIEW);
 });
 
-await ta('a review the caller does not own is 403 — on read', async () => {
-  const r = await call('GET', { token: 'token-other', query: { reviewId: REVIEW } });
-  eq(r.statusCode, 403);
+t('an id in the fields is ignored — the database mints it', () => {
+  const p = payloadOf({ fileName: 'lease.pdf', id: 'chosen-by-caller' });
+  ok(!('id' in p), JSON.stringify(p));
 });
 
-await ta('a review the caller does not own is 403 — on write', async () => {
-  const r = await call('POST', { token: 'token-other', body: { reviewId: REVIEW, fileName: 'x.pdf' } });
-  eq(r.statusCode, 403);
-  ok(!calls.some(c => c.method === 'POST' && c.url.includes('/acquisition_documents')),
-     'a refused caller still reached the documents table');
+t('unknown keys are dropped rather than written', () => {
+  const p = payloadOf({ fileName: 'lease.pdf', created_at: '1999-01-01', updated_at: '1999-01-01', nonsense: 1 });
+  ok(!('created_at' in p) && !('updated_at' in p) && !('nonsense' in p), JSON.stringify(p));
 });
 
-await ta('ownership is checked against acquisition_reviews, not properties', async () => {
-  await call('GET', { query: { reviewId: REVIEW } });
-  const check = calls.find(c => c.url.includes('/acquisition_reviews'));
-  ok(check, 'no ownership lookup was made');
-  ok(check.url.includes(`id=eq.${REVIEW}`) && check.url.includes(`user_id=eq.${OWNER}`), check.url);
-  ok(!calls.some(c => c.url.includes('/properties')), 'it joined through properties — that is the managed-property model');
+t('an out-of-list parsing_status or intake_kind is normalised, not passed through', () => {
+  const p = payloadOf({ fileName: 'l.pdf', parsingStatus: 'nearly', intakeKind: 'spreadsheet' });
+  eq(p.parsing_status, 'pending');
+  eq(p.intake_kind, 'other');
 });
 
-sec('the endpoint — what a write may set');
-
-await ta('user_id comes from the token, never from the body', async () => {
-  const r = await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf', user_id: OTHER, userId: OTHER } });
-  eq(r.statusCode, 200);
-  const write = calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents'));
-  eq(write.body.user_id, OWNER, 'the body overrode the token');
-});
-
-await ta('an id in the body is ignored — the database mints it', async () => {
-  await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf', id: 'chosen-by-caller' } });
-  const write = calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents'));
-  ok(!('id' in write.body), JSON.stringify(write.body));
-});
-
-await ta('unknown keys are dropped rather than forwarded', async () => {
-  await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf', created_at: '1999-01-01', nonsense: 1, review_id: 'other-review' } });
-  const write = calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents'));
-  ok(!('created_at' in write.body) && !('nonsense' in write.body), JSON.stringify(write.body));
-  eq(write.body.review_id, REVIEW, 'review_id must come from the checked reviewId');
-});
-
-await ta('an out-of-list parsing_status or intake_kind is normalised, not passed through', async () => {
-  await call('POST', { body: { reviewId: REVIEW, fileName: 'l.pdf', parsingStatus: 'nearly', intakeKind: 'spreadsheet' } });
-  const write = calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents'));
-  eq(write.body.parsing_status, 'pending');
-  eq(write.body.intake_kind, 'other');
-});
-
-await ta('the four real statuses and both real kinds survive', async () => {
+t('the four real statuses and both real kinds survive', () => {
   for (const s of ['pending', 'success', 'partial', 'failed']) {
-    await call('POST', { body: { reviewId: REVIEW, fileName: 'l.pdf', parsingStatus: s } });
-    eq(calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents')).body.parsing_status, s, s);
+    eq(payloadOf({ fileName: 'l.pdf', parsingStatus: s }).parsing_status, s, s);
   }
   for (const k of ['lease', 'invoice']) {
-    await call('POST', { body: { reviewId: REVIEW, fileName: 'l.pdf', intakeKind: k } });
-    eq(calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents')).body.intake_kind, k, k);
+    eq(payloadOf({ fileName: 'l.pdf', intakeKind: k }).intake_kind, k, k);
   }
 });
 
-await ta('a missing fileName is 400, and nothing is written', async () => {
-  const r = await call('POST', { body: { reviewId: REVIEW } });
-  eq(r.statusCode, 400);
-  ok(!calls.some(c => c.method === 'POST' && c.url.includes('/acquisition_documents')));
+t('produced_kind is a tenant or an invoice or nothing at all', () => {
+  eq(payloadOf({ fileName: 'l.pdf', producedKind: 'tenant' }).produced_kind, 'tenant');
+  eq(payloadOf({ fileName: 'l.pdf', producedKind: 'invoice' }).produced_kind, 'invoice');
+  eq(payloadOf({ fileName: 'l.pdf', producedKind: 'property' }).produced_kind, null);
 });
 
-await ta('a whitespace-only fileName is 400 — not a row named " "', async () => {
-  const r = await call('POST', { body: { reviewId: REVIEW, fileName: '   ' } });
-  eq(r.statusCode, 400);
+t('used_pdf_direct is a boolean, and a truthy string is not true', () => {
+  eq(payloadOf({ fileName: 'l.pdf', usedPdfDirect: true }).used_pdf_direct, true);
+  eq(payloadOf({ fileName: 'l.pdf', usedPdfDirect: 'yes' }).used_pdf_direct, false);
 });
 
-await ta('the write upserts on (review_id, file_name)', async () => {
-  await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf' } });
-  const write = calls.find(c => c.method === 'POST' && c.url.includes('/acquisition_documents'));
-  ok(write.url.includes('on_conflict=review_id,file_name'), write.url);
-  ok(String(write.headers.Prefer || '').includes('merge-duplicates'), JSON.stringify(write.headers));
+t('a byte size is a non-negative whole number or nothing', () => {
+  eq(payloadOf({ fileName: 'l.pdf', byteSize: '2048.7' }).byte_size, 2048);
+  eq(payloadOf({ fileName: 'l.pdf', byteSize: -5 }).byte_size, null);
+  eq(payloadOf({ fileName: 'l.pdf', byteSize: 'huge' }).byte_size, null);
 });
 
-await ta('the response does not echo the document text back', async () => {
-  const r = await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf', extractedText: 'the whole lease' } });
-  eq(r.statusCode, 200);
-  ok(!('extracted_text' in r.body.data[0]), Object.keys(r.body.data[0]).join(','));
+t('a field that was not offered is not written at all', () => {
+  const p = payloadOf({ fileName: 'l.pdf' });
+  ok(!('storage_path' in p) && !('extracted_text' in p) && !('error_message' in p), JSON.stringify(p));
 });
 
-sec('the endpoint — reading');
-
-await ta('a list asks for the review, ordered, and NOT for the text', async () => {
-  const r = await call('GET', { query: { reviewId: REVIEW } });
-  eq(r.statusCode, 200);
-  const q = calls.find(c => c.url.includes('/acquisition_documents'));
-  ok(q.url.includes(`review_id=eq.${REVIEW}`), q.url);
-  ok(q.url.includes('order=created_at.asc'), q.url);
-  ok(!/select=[^&]*extracted_text/.test(q.url), 'the list asked for extracted_text: ' + q.url);
-  ok(/select=[^&]*storage_path/.test(q.url) && /select=[^&]*parsing_status/.test(q.url), q.url);
+t('the text is written when it is offered — that is the point of the row', () => {
+  eq(payloadOf({ fileName: 'l.pdf', extractedText: 'THE WHOLE LEASE' }).extracted_text, 'THE WHOLE LEASE');
+  eq(payloadOf({ fileName: 'l.pdf', extractedText: '' }).extracted_text, null);
 });
 
-await ta('a list with no reviewId is 400', async () => {
-  eq((await call('GET', {})).statusCode, 400);
+t('a long error message is kept but bounded', () => {
+  const p = payloadOf({ fileName: 'l.pdf', errorMessage: 'x'.repeat(5000) });
+  eq(p.error_message.length, 2000);
 });
 
-sec('the endpoint — refusals that must stay refusals');
+sec('a write that is not a row');
 
-await ta('DELETE is 405 and says why', async () => {
-  const r = await call('DELETE', { query: { id: 'doc-1' } });
-  eq(r.statusCode, 405);
-  ok(/preserved/i.test(r.body.error), r.body.error);
-  ok(!calls.some(c => c.method === 'DELETE'), 'it reached the database anyway');
+t('no review is refused', () => {
+  const r = build({ fileName: 'l.pdf' }, null);
+  ok(!r.ok && /reviewId/i.test(r.error), JSON.stringify(r));
 });
 
-await ta('PUT and PATCH are 405', async () => {
-  eq((await call('PUT',   { body: {} })).statusCode, 405);
-  eq((await call('PATCH', { body: {} })).statusCode, 405);
+t('no signed-in user is refused — a row must name its owner', () => {
+  const r = build({ fileName: 'l.pdf' }, REVIEW, null);
+  ok(!r.ok && /userId/i.test(r.error), JSON.stringify(r));
 });
 
-sec('the endpoint — a missing table is said out loud');
-
-await ta('a read against a missing documents table is 503 naming migration 023', async () => {
-  sbBehaviour = 'missing_table';
-  const r = await call('GET', { query: { reviewId: REVIEW } });
-  sbBehaviour = 'normal';
-  eq(r.statusCode, 503);
-  eq(r.body.code, 'migration_missing');
-  eq(r.body.table, 'acquisition_documents');
-  ok(/023_acquisition_documents\.sql/.test(r.body.error), r.body.error);
+t('a missing fileName is refused', () => {
+  const r = build({ intakeKind: 'lease' });
+  ok(!r.ok && /fileName/i.test(r.error), JSON.stringify(r));
 });
 
-await ta('and a write against a missing documents table is 503, not a silent success', async () => {
-  sbBehaviour = 'missing_table';
-  const r = await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf' } });
-  sbBehaviour = 'normal';
-  eq(r.statusCode, 503);
-  eq(r.body.code, 'migration_missing');
-  eq(r.body.table, 'acquisition_documents');
+t('a whitespace-only fileName is refused — not a row named " "', () => {
+  ok(!build({ fileName: '   ' }).ok);
 });
 
-// Found by tools/acquisition-documents-mutation.js: this branch is a DIFFERENT
-// missing table — the ownership lookup reads acquisition_reviews — and naming
-// 023 here would send an operator to the wrong file.
-await ta('a missing REVIEWS table names migration 006, not 023 — on read', async () => {
-  sbBehaviour = 'missing_reviews';
-  const r = await call('GET', { query: { reviewId: REVIEW } });
-  sbBehaviour = 'normal';
-  eq(r.statusCode, 503);
-  eq(r.body.code, 'migration_missing');
-  eq(r.body.table, 'acquisition_reviews');
-  ok(/006_acquisition_reviews\.sql/.test(r.body.error), r.body.error);
-  ok(!/023/.test(r.body.error), r.body.error);
+sec('the list, the key, and a table that is not there');
+
+t('the list does NOT ask for the document text', () => {
+  ok(AD.LIST_COLUMNS.indexOf('extracted_text') === -1, AD.LIST_COLUMNS.join(','));
+  ok(!/extracted_text/.test(AD.LIST_SELECT), AD.LIST_SELECT);
 });
 
-await ta('…and on write, where it must not read as 403 either', async () => {
-  sbBehaviour = 'missing_reviews';
-  const r = await call('POST', { body: { reviewId: REVIEW, fileName: 'lease.pdf' } });
-  sbBehaviour = 'normal';
-  eq(r.statusCode, 503);
-  eq(r.body.table, 'acquisition_reviews');
-  ok(/006_acquisition_reviews\.sql/.test(r.body.error), r.body.error);
+t('but it asks for everything the panel shows', () => {
+  for (const c of ['id', 'file_name', 'intake_kind', 'byte_size', 'storage_path',
+                   'parsing_status', 'error_message', 'produced_kind', 'produced_id', 'created_at']) {
+    ok(AD.LIST_COLUMNS.indexOf(c) >= 0, 'the list never asks for ' + c);
+  }
 });
 
-t('the migration-missing predicate recognises the code and the message', () => {
-  ok(handler._isMigrationMissing({ code: '42P01' }));
-  ok(handler._isMigrationMissing([{ message: 'relation "x" does not exist' }]));
-  ok(!handler._isMigrationMissing({ code: '23505', message: 'duplicate key' }));
-  ok(!handler._isMigrationMissing(null));
+t('one file is one row — the conflict key is (review_id, file_name)', () => {
+  eq(AD.CONFLICT_KEY, 'review_id,file_name');
 });
+
+t('a missing table is recognised by its code', () => {
+  ok(AD.isMissingTable({ code: '42P01' }), 'the code alone was not enough');
+  ok(AD.isMissingTable({ message: 'relation "public.acquisition_documents" does not exist' }));
+  ok(!AD.isMissingTable({ code: '23505', message: 'duplicate key value violates unique constraint' }));
+  ok(!AD.isMissingTable({ code: '23503', message: 'violates foreign key constraint' }));
+  ok(!AD.isMissingTable(null) && !AD.isMissingTable({}));
+});
+
+// Mutation testing found this in the endpoint before it was removed: both the
+// reviews list and the documents panel can meet an absent table, and naming 023
+// when what is missing is the reviews table sends an operator to the wrong file.
+t('a missing table names the migration for THAT table', () => {
+  ok(/023_acquisition_documents\.sql/.test(AD.migrationFor('acquisition_documents')));
+  ok(/006_acquisition_reviews\.sql/.test(AD.migrationFor('acquisition_reviews')));
+  ok(!/023/.test(AD.migrationFor('acquisition_reviews')), AD.migrationFor('acquisition_reviews'));
+});
+
+sec('the endpoint is gone, and api/ is back inside its budget');
+
+// Vercel's Hobby plan deploys at most 12 Serverless Functions. P1-2's thirteenth
+// one failed the deployment outright, so this is a build constraint, not taste.
+t('api/acquisition-documents.js no longer exists', () => {
+  ok(!fs.existsSync(path.join(ROOT, 'api/acquisition-documents.js')),
+     'the endpoint is back — the deployment will fail on the function limit');
+});
+
+t('api/ holds no more than 12 deployable functions', () => {
+  const fns = fs.readdirSync(path.join(ROOT, 'api'))
+    .filter(f => /\.js$/.test(f) && !f.startsWith('_'));
+  ok(fns.length <= 12, fns.length + ' functions: ' + fns.join(', '));
+});
+
+t('nothing in the app calls the endpoint that was removed', () => {
+  for (const f of ['script.js', 'index.html', 'acquisition-documents.js']) {
+    ok(!/api\/acquisition-documents/.test(code(f)), f + ' still calls it');
+  }
+});
+
+t('the module is loaded by the page, before script.js uses it', () => {
+  const H0 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const mod = H0.indexOf('src="acquisition-documents.js"');
+  const app = H0.indexOf('src="script.js"');
+  ok(mod > -1, 'index.html does not load acquisition-documents.js');
+  ok(mod < app, 'it loads after script.js');
+});
+
+sec('the data layer writes the table itself, under the rules the database keeps');
+
+{
+  const S0    = code('script.js');
+  const load0 = fnBody(S0, '_acqLoadDocuments');
+  const save0 = fnBody(S0, '_acqSaveDocument');
+
+  t('both halves go to acquisition_documents through the authenticated client', () => {
+    ok(/db\s*\n?\s*\.from\('acquisition_documents'\)/.test(load0), 'the read does not use the db client');
+    ok(/db\s*\n?\s*\.from\('acquisition_documents'\)/.test(save0), 'the write does not use the db client');
+    ok(!/fetch\(/.test(load0) && !/fetch\(/.test(save0), 'it is still going through an endpoint');
+  });
+
+  t('the read is scoped to the review AND the signed-in user, oldest first', () => {
+    ok(/\.eq\('review_id', reviewId\)/.test(load0), 'the read is not scoped to the review');
+    ok(/\.eq\('user_id', user\.id\)/.test(load0), 'the read is not scoped to the signed-in user');
+    ok(/\.order\('created_at', \{ ascending: true \}\)/.test(load0), 'the order is not the order they arrived in');
+  });
+
+  t('neither half asks the database for the document text', () => {
+    ok(/\.select\(_AD\(\)\.LIST_SELECT\)/.test(load0), 'the read picks its own columns');
+    ok(/\.select\(_AD\(\)\.LIST_SELECT\)/.test(save0), 'the write reads back its own columns');
+  });
+
+  t('the write upserts on the module’s conflict key', () => {
+    ok(/\.upsert\(built\.payload, \{ onConflict: _AD\(\)\.CONFLICT_KEY \}\)/.test(save0), save0.slice(0, 200));
+  });
+
+  t('the owner written is the session’s, and no field can name a different one', () => {
+    ok(/buildPayload\([^)]*user\.id/.test(save0), 'the payload is not built with the session user');
+    ok(!/fields\.userId|fields\.user_id/.test(save0), 'a field can name the owner');
+    ok(/db\.auth\.getUser\(\)/.test(save0), 'the write never asks who is signed in');
+  });
+
+  t('a write with no signed-in user writes nothing', () => {
+    ok(/if \(!user\?\.id\) return null/.test(save0), save0.slice(0, 400));
+  });
+
+  t('both halves recognise a missing table and say so', () => {
+    ok(/isMissingTable\(error\)/.test(load0) && /_acqDocsMissing\(/.test(load0), 'the read does not');
+    ok(/isMissingTable\(error\)/.test(save0) && /_acqDocsMissing\(/.test(save0), 'the write does not');
+    ok(/toast: true/.test(save0), 'nobody is told when a document is not filed');
+  });
+
+  t('the ownership rule is named where it now lives', () => {
+    const mod = fs.readFileSync(path.join(ROOT, 'acquisition-documents.js'), 'utf8');
+    ok(/composite foreign key/i.test(mod) && /row-level security|RLS/i.test(mod),
+       'the module does not say who enforces ownership');
+  });
+}
 
 // ── the migration ───────────────────────────────────────────────────────────
 sec('the migration says what it is for and what it is not');
@@ -442,7 +428,8 @@ t('a missing table is said on screen, not shown as "no documents"', () => {
   ok(/_acqDocsUnavailable/.test(r), 'the panel does not know the table can be absent');
   ok(/023_acquisition_documents\.sql/.test(r), 'it does not name the migration');
   const load = fnBody(S, '_acqLoadDocuments');
-  ok(/migration_missing/.test(load), 'the loader does not recognise the state');
+  ok(/isMissingTable\(error\)/.test(load), 'the loader does not recognise the state');
+  ok(/_acqDocsMissing\('acquisition_documents'\)/.test(load), 'the loader does not record it');
 });
 
 t('uploads keep working when the table is absent — extraction is not held hostage', () => {

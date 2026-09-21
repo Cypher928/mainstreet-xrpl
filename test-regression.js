@@ -422,9 +422,13 @@ const SUITES = [
   { label: 'Acquisition workspace walk (e2e, P1-1)',    cmd: 'node test-e2e-acquisition-workspace.js' },
   // P1-2. Every file an acquisition review is given is kept: the original in
   // the private bucket, the text in a row, and a row even when extraction
-  // fails. The contract suite drives /api/acquisition-documents for real (a
-  // caller may touch a document only through a review they own; user_id comes
-  // from the token); the walk proves the row exists before the extraction does.
+  // fails. The rows are written straight from the browser under RLS — there is
+  // no endpoint, because a thirteenth Serverless Function will not deploy. The
+  // contract suite drives acquisition-documents.js for real (user_id comes from
+  // the session, unknown keys are dropped, the list leaves the text behind) and
+  // checks api/ is back inside its 12-function budget; the walk proves the row
+  // exists before the extraction does and that the database refuses a document
+  // on a review the signed-in user does not own.
   { label: 'Acquisition documents (P1-2)',              cmd: 'node test-acquisition-documents.js' },
   { label: 'Acquisition documents walk (e2e, P1-2)',    cmd: 'node test-e2e-acquisition-documents.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —

@@ -65,6 +65,14 @@ access at load time and are Node-testable via `vm`.
 - **Depends on:** nothing. **Consumed by:** script.js acquisition glue (`_acqAdopt`, `_acqRecord`, `_saveAcqReview`, `_acqHandleSaveConflict`, `_renderAcqStageChips`, `acqSetStage`).
 - **Tests:** `test-acquisition-workspace.js`, `test-e2e-acquisition-workspace.js`, `tools/acquisition-workspace-mutation.js`.
 
+## acquisition-documents.js — Acquisition Review document contract (Phase 1, P1-2)
+- **Purpose:** what may be written about a document an acquisition review was given, and how its row is addressed. Replaces `api/acquisition-documents.js`, which was the 13th Serverless Function in `api/` and could not deploy on the Hobby plan's limit of 12. See `docs/ACQUISITION_REVIEW.md` §4b.
+- **Responsibilities:** `buildPayload(reviewId, userId, fields)` — camelCase in, snake_case out, through the `WRITABLE` allow-list, with `user_id` from the session and every unknown key dropped; `LIST_COLUMNS` / `LIST_SELECT` (deliberately without `extracted_text`); `CONFLICT_KEY` = `review_id,file_name`; `isMissingTable` (`42P01`) and `migrationFor(table)`, which names the migration for the table that is actually absent.
+- **Ownership is NOT enforced here.** It is migration 023's RLS policy (`user_id = auth.uid()`, no anon policy) and its composite foreign key `(review_id, user_id)` → `acquisition_reviews (id, user_id)`. This module only makes sure the row it builds names the signed-in user, so the key has something to refuse.
+- **Inputs/Outputs:** pure functions; no DOM, no network, no globals.
+- **Depends on:** nothing. **Consumed by:** script.js's `_acqLoadDocuments` and `_acqSaveDocument`, which apply it through the authenticated Supabase client.
+- **Tests:** `test-acquisition-documents.js`, `test-e2e-acquisition-documents.js`, `tools/acquisition-documents-mutation.js`, `tools/verify-migration-023.js`.
+
 ## Reports
 - **lease-review-packets.js** (lender summary etc.), **escrow-draw-packets.js** (draw package), plus script.js report generators (Master, Reconciliation Summary, Tenant Statements, CSV exports). Pattern: engine data → HTML → print window.
 

@@ -6,20 +6,29 @@
  *   node tools/acquisition-documents-mutation.js
  *
  * Each mutant is a single, plausible edit to a rule P1-2 introduced — in the
- * endpoint, in the intake, or in the migration itself. A SURVIVOR means the
+ * write contract, in the data layer, in the intake, or in the migration itself. A SURVIVOR means the
  * suites would not have noticed the regression and is either a real gap or an
  * equivalent mutant that must be argued for.
  *
- *   The endpoint — api/acquisition-documents.js
- *     A01  the ownership check is dropped (any review, any caller)
- *     A02  user_id is taken from the request body
- *     A03  the write allow-list is bypassed — the body goes to the database
- *     A04  the list asks for the document text as well
- *     A05  DELETE quietly succeeds instead of refusing
- *     A06  a missing table reads as an empty list
- *     A07  the upsert key is dropped, so one file files twice
- *     A08  a nameless document is accepted
- *     A09  the response echoes the document text back
+ *   The write contract — acquisition-documents.js
+ *     D01  the write allow-list is bypassed — the fields go to the database
+ *     D02  user_id is taken from the fields instead of the session
+ *     D03  the list asks for the document text as well
+ *     D04  a nameless document is accepted
+ *     D05  the upsert key is dropped, so one file files twice
+ *     D06  a missing table is not recognised
+ *     D07  a missing REVIEWS table sends the operator to migration 023
+ *     D08  unknown keys are forwarded to the database
+ *     D09  a document with no review is built anyway
+ *
+ *   The data layer — script.js
+ *     C01  the read is not scoped to the signed-in user
+ *     C02  the list comes back newest first
+ *     C03  the upsert loses its conflict key
+ *     C04  the write asks the database for the document text back
+ *     C05  a write that fails on a missing table says nothing
+ *     C06  a read that fails on a missing table reads as "no documents"
+ *     C07  the row is never shown until the review is re-opened
  *
  *   The intake — script.js
  *     G01  no row is written until the extraction has finished
@@ -49,47 +58,69 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const A = 'api/acquisition-documents.js';
+const D = 'acquisition-documents.js';
 const S = 'script.js';
 const M = 'migrations/023_acquisition_documents.sql';
 const R = 'migrations/023_acquisition_documents_rollback.sql';
 
 const MUTANTS = [
-  // ── the endpoint ─────────────────────────────────────────────────────────
-  { id: 'A01', file: A, why: 'the ownership check is dropped',
-    from: '  const rows = Array.isArray(r.json) ? r.json : [];\n  return { ok: rows.length > 0, status: r.status, json: r.json };',
-    to:   '  const rows = Array.isArray(r.json) ? r.json : [];\n  return { ok: true, status: r.status, json: r.json };' },
-  { id: 'A02', file: A, why: 'user_id is taken from the request body',
-    from: '    const payload = { review_id: reviewId, user_id: user.id };',
-    to:   '    const payload = { review_id: reviewId, user_id: body.user_id || user.id };' },
-  { id: 'A03', file: A, why: 'the write allow-list is bypassed',
-    from: '      if (body[camel] !== undefined) payload[snake] = WRITABLE[snake](body[camel]);',
-    to:   '      if (body[camel] !== undefined) payload[snake] = body[camel];\n    Object.assign(payload, body.passthrough || {});' },
-  { id: 'A04', file: A, why: 'the list asks for the document text as well',
-    from: "  'error_message', 'produced_kind', 'produced_id', 'created_at', 'updated_at',",
-    to:   "  'error_message', 'produced_kind', 'produced_id', 'created_at', 'updated_at', 'extracted_text'," },
-  { id: 'A05', file: A, why: 'DELETE quietly succeeds instead of refusing',
-    from: "    return res.status(405).json({\n      error: 'Acquisition documents are preserved.",
-    to:   "    return res.status(200).json({\n      error: 'Acquisition documents are preserved." },
-  { id: 'A06', file: A, why: 'a missing documents table reads as an empty list',
-    from: "      if (_isMigrationMissing(result.json)) return _sendMigrationMissing(res);\n      return res.status(502).json({ error: 'Query failed', detail: result.json, keySource: KEY_SOURCE });",
-    to:   "      if (_isMigrationMissing(result.json)) return res.status(200).json({ ok: true, data: [] });\n      return res.status(502).json({ error: 'Query failed', detail: result.json, keySource: KEY_SOURCE });" },
-  // The defect the first mutation run surfaced: the ownership lookup reads
-  // acquisition_reviews, so a missing table THERE was telling an operator to
-  // run 023. Each branch now names the table that is actually absent, and this
-  // mutant is what keeps that true.
-  { id: 'A10', file: A, why: 'a missing REVIEWS table sends the operator to migration 023',
-    from: "  const t = MIGRATION_FOR[table] ? table : 'acquisition_documents';",
-    to:   "  const t = 'acquisition_documents'; void table;" },
-  { id: 'A07', file: A, why: 'the upsert key is dropped, so one file files twice',
-    from: "      '/acquisition_documents?on_conflict=review_id,file_name',",
-    to:   "      '/acquisition_documents'," },
-  { id: 'A08', file: A, why: 'a nameless document is accepted',
-    from: "    if (!payload.file_name) {\n      return res.status(400).json({ error: 'fileName must be a non-empty string', keySource: KEY_SOURCE });\n    }",
-    to:   "    if (!payload.file_name) { payload.file_name = 'untitled'; }" },
-  { id: 'A09', file: A, why: 'the response echoes the document text back',
-    from: '    const clean = rows.map(r => { const c = { ...r }; delete c.extracted_text; return c; });',
-    to:   '    const clean = rows.map(r => ({ ...r }));' },
+  // ── the write contract ───────────────────────────────────────────────────
+  { id: 'D01', file: D, why: 'the write allow-list is bypassed',
+    from: '      payload[snake] = WRITABLE[snake](f[camel]);',
+    to:   '      payload[snake] = f[camel];' },
+  { id: 'D02', file: D, why: 'user_id is taken from the fields instead of the session',
+    from: '    var payload = { review_id: reviewId, user_id: userId };',
+    to:   '    var payload = { review_id: reviewId, user_id: f.user_id || f.userId || userId };' },
+  { id: 'D03', file: D, why: 'the list asks for the document text as well',
+    from: "    'error_message', 'produced_kind', 'produced_id', 'created_at', 'updated_at',",
+    to:   "    'error_message', 'produced_kind', 'produced_id', 'created_at', 'updated_at', 'extracted_text'," },
+  { id: 'D04', file: D, why: 'a nameless document is accepted',
+    from: "    if (!payload.file_name) return { ok: false, error: 'fileName must be a non-empty string' };",
+    to:   "    if (!payload.file_name) payload.file_name = 'untitled';" },
+  { id: 'D05', file: D, why: 'the upsert key is dropped, so one file files twice',
+    from: "  var CONFLICT_KEY = 'review_id,file_name';",
+    to:   "  var CONFLICT_KEY = 'id';" },
+  { id: 'D06', file: D, why: 'a missing table is not recognised',
+    from: "    if (error.code === '42P01') return true;",
+    to:   "    if (false) return true;" },
+  // The defect the first mutation run surfaced, carried over from the endpoint
+  // this module replaces: two different reads can meet an absent table, and
+  // naming 023 when the reviews table is the missing one sends an operator to
+  // the wrong file.
+  { id: 'D07', file: D, why: 'a missing REVIEWS table sends the operator to migration 023',
+    from: '    return MIGRATION_FOR[table] || MIGRATION_FOR.acquisition_documents;',
+    to:   '    return MIGRATION_FOR.acquisition_documents;' },
+  { id: 'D08', file: D, why: 'unknown keys are forwarded to the database',
+    from: '    return { ok: true, payload: payload };',
+    to:   '    return { ok: true, payload: Object.assign({}, f, payload) };' },
+  { id: 'D09', file: D, why: 'a document with no review is built anyway',
+    from: "    if (!reviewId) return { ok: false, error: 'Missing reviewId' };",
+    to:   "    if (!reviewId) reviewId = 'unknown';" },
+
+  // ── the data layer ───────────────────────────────────────────────────────
+  { id: 'C01', file: S, why: 'the read is not scoped to the signed-in user',
+    from: "      .eq('user_id', user.id)\n      .order('created_at', { ascending: true });",
+    to:   "      .order('created_at', { ascending: true });" },
+  // Anchored on the user filter above it: `.order('created_at', …)` alone
+  // appears four times in script.js and three of them are other screens.
+  { id: 'C02', file: S, why: 'the list comes back newest first',
+    from: "      .eq('user_id', user.id)\n      .order('created_at', { ascending: true });",
+    to:   "      .eq('user_id', user.id)\n      .order('created_at', { ascending: false });" },
+  { id: 'C03', file: S, why: 'the upsert loses its conflict key',
+    from: "      .upsert(built.payload, { onConflict: _AD().CONFLICT_KEY })\n      .select(_AD().LIST_SELECT);",
+    to:   "      .upsert(built.payload)\n      .select(_AD().LIST_SELECT);" },
+  { id: 'C04', file: S, why: 'the write asks the database for the document text back',
+    from: "      .upsert(built.payload, { onConflict: _AD().CONFLICT_KEY })\n      .select(_AD().LIST_SELECT);",
+    to:   "      .upsert(built.payload, { onConflict: _AD().CONFLICT_KEY })\n      .select('*');" },
+  { id: 'C05', file: S, why: 'a write that fails on a missing table says nothing',
+    from: "      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents', { toast: true }); return null; }",
+    to:   "      if (_AD().isMissingTable(error)) { return null; }" },
+  { id: 'C06', file: S, why: 'a read that fails on a missing table reads as "no documents"',
+    from: "      if (_AD().isMissingTable(error)) { _acqDocsMissing('acquisition_documents'); return []; }",
+    to:   "      if (_AD().isMissingTable(error)) { return []; }" },
+  { id: 'C07', file: S, why: 'the row is never shown until the review is re-opened',
+    from: '    if (row) _acqDocCache(fields.reviewId, row);',
+    to:   '    if (row) void row;' },
 
   // ── the intake ───────────────────────────────────────────────────────────
   { id: 'G01', file: S, why: 'no row is written until the extraction has finished',
