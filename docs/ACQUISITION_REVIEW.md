@@ -2,14 +2,12 @@
 
 **Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
 shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
-in progress under the approved plan in §4d: increment P4-1 is built and
-validated locally (§4e); migration 025 is applied to the Pilot project
-(verified: schema, checks, index, existing rows `pending`/`{}`, documents
-byte-identical); the P4-1 code is committed on `pilot` and NOT yet pushed** —
-the push is the next step, on the user's say-so. P4-2, P4-3 and P4-V do not
-start until P4-1 is reviewed. Production (`main`,
-mainstreetcam.com, the production Supabase project) is not touched by this
-work.
+in progress under the approved plan in §4d: increment P4-1 is CLOSED — built,
+validated locally, migration 025 applied to Pilot, deployed to
+www.mainstreet-review.com and validated in the live browser on a real lease
+(§4e, §4f).** P4-2, P4-3 and P4-V do not start until P4-1 is approved for
+closure. Production (`main`, mainstreetcam.com, the production Supabase
+project) is not touched by this work.
 
 §7 records feedback from the acquisition team that binds P1-5 and P1-7. It is a
 requirement, not a change: no code has been written against it.
@@ -97,7 +95,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 built and committed; 025 applied to Pilot; not yet pushed** |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 shipped and browser-validated (§4f); P4-2 not started** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -420,9 +418,9 @@ named by the document it changes rather than by an id.
 
 ## 4d. P1-4 — Lease Intelligence (approved plan; increments ship one at a time)
 
-**Status: plan approved. P4-1 built and validated locally — see §4e — and
-awaiting review. P4-2, P4-3 and P4-V do not start until the preceding
-increment has been validated and reviewed.**
+**Status: plan approved. P4-1 shipped and validated on the live Pilot — see
+§4e and §4f. P4-2, P4-3 and P4-V do not start until the preceding increment
+has been validated and reviewed.**
 
 ### The one job
 
@@ -584,12 +582,11 @@ pixels from the first commit.
 
 ---
 
-## 4e. P4-1 — what each document says (built; 025 applied; not yet pushed)
+## 4e. P4-1 — what each document says (shipped)
 
-**Status: built and committed on `pilot`, validated locally; migration 025
-applied to the Pilot project and verified in place; the code is NOT yet
-pushed.** Everything below is what the increment does; §5 lists what proves
-it. Nothing in P4-2 or P4-3 has been started.
+**Status: shipped to Pilot and validated in the live browser (§4f).**
+Everything below is what the increment does; §5 lists what proves it and §4f
+records the live validation. Nothing in P4-2 or P4-3 has been started.
 
 ### What it adds
 
@@ -673,7 +670,112 @@ column comments; the three existing documents came out `pending` with `{}`
 and their identity, text, classification and history fingerprint unchanged;
 a probe confirmed every refusal (empty evidence under `success`, no
 timestamp, a status outside the list, an array as evidence, and 024's
-unconfirmed confirmation) and rolled itself back. Push is the remaining step.
+unconfirmed confirmation) and rolled itself back. The code was then pushed to
+`pilot` and deployed; §4f records the live validation.
+
+---
+
+## 4f. P4-1 closeout — validated on the live Pilot
+
+**Deployed commit `f302e88`** (which carries `7fbe696`), Vercel deployment
+`dpl_BD2r7Zjn3SqNsbwnUqDyfZYKiq3F`, state READY, aliased to
+`www.mainstreet-review.com`. The alias was confirmed to serve the new build by
+fetching `/acquisition-terms.js`, a file that does not exist before `7fbe696`.
+
+### What was walked, in the live browser, on a phone
+
+The operator ran it on **`ShopRite_Anchor_Tenant_Lease.pdf`**, a real 33-page
+lease under the Maple plaza review with 107,041 characters of stored text,
+uploaded before migration 024 and therefore `unclassified` and `pending` going
+in. Observed on screen: the document read Unclassified / Not Confirmed; the
+type was corrected to a lease-family type; the row showed **"Reading terms…"**
+and then **"Terms read"**; after a full page refresh the row still read
+Renewal and Terms read; "Open original" still opened the 33-page original; the
+other two documents were untouched and still unclassified; the mobile layout
+held.
+
+### What the database showed afterwards
+
+The UI was not taken at its word. The row was read back directly:
+
+| column | value |
+|---|---|
+| `abstraction_status` | `success` |
+| `abstraction_model` | `claude-sonnet-4-6` |
+| `abstracted_at` | 2026-09-21 20:30:55.85+00 |
+| `abstracted_fields` | `schemaVersion` 1, **27 fields**, 10 valued, 10 evidenced, 0 quote-only, 17 missing |
+
+All four columns are genuinely populated, the field count is exactly the 27 of
+§4d.1, and `success` is correct because at least one field carries a value
+WITH its quote. Representative evidence, verbatim from the row:
+
+- `cap` = 4 — *"CAM increases are capped at 4% annually, excluding
+  uncontrollable expenses."*, page 4, confidence 0.95
+- `leased_sqft` = 65000 — *"Leased Area: 65,000 rentable square feet"*, page 1,
+  confidence 0.99
+- `lease_type` = `NNN`, `start_date` = 2024-03-01, `end_date` = 2039-02-28,
+  `tenant_name` = "ShopRite Supermarkets, Inc.", each with its own clause and
+  page.
+
+**Missing stayed missing.** Seventeen fields came back `value: null,
+quote: null` — among them `audit_rights`, `guarantor_name`, `co_tenancy`,
+`tenant_improvement_allowance`, `expense_stop`, `pro_rata_method`. None was
+stored as 0, `false` or `""`. Ten valued plus seventeen missing is twenty-seven.
+
+### Two behaviours worth recording, because they look wrong and are not
+
+**`abstracted_at` precedes `confirmed_at` by six seconds.** The history shows
+two human corrections: `null` → `amendment` at 20:30:35.682, then `amendment` →
+`renewal` at 20:31:02.006. The abstraction ran on the FIRST correction, the one
+that moved the document into a lease family, and finished at 20:30:55.85. The
+second correction did not re-read, because a correction between two
+lease-family types is the same document saying the same words — that is the
+designed behaviour in `acqSetDocType`, and the timestamps are its fingerprint.
+`confirmed_at` tracks the latest classification act; `abstracted_at` tracks the
+reading. They are not meant to agree.
+
+**`renewal_options` came back weak, and said so.** Its value is the term
+sentence rather than the option schedule, with **confidence 0.4** — by far the
+lowest of the ten. The low confidence is the mechanism working: P4-2's state
+model and a human confirmation are what resolve a reading like this, and
+nothing in P4-1 presents it as settled.
+
+### One reading to watch
+
+`base_rent` was stored as **1202500** against the quote *"Tenant agrees to pay
+base rent of $18.50 per square foot annually."* That is 65,000 × $18.50: the
+clause states a RATE and the stored value is a computed annual total. The task
+does ask for "annual base rent in dollars", so this is within its instruction,
+but the quote does not literally contain the number it supports. `base_rent` is
+group B — extracted, never governed across a family — so nothing downstream
+relies on it today. **Flagged for P4-2** as the first candidate for the
+`unclear` state, where a value its quote does not literally establish is shown
+as such rather than as evidenced.
+
+### Not exercised live
+
+Two cases in the approved plan had no real data to exercise them, and the
+corpus could not provide one:
+
+- **An explicit negative** ("Tenant shall have no option to renew"), which must
+  be stored as a VALUE with its quote. Zero of the 27 fields came back as a
+  quoted zero or a quoted `false`. Covered by `test-acquisition-terms.js`,
+  `test-e2e-acquisition-abstraction.js` and `tools/verify-migration-025.js`, but
+  **not by a real document**.
+- **A failed abstraction on a document with no usable text.** No live failure
+  occurred. Covered by the suites only.
+
+Both remain live-unverified and should be watched for the first time a real
+document produces one.
+
+### Untouched, and confirmed untouched
+
+`SafeShield_Insurance_Lease.pdf` and `Prime_Wellness_Spa_Lease.pdf` both still
+read `doc_type` NULL, `unclassified`, `abstraction_status` `pending`,
+`abstracted_fields` `{}`, no model, no timestamp, and an empty
+`classification_history`. Nothing collateral was written. A pre-025 document
+that nobody has classified shows no terms chip and no Read terms control,
+because `isAbstractable(null)` is false — honest silence rather than a promise.
 
 ---
 
