@@ -92,7 +92,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | Lease Intelligence — abstraction per family, governing terms with state `verified · ai_extracted · missing · conflicting · unclear`; per-field confirm/correct as appended snapshots | planned |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 in progress** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -410,6 +410,171 @@ or a lease document with no lease to belong to), then one group per leasehold
 with its documents in governing order, then the review's own documents. Each
 row says what the document is, how settled that is, and what it changes —
 named by the document it changes rather than by an id.
+
+---
+
+## 4d. P1-4 — Lease Intelligence (approved plan; increments ship one at a time)
+
+**Status: plan approved. P4-1 in progress. P4-2, P4-3 and P4-V do not start
+until the preceding increment has been validated and reviewed.**
+
+### The one job
+
+Turn a family of classified documents into ONE set of lease terms, each
+carrying the document and clause behind it, and each saying how settled it is.
+P1-3 made the documents addressable, typed, grouped and ordered. P1-4 reads
+them.
+
+### Rules that bind every increment of P1-4 (approved)
+
+- **Document classification status matters to term status.** A term derived
+  from an `unclassified` or `proposed` classification cannot become
+  `verified`, even with a value and a quote. The term's status is the WEAKER
+  of the supporting evidence and the classification.
+- **Confirm and Correct on a term are BLOCKED** while the governing document's
+  classification is `unclassified` or `proposed`. The person confirms or
+  corrects the document's classification first. The UI says so, rather than
+  silently accepting a confirmation and capping it.
+- **`missing` means the documents do not establish the term.** It is never
+  `none`, `no` or `0`. An explicit negative in a document — "Tenant shall have
+  no option to renew" — is an extracted VALUE with a quote, and is not missing.
+  Nothing may turn an unknown into a negative or a zero.
+- **Contradictions stay visible.** They are never auto-resolved; a person
+  chooses.
+- **Governing terms are derived by the existing
+  `LeaseIntelligence.reasonMultiDocumentLease`.** No second reasoner. The
+  acquisition field list is passed as an optional second argument; the
+  owner-operator path is unchanged and a test proves it.
+- **AI proposes; a human confirms or corrects. AI never writes verified truth.**
+- **No write-back.** P1-4 does not populate `review.data.tenants[]` and does
+  not feed today's CAM-framed Decision Report. P1-7 consumes the acquisition
+  model when Report v2 is rebuilt around the buyer's questions.
+- **Confirmation is per field**, never per family. Confirming `lease_type`
+  says nothing about `cap`.
+- **The shared `lease_extraction` contract is untouched.** Abstraction reads the
+  text P1-2 preserved.
+- **Page numbers are nullable metadata.** Evidence is always the document plus
+  the quote; a page is stored only when the abstraction task can genuinely tie
+  the quote to one, never invented.
+- **No new serverless function. Pilot only.**
+
+### 1. The fields (27), approved exactly as listed
+
+| group | fields | standing |
+|---|---|---|
+| **A** — the reasoner's canonical 13 | `cap` `cap_base_amount` `admin_fee_pct` `gross_up_pct` `expense_stop` `audit_rights` `pro_rata_method` `renewal_options` `tenant_name` `leased_sqft` `start_date` `end_date` `lease_type` | source of truth; names unchanged |
+| **B** — extracted today, never governed | `base_rent` `security_deposit` `suite` `excluded_categories` `admin_fee_basis` | already in `lease_extraction`; `CANONICAL_FIELDS` omits them, so no document ever governs them across a family |
+| **C** — genuinely new, one per committed category | `tenant_improvement_allowance` `landlord_work` `guarantor_name` `guaranty_limit` `termination_rights` `expansion_rights` `assignment_consent` `exclusive_use` `co_tenancy` | allowances · landlord work · guaranties (×2) · options (×2) · obligations (×3). **Keep all nine; do not reduce, rename or defer.** |
+
+The guaranty *document* was already representable (`doc_type: 'guaranty'`);
+who the guarantor is and what the cap is were not. That is why those two
+fields exist.
+
+### 2. Per-document evidence — `acquisition_documents.abstracted_fields`
+
+```
+{
+  "schemaVersion": 1,
+  "model": "…",
+  "at": "ISO-8601",
+  "fields": {
+    "<field>": { "value": …|null, "quote": "…"|null, "page": n|null, "confidence": 0..1|null }
+  }
+}
+```
+
+Every field the task was asked for appears. `value: null, quote: null` means
+this document does not establish the term — different from never having
+looked. A value with no quote can never reach `verified`. Alongside it:
+`abstraction_status` ∈ `pending · success · partial · failed · skipped`,
+`abstraction_model`, `abstracted_at`. `skipped` is the honest state for a
+document that is not a lease-family document; a rent roll is not abstracted.
+
+### 3. Human decisions — `acquisition_term_decisions`, append-only
+
+One row per human act, per field, per family: `id` `review_id` `user_id`
+`family_id` `field_key` `action` ∈ `confirm · correct · reject · reopen`
+`previous_value` `new_value` `source_document_id` `source_quote` `source_page`
+`decided_by` (not null) `decided_at` `note` `created_at`. The current decision
+is the latest row by `decided_at`. A trigger REFUSES update and delete, so the
+correction history cannot be rewritten. Composite keys on `user_id` to reviews,
+families and documents; owner-only RLS; no anon policy.
+
+### 4. Migrations
+
+Split so each increment is validated against exactly its own schema change:
+
+- **025 (P4-1)** — `abstracted_fields`, `abstraction_status`,
+  `abstraction_model`, `abstracted_at` on `acquisition_documents`.
+- **026 (P4-3)** — `acquisition_term_decisions`, and the extension of
+  `acq_docs_relationship_status_check` to admit `needs_review` (§9 below).
+
+Each Pilot-only, with a rollback and a `tools/verify-migration-0NN.js` that
+executes it against a throwaway cluster before it is applied.
+
+### 5. Wrapping the reasoner (P4-2) — `acquisition-terms.js`
+
+`buildReasonerInput(documents)` maps the family's CURRENT documents
+(`superseded_by_document_id is null`) into the shape the reasoner already
+takes: `docType` ← `doc_type`, `docDate` ← `doc_date`, `extractedFields` and
+`quotes` ← `abstracted_fields`. It calls
+`LeaseIntelligence.reasonMultiDocumentLease(docs, { fields })`. The ONLY change
+to `lease-intelligence.js` is that optional second argument, defaulting to
+`CANONICAL_FIELDS`. `resolveTerms(reasonerResult, documents, decisions)` then
+applies the state model, the ceiling, and the decision overlay.
+
+### 6. The five-state term model
+
+| state | reached when |
+|---|---|
+| `verified` | a human confirmed it; the governing document has a quote; that document's classification is `confirmed` or `corrected` |
+| `ai_extracted` | a value with evidence that nobody has confirmed, or the ceiling (§8) caps it here |
+| `conflicting` | the reasoner returned contradictions and no human has chosen |
+| `unclear` | a value with no supporting quote, or a quote that does not support the value |
+| `missing` | no current document in the family establishes the term |
+
+For P1-7 these project onto §7's four: `conflicting` and `unclear` → **issue**;
+`ai_extracted` → **assumption**; the other two carry across.
+
+### 7. Contradictions and missing, on screen
+
+A contradiction shows BOTH values with the documents that assert them, at
+`conflicting`, until a person chooses. A missing term is a row that reads "no
+document on file establishes this" — never zero, never blank, never omitted.
+
+### 8. Classification status → term status (the ceiling)
+
+| governing document's `doc_type_status` | highest term state reachable |
+|---|---|
+| `unclassified` or `proposed` | `ai_extracted` — and Confirm/Correct are disabled, with the reason shown |
+| `confirmed` or `corrected`, quote present | `verified`, once a human confirms the term |
+| `confirmed` or `corrected`, no quote | `unclear` |
+
+### 9. D-17 — relationships stay coherent (P4-3)
+
+Reclassifying a document from a lease-family type to a review-level type
+clears its family (as today) but no longer discards its relationship:
+`parent_document_id` and `relationship` are preserved and
+`relationship_status` becomes `needs_review`. The same happens in reverse when
+a document's parent is reclassified away. Nothing is auto-reassigned. The
+prior state is appended to `classification_history`; P1-6 surfaces these.
+
+### 10. Browser UX (P4-3)
+
+A Lease Terms panel per family under the Documents panel: field, governing
+value, state chip, source document and clause snippet, Confirm / Correct.
+Superseded values collapse. Conflicting fields show both values and both
+documents. Missing fields are listed, not hidden. Tested at 375, 390 and 430
+pixels from the first commit.
+
+### 11. Increments and verification
+
+| # | ships | validated by |
+|---|---|---|
+| **P4-1** | `acquisition_abstraction` task on the existing `/api/claude`; the 27-field evidence shape; migration 025; abstraction at intake for lease-family documents; `skipped` for the rest; re-abstraction when a document is corrected into a lease-family type | pure contract suite, browser walk, migration executed, mutation, security task registration, regression baseline |
+| **P4-2** | `acquisition-terms.js` resolver; the optional field list on the reasoner; five states; ceiling; contradictions; missing-vs-negative | pure suite incl. proof the owner-operator reasoner is unchanged; mutation on state transitions, ceiling, conflicts, missing-vs-negative |
+| **P4-3** | migration 026; decisions table; Lease Terms panel; blocked Confirm with reason; D-17 `needs_review` | browser walk incl. narrow viewports; migration executed incl. append-only refusal and cross-owner refusal; mutation |
+| **P4-V** | — | full regression against the established baseline |
 
 ---
 
