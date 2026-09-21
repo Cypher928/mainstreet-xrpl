@@ -122,8 +122,7 @@ composite key nulls `user_id` too, and deleting a family would fail.
 `acquisition_document_families` carries the same owner-only RLS, no anon
 policy, and the same composite key to `acquisition_reviews`.
 
-**What each document says (migration 025, P1-4 / P4-1 — written, not yet
-applied).** `abstracted_fields` is one jsonb object per document:
+**What each document says (migration 025, P1-4 / P4-1 — applied to Pilot).** `abstracted_fields` is one jsonb object per document:
 `{ schemaVersion, model, at, fields: { <field>: { value, quote, page,
 confidence } } }` for the 27 fields `acquisition-terms.js` owns (the field
 list is deliberately not encoded in the schema). **`value: null, quote: null`
@@ -243,7 +242,7 @@ acquisition review the same way.
 | 009 | Atomic tenant resync | Prevent partial tenant-table states |
 | 023 | `acquisition_documents` (+ a unique `(id, user_id)` on `acquisition_reviews` for the composite FK) | Acquisition Review keeps every source it is given (P1-2). Pilot only; rollback in `023_..._rollback.sql`; executed end-to-end by `tools/verify-migration-023.js` |
 | 024 | classification / family / version columns on `acquisition_documents`, `acquisition_document_families`, the `intake_id` identity swap and the coherence trigger | What each source IS, which leasehold it belongs to, what it changed, and what replaced it (P1-3). Answers D-14 so a re-upload keeps both sources. Pilot only; rollback in `024_..._rollback.sql`, which **refuses** to restore 023's unique key while that would mean destroying a preserved source; executed end-to-end by `tools/verify-migration-024.js` |
-| 025 | `abstracted_fields`, `abstraction_status`, `abstraction_model`, `abstracted_at` on `acquisition_documents`; three checks and one partial index | What each document SAYS about each of 27 lease terms, with the clause behind it (P1-4, P4-1). Pilot only; rollback in `025_..._rollback.sql`; executed end-to-end by `tools/verify-migration-025.js`. **Written and verified; NOT yet applied to Pilot — awaiting review of P4-1.** |
+| 025 | `abstracted_fields`, `abstraction_status`, `abstraction_model`, `abstracted_at` on `acquisition_documents`; three checks and one partial index | What each document SAYS about each of 27 lease terms, with the clause behind it (P1-4, P4-1). Pilot only; rollback in `025_..._rollback.sql`; executed end-to-end by `tools/verify-migration-025.js`. **Applied to Pilot 2026-09-21** (`20260921201418_025_acquisition_abstraction`) with the three existing documents verified byte-identical and `pending`. |
 
 Migrations are plain SQL applied via the Supabase SQL editor (no migration
 runner in-repo). New migrations: next number, idempotent

@@ -3,11 +3,11 @@
 **Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
 shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
 in progress under the approved plan in §4d: increment P4-1 is built and
-validated locally (§4e) and awaits review; migration 025 is written and
-executed against a throwaway cluster but NOT applied to Pilot, and the P4-1
-code is not deployed** — the Documents panel degrades if the code ships before
-its migration, so the order is review → authorize 025 → apply → push. P4-2,
-P4-3 and P4-V do not start until P4-1 is reviewed. Production (`main`,
+validated locally (§4e); migration 025 is applied to the Pilot project
+(verified: schema, checks, index, existing rows `pending`/`{}`, documents
+byte-identical); the P4-1 code is committed on `pilot` and NOT yet pushed** —
+the push is the next step, on the user's say-so. P4-2, P4-3 and P4-V do not
+start until P4-1 is reviewed. Production (`main`,
 mainstreetcam.com, the production Supabase project) is not touched by this
 work.
 
@@ -97,7 +97,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 built, awaiting review; 025 not applied** |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 built and committed; 025 applied to Pilot; not yet pushed** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -584,10 +584,11 @@ pixels from the first commit.
 
 ---
 
-## 4e. P4-1 — what each document says (built; awaiting review)
+## 4e. P4-1 — what each document says (built; 025 applied; not yet pushed)
 
-**Status: built on `pilot`, validated locally, NOT deployed, migration 025 NOT
-applied.** Everything below is what the increment does; §5 lists what proves
+**Status: built and committed on `pilot`, validated locally; migration 025
+applied to the Pilot project and verified in place; the code is NOT yet
+pushed.** Everything below is what the increment does; §5 lists what proves
 it. Nothing in P4-2 or P4-3 has been started.
 
 ### What it adds
@@ -665,7 +666,14 @@ it. Nothing in P4-2 or P4-3 has been started.
 The list select now names the 025 columns, so on a Pilot database without 025
 the Documents panel says documents are being read but not filed and names
 `migrations/025_acquisition_abstraction.sql`. Therefore: review → authorize
-025 → apply to Pilot → push → verify.
+025 → apply to Pilot → push → verify. **025 was applied to Pilot on
+2026-09-21** (Supabase migration `20260921201418_025_acquisition_abstraction`):
+four columns with their defaults, three checks, the partial index, both
+column comments; the three existing documents came out `pending` with `{}`
+and their identity, text, classification and history fingerprint unchanged;
+a probe confirmed every refusal (empty evidence under `success`, no
+timestamp, a status outside the list, an array as evidence, and 024's
+unconfirmed confirmation) and rolled itself back. Push is the remaining step.
 
 ---
 
