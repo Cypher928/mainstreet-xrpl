@@ -79,9 +79,11 @@ const DB = `
         var p=P({data:arr,error:null});
         p.select=function(){var s=P({data:arr,error:null});s.single=function(){return P({data:arr[0],error:null});};return s;};
         return p;},
-      update:function(patch){return {eq:function(k,v){var t=tbl(name);
-        t.forEach(function(r){if(r[k]===v)Object.assign(r,patch);});
-        return P({data:null,error:null});}};},
+      update:function(patch){var fl=[];var run=function(){var t=tbl(name),ch=[];
+          t.forEach(function(r){if(fl.every(function(f){return r[f[0]]===f[1];})){Object.assign(r,patch);ch.push(r);}});
+          return P({data:ch,error:null});};
+        var u={eq:function(k,v){fl.push([k,v]);return u;},select:function(){return u;},
+               then:function(res,rej){return run().then(res,rej);}};return u;},
       delete:function(){return {eq:function(k,v){var t=tbl(name);
         for(var i=t.length-1;i>=0;i--)if(t[i][k]===v)t.splice(i,1);
         return P({error:null});},

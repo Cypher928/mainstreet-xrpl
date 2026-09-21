@@ -101,11 +101,21 @@ const SUPABASE_MOCK = `
         result.select = function() { return noopPromise({ data: arr, error: null }); };
         return result;
       },
-      update:   function() {
-        var result = noopPromise({ data: null, error: null });
-        result.select = function() { return noopPromise({ data: null, error: null }); };
-        result.eq = function() { return noopPromise({ data: null, error: null }); };
-        return result;
+      // A conditional UPDATE (P1-1): applied to the rows matching every filter,
+      // each stamped with a fresh updated_at the way the trigger does.
+      update:   function(patch) {
+        var u = {
+          eq: function(col, val) { _filters[col] = val; return u; },
+          select: function() { return u; },
+          then: function(fn) {
+            var rows = (_store[tableName] || []).filter(function(r) {
+              return Object.keys(_filters).every(function(k) { return r[k] === _filters[k]; });
+            });
+            rows.forEach(function(r) { Object.assign(r, patch); r.updated_at = 'rev-' + Date.now() + '-' + Math.random().toString(36).slice(2); });
+            return noopPromise({ data: rows, error: null }).then(fn);
+          }
+        };
+        return u;
       },
       delete:   function() {
         return { eq: function() { return noopPromise({ error: null }); }, in: function() { return noopPromise({ error: null }); } };

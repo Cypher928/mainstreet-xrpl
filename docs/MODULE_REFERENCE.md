@@ -58,6 +58,13 @@ access at load time and are Node-testable via `vm`.
 - **API (consumed):** `computeRevenueAtRisk`, `computePortfolioIntelligence`, `computeRenewalPipeline`, `computeRevenueForecast`, `computePortfolioActions`.
 - **UI:** acquisition review section (portfolio), Decision Report; feeds Command Center + Workspace.
 
+## acquisition-workspace.js — Acquisition Review record (Phase 1, P1-1)
+- **Purpose:** the one owner of an `acquisition_reviews` row's shape, its stage and its activity history. See `docs/ACQUISITION_REVIEW.md`.
+- **Responsibilities:** `upgradeReview` (idempotent; adds missing v2 keys, never removes or rewrites), `newReviewData`; `STAGES` / `stageOf` / `deriveStage` / `setStage` / `markAcquired` / `markReverted`; `recordActivity` (appended, attributed, capped with `activityDropped`); `stageChips` view model; `savePayload` + `classifySaveResult` — the two halves of the conditional save (no row matched under a revision filter ⇒ `conflict`, never success).
+- **Inputs/Outputs:** pure functions over the row `{ id, user_id, name, status, data, updated_at }`; every function returns a new row and leaves its input untouched.
+- **Depends on:** nothing. **Consumed by:** script.js acquisition glue (`_acqAdopt`, `_acqRecord`, `_saveAcqReview`, `_acqHandleSaveConflict`, `_renderAcqStageChips`, `acqSetStage`).
+- **Tests:** `test-acquisition-workspace.js`, `test-e2e-acquisition-workspace.js`, `tools/acquisition-workspace-mutation.js`.
+
 ## Reports
 - **lease-review-packets.js** (lender summary etc.), **escrow-draw-packets.js** (draw package), plus script.js report generators (Master, Reconciliation Summary, Tenant Statements, CSV exports). Pattern: engine data → HTML → print window.
 

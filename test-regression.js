@@ -413,6 +413,13 @@ const SUITES = [
   { label: 'Phase 0 remediation (M1a, M5, P1b)',        cmd: 'node test-phase0-remediation.js' },
   { label: 'Acquisition due diligence',                 cmd: 'node test-acquisition.js' },
   { label: 'Acquisition orphan repair',                 cmd: 'node test-acq-orphan-repair.js' },
+  // ACQUISITION REVIEW PHASE 1 · P1-1. The review record has one owner
+  // (acquisition-workspace.js): upgrade merges and never replaces, the stage
+  // is a recorded decision the conversion facts override, activity is
+  // appended and capped honestly, and a save conditioned on the revision last
+  // read reports a CONFLICT rather than overwriting what it has not seen.
+  { label: 'Acquisition workspace record (P1-1)',       cmd: 'node test-acquisition-workspace.js' },
+  { label: 'Acquisition workspace walk (e2e, P1-1)',    cmd: 'node test-e2e-acquisition-workspace.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },

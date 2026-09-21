@@ -6124,6 +6124,23 @@
     .acq-card-status.orphaned   { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-detail-badge.orphaned  { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-card-orphan-note       { color: var(--c-fbbf24, #fbbf24); }
+    /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */
+    .acq-stage-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin: -12px 0 22px; }
+    .acq-stage-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-4); }
+    .acq-stage-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .acq-stage-chip { font-size: 0.74rem; font-weight: 600; padding: 4px 11px; border-radius: 12px;
+      border: 1px solid #334155; background: none; color: var(--text-4); cursor: pointer;
+      line-height: 1.3; }
+    .acq-stage-chip:hover:not([disabled]) { border-color: #475569; color: var(--text-1); }
+    .acq-stage-chip.done     { border-color: rgba(74,222,128,0.35); color: var(--c-4ade80); }
+    .acq-stage-chip.current  { border-color: var(--theme-accent, #c9973a); color: var(--text-1);
+      background: rgba(201,151,58,0.14); }
+    .acq-stage-chip.upcoming { color: var(--text-5); }
+    .acq-stage-chip[disabled] { cursor: default; opacity: 0.85; }
+    .acq-stage-sep  { color: var(--text-5); font-size: 0.8rem; }
+    .acq-stage-note { margin-left: 6px; font-size: 0.72rem; color: var(--c-a78bfa); }
     .acq-archived-badge { display: inline-block; margin-left: 8px; padding: 2px 8px;
       border-radius: 10px; font-size: 0.7rem; font-weight: 600;
       background: rgba(var(--line-rgb), 0.07); color: var(--text-4); }
@@ -7319,6 +7336,14 @@
     <button class="acq-back-btn acq-delete-btn" onclick="deleteActiveAcquisitionReview()" title="Delete this review permanently" style="margin-left:auto;border-color:rgba(239,68,68,0.3);color:var(--c-f87171);">&#x1F5D1; Delete</button>
   </div>
 
+  <!-- Review stage (P1-1). Rendered by _renderAcqStageChips from
+       AcquisitionWorkspace.stageChips; a person moves between stages here,
+       Acquired is set by the conversion. -->
+  <div class="acq-stage-row" id="acqStageRow" role="group" aria-label="Review stage">
+    <span class="acq-stage-label">Stage</span>
+    <div class="acq-stage-chips" id="acqStageChips"></div>
+  </div>
+
   <!-- Conversion confirmation modal (hidden until triggered) -->
   <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
     <div class="acq-modal-box">
@@ -8413,6 +8438,8 @@
 <script src="lease-review-packets.js"></script>
 <script src="lease-intelligence.js"></script>
 <script src="acquisition-engine.js"></script>
+<!-- Acquisition Review Phase 1 (P1-1): the review record's shape, stage and activity — pure; script.js applies it. -->
+<script src="acquisition-workspace.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>

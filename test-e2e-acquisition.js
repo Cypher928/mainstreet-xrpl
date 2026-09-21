@@ -83,6 +83,9 @@ const SUPABASE_MOCK = `
 
   function makeQ(tableName) {
     var _filters = {};
+    // A conditional UPDATE (P1-1): applied to the rows matching every filter,
+    // each stamped with a fresh updated_at the way the trigger does.
+    var _pending = null;
     var q = {
       select:   function() { return q; },
       insert:   function(rows) {
@@ -97,7 +100,7 @@ const SUPABASE_MOCK = `
         }
         return noopPromise({ data: [row], error: null });
       },
-      update:   function() { return noopPromise({ data: null, error: null }); },
+      update:   function(patch) { _pending = patch; return q; },
       delete:   function() {
         return { eq: function() { return noopPromise({ error: null }); } };
       },
@@ -114,6 +117,7 @@ const SUPABASE_MOCK = `
         var rows = (_store[tableName] || []).filter(function(r) {
           return Object.keys(_filters).every(function(k) { return r[k] === _filters[k]; });
         });
+        if (_pending) rows.forEach(function(r) { Object.assign(r, _pending); r.updated_at = 'rev-' + Date.now() + '-' + Math.random().toString(36).slice(2); });
         return noopPromise({ data: rows, error: null }).then(fn);
       }
     };

@@ -82,6 +82,17 @@ you *don't own yet*): `name`, `status ('draft'…)`, `data (jsonb)` holding the
 uploaded rent roll analysis, findings, and decision-report inputs. Migration
 007 fixed the status check constraint.
 
+**`data` shape and writes (Acquisition Review P1-1).** `acquisition-workspace.js`
+owns the layout (`schemaVersion: 2`, `stage`, `activity[]`, `documents[]`,
+`families[]`, `assumptions[]` alongside the existing `tenants`, `invoices`,
+`totalSqFt`, `analysis`, `conversionRecord`, `conversionHistory`). Rows are
+upgraded in memory on load and reach the database in the new shape with
+their next real change — no migration, no backfill. A save is a **conditional
+UPDATE** on `id`, `user_id` and the `updated_at` last read (the trigger
+stamps a new one on every update); zero rows matched is reported to the user
+as a conflict and the stored row is reloaded, never overwritten. Details in
+`docs/ACQUISITION_REVIEW.md` §4.
+
 ## 3. The property blob — `properties.data`
 
 `saveProperty` writes an **explicit whitelist** (script.js `saveProperty`).

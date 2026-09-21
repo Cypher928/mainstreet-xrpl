@@ -975,6 +975,12 @@ let _propsLoadedOk = false;
 // ─── Acquisition Review State ─────────────────────────────────────────────────
 // Fully isolated — never touches _props, tenantData, invoiceData, or activePropId.
 let _acqReviews    = [];
+// Review id → the `updated_at` last READ from the database for that row. In
+// memory only, never a column: a save is conditioned on it (see _saveAcqReview)
+// so a row that changed since it was loaded is reported, not overwritten. Set
+// from database reads and from our own inserts; never from a client-side
+// timestamp the trigger may have replaced.
+const _acqRevs     = new Map();
 let _activeAcqId   = null;
 let _acqTenants    = [];
 let _acqInvoices   = [];
@@ -22791,7 +22797,7 @@ async function ensureDemoAcqReview() {
       .single();
     if (!chkErr && existing?.status === 'complete') {
       _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
-      _acqReviews.unshift(existing);
+      _acqReviews.unshift(_acqAdopt(existing));
       _renderAcqSection(_acqReviews);
       return;
     }
@@ -22910,7 +22916,10 @@ async function ensureDemoAcqReview() {
     }
 
     _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
-    _acqReviews.unshift(review);
+    // Upgraded to the current shape but with NO revision recorded: the upsert
+    // may have been an UPDATE, in which case the trigger replaced the
+    // updated_at we sent. The first save reads the real one back.
+    _acqReviews.unshift(_AW().upgradeReview(review));
     _renderAcqSection(_acqReviews);
     console.log('[ensureDemoAcqReview] seeded Harborview Retail Center', {
       tenants: demoAcqTenants.length,
@@ -29635,6 +29644,9 @@ async function _revertAcquisitionsForDeletedProperty(propId) {
       delete nextData.conversionRecord;   // the claim is no longer true
       review.data   = nextData;
       review.status = 'complete';         // back to Ready to Convert
+      // Stage re-derived from what remains (no longer acquired); the revert
+      // is recorded on the review so it can say why its stage moved back.
+      review.data   = _AW().markReverted(review, { actor: _acqActor(), propertyId: propId }).data;
       // _saveAcqReview never throws — it toasts and returns false. Read the
       // result, or a failed write looks exactly like a successful one.
       const saved = await _saveAcqReview(review);
@@ -30169,6 +30181,38 @@ function _renderTenantPropertyView(property) {
 
 // ─── Acquisition Review ───────────────────────────────────────────────────────
 
+// ── Acquisition Workspace record (P1-1) ───────────────────────────────────────
+// acquisition-workspace.js owns the review's shape, its stage and its activity
+// history. The glue below adopts rows through it, applies its results onto the
+// in-memory review object (keeping that object's identity — _acqReviews,
+// the detail panel and the callers all hold the same reference), and saves.
+
+function _AW() { return window.AcquisitionWorkspace; }
+
+// Who is acting, for the activity record. Null when nobody is signed in — a
+// system act, never a made-up person.
+function _acqActor() {
+  const u = window.AuthService?.getCurrentUser?.() || null;
+  return u ? { uid: u.id || null, email: u.email || null } : null;
+}
+
+// A row that came back FROM THE DATABASE: upgrade it to the current shape and
+// remember the revision it was read at. Only reads set the revision — a value
+// this client sent may have been replaced by the updated_at trigger.
+function _acqAdopt(row) {
+  const up = _AW().upgradeReview(row);
+  if (row && row.id && row.updated_at) _acqRevs.set(row.id, String(row.updated_at));
+  return up;
+}
+
+// Record one activity entry on a review, in place.
+function _acqRecord(review, entry) {
+  if (!review) return review;
+  const next = _AW().recordActivity(review, Object.assign({ actor: _acqActor() }, entry));
+  review.data = next.data;
+  return review;
+}
+
 async function _loadAcqReviews() {
   try {
     const { data: { user } } = await db.auth.getUser();
@@ -30179,31 +30223,133 @@ async function _loadAcqReviews() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     if (error) { console.warn('[acq] load error:', error.message); return []; }
-    return data || [];
+    return (data || []).map(_acqAdopt);
   } catch (e) {
     console.warn('[acq] _loadAcqReviews failed:', e.message);
     return [];
   }
 }
 
+// Save a review WITHOUT overwriting a version this client has not seen.
+//
+// The write is an UPDATE conditioned on `updated_at` equalling the revision
+// last read (_acqRevs). The database trigger sets a new updated_at on every
+// update, so a row that another tab or person saved since we loaded it no
+// longer matches — zero rows come back, and that is a CONFLICT: the stored
+// version is reloaded and the user is told their last change did not land.
+// The old behaviour was an unconditional upsert of the whole object, which
+// made the last writer win in silence.
+//
+// With no known revision (a seeded review, a row this session has not read)
+// the update is unconditional but still returns the row's revision, so every
+// later save IS conditional. A row that does not exist yet falls back to the
+// insert-by-upsert the create path relies on.
 async function _saveAcqReview(review) {
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return false;
-    const { error } = await db
-      .from('acquisition_reviews')
-      .upsert({ ...review, user_id: user.id }, { onConflict: 'id' });
-    if (error) {
-      console.error('[acq] save error:', error.message, '| code:', error.code);
-      showToast('⚠️ Review save failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    const AW      = _AW();
+    const payload = AW.savePayload(review);
+    const rev     = _acqRevs.get(review.id) || null;
+
+    let q = db.from('acquisition_reviews').update(payload).eq('id', review.id).eq('user_id', user.id);
+    if (rev) q = q.eq('updated_at', rev);
+    const { data, error } = await q.select('id, updated_at');
+    const verdict = AW.classifySaveResult({ rows: data, error, hadRev: !!rev });
+
+    if (verdict.ok) {
+      if (verdict.rev) { _acqRevs.set(review.id, verdict.rev); review.updated_at = verdict.rev; }
+      return true;
+    }
+    if (verdict.kind === 'conflict') {
+      console.warn('[acq] save conflict on review', review.id, '— stored version changed since load');
+      await _acqHandleSaveConflict(review, user.id);
       return false;
     }
-    return true;
+    if (verdict.kind === 'missing') {
+      const { error: upErr } = await db
+        .from('acquisition_reviews')
+        .upsert({ id: review.id, user_id: user.id, ...payload }, { onConflict: 'id' });
+      if (upErr) {
+        console.error('[acq] save error:', upErr.message, '| code:', upErr.code);
+        showToast('⚠️ Review save failed — ' + upErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+        return false;
+      }
+      return true;
+    }
+    console.error('[acq] save error:', verdict.message, '| code:', verdict.code);
+    showToast('⚠️ Review save failed — ' + verdict.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return false;
   } catch (e) {
     console.error('[acq] _saveAcqReview failed:', e.message);
     showToast('⚠️ Review save failed — please try again', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
     return false;
   }
+}
+
+// The stored row changed underneath us. Reload it, replace the in-memory copy,
+// re-render, and say plainly that the last local change was not saved. If the
+// row is gone it was deleted elsewhere — the review is removed here too rather
+// than kept as a ghost that can never save.
+async function _acqHandleSaveConflict(review, userId) {
+  const wasActive = _activeAcqId === review.id;
+  const { data: rows } = await db
+    .from('acquisition_reviews')
+    .select('id, name, status, data, created_at, updated_at')
+    .eq('id', review.id)
+    .eq('user_id', userId);
+  const fresh = Array.isArray(rows) && rows[0] ? _acqAdopt(rows[0]) : null;
+  if (fresh) {
+    const idx = _acqReviews.findIndex(r => r && r.id === review.id);
+    if (idx >= 0) _acqReviews[idx] = fresh; else _acqReviews.unshift(fresh);
+    showToast('⚠️ This review was changed elsewhere — your last change was not saved. Showing the latest saved version.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    _renderAcqSection(_acqReviews);
+    if (wasActive) selectAcquisitionReview(review.id);
+  } else {
+    _acqReviews = _acqReviews.filter(r => r && r.id !== review.id);
+    _acqRevs.delete(review.id);
+    showToast('⚠️ This review was deleted elsewhere — your last change was not saved.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 8000 });
+    if (wasActive) closeAcquisitionDetail(); else _renderAcqSection(_acqReviews);
+  }
+}
+
+// ── Stage chips ───────────────────────────────────────────────────────────────
+// The review's stage, in the detail header. Every stage before the current one
+// reads done, the current one is marked, and a person can move to any stage
+// except Acquired — that one is set by the acquisition itself and locks the row.
+function _renderAcqStageChips(review) {
+  const el = document.getElementById('acqStageChips');
+  if (!el) return;
+  const AW = _AW();
+  if (!AW || !review) { el.innerHTML = ''; return; }
+  const chips = AW.stageChips(review);
+  const locked = AW.stageOf(review) === AW.TERMINAL_STAGE;
+  el.innerHTML = chips.map(c => {
+    const attrs = c.selectable
+      ? `onclick="acqSetStage('${esc(c.key)}')" title="Move this review to ${esc(c.label)}"`
+      : `disabled title="${c.key === AW.TERMINAL_STAGE ? 'Set when the review is converted to a property' : 'This review has been acquired'}"`;
+    return `<button type="button" class="acq-stage-chip ${esc(c.state)}" data-stage="${esc(c.key)}" ${attrs}>${esc(c.label)}</button>`;
+  }).join('<span class="acq-stage-sep" aria-hidden="true">›</span>')
+  + (locked ? '<span class="acq-stage-note">Acquired — stage is fixed</span>' : '');
+}
+
+function acqSetStage(stage) {
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (!review) return;
+  const r = _AW().setStage(review, stage, { actor: _acqActor() });
+  if (!r.ok) {
+    const why = r.reason === 'locked_after_acquisition' ? 'This review has been acquired; its stage is fixed.'
+              : r.reason === 'acquired_is_set_by_conversion' ? 'Acquired is set when the review is converted to a property.'
+              : 'That stage is not recognised.';
+    showToast('⚠️ ' + why, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+    return;
+  }
+  if (!r.changed) return;
+  review.data = r.review.data;
+  _renderAcqStageChips(review);
+  _saveAcqReview(review);
 }
 
 async function _loadAcqReviewsAndRender() {
@@ -30256,10 +30402,11 @@ async function createAcquisitionReview() {
       user_id:    user.id,
       name:       name.trim(),
       status:     'draft',
-      data:       { tenants: [], invoices: [], totalSqFt: 0, documents: [], analysis: null },
+      data:       _AW().newReviewData(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    _acqRecord(review, { type: 'review_created', summary: 'Review created — ' + review.name });
     const { error } = await db.from('acquisition_reviews').insert(review);
     if (error) {
       const code = error.code || '';
@@ -30270,6 +30417,9 @@ async function createAcquisitionReview() {
       alert('Could not create review.\n\n' + error.message + hint);
       return;
     }
+    // An INSERT stores the updated_at we sent (the trigger fires on UPDATE
+    // only), so this is a revision the database now holds.
+    _acqRevs.set(id, review.updated_at);
     _acqReviews.unshift(review);
     _renderAcqSection(_acqReviews);
     selectAcquisitionReview(id);
@@ -30304,6 +30454,7 @@ function selectAcquisitionReview(id) {
   badge.textContent = _orphan ? 'converted — property no longer exists' : review.status;
   badge.className = 'acq-detail-badge ' + (_orphan ? 'orphaned' : review.status);
   _renderAcqConvertAction(review);
+  _renderAcqStageChips(review);
 
   const sqftEl = document.getElementById('acqTotalSqft');
   if (sqftEl) sqftEl.value = _acqSqFt || '';
@@ -30353,6 +30504,7 @@ async function deleteActiveAcquisitionReview() {
     }
 
     _acqReviews = _acqReviews.filter(r => r.id !== id);
+    _acqRevs.delete(id);
     showToast(`"${review.name}" deleted.`);
     closeAcquisitionDetail();
   } catch (e) {
@@ -30546,12 +30698,16 @@ async function convertAcquisitionToProperty() {
     }
     review.status = 'converted';
     review.data   = Object.assign({}, review.data, { conversionRecord, conversionHistory });
+    // The stage follows the facts just written: converted ⇒ acquired, and the
+    // act goes on the review's own activity record.
+    review.data   = _AW().markAcquired(review, { actor: _acqActor(), repair: _isRepair }).data;
     await _saveAcqReview(review);
 
     // Update detail header badge + action area
     const badge = document.getElementById('acqDetailBadge');
     if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
     _renderAcqConvertAction(review);
+    _renderAcqStageChips(review);
 
     // Refresh acquisition section and portfolio grid so the new property card appears immediately
     _renderAcqSection(_acqReviews);
@@ -30657,6 +30813,12 @@ async function acqHandleLeaseFiles(fileList) {
   review.data = review.data || {};
   review.data.tenants = _acqTenants.filter(t => t._status !== 'error');
   review.updated_at   = new Date().toISOString();
+  {
+    const failed = files.filter(f => _acqTenants.some(t => t._fileName === f.name && t._status === 'error')).map(f => f.name);
+    _acqRecord(review, { type: 'documents_added',
+      summary: files.length + ' lease file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
+      meta: { kind: 'lease', files: files.map(f => f.name), failed } });
+  }
   _saveAcqReview(review);
   document.getElementById('acqLeaseInput').value = '';
 }
@@ -30705,6 +30867,12 @@ async function acqHandleInvoiceFiles(fileList) {
   review.data = review.data || {};
   review.data.invoices = _acqInvoices.filter(i => i._status !== 'error' && i.amount);
   review.updated_at    = new Date().toISOString();
+  {
+    const failed = files.filter(f => _acqInvoices.some(i => i.fileName === f.name && i._status === 'error')).map(f => f.name);
+    _acqRecord(review, { type: 'documents_added',
+      summary: files.length + ' invoice file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
+      meta: { kind: 'invoice', files: files.map(f => f.name), failed } });
+  }
   _saveAcqReview(review);
   document.getElementById('acqInvoiceInput').value = '';
 }
@@ -30727,6 +30895,8 @@ async function runAcquisitionAnalysis() {
     review.data.analysis = report;
     review.status    = 'complete';
     review.updated_at = new Date().toISOString();
+    _acqRecord(review, { type: 'analysis_run', summary: 'Risk analysis run',
+      meta: { tenants: tenants.length, invoices: invoices.length, totalSqFt: _acqSqFt } });
 
     const badge = document.getElementById('acqDetailBadge');
     if (badge) { badge.textContent = 'complete'; badge.className = 'acq-detail-badge complete'; }

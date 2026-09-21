@@ -97,7 +97,7 @@ const CLICK_LABEL = function (rx) {
       upsert:function(r){var rows=(Array.isArray(r)?r:[r]);
         var p=Promise.resolve({data:rows,error:null});
         p.select=function(){var q2=Promise.resolve({data:rows,error:null});q2.single=function(){return Promise.resolve({data:rows[0],error:null});};return q2;};return p;},
-      update:function(){return Promise.resolve({data:null,error:null});},
+      update:function(){var p=Promise.resolve({data:[],error:null});p.eq=function(){return p;};p.select=function(){return p;};return p;},
       delete:function(){return {eq:function(){return Promise.resolve({error:null});}};},
       then:function(f){return Promise.resolve({data:[],error:null}).then(f);}};return q;},
     storage:{from:function(){return {upload:function(){return Promise.resolve({data:{path:'x'},error:null});},
