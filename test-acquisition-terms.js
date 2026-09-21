@@ -596,13 +596,26 @@ t('the security suite lists the task, and api/ is still inside its twelve', () =
 });
 
 // ── LeaseIntelligence is untouched ──────────────────────────────────────────
-sec('LeaseIntelligence is unchanged by this increment');
+// P4-1 changed nothing in lease-intelligence.js and this suite pinned that.
+// P4-2 then made the ONE change the plan allows — an optional field list — so
+// what is pinned here is what P4-1 actually depends on and what must survive
+// every later increment: called the way the owner-operator path calls it, the
+// reasoner reasons over CANONICAL_FIELDS and knows nothing of this module.
+// The seam itself is P4-2's to prove; `test-acquisition-resolver.js` does.
+sec('LeaseIntelligence still answers the owner-operator path unchanged');
 
-t('reasonMultiDocumentLease still takes one argument and reasons over CANONICAL_FIELDS', () => {
+t('P4-1 needs nothing from lease-intelligence.js, and it references nothing of ours', () => {
   const li = code('lease-intelligence.js');
-  ok(/function reasonMultiDocumentLease\(documents\) \{/.test(li), 'the signature changed — that is P4-2, not P4-1');
-  ok(!/AcquisitionTerms|abstracted_fields|acquisition-terms/.test(li), 'lease-intelligence.js references the new module');
-  eq(LI.reasonMultiDocumentLease.length, 1);
+  ok(!/AcquisitionTerms|abstracted_fields|acquisition-terms|resolveTerms/.test(li),
+     'lease-intelligence.js references the new module');
+});
+
+t('called with one argument it reasons over CANONICAL_FIELDS and nothing wider', () => {
+  const docs = [{ docType: 'original_lease', docDate: '2023-03-01', fileName: 'l.pdf',
+                  extractedFields: { cap: 4, co_tenancy: 'anchor' }, quotes: { cap: 'q' } }];
+  const one = LI.reasonMultiDocumentLease(docs);
+  ok(!('co_tenancy' in one), 'an acquisition-only field reached the default path');
+  deq(Object.keys(one), ['cap']);
 });
 
 t('and its behaviour on an owner-operator family is what it was', () => {
@@ -619,7 +632,7 @@ t('and its behaviour on an owner-operator family is what it was', () => {
   eq(r.cap.supersededValues.length, 1);
   eq(r.tenant_name.currentValue, 'Coastal Outfitters');
   deq(Object.keys(r), LI.CANONICAL_FIELDS.filter(f => f in r));
-  for (const f of NINE) ok(!(f in r), 'the reasoner already knows ' + f + ' — it should not until P4-2');
+  for (const f of NINE) ok(!(f in r), 'an acquisition-only field reached the owner-operator path');
 });
 
 console.log('\n' + '─'.repeat(64));

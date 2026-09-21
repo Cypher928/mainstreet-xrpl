@@ -451,6 +451,15 @@ const SUITES = [
   { label: 'Acquisition lease terms — evidence (P4-1)',  cmd: 'node test-acquisition-terms.js' },
   { label: 'Acquisition abstraction walk (e2e, P4-1)',   cmd: 'node test-e2e-acquisition-abstraction.js' },
   { label: 'Migration 025 applies and rolls back',      cmd: 'node tools/verify-migration-025.js' },
+  // P1-4 / P4-2. A family of abstracted documents becomes ONE set of terms.
+  // The precedence decision stays with LeaseIntelligence.reasonMultiDocumentLease,
+  // which gained exactly one optional argument and whose owner-operator path
+  // this suite re-proves. What it defends beyond that is the refusing: a
+  // contradiction is never auto-resolved, a proposed classification can never
+  // yield a verified term, a figure the clause does not state is `unclear` and
+  // flagged derived rather than presented as evidence, and a silence is never
+  // a zero.
+  { label: 'Acquisition term resolver (P4-2)',          cmd: 'node test-acquisition-resolver.js' },
   // The panel on a phone. P1-3's type control and Confirm button turned the
   // document row into four flex children that all refused to shrink, so the
   // one holding the file name collapsed to nothing and names broke one

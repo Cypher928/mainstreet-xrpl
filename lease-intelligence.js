@@ -185,8 +185,16 @@ window.LeaseIntelligence = (() => {
 
   const DOC_TYPE_TIER = { side_letter: 4, estoppel: 3, amendment: 2, original_lease: 1 };
 
-  function reasonMultiDocumentLease(documents) {
+  // `options.fields` — Acquisition Review P1-4 (P4-2). The precedence rules
+  // below are not specific to the canonical thirteen: they are about which
+  // DOCUMENT governs, not which field is being governed. Acquisition Review
+  // reasons over a longer list (acquisition-terms.js FIELDS) and this is the
+  // one seam it needs. Omit it and nothing changes — the owner-operator path
+  // passes one argument and still gets CANONICAL_FIELDS, which a test pins.
+  function reasonMultiDocumentLease(documents, options) {
     if (!Array.isArray(documents) || documents.length === 0) return {};
+    const fields = (options && Array.isArray(options.fields) && options.fields.length)
+      ? options.fields : CANONICAL_FIELDS;
 
     // Sort: higher tier first, then newer date first within same tier.
     const sorted = [...documents].sort((a, b) => {
@@ -199,7 +207,7 @@ window.LeaseIntelligence = (() => {
 
     const result = {};
 
-    for (const field of CANONICAL_FIELDS) {
+    for (const field of fields) {
       const history = [];
       for (const doc of sorted) {
         const val = doc.extractedFields?.[field];

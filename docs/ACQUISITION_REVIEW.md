@@ -2,12 +2,14 @@
 
 **Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
 shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
-in progress under the approved plan in §4d: increment P4-1 is CLOSED — built,
+in progress under the approved plan in §4d. Increment P4-1 is CLOSED — built,
 validated locally, migration 025 applied to Pilot, deployed to
 www.mainstreet-review.com and validated in the live browser on a real lease
-(§4e, §4f).** P4-2, P4-3 and P4-V do not start until P4-1 is approved for
-closure. Production (`main`, mainstreetcam.com, the production Supabase
-project) is not touched by this work.
+(§4e, §4f). Increment P4-2 is BUILT and awaiting review (§4g): the term
+resolver, headless, with no UI, no migration and nothing user-visible.**
+P4-3 and P4-V do not start until P4-2 is reviewed. Production (`main`,
+mainstreetcam.com, the production Supabase project) is not touched by this
+work.
 
 §7 records feedback from the acquisition team that binds P1-5 and P1-7. It is a
 requirement, not a change: no code has been written against it.
@@ -95,7 +97,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 shipped and browser-validated (§4f); P4-2 not started** |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 shipped and browser-validated (§4f); P4-2 built, awaiting review (§4g); P4-3 not started** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -779,6 +781,126 @@ because `isAbstractable(null)` is false — honest silence rather than a promise
 
 ---
 
+## 4g. P4-2 — the term resolver (built; awaiting review)
+
+**Status: built and validated locally. Headless by design — no UI, no
+migration, no schema change, nothing deployed that a person can see yet. The
+Lease Terms panel and the decisions table are P4-3.**
+
+### The one change to `lease-intelligence.js`, and nothing else
+
+`reasonMultiDocumentLease(documents, options)` gained an optional second
+argument. `options.fields` replaces `CANONICAL_FIELDS` for the loop; omit it,
+pass `{}`, pass `{ fields: [] }` or pass nonsense and the function behaves
+exactly as it did. The precedence rules themselves are untouched, because they
+were never about which field was being governed — they are about which
+DOCUMENT governs. `DOC_TYPE_TIER` is **not** widened: doing so would change
+every existing owner-operator lease.
+
+### Nine types onto four tiers
+
+The reasoner knows `original_lease · amendment · estoppel · side_letter`.
+Acquisition Review has nine lease-family types, and P1-3 gave them tiers
+chosen to match that table. `REASONER_DOC_TYPE` maps each of ours onto the
+reasoner type that **shares its tier**: renewal, extension, assignment and
+guaranty rank as an amendment does; an SNDA ranks as an estoppel does. A test
+reads both tables and asserts the mapping preserves every tier, so a renewal
+outranks the lease it renews.
+
+### What feeds the reasoner
+
+`buildReasonerInput(documents)` admits a document only if it is **current**
+(not superseded, D-14), a **lease-family type**, and actually **read**
+(`abstraction_status` `success` or `partial`). A rent roll, an unclassified
+scan, a failed read and a replaced upload all have nothing to say about lease
+terms, and saying nothing is the correct contribution. A field's value is
+offered only when it is non-null; its quote is offered either way, so a clause
+nobody could read a value from survives into the answer as `unclear` rather
+than vanishing.
+
+### Does the clause actually say it — `evidenceSupport`
+
+The live P4-1 run produced the case this exists for. `base_rent` came back as
+1,202,500 against *"Tenant agrees to pay base rent of $18.50 per square foot
+annually."* That is 65,000 × $18.50: defensible arithmetic, and not something
+the clause states. So each entry is classified:
+
+| support | meaning |
+|---|---|
+| `stated` | the clause contains the value |
+| `derived` | a number the clause does not contain — computed, or wrong |
+| `none` | there is no quote, or no value |
+
+The value is **kept**, the arithmetic is **not undone**, the clause is kept
+with it, and the term is `unclear` with `derived: true` and a sentence saying
+the figure was worked out rather than read. A human correction clears the flag,
+because then a person has vouched for it.
+
+Commas, currency symbols and accounting parentheses are understood, so
+"65,000 rentable square feet" states 65000 and "(500)" states -500 — the same
+notation `normalizeFieldValue` already reads. **An explicit negative is
+recognised before the numeral check can call it derived**: "There shall be no
+cap" states 0.
+
+**Stated limit:** only numbers are checked this way. A date, an enum, a boolean
+and free text cannot be compared to their clause by containment without a
+parser per type, and a false `derived` would be worse than no check. For those,
+a quote is taken at its word.
+
+### The five states
+
+| state | reached when |
+|---|---|
+| `verified` | a person confirmed or corrected it AND the ceiling allows it |
+| `ai_extracted` | a value with a clause that states it, nobody having confirmed |
+| `conflicting` | same-rank documents disagree and no person has chosen |
+| `unclear` | no clause, a clause with no readable value, or a derived figure |
+| `missing` | no current document establishes the term |
+
+All 27 come back every time. `missing` says *"No current document on file
+establishes this term"* in words — never zero, never blank, never omitted.
+
+### The ceiling
+
+| governing document's `doc_type_status` | highest state | Confirm |
+|---|---|---|
+| `unclassified` or `proposed` | `ai_extracted` | blocked, with the reason |
+| `confirmed` / `corrected`, clause present | `verified` | allowed |
+| `confirmed` / `corrected`, no clause | `unclear` | allowed |
+
+The ceiling follows the **governing** document, not the best-classified one in
+the family. A contradiction and an absence are facts about the documents rather
+than weak readings, so no ceiling turns either into agreement.
+
+### Contradictions
+
+Taken from the reasoner verbatim and never auto-resolved. Both values stay on
+the term with the documents asserting them, and `history` lists every document
+that spoke, strongest first. A human decision moves the state off
+`conflicting`; **the contradiction record stays**.
+
+### Lineage, and a cross-check
+
+The reasoner returns the governing docTYPE but not which document it was, and
+the ceiling needs that document's classification. So the resolver reproduces
+the reasoner's ordering to name the governing row, and then **cross-checks**:
+if the reasoner's `currentValue` disagrees with the document the resolver
+identified, the term carries `lineageMismatch: true` rather than quietly
+preferring one of the two. A field the reasoner was not asked about trips the
+same flag, which is what keeps `options.fields` from being accepted and ignored.
+
+### Decisions, read but not yet written
+
+`resolveTerms` applies `acquisition_term_decisions` rows if given any. Until
+P4-3 creates that table the list is always empty and nothing is ever `verified`
+— AI does not write verified truth. The overlay: `confirm` verifies (subject to
+the ceiling), `correct` replaces the value and records the person, `reject`
+keeps what the document said and stops presenting it as the answer, `reopen`
+returns the term to the documents. Latest by `decided_at` wins, array order is
+irrelevant, and a decision on one field says nothing about any other.
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,
@@ -919,6 +1041,36 @@ P1-4 / P4-1:
   prompt; each must go red in the three suites above.
 - `test-security.js` lists `acquisition_abstraction` among the tasks
   `/api/claude` owns.
+
+P1-4 / P4-2:
+
+- `test-acquisition-resolver.js` — drives the resolver and **executes
+  `lease-intelligence.js` from disk**, so the seam is exercised rather than
+  described: the reasoner takes an optional field list and ignores a malformed
+  one; called with one argument it still reasons over `CANONICAL_FIELDS` and
+  an acquisition-only field never reaches that path; the owner-operator
+  multi-document result is re-proved; `DOC_TYPE_TIER` is read out of the file
+  and asserted unwidened, and the resolver's private copy of it is asserted
+  identical; every lease-family type maps onto a reasoner type of its own tier,
+  so a renewal outranks its lease. Then the refusing: a superseded, review-level,
+  unclassified or unread document is not consulted; a derived figure is
+  `unclear` and flagged while a stated one is not; an explicit negative is a
+  value and a silence is `missing`; a same-rank disagreement is `conflicting`
+  with both values kept and no winner picked; a proposed classification caps
+  the term and blocks Confirm with the reason in words; the ceiling follows the
+  governing document rather than the best one; a confirmation cannot outrank
+  the ceiling; the latest decision wins by timestamp, reopen clears, reject
+  keeps the reading, and a decision on one field settles only that field. It
+  also pins the increment's boundaries — no network, no DOM, no storage, no
+  migration 026, and no Lease Terms UI in `script.js` or `index.html`.
+- `tools/acquisition-resolver-mutation.js` — 35 mutants across the reasoner
+  seam, the document filter, the support check, the five states, contradictions,
+  the ceiling, the decision overlay and the lineage cross-check. **34 of 34
+  killed; one documented equivalent** (C03: removing `conflicting` from the
+  ceiling guard changes nothing today, because `STATE_STRENGTH` has no entry
+  for it and a strength of 0 is below every ceiling — the guard protects a
+  future edit, and the harness now requires an equivalent mutant to actually
+  survive, so a stale exemption cannot hide a real kill).
 - Every suite above is registered in `test-regression.js`.
 
 ---
