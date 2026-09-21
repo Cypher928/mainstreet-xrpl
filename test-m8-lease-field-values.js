@@ -385,7 +385,12 @@ sec('F. No new read, no write, no capability, no extraction change');
     is(new RegExp('"' + k + '"').test(tasks),
        'F6.' + k + ' is still requested by the extractor');
   }
-  is(!/cap_base_amount/.test(tasks),
+  // The lease EXTRACTION prompt specifically. Acquisition Review's P1-4
+  // abstraction task lives in the same file and names cap_base_amount on
+  // purpose — it is one of LeaseIntelligence's canonical fields — so the
+  // guarantee here is about lease_extraction's contract, not the whole file.
+  const leaseSystem = require('./api/_claude-tasks.js').CLAUDE_TASKS.lease_extraction.system;
+  is(!/cap_base_amount/.test(leaseSystem),
      'F7 and cap_base_amount is still absent from the extraction schema');
 
   // The record is not mutated by being read.

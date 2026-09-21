@@ -30546,6 +30546,119 @@ async function _acqApplyClassification(reviewId, docRow, reading, opts = {}) {
   return _acqSaveDocument(fields);
 }
 
+// ── What each document SAYS (P1-4, P4-1) ─────────────────────────────────────
+// Classification said what a document IS. This asks what it ESTABLISHES, for
+// the 27 terms acquisition-terms.js names, and stores the answer on the row —
+// value, verbatim quote, page, confidence — as the evidence P4-2 reasons from.
+//
+// It stores evidence and nothing else. It does not resolve a governing value,
+// does not write into the review's tenants, and does not decide anything a
+// person will later confirm. A term the document does not address is stored
+// as { value: null, quote: null }, and NOTHING here turns that into a zero.
+
+function _AT() { return window.AcquisitionTerms; }
+
+const _ACQ_ABS_STATUS = {
+  pending: { label: 'Terms not read yet',            cls: 'pending' },
+  success: { label: 'Terms read',                    cls: 'ok'      },
+  partial: { label: 'Terms read — none established', cls: 'warn'    },
+  failed:  { label: 'Terms could not be read',       cls: 'error'   },
+  // skipped: not a lease-family document. Nothing to say, so nothing is said.
+};
+// Documents being read right now, so the chip can say so instead of "not yet".
+const _acqAbstracting = new Set();
+
+// One document's stored text, on demand. The list never carries it (it is the
+// largest column); this reads it for exactly one row when a person asks for a
+// document to be read again, or corrects its type into a lease family.
+async function _acqLoadDocumentText(docId) {
+  if (!docId) return null;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .select('id, extracted_text')
+      .eq('id', docId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.extracted_text || null;
+  } catch (e) {
+    console.warn('[acq] _acqLoadDocumentText failed:', e && e.message);
+    return null;
+  }
+}
+
+// Read a document for its terms and store what it said. Returns the saved row.
+//
+//   skipped  the document is not a lease-family document (rent roll, invoice,
+//            unclassified): a true statement rather than a promise
+//   failed   there was no text to read, the call failed, or the reply carried
+//            no fields — the row keeps whatever evidence it had before
+//   partial  fields came back but not one carries a value WITH its quote
+//   success  at least one term has a value and the clause behind it
+async function _acqAbstractDocument(reviewId, docRow, text) {
+  const AT = _AT();
+  if (!AT || !docRow || !reviewId) return null;
+  const base = { reviewId, intakeId: docRow.intake_id, fileName: docRow.file_name };
+
+  if (!AT.isAbstractable(docRow.doc_type)) {
+    return _acqSaveDocument({ ...base, abstractionStatus: 'skipped' });
+  }
+  const body = String(text || '').trim();
+  if (body.length < 40) {
+    return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });
+  }
+
+  _acqAbstracting.add(docRow.id);
+  _renderAcqDocuments();
+  let reading = null;
+  try {
+    reading = await claudeFetch({
+      task: 'acquisition_abstraction',
+      max_tokens: 6000,
+      messages: [{ role: 'user', content:
+        // Context only. The prompt is told not to read terms from the name, and
+        // the type is what the row says it is — a proposal reads the same way
+        // a confirmation does; the ceiling on what a term can become is
+        // applied when the term is resolved (P4-2), not here.
+        `File name (context only, do not read terms from it): ${docRow.file_name || 'unknown'}\n` +
+        `Document type (as classified): ${docRow.doc_type}\n\n` +
+        `Document text:\n${body.slice(0, 120000)}`
+      }],
+    });
+  } catch (e) {
+    console.warn('[acq] abstraction failed:', docRow.file_name, e && e.message);
+  }
+  _acqAbstracting.delete(docRow.id);
+
+  const built = AT.buildAbstraction(reading, {
+    model: reading && reading.__meta && reading.__meta.model,
+    at: new Date().toISOString(),
+  });
+  if (!built.ok) {
+    return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });
+  }
+  return _acqSaveDocument({
+    ...base,
+    abstractedFields:  built.abstraction,
+    abstractionStatus: built.status,
+    abstractionModel:  built.abstraction.model,
+    abstractedAt:      built.abstraction.at,
+  });
+}
+
+// A person asks for a document to be read (again). The text is already on the
+// row; nothing is re-uploaded.
+async function acqReabstractDocument(docId) {
+  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  if (!row || _acqAbstracting.has(docId)) return;
+  const text = await _acqLoadDocumentText(docId);
+  await _acqAbstractDocument(_activeAcqId, row, text);
+  _renderAcqDocuments();
+}
+
 // Put the original in the private `leases` bucket.
 //
 // /api/upload replaces every character outside [A-Za-z0-9._-] in the name it is
@@ -30678,6 +30791,20 @@ function _renderAcqDocuments() {
     const confirmBtn = (cls.status === 'proposed')
       ? `<button class="acq-doc-confirm" data-doc-id="${esc(r.id)}" title="${esc(cls.note)}">Confirm</button>` : '';
 
+    // P1-4: whether this document has been read for its terms. Only for the
+    // types that carry terms — a rent roll says nothing here, honestly. A
+    // document that could be read and has not been (or could not be) offers
+    // the control to read it, from the text already on its row.
+    const AT = _AT();
+    const abstractable = !!(AT && AT.isAbstractable(r.doc_type));
+    const reading  = _acqAbstracting.has(r.id);
+    const abs      = reading ? { label: 'Reading terms…', cls: 'pending' } : _ACQ_ABS_STATUS[r.abstraction_status];
+    const termsChip = (abstractable && abs)
+      ? ` · <span class="acq-doc-terms ${esc(abs.cls)}" data-abstraction="${esc(reading ? 'reading' : (r.abstraction_status || ''))}">${esc(abs.label)}</span>` : '';
+    const readBtn = (abstractable && current && !reading
+                     && r.abstraction_status !== 'success' && r.abstraction_status !== 'partial')
+      ? `<button class="acq-doc-reabstract" data-doc-id="${esc(r.id)}" title="Read what this document says about the lease terms, from its stored text">Read terms</button>` : '';
+
     return `
     <div class="acq-doc-row${current ? '' : ' superseded'}" data-doc-id="${esc(r.id)}" data-doc-type="${esc(r.doc_type || '')}" data-doc-status="${esc(cls.status)}">
       <span class="acq-doc-kind ${esc(r.intake_kind || 'other')}">${esc(r.intake_kind || 'other')}</span>
@@ -30686,12 +30813,12 @@ function _renderAcqDocuments() {
         <div class="acq-doc-meta">
           <span class="acq-doc-class ${cls.verified ? 'confirmed' : 'proposed'}" title="${esc(cls.note)}">${esc(cls.label)}</span>
           ${cls.verified ? '' : '<span class="acq-doc-unconf">not confirmed</span>'}
-          · <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>
+          · <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>${termsChip}
           ${r.doc_date ? ' · ' + esc(r.doc_date) : ''}${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
         </div>
         ${rel}${supersededNote}${err}${note}
       </div>
-      <div class="acq-doc-actions">${typeControl}${confirmBtn}</div>
+      <div class="acq-doc-actions">${typeControl}${confirmBtn}${readBtn}</div>
       ${opener}
     </div>`;
   };
@@ -30736,6 +30863,8 @@ function _acqBindDocControls(el) {
   el.addEventListener('click', (ev) => {
     const btn = ev.target.closest && ev.target.closest('.acq-doc-confirm');
     if (btn) { ev.preventDefault(); acqConfirmDocType(btn.getAttribute('data-doc-id')); }
+    const rd = ev.target.closest && ev.target.closest('.acq-doc-reabstract');
+    if (rd) { ev.preventDefault(); acqReabstractDocument(rd.getAttribute('data-doc-id')); }
   });
   el.addEventListener('change', (ev) => {
     const sel = ev.target.closest && ev.target.closest('.acq-doc-type');
@@ -30791,8 +30920,28 @@ async function acqSetDocType(docId, nextType) {
     fields.familyId = null; fields.familyStatus = 'unfiled'; fields.familySource = null;
     fields.parentDocumentId = null; fields.relationship = null; fields.relationshipStatus = null;
   }
-  await _acqSaveDocument(fields);
+  const savedRow = await _acqSaveDocument(fields);
   _renderAcqDocuments();
+
+  // WHAT IT SAYS, revisited (P1-4). A document corrected INTO a lease-family
+  // type has terms nobody has read yet — read them now, from the text already
+  // on its row. One corrected OUT of a lease family is `skipped` from here on;
+  // the evidence it had is left in place (it is what the document said, and
+  // P4-2 reads only `success`/`partial`), and a correction back re-reads it.
+  const AT = _AT();
+  if (savedRow && AT) {
+    const wasAbstractable = AT.isAbstractable(row.doc_type);
+    const isAbstractable  = AT.isAbstractable(nextType);
+    if (isAbstractable && !wasAbstractable) {
+      const text = await _acqLoadDocumentText(docId);
+      await _acqAbstractDocument(_activeAcqId, savedRow, text);
+      _renderAcqDocuments();
+    } else if (!isAbstractable && row.abstraction_status !== 'skipped') {
+      await _acqSaveDocument({ reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+                               abstractionStatus: 'skipped' });
+      _renderAcqDocuments();
+    }
+  }
 }
 
 async function _loadAcqReviews() {
@@ -31442,12 +31591,23 @@ async function acqHandleLeaseFiles(fileList) {
 
       // WHAT IT IS (P1-3). Read from the text already stored, after the source
       // is safe — a classification that fails costs the review nothing.
+      let classified = saved;
       if (saved && storedText) {
         const reading = await _acqClassifyDocument(storedText, file.name);
         if (reading) {
-          await _acqApplyClassification(review.id, saved, reading,
-            { inheritedFamily: !!(replaced && replaced.inherit && replaced.inherit.family_id) });
+          classified = (await _acqApplyClassification(review.id, saved, reading,
+            { inheritedFamily: !!(replaced && replaced.inherit && replaced.inherit.family_id) })) || saved;
         }
+        _renderAcqDocuments();
+      }
+
+      // WHAT IT SAYS (P1-4). After the source is safe and after it is
+      // classified, because whether it is read at all depends on what it is:
+      // a lease-family document is read for its terms; a rent roll is
+      // `skipped`; a document with no stored text is `failed`, honestly.
+      // Like classification, this costs the review nothing when it fails.
+      if (classified) {
+        await _acqAbstractDocument(review.id, classified, storedText);
         _renderAcqDocuments();
       }
     } catch (e) {

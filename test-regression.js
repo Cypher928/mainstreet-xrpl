@@ -441,6 +441,16 @@ const SUITES = [
   { label: 'Acquisition classification (P1-3)',         cmd: 'node test-acquisition-classification.js' },
   { label: 'Acquisition classification walk (e2e, P1-3)', cmd: 'node test-e2e-acquisition-classification.js' },
   { label: 'Migration 024 applies and rolls back',      cmd: 'node tools/verify-migration-024.js' },
+  // P1-4 / P4-1. What each document SAYS, stored as evidence on its row: 27
+  // fields (LeaseIntelligence's 13 verbatim, 5 already extracted, 9 approved
+  // by name), each a value with its verbatim clause. What these defend is
+  // MISSING IS NOT NONE — a term the document does not address stays null and
+  // nothing turns it into a zero — and that a claim of having read a document
+  // carries what was read. No write-back: the reasoner and the tenant record
+  // are untouched by this increment.
+  { label: 'Acquisition lease terms — evidence (P4-1)',  cmd: 'node test-acquisition-terms.js' },
+  { label: 'Acquisition abstraction walk (e2e, P4-1)',   cmd: 'node test-e2e-acquisition-abstraction.js' },
+  { label: 'Migration 025 applies and rolls back',      cmd: 'node tools/verify-migration-025.js' },
   // The panel on a phone. P1-3's type control and Confirm button turned the
   // document row into four flex children that all refused to shrink, so the
   // one holding the file name collapsed to nothing and names broke one

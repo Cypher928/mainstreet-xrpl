@@ -122,6 +122,23 @@ composite key nulls `user_id` too, and deleting a family would fail.
 `acquisition_document_families` carries the same owner-only RLS, no anon
 policy, and the same composite key to `acquisition_reviews`.
 
+**What each document says (migration 025, P1-4 / P4-1 — written, not yet
+applied).** `abstracted_fields` is one jsonb object per document:
+`{ schemaVersion, model, at, fields: { <field>: { value, quote, page,
+confidence } } }` for the 27 fields `acquisition-terms.js` owns (the field
+list is deliberately not encoded in the schema). **`value: null, quote: null`
+means this document does not establish the term** — a different thing from a
+document that denies it, which is a value with its quote; nothing in the
+schema or the code that writes it turns the first into the second.
+`abstraction_status ∈ pending · success · partial · failed · skipped`, where
+`skipped` is the honest state for a document that is not a lease-family
+document, and a check **refuses `success` or `partial` unless the object has a
+`fields` key and `abstracted_at` is set** — a status may not claim a reading
+it does not carry. The evidence column is not in the list select (it is read
+per family by P4-2, like `extracted_text` is read per document); the three
+bookkeeping columns are. The existing owner policy covers the new columns; no
+new policy, table or function.
+
 **Written from the browser, like `acquisition_reviews`.** There is no endpoint
 in front of this table: RLS (`acq_docs_owner_all`, `user_id = auth.uid()`, no
 anon policy) decides what a signed-in client may read and write, and the
@@ -226,6 +243,7 @@ acquisition review the same way.
 | 009 | Atomic tenant resync | Prevent partial tenant-table states |
 | 023 | `acquisition_documents` (+ a unique `(id, user_id)` on `acquisition_reviews` for the composite FK) | Acquisition Review keeps every source it is given (P1-2). Pilot only; rollback in `023_..._rollback.sql`; executed end-to-end by `tools/verify-migration-023.js` |
 | 024 | classification / family / version columns on `acquisition_documents`, `acquisition_document_families`, the `intake_id` identity swap and the coherence trigger | What each source IS, which leasehold it belongs to, what it changed, and what replaced it (P1-3). Answers D-14 so a re-upload keeps both sources. Pilot only; rollback in `024_..._rollback.sql`, which **refuses** to restore 023's unique key while that would mean destroying a preserved source; executed end-to-end by `tools/verify-migration-024.js` |
+| 025 | `abstracted_fields`, `abstraction_status`, `abstraction_model`, `abstracted_at` on `acquisition_documents`; three checks and one partial index | What each document SAYS about each of 27 lease terms, with the clause behind it (P1-4, P4-1). Pilot only; rollback in `025_..._rollback.sql`; executed end-to-end by `tools/verify-migration-025.js`. **Written and verified; NOT yet applied to Pilot — awaiting review of P4-1.** |
 
 Migrations are plain SQL applied via the Supabase SQL editor (no migration
 runner in-repo). New migrations: next number, idempotent

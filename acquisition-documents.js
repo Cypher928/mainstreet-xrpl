@@ -81,6 +81,11 @@
     // opposite of an audit record. It is bounded (HISTORY_CAP small entries),
     // unlike extracted_text, which is why that one stays out and this does not.
     'classification_history',
+    // P1-4. Whether and when the document was read for its terms — NOT the
+    // evidence itself. abstracted_fields is 27 entries with quotes and, like
+    // extracted_text, is read by the code that reasons from it (P4-2), one
+    // family at a time, not by a list that only shows a status chip.
+    'abstraction_status', 'abstraction_model', 'abstracted_at',
   ];
   var LIST_SELECT = LIST_COLUMNS.join(', ');
 
@@ -159,6 +164,11 @@
   // one of these with no confirmed_by; buildPayload refuses it here too, so the
   // mistake is caught before it reaches the database rather than as a 500.
   var CONFIRMED_STATUSES = ['confirmed', 'corrected'];
+  // P1-4. Whether the document has been read for its terms. The list is
+  // acquisition-terms.js's (ABSTRACTION_STATUSES) and migration 025's; it is
+  // repeated here because this module loads first and depends on nothing, and
+  // a test holds the three equal.
+  var ABSTRACTION_STATUSES = ['pending', 'success', 'partial', 'failed', 'skipped'];
 
   function docTypeLabel(t) { return (DOC_TYPES[t] && DOC_TYPES[t].label) || 'Unclassified'; }
   function docTypeTier(t)  { return (DOC_TYPES[t] && DOC_TYPES[t].tier)  || 0; }
@@ -230,6 +240,16 @@
     confirmed_at: function (v) { return _str(v, 40); },
 
     classification_history: function (v) { return Array.isArray(v) ? v : []; },
+
+    // ── P1-4 ────────────────────────────────────────────────────────────────
+    // The evidence is written whole, by the one code path that builds it
+    // (acquisition-terms.js buildAbstraction). Anything that is not an object
+    // becomes the empty object, which the status rule below then refuses to
+    // pair with `success` — a corrupt reading cannot masquerade as a read.
+    abstracted_fields:  function (v) { return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {}; },
+    abstraction_status: _oneOf(ABSTRACTION_STATUSES, 'pending'),
+    abstraction_model:  function (v) { return _str(v, 255); },
+    abstracted_at:      function (v) { return _str(v, 40); },
   };
 
   // camelCase in the app, snake_case in the table.
@@ -247,6 +267,8 @@
     supersededByDocumentId: 'superseded_by_document_id',
     confirmedBy: 'confirmed_by', confirmedAt: 'confirmed_at',
     classificationHistory: 'classification_history',
+    abstractedFields: 'abstracted_fields', abstractionStatus: 'abstraction_status',
+    abstractionModel: 'abstraction_model', abstractedAt: 'abstracted_at',
   };
 
   /**
@@ -288,6 +310,19 @@
               || payload.relationship_status === 'confirmed';
     if (claims && !payload.confirmed_by) {
       return { ok: false, error: 'A confirmed classification must name who confirmed it' };
+    }
+
+    // A STATUS THAT CLAIMS THE DOCUMENT WAS READ CARRIES WHAT WAS READ.
+    //
+    // Migration 025's check refuses `success` / `partial` with no `fields` key
+    // or no timestamp. Refusing it here too names the mistake at the call
+    // site. The data layer always writes the four abstraction columns together,
+    // so a read that arrives without its evidence is a bug, not a partial save.
+    if (payload.abstraction_status === 'success' || payload.abstraction_status === 'partial') {
+      var ev = payload.abstracted_fields;
+      if (!ev || typeof ev !== 'object' || !Object.prototype.hasOwnProperty.call(ev, 'fields') || !payload.abstracted_at) {
+        return { ok: false, error: 'An abstraction marked ' + payload.abstraction_status + ' must carry its fields and its timestamp' };
+      }
     }
 
     // Two columns may not disagree about whether the document is filed.
@@ -616,8 +651,32 @@
   };
   var MIGRATION_FOR_COLUMNS = 'migrations/024_acquisition_document_classification.sql';
 
+  // A missing column names the migration that ADDS that column. Every column
+  // 024 added is 024's; the four 025 added are 025's. Sending an operator who
+  // has run 024 back to 024 because 025 is what is missing is the same
+  // wrong-file bug in a third coat of paint.
+  var MIGRATION_FOR_COLUMN = {
+    abstracted_fields:  'migrations/025_acquisition_abstraction.sql',
+    abstraction_status: 'migrations/025_acquisition_abstraction.sql',
+    abstraction_model:  'migrations/025_acquisition_abstraction.sql',
+    abstracted_at:      'migrations/025_acquisition_abstraction.sql',
+  };
+
   function migrationFor(table) {
     return MIGRATION_FOR[table] || MIGRATION_FOR.acquisition_documents;
+  }
+
+  /**
+   * The column a 42703 names, when the message names one. PostgREST says
+   * `column acquisition_documents.abstraction_status does not exist`; plain
+   * PostgreSQL says `column "abstraction_status" does not exist`. Null when
+   * the message is not in either shape.
+   */
+  function missingColumnName(error) {
+    if (!error) return null;
+    var msg = String(error.message || error.error || error.details || '');
+    var m = msg.match(/column\s+"?(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)"?\s+does not exist/i);
+    return m ? m[1].toLowerCase() : null;
   }
 
   /**
@@ -644,7 +703,9 @@
    * testing found in P1-2's endpoint, wearing a different hat.
    */
   function migrationForError(error, table) {
-    return isMissingColumn(error) ? MIGRATION_FOR_COLUMNS : migrationFor(table);
+    if (!isMissingColumn(error)) return migrationFor(table);
+    var col = missingColumnName(error);
+    return (col && MIGRATION_FOR_COLUMN[col]) || MIGRATION_FOR_COLUMNS;
   }
 
   /**
@@ -678,8 +739,11 @@
     buildPayload: buildPayload,
     buildFamilyPayload: buildFamilyPayload,
     MIGRATION_FOR: MIGRATION_FOR,
+    MIGRATION_FOR_COLUMN: MIGRATION_FOR_COLUMN,
     migrationFor: migrationFor,
     migrationForError: migrationForError,
+    missingColumnName: missingColumnName,
+    ABSTRACTION_STATUSES: ABSTRACTION_STATUSES,
     isMissingTable: isMissingTable,
     isMissingColumn: isMissingColumn,
     schemaGap: function (error) { return isMissingTable(error) || isMissingColumn(error); },

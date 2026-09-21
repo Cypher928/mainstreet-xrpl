@@ -247,6 +247,74 @@ RULES:
   verbatim, at most 200 characters. Null if nothing specific decided it.
 - Never infer a document type from the file name. Read the document.`;
 
+// Acquisition Review P1-4 (P4-1) — what a document SAYS, term by term.
+//
+// This is the second half of what document_classification deliberately refused
+// to do. Classification says what a document IS; this says what it ESTABLISHES,
+// for a fixed vocabulary of 27 terms, with the clause behind each one. It is
+// still not lease_extraction: it does not resolve a tenant record, does not
+// pick a tenant name over another, and does not decide which document governs
+// — LeaseIntelligence.reasonMultiDocumentLease does that, from this evidence.
+//
+// The 27 names are acquisition-terms.js's and are reproduced here verbatim —
+// a test holds the two lists equal. Group A is LeaseIntelligence's canonical
+// thirteen; B is what lease_extraction already returns; C is the nine the
+// approved plan named. None may be dropped or renamed here.
+//
+// MISSING IS NOT NONE. A term the document does not address is
+// { value: null, quote: null }. A document that says "Tenant shall have no
+// option to renew" establishes the term — the value is what it says, and the
+// quote is the clause. The instruction to never turn the first into the second
+// is the most important line in this prompt.
+const ACQUISITION_ABSTRACTION_SYSTEM = `You read ONE commercial lease document (a lease, an amendment, a renewal, an extension, an assignment, a guaranty, a side letter, an SNDA or an estoppel) for an acquisition review and report what THIS DOCUMENT SAYS about each of the terms below.
+The text may be OCR'd from a scan — tolerate spacing and character noise.
+Return ONLY valid JSON. No explanation. No markdown. Start with { and end with }.
+
+{
+  "fields": {
+    "<field>": { "value": <typed value> | null, "quote": string | null, "page": number | null, "confidence": 0.0-1.0 | null }
+  }
+}
+
+Report EVERY one of these 27 fields, each exactly once, under exactly these keys:
+
+  cap                           number   — annual CAM / operating-expense increase cap; a percentage as a plain number (5 for "5%"), or a dollar amount
+  cap_base_amount               number   — the dollar base the cap is measured from, when stated
+  admin_fee_pct                 number   — administrative / management fee percentage (15 for "15%")
+  gross_up_pct                  number   — gross-up occupancy percentage (95 for "95%")
+  expense_stop                  number   — expense stop or base-year stop, dollars per square foot
+  audit_rights                  boolean  — true if the tenant has an explicit right to audit; false if explicitly waived
+  pro_rata_method               "rentable" | "leasable" | "occupied" | "gross" — the pro-rata denominator
+  renewal_options               string   — count, term and rate basis of renewal options, or the clause that denies them
+  tenant_name                   string   — the tenant named in THIS document (for an assignment, the assignee)
+  leased_sqft                   number   — the premises' square footage as an integer
+  start_date                    "YYYY-MM-DD" — commencement date THIS document states or changes
+  end_date                      "YYYY-MM-DD" — expiration date THIS document states or changes
+  lease_type                    "NNN" | "Gross" | "Modified Gross"
+  base_rent                     number   — annual base rent in dollars (monthly × 12)
+  security_deposit              number   — security deposit in dollars
+  suite                         string   — suite / unit designator
+  excluded_categories           string   — expense categories excluded from CAM, comma-separated
+  admin_fee_basis               "operating_expenses" | "controllable_expenses" | "excluding_management_fee" | "unstated"
+  tenant_improvement_allowance  number   — TI allowance in dollars (total, or per square foot if that is how it is stated — say which in the quote)
+  landlord_work                 string   — landlord's work / delivery obligations, briefly
+  guarantor_name                string   — the guarantor of the tenant's obligations
+  guaranty_limit                number   — the dollar cap on the guaranty, when stated
+  termination_rights            string   — any early termination right, its trigger, notice and fee
+  expansion_rights              string   — expansion, right of first refusal or right of first offer
+  assignment_consent            string   — the standard for landlord consent to assignment or sublease
+  exclusive_use                 string   — any exclusive-use protection granted to the tenant
+  co_tenancy                    string   — any co-tenancy condition and its remedy
+
+RULES:
+- value: what THIS document establishes for the term, in the type shown. Use null when this document does not address the term. Do not carry a value over from what a lease "usually" says, from the file name, or from any other document.
+- MISSING IS NOT NONE. If the document says nothing about a term, value is null and quote is null. If the document EXPLICITLY denies or waives a term — "Tenant shall have no option to renew", "there shall be no cap on Operating Expenses", "Tenant waives any right to audit" — that is a VALUE (the denying language for a string field; 0 for a number field; false for a boolean), with the clause as its quote. Never report an unaddressed term as 0, false, "none" or "".
+- quote: the exact verbatim span of the document that establishes the value — copied character for character, at most 600 characters, the shortest span that establishes it. Never paraphrase. A value with no quote will not be trusted, so if you cannot quote it, report the value as null.
+- page: the page number from the nearest preceding "--- Page N ---" marker in the text, ONLY when such a marker is present and you are certain. Otherwise null. Never guess a page.
+- confidence: your confidence that the value is what this document establishes, 0.0 to 1.0. Null when value is null.
+- An amendment, side letter or estoppel usually addresses only a few terms. Report null for the rest. Do not invent what an amendment does not change.
+- Never infer anything from the file name. Read the document.`;
+
 /**
  * SEC-2 + AI-3 — extraction reads customer documents, so the boundary rule
  * applies here as much as it does to Ask-the-Lease. A lease is a document one
@@ -272,6 +340,11 @@ const CLAUDE_TASKS = {
   // Acquisition Review P1-3. Six small fields and a short quote; 400 is room
   // for that and not for an abstraction.
   document_classification:  { system: _withBoundary(DOCUMENT_CLASSIFICATION_SYSTEM),  maxTokens: 400  },
+  // Acquisition Review P1-4. Twenty-seven fields, each with a verbatim quote
+  // of up to 600 characters: ~200 tokens a field when every one is addressed,
+  // which an original lease can do. A truncated reply is unparseable and the
+  // whole reading is lost, so the ceiling sits above the worst case.
+  acquisition_abstraction:  { system: _withBoundary(ACQUISITION_ABSTRACTION_SYSTEM),  maxTokens: 6000 },
 };
 
 /**

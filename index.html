@@ -6193,6 +6193,17 @@
     .acq-doc-confirm { background: none; border: 1px solid var(--c-4ade80); color: var(--c-4ade80);
       padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; }
     .acq-doc-confirm:hover { background: rgba(74, 222, 128, 0.12); }
+    /* P1-4: whether the document has been read for its terms, and the control
+       that reads it when it has not. Same colours as the parsing status. */
+    .acq-doc-terms { white-space: nowrap; }
+    .acq-doc-terms.ok      { color: var(--c-4ade80); }
+    .acq-doc-terms.warn    { color: var(--c-fbbf24, #fbbf24); }
+    .acq-doc-terms.error   { color: var(--c-f87171); }
+    .acq-doc-terms.pending { color: var(--text-4); }
+    .acq-doc-reabstract { background: none; border: 1px solid #334155; color: var(--text-3);
+      padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; }
+    .acq-doc-reabstract:hover { border-color: var(--text-3); }
+    .acq-doc-reabstract[disabled] { opacity: 0.5; cursor: default; }
 
     /* On a phone the classification controls take a line of their own, under
        the file name, instead of competing with it for a 320px row. Nothing is
@@ -6210,7 +6221,7 @@
       .acq-doc-open,
       .acq-doc-nofile  { order: 5; flex: 0 0 auto; }
       /* Touch targets, now that they are no longer crammed into a row. */
-      .acq-doc-type, .acq-doc-confirm, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
+      .acq-doc-type, .acq-doc-confirm, .acq-doc-reabstract, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
     }
 
     /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */
@@ -8541,6 +8552,8 @@
 <script src="acquisition-workspace.js"></script>
 <!-- Acquisition Review Phase 1 (P1-2): what may be written about a document and which columns a list asks for — pure; script.js writes it through the authenticated Supabase client, and migration 023's RLS and composite foreign key are what actually enforce ownership. -->
 <script src="acquisition-documents.js"></script>
+<!-- Acquisition Review Phase 1 (P1-4, P4-1): the 27 lease terms and the shape of what one document says about each — pure; script.js asks the server-owned acquisition_abstraction task and stores the result on the document row. -->
+<script src="acquisition-terms.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>

@@ -1,8 +1,13 @@
 # Acquisition Review — Phase 1
 
 **Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
-shipped**, with migrations 023 and 024 applied to the Pilot project; P1-4 onward
-are planned and individually approved before any code. Production (`main`,
+shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
+in progress under the approved plan in §4d: increment P4-1 is built and
+validated locally (§4e) and awaits review; migration 025 is written and
+executed against a throwaway cluster but NOT applied to Pilot, and the P4-1
+code is not deployed** — the Documents panel degrades if the code ships before
+its migration, so the order is review → authorize 025 → apply → push. P4-2,
+P4-3 and P4-V do not start until P4-1 is reviewed. Production (`main`,
 mainstreetcam.com, the production Supabase project) is not touched by this
 work.
 
@@ -92,7 +97,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 in progress** |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 built, awaiting review; 025 not applied** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -415,8 +420,9 @@ named by the document it changes rather than by an id.
 
 ## 4d. P1-4 — Lease Intelligence (approved plan; increments ship one at a time)
 
-**Status: plan approved. P4-1 in progress. P4-2, P4-3 and P4-V do not start
-until the preceding increment has been validated and reviewed.**
+**Status: plan approved. P4-1 built and validated locally — see §4e — and
+awaiting review. P4-2, P4-3 and P4-V do not start until the preceding
+increment has been validated and reviewed.**
 
 ### The one job
 
@@ -578,6 +584,91 @@ pixels from the first commit.
 
 ---
 
+## 4e. P4-1 — what each document says (built; awaiting review)
+
+**Status: built on `pilot`, validated locally, NOT deployed, migration 025 NOT
+applied.** Everything below is what the increment does; §5 lists what proves
+it. Nothing in P4-2 or P4-3 has been started.
+
+### What it adds
+
+- **`acquisition-terms.js`** — the vocabulary and the evidence shape, pure.
+  `FIELD_GROUPS` holds the 27 fields of §4d.1 in their three groups; group A
+  is `LeaseIntelligence.CANONICAL_FIELDS` byte for byte and a test asserts it
+  against that file. `FIELD_META` says what each field IS (number · money ·
+  percent · date · boolean · enum · text, with the enum vocabularies taken
+  from `lease_extraction`). `normalizeFieldValue`, `normalizeEntry` and
+  `buildAbstraction` turn a model reading into the §4d.2 shape — every field
+  present, unknown keys dropped, quote bounded to 600, page a positive integer
+  or null, confidence 0..1 or null — and `summarizeAbstraction` counts it.
+  `isAbstractable(docType)` is the lease-family predicate and gives the same
+  answer as `AcquisitionDocuments.isFamilyType` for every type.
+- **`acquisition_abstraction`** in `api/_claude-tasks.js` — the server-owned
+  task on the existing `/api/claude`. It names all 27 fields, each once, with
+  its type; instructs that a term the document does not address is
+  `{ value: null, quote: null }`; that an explicit denial or waiver is a VALUE
+  with its clause; that quotes are verbatim and at most 600 characters; that a
+  page is reported only from a `--- Page N ---` marker and never guessed; and
+  that nothing is inferred from the file name. The untrusted-document boundary
+  applies. Ceiling 6000 tokens, above the worst case of 27 quoted fields — a
+  truncated reply is unparseable and loses the whole reading.
+- **Migration 025** — four columns on `acquisition_documents`:
+  `abstracted_fields jsonb not null default '{}'`, `abstraction_status text
+  not null default 'pending'`, `abstraction_model`, `abstracted_at`. Three
+  checks: the evidence is an object; the status is one of the five; **a
+  status of `success` or `partial` must carry a `fields` key and a
+  timestamp**. One partial index on `(family_id, abstraction_status)` for the
+  reads P4-2 makes. No new table, no new policy — the owner policy covers the
+  new column. Rollback removes exactly those objects.
+- **The document model** — `WRITABLE`/`CAMEL` gain the four columns; the list
+  select gains `abstraction_status`, `abstraction_model`, `abstracted_at` and
+  deliberately **not** `abstracted_fields` (27 quoted entries per row is
+  `extracted_text`'s problem again). `buildPayload` refuses `success` /
+  `partial` without fields and timestamp before the database gets to.
+  `migrationForError` is now column-aware: a missing 025 column names 025, a
+  missing 024 column still names 024.
+- **The data layer** — `_acqAbstractDocument(reviewId, docRow, text)` runs at
+  intake **after the source is stored and after it is classified**, because
+  whether a document is read depends on what it is: a lease-family type is
+  read for its terms; anything else (rent roll, invoice, unclassified) is
+  `skipped`; no stored text or a failed call is `failed`. A failure keeps the
+  evidence the row already had. The four columns are written together in one
+  upsert, from `buildAbstraction` and nothing else. The text is sent whole
+  (up to 120k characters) with the file name and the classified type as
+  context only.
+- **Corrections** — `acqSetDocType` re-reads a document corrected **into** a
+  lease-family type, from its stored text via `_acqLoadDocumentText` (one row,
+  owner-scoped), and marks one corrected **out** as `skipped`, leaving its
+  evidence in place. A correction between two lease-family types does not
+  re-read: the terms are the same words.
+- **The panel** — one chip per lease-family document row: *Terms read* ·
+  *Terms read — none established* · *Terms could not be read* · *Terms not
+  read yet* · *Reading terms…*. A rent roll shows nothing; it has no terms. A
+  lease-family document not yet read (including every Pilot document that
+  predates 025) offers **Read terms**, which reads from the stored text. The
+  row's phone layout is measured with the chip and control present.
+
+### What it does NOT do
+
+- It does not resolve a governing value, apply the ceiling, or show a term.
+  That is P4-2 and P4-3.
+- It does not touch `lease-intelligence.js`. `reasonMultiDocumentLease` still
+  takes one argument; a test proves the owner-operator result is what it was
+  and that the reasoner knows nothing of the nine new fields.
+- It does not write back. The tenant `lease_extraction` produced is what it
+  returned; the review record holds no abstraction; the browser walk checks
+  both.
+- It does not add a function. `api/` still holds twelve.
+
+### Deploy protocol
+
+The list select now names the 025 columns, so on a Pilot database without 025
+the Documents panel says documents are being read but not filed and names
+`migrations/025_acquisition_abstraction.sql`. Therefore: review → authorize
+025 → apply to Pilot → push → verify.
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,
@@ -670,6 +761,54 @@ P1-3:
   geometry at 375/390/430 and 1280 px, because no reading of the stylesheet
   would have caught it, and it refuses to measure a hidden panel — the first
   version of it reported zeros as passes.
+
+P1-4 / P4-1:
+
+- `test-acquisition-terms.js` — drives `acquisition-terms.js` and the
+  document model for real and loads `lease-intelligence.js` in a sandbox:
+  group A equals `CANONICAL_FIELDS` byte for byte; the nine approved fields
+  are present under their names; the prompt names all 27 exactly once and
+  nothing else, says MISSING IS NOT NONE, forbids paraphrase, guessed pages
+  and file-name inference; every normaliser leaves null as null and a
+  negative word becomes 0 only WITH a quote; an unread value keeps its quote;
+  an array is not a value; `buildAbstraction` records every field, drops
+  unknown keys, is `failed` with no fields and `partial` with no evidenced
+  value; `buildPayload` refuses a claim without its evidence; a missing 025
+  column names 025; migration 025 as text adds four columns and touches one
+  table; the data layer (source-pinned) asks the server-owned task, skips
+  non-family documents, keeps evidence on failure, writes the four columns
+  together, reads after store and after classification, re-reads on a
+  correction into a family, and reaches no tenant or lease record; and
+  **LeaseIntelligence is unchanged** — one-argument signature, no reference
+  to the new module, same owner-operator result, no knowledge of the nine.
+- `test-e2e-acquisition-abstraction.js` — the walk, against a stand-in that
+  enforces migration 025's three checks alongside 024's: a lease is read
+  after classification and its row carries 27 fields with a value+quote, a
+  null+null for what it does not address, and a denial as a value; one
+  upsert writes the four columns under the owner; **nothing was written
+  back** to the tenant or the review; a rent roll is `skipped` without a
+  call; a failed call is `failed` and the review is unharmed; a rent roll
+  corrected into an amendment is read from its stored text (owner-scoped
+  read, not a re-upload) and told its new type; corrected back out it is
+  `skipped` with its evidence intact; a family-to-family correction does not
+  re-read; **Read terms** on a failed row reads it again; the panel chips a
+  lease and says nothing on a rent roll; the module and the stand-in refuse
+  what 025 refuses; and at 375 px the chip and control leave the file name
+  its width.
+- `tools/verify-migration-025.js` — **executes** 025 against a throwaway
+  cluster on top of 000 + 006 + 023 + 024: applies and re-applies with no
+  duplicate constraint, leaves an existing classified row byte-identical and
+  `pending` with `{}`, refuses an array/string/number/null as evidence,
+  refuses a status outside the five, refuses `success`/`partial` without
+  `fields` or without a timestamp while `failed` keeps old evidence, reads a
+  stored null back as JSON null and a stored explicit 0 as 0, hides the
+  evidence from another user and anon under the existing policy, keeps every
+  024 guarantee, rolls back exactly its own objects, and applies again.
+- `tools/acquisition-terms-mutation.js` — 38 mutants across the module, the
+  document model, the data layer, the migration and rollback SQL, and the
+  prompt; each must go red in the three suites above.
+- `test-security.js` lists `acquisition_abstraction` among the tasks
+  `/api/claude` owns.
 - Every suite above is registered in `test-regression.js`.
 
 ---
