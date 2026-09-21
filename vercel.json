@@ -8,7 +8,8 @@
     "api/rlusd-settlement.js": { "maxDuration": 60 }
   },
   "redirects": [
-    { "source": "/", "destination": "/home", "permanent": false }
+    { "source": "/", "destination": "/home", "permanent": false },
+    { "source": "/index.html", "destination": "/home", "permanent": false }
   ],
   "rewrites": [
     { "source": "/api/:path*",      "destination": "/api/:path*"          },
