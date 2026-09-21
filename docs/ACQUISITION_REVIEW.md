@@ -1,9 +1,13 @@
 # Acquisition Review — Phase 1
 
-**Status:** in progress on `pilot`. Increment **P1-1 shipped**; P1-2 onward
+**Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
+shipped**, with migrations 023 and 024 applied to the Pilot project; P1-4 onward
 are planned and individually approved before any code. Production (`main`,
 mainstreetcam.com, the production Supabase project) is not touched by this
 work.
+
+§7 records feedback from the acquisition team that binds P1-5 and P1-7. It is a
+requirement, not a change: no code has been written against it.
 
 This document is the committed scope of Acquisition Review, the Phase 1 plan
 against the code that exists, and the record of decisions still open. It was
@@ -89,9 +93,9 @@ Each is small, separately approved, and verified before the next starts.
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
 | P1-4 | Lease Intelligence — abstraction per family, governing terms with state `verified · ai_extracted · missing · conflicting · unclear`; per-field confirm/correct as appended snapshots | planned |
-| P1-5 | Financial Intake — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
-| P1-6 | Needs Attention — ranked, evidence-pointed, gates completion | planned |
-| P1-7 | Acquisition Report v2 — buying / income / obligations / proof; verified vs assumption vs underwritten | planned |
+| P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
+| P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
+| P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
 | P1-8 | The 13-column lease matrix + CSV, every cell carrying provenance | planned — columns undefined (§6) |
 | P1-9 | Lease Q&A over acquisition documents (single document; optionally one family) — same refusal contract | planned |
 | P1-10 | Completion — the deliberate transition to an acquired property, carrying documents and evidence | planned |
@@ -491,6 +495,16 @@ P1-3:
   source**, which is the one case that cannot be undone cleanly.
 - `tools/acquisition-classification-mutation.js` — 33 mutants across the model,
   the data layer, the migration SQL and the classifier's prompt.
+- `test-e2e-acquisition-documents-mobile.js` — the panel on a phone. Browser
+  validation of P1-3 found the document row unusable at iPhone widths: the type
+  control and Confirm button made a fourth non-shrinking child, so the only
+  flexible one — the file name — resolved to **zero pixels** and
+  `SafeShield_Insurance_Lease.pdf` broke one character per line, thirty lines
+  tall. The fix is CSS only (the row wraps; the name has a real flex-basis; the
+  controls take their own line under 680px). This suite measures the LAID-OUT
+  geometry at 375/390/430 and 1280 px, because no reading of the stylesheet
+  would have caught it, and it refuses to measure a hidden panel — the first
+  version of it reported zeros as passes.
 - Every suite above is registered in `test-regression.js`.
 
 ---
@@ -506,7 +520,7 @@ Each belongs to the increment that needs it; none is decided here.
 | D-4 | **Team activity / multi-user.** `acquisition_reviews` RLS is owner-only; team access is named in the IA and not implemented. P1-1 records activity for the owner. Sharing and roles are out of scope unless authorized. | later |
 | D-5 | **Lifecycle representation.** Done in P1-1 as `data.stage` in jsonb; the `status` column and its constraint are unchanged so Command Center and portfolio actions keep working. Whether `status` should grow is not proposed. | — |
 | D-6 | **Obligations and options extraction.** The current contract extracts only `renewal_options` and a boolean `audit_rights`. Adding fields to `lease_extraction` is a shared-contract change under the one-revision-one-re-extraction rule; recommended instead: a separate `acquisition_abstraction` task. | P1-4 |
-| D-7 | **Financial intake formats.** Which rent roll / GL sources (Yardi, MRI, Excel, scanned PDF)? Sample files decide the parser. | P1-5 |
+| D-7 | **Financial intake formats.** Which rent roll / GL sources (Yardi, MRI, Excel, scanned PDF)? Sample files decide the parser. **Partly answered by §7: the GL is the primary source and seller invoices are optional, so the GL parser is the one P1-5 cannot ship without.** | P1-5 |
 | D-8 | **Stabilized / underwritten figures.** Assumed user-entered in-app; not imported from a model. | P1-7 |
 | D-9 | **Q&A scope.** Single document, or one family's governing documents? Cross-family questions stay a refusal (ARCHITECTURE_PRINCIPLES §1). | P1-9 |
 | D-10 | **Page numbers on extraction evidence.** Extraction quotes carry no page today; capturing one is a contract change. | P1-4 |
@@ -517,3 +531,76 @@ Each belongs to the increment that needs it; none is decided here.
 | ~~D-15~~ | **RESOLVED** — `review.data.documents[]` stays as a vestigial empty array and is never written to; `acquisition_documents` is the one home. Removing the key would contradict `upgradeReview`'s first rule (an upgrade never removes a key), so it is left and documented instead. | P1-3 · done |
 | D-16 | **Confirming a whole family at once.** P1-3 confirms a document at a time, which is right for a handful and tedious for a data room. Whether a family-level "confirm all" is wanted, and whether it should record one act or one per document, is undecided. | P1-4 or later |
 | D-17 | **Moving a document between families, and merging two.** P1-3 can unfile a document by correcting its type, but has no control for "this belongs to that other leasehold" or "these two families are one". The table supports both; the workflow is not designed. Related and also open: correcting a lease to a review-level type leaves the amendments that named it as their parent still pointing at it — a proposal that is visible and wrong rather than hidden, but nothing re-proposes them. | P1-4 |
+
+---
+
+## 7. The buyer's report — recorded from acquisition-team feedback
+
+**Status: a requirement for P1-5 and P1-7. Nothing in P1-3 changed because of
+it, and no code has been written against it.** Recorded here the day it was
+given so the increments that need it inherit it rather than rediscover it.
+
+### What the team said
+
+Two things, from people doing this work on real acquisitions.
+
+**The buyer usually does not get the seller's historical CAM invoices.** They
+work from the general ledger instead. Seller invoices are a bonus when they
+arrive, not an input the review can require.
+
+**Today's Acquisition Decision Report is the CAM/recovery analysis wearing an
+acquisition label.** It leads with 311% CAM recovery, Proceed, missed recovery,
+CAM leakage, audit windows and tenant CAM allocation. Those are the questions an
+*owner-operator* asks about a property they already hold. A buyer in diligence
+is asking different ones.
+
+### What that requires
+
+**Invoices are not a required input (P1-5).** The GL is the primary financial
+source. A review with a rent roll and a GL and no invoices at all must reach a
+complete report; nothing may be blocked, hidden or marked incomplete merely
+because seller invoices are absent. Invoice intake stays supported — P1-2
+preserves them and P1-3 classifies them — and becomes an enrichment rather than
+a prerequisite. The GL parser is therefore the part of P1-5 that cannot slip.
+
+**Acquisition Report v2 answers five questions, in this order (P1-7):**
+
+1. **What am I buying?** The property, its spaces, its physical and legal facts.
+2. **What income am I actually buying?** Contractual income from the leases,
+   next to what the rent roll claims and what the GL shows — not merged into
+   one number.
+3. **What obligations am I inheriting?** Landlord work, allowances, options,
+   guarantees, restrictions, anything that follows the property to the buyer.
+4. **What documents and evidence prove it?** Every figure that matters names the
+   document behind it, which is what P1-2 preserved and P1-3 made addressable.
+5. **What needs attention before acquisition?** Ranked, and gating completion
+   (P1-6).
+
+**Four states, never three.** Every fact in the report is one of:
+
+| state | meaning |
+|---|---|
+| **verified** | a document supports it, and the report can show which |
+| **assumption** | somebody entered or underwrote it; no document behind it |
+| **issue** | documents disagree, or a term is unclear |
+| **missing** | nothing on file answers this |
+
+**MISSING IS NOT NONE.** A review with no estoppels must say "no estoppels on
+file", never "no estoppel issues". A GL with no line for a category must say the
+category is unevidenced, not that the expense is zero. This is
+ARCHITECTURE_PRINCIPLES §8 applied to money, and it is the single rule most
+likely to be lost when a report is made to look tidy.
+
+### What this does NOT change
+
+The committed scope in §1 stands in full and is not narrowed by this note:
+document intake with classification and families (P1-2, P1-3), lease
+intelligence and governing terms (P1-4), financial/GL/rent-roll intake (P1-5),
+Needs Attention (P1-6), the 13-column lease matrix (P1-8), deterministic
+evidence-traceable lease Q&A (P1-9), and the deliberate transition into the
+acquired-property lifecycle (P1-10). Report v2 is one of the nine areas, not a
+replacement for them.
+
+The existing CAM reconciliation product is untouched. It is the right tool for
+an owner-operator, and Report v2 is a different report for a different reader —
+not a rewrite of it.
