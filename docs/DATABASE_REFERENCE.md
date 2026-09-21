@@ -82,6 +82,24 @@ you *don't own yet*): `name`, `status ('draft'…)`, `data (jsonb)` holding the
 uploaded rent roll analysis, findings, and decision-report inputs. Migration
 007 fixed the status check constraint.
 
+### acquisition_documents
+Every file an Acquisition Review was given (migration 023, **Pilot only**).
+Owned through the review: `review_id` + `user_id` with a **composite foreign
+key** to `acquisition_reviews (id, user_id)`, so a document can never claim an
+owner its review does not have, and deleting a review takes its documents with
+it. `storage_path` is a storage REFERENCE (`bucket/path`, SEC-1) and is NULL
+when the original is not on file — too large, or the upload failed.
+`parsing_status ∈ pending · success · partial · failed`; a failed extraction
+keeps its row and its `error_message` rather than vanishing. `intake_kind`
+records which upload control the file came through and is **not** a
+classification — document type, families and versions are P1-3.
+`unique (review_id, file_name)` makes one file one row, so the intake's two
+writes (on arrival, then on extraction) update rather than duplicate. RLS is
+owner-only with no anon policy; reached only through `/api/acquisition-documents`,
+which checks the review's owner and has **no delete**. Isolated from
+`lease_documents` on purpose: that table is property-scoped, and a review has
+no property until it is converted. See `docs/ACQUISITION_REVIEW.md` §4b.
+
 **`data` shape and writes (Acquisition Review P1-1).** `acquisition-workspace.js`
 owns the layout (`schemaVersion: 2`, `stage`, `activity[]`, `documents[]`,
 `families[]`, `assumptions[]` alongside the existing `tenants`, `invoices`,
@@ -172,6 +190,7 @@ acquisition review the same way.
 | 007 | Fix acq review status constraint | Constraint bug |
 | 008 (+008b) | Database hardening + verification queries | Indexes, constraints, checks |
 | 009 | Atomic tenant resync | Prevent partial tenant-table states |
+| 023 | `acquisition_documents` (+ a unique `(id, user_id)` on `acquisition_reviews` for the composite FK) | Acquisition Review keeps every source it is given (P1-2). Pilot only; rollback in `023_..._rollback.sql`; executed end-to-end by `tools/verify-migration-023.js` |
 
 Migrations are plain SQL applied via the Supabase SQL editor (no migration
 runner in-repo). New migrations: next number, idempotent

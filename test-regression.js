@@ -420,6 +420,17 @@ const SUITES = [
   // read reports a CONFLICT rather than overwriting what it has not seen.
   { label: 'Acquisition workspace record (P1-1)',       cmd: 'node test-acquisition-workspace.js' },
   { label: 'Acquisition workspace walk (e2e, P1-1)',    cmd: 'node test-e2e-acquisition-workspace.js' },
+  // P1-2. Every file an acquisition review is given is kept: the original in
+  // the private bucket, the text in a row, and a row even when extraction
+  // fails. The contract suite drives /api/acquisition-documents for real (a
+  // caller may touch a document only through a review they own; user_id comes
+  // from the token); the walk proves the row exists before the extraction does.
+  { label: 'Acquisition documents (P1-2)',              cmd: 'node test-acquisition-documents.js' },
+  { label: 'Acquisition documents walk (e2e, P1-2)',    cmd: 'node test-e2e-acquisition-documents.js' },
+  // The migration itself, executed against a throwaway PostgreSQL cluster —
+  // no Supabase project is contacted. SKIPS loudly when no local server binary
+  // is present, which is a skip and not a pass.
+  { label: 'Migration 023 applies and rolls back',      cmd: 'node tools/verify-migration-023.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },

@@ -6124,6 +6124,38 @@
     .acq-card-status.orphaned   { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-detail-badge.orphaned  { background: rgba(201,151,58,0.12); color: var(--c-fbbf24, #fbbf24); }
     .acq-card-orphan-note       { color: var(--c-fbbf24, #fbbf24); }
+    /* Documents panel (P1-2) — every source this review was given. */
+    .acq-docs-card { background: var(--theme-card); border: 1px solid var(--theme-surface);
+      border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+    .acq-docs-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+    .acq-docs-head h3 { margin: 0; font-size: 0.92rem; font-weight: 600; color: var(--text-1); }
+    .acq-docs-count { font-size: 0.74rem; color: var(--text-4); }
+    .acq-docs-list { display: flex; flex-direction: column; gap: 6px; }
+    .acq-docs-empty, .acq-docs-warn { font-size: 0.78rem; color: var(--text-5); line-height: 1.5; }
+    .acq-docs-warn { color: var(--c-fbbf24, #fbbf24); }
+    .acq-docs-warn code { font-size: 0.74rem; background: rgba(var(--line-rgb), 0.12);
+      padding: 1px 5px; border-radius: 4px; }
+    .acq-doc-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      border: 1px solid var(--theme-surface); border-radius: 8px; }
+    .acq-doc-kind { flex-shrink: 0; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; padding: 2px 7px; border-radius: 9px;
+      background: var(--theme-surface); color: var(--text-4); }
+    .acq-doc-kind.lease   { color: var(--c-60a5fa); }
+    .acq-doc-kind.invoice { color: var(--c-4ade80); }
+    .acq-doc-main { flex: 1; min-width: 0; }
+    .acq-doc-name { font-size: 0.82rem; color: var(--text-1); overflow-wrap: anywhere; }
+    .acq-doc-meta { font-size: 0.72rem; color: var(--text-5); margin-top: 2px; }
+    .acq-doc-status.ok      { color: var(--c-4ade80); }
+    .acq-doc-status.warn    { color: var(--c-fbbf24, #fbbf24); }
+    .acq-doc-status.error   { color: var(--c-f87171); }
+    .acq-doc-status.pending { color: var(--text-4); }
+    .acq-doc-err  { font-size: 0.72rem; color: var(--c-f87171); margin-top: 3px; overflow-wrap: anywhere; }
+    .acq-doc-note { font-size: 0.72rem; color: var(--c-fbbf24, #fbbf24); margin-top: 3px; overflow-wrap: anywhere; }
+    .acq-doc-open { flex-shrink: 0; background: none; border: 1px solid #334155; color: var(--text-3);
+      padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; }
+    .acq-doc-open:hover { border-color: #475569; color: var(--text-1); }
+    .acq-doc-nofile { flex-shrink: 0; font-size: 0.72rem; color: var(--text-5); font-style: italic; }
+
     /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */
     .acq-stage-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       margin: -12px 0 22px; }
@@ -7393,6 +7425,16 @@
         <li style="color:var(--text-5);font-size:0.78rem;">No invoices uploaded yet — use "Upload Invoices" above to add CAM expense documents.</li>
       </ul>
     </div>
+  </div>
+
+  <!-- Documents (P1-2). Every file this review was given: what became of it,
+       and a control that opens the original. Rendered by _renderAcqDocuments. -->
+  <div class="acq-docs-card" id="acqDocsCard">
+    <div class="acq-docs-head">
+      <h3>&#x1F4C1; Documents</h3>
+      <span class="acq-docs-count" id="acqDocsCount"></span>
+    </div>
+    <div class="acq-docs-list" id="acqDocsList"></div>
   </div>
 
   <!-- Total SqFt + Analyze -->

@@ -700,6 +700,19 @@ sec('SEC-1 · a stored document is authorised before it can be read');
         r.timelineAttachment = /data-doc-url/.test(window.docLinkHtml(INV, 'x', { className: 'tl-attach' })) ? 1 : 0;
         r.reserveDocument    = /data-doc-url/.test(window.docLinkHtml(INV, 'View', { className: 'escrow-doc-btn' })) ? 1 : 0;
 
+        // An acquisition document (P1-2), through the real renderer rather than
+        // a hand-built string: the panel is a new surface that holds stored
+        // originals, so §9 applies to it the same as to every other.
+        if (typeof _renderAcqDocuments === 'function' && typeof _acqDocs !== 'undefined') {
+          _activeAcqId = 'sec-review';
+          _acqDocs.set('sec-review', [{ id: 'd1', file_name: 'lease.pdf', intake_kind: 'lease',
+            parsing_status: 'success', storage_path: LEASE, byte_size: 12345 }]);
+          _renderAcqDocuments();
+          r.acquisitionDocument = opens(document.getElementById('acqDocsList'));
+        } else {
+          r.acquisitionDocument = 0;
+        }
+
         const aix = document.createElement('div');
         aix.innerHTML = window.AIExplanation.render(
           'STATUS: No issues\nWHY: x\nSUGGESTION: y\nEVIDENCE: Invoice',
@@ -720,6 +733,7 @@ sec('SEC-1 · a stored document is authorised before it can be read');
         ['timelineAttachment', 'a timeline attachment'],
         ['reserveDocument',    'a reserve source document'],
         ['aiEvidenceChip',     'an AI evidence citation'],
+        ['acquisitionDocument', 'an acquisition review document'],
       ]) {
         assert(`${label} offers a control that opens it`,
           surfaces[key] > 0,

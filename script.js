@@ -30213,6 +30213,203 @@ function _acqRecord(review, entry) {
   return review;
 }
 
+// ── Acquisition documents (P1-2) ──────────────────────────────────────────────
+// Every file an acquisition review is given is kept: the original in the private
+// `leases` bucket, its text in a row, and a row even when extraction fails.
+// Before this, acqHandleLeaseFiles read each file in the browser and threw the
+// source away — no upload, no stored text, and a failed extraction left nothing
+// at all. The rows live in acquisition_documents (migration 023), reached only
+// through /api/acquisition-documents, which checks the review's owner.
+
+const _acqDocs = new Map();     // reviewId → rows, as the list endpoint returns them
+// The table is not there (migration 023 not run). Uploads still extract — the
+// workflow is not held hostage — but the product must say the documents are not
+// being filed rather than showing a review with none.
+let _acqDocsUnavailable = false;
+
+function _acqDocRows(reviewId) {
+  const rows = _acqDocs.get(reviewId);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Merge one row into the cache by id, preserving list order (created_at asc).
+function _acqDocCache(reviewId, row) {
+  if (!reviewId || !row || !row.id) return;
+  const rows = _acqDocRows(reviewId).slice();
+  const i = rows.findIndex(r => r && r.id === row.id);
+  if (i >= 0) rows[i] = Object.assign({}, rows[i], row); else rows.push(row);
+  _acqDocs.set(reviewId, rows);
+}
+
+async function _acqLoadDocuments(reviewId) {
+  if (!reviewId) return [];
+  try {
+    const resp = await fetch(`/api/acquisition-documents?reviewId=${encodeURIComponent(reviewId)}`, {
+      headers: await _authHeaders(),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      if (err.code === 'migration_missing') {
+        _acqDocsUnavailable = true;
+        console.warn('[acq] documents unavailable — run migrations/023_acquisition_documents.sql');
+        return [];
+      }
+      console.warn('[acq] could not load documents:', err.error || resp.status);
+      return [];
+    }
+    const { data } = await resp.json();
+    _acqDocsUnavailable = false;
+    _acqDocs.set(reviewId, Array.isArray(data) ? data : []);
+    return _acqDocRows(reviewId);
+  } catch (e) {
+    console.warn('[acq] _acqLoadDocuments failed:', e && e.message);
+    return [];
+  }
+}
+
+// Write (or update) one document row. Keyed on (review, file name) server-side,
+// so calling it twice for the same file — once when it arrives, once when the
+// extraction lands — updates one row rather than filing two.
+async function _acqSaveDocument(fields) {
+  if (_acqDocsUnavailable) return null;
+  try {
+    const resp = await fetch('/api/acquisition-documents', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+      body:    JSON.stringify(fields),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      if (result.code === 'migration_missing') {
+        _acqDocsUnavailable = true;
+        showToast('⚠️ Documents are being read but not filed — run migrations/023_acquisition_documents.sql in Supabase.',
+          { color: '#92400e', textColor: '#fef3c7', duration: 9000 });
+      } else {
+        console.error('[acq] document save failed:', result.error || resp.status);
+      }
+      return null;
+    }
+    const row = Array.isArray(result.data) ? result.data[0] : null;
+    if (row) _acqDocCache(fields.reviewId, row);
+    return row;
+  } catch (e) {
+    console.warn('[acq] _acqSaveDocument failed:', e && e.message);
+    return null;
+  }
+}
+
+// Put the original in the private `leases` bucket.
+//
+// /api/upload replaces every character outside [A-Za-z0-9._-] in the name it is
+// given, so this becomes ONE object at `<uid>/acq_<reviewId>_<ts>-<file>` —
+// a single segment under the caller's id, which is exactly what
+// /api/document-url's ownership check reads. No change to either endpoint.
+//
+// A failure here is reported, never hidden: the row keeps storage_path null and
+// the panel says the original is not on file. The fields were still read.
+async function _acqStoreOriginal(file, reviewId) {
+  const _L = window.MSRequestLimits;
+  const _v = _L && _L.checkUploadSize(file && file.size, 'lease');
+  if (!_L || !_v.ok) {
+    const reason = _v ? _v.error : 'request-limits.js is not loaded';
+    console.warn('[acq] original not stored:', file && file.name, reason);
+    return { ref: null, reason };
+  }
+  const fileName = `acq/${reviewId}/${Date.now()}-${file.name}`;
+  try {
+    const fileBase64 = await toBase64(file);
+    const resp = await fetch('/api/upload', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
+      body:    JSON.stringify({ fileName, fileType: file.type, fileBase64, bucket: 'leases' }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok || result.error) throw new Error(result.error || `HTTP ${resp.status}`);
+    return { ref: result.url, reason: null };
+  } catch (e) {
+    console.warn('[acq] original upload failed:', file && file.name, e && e.message);
+    return { ref: null, reason: 'The original could not be stored — ' + (e && e.message) };
+  }
+}
+
+// What this file produced in the review, when it produced anything.
+function _acqProducedLabel(row) {
+  if (!row || !row.produced_id) return null;
+  if (row.produced_kind === 'tenant') {
+    const t = _acqTenants.find(x => x && x.id === row.produced_id);
+    return t ? (t.tenant_name || t.tenantName || null) : null;
+  }
+  if (row.produced_kind === 'invoice') {
+    const i = _acqInvoices.find(x => x && x.id === row.produced_id);
+    return i ? (i.vendorName || null) : null;
+  }
+  return null;
+}
+
+const _ACQ_DOC_STATUS = {
+  pending: { label: 'Reading…',              cls: 'pending' },
+  success: { label: 'Read',                  cls: 'ok'      },
+  partial: { label: 'Read — no text stored', cls: 'warn'    },
+  failed:  { label: 'Extraction failed',     cls: 'error'   },
+};
+
+function _acqDocSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB'
+                     : (n / 1048576).toFixed(1) + ' MB';
+}
+
+// The Documents panel: every file this review was given, what became of it, and
+// a control that opens the original (ARCHITECTURE_PRINCIPLES §9 — a stored
+// document must be reachable from the screen its record lives on).
+function _renderAcqDocuments() {
+  const el = document.getElementById('acqDocsList');
+  if (!el) return;
+  const rows    = _acqDocRows(_activeAcqId);
+  const countEl = document.getElementById('acqDocsCount');
+  if (countEl) {
+    countEl.textContent = rows.length ? rows.length + (rows.length === 1 ? ' file on record' : ' files on record') : '';
+  }
+
+  if (_acqDocsUnavailable) {
+    el.innerHTML = '<div class="acq-docs-warn">Documents are being read but <strong>not filed</strong> — the document table is not set up on this project. '
+      + 'Run <code>migrations/023_acquisition_documents.sql</code> in Supabase to keep the originals.</div>';
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = '<div class="acq-docs-empty">No documents on file yet. Every lease and invoice uploaded above is kept here with its original.</div>';
+    return;
+  }
+
+  el.innerHTML = rows.map(r => {
+    const st       = _ACQ_DOC_STATUS[r.parsing_status] || { label: r.parsing_status || 'Unknown', cls: 'warn' };
+    const produced = _acqProducedLabel(r);
+    const size     = _acqDocSize(r.byte_size);
+    const opener   = r.storage_path && window.docLinkHtml
+      ? docLinkHtml(r.storage_path, '&#x1F4C4; Open original',
+          { className: 'acq-doc-open', title: 'Open ' + (r.file_name || 'the original') })
+      : '<span class="acq-doc-nofile" title="The fields were read from this file, but the file itself is not stored">Original not on file</span>';
+    const err = r.parsing_status === 'failed' && r.error_message
+      ? `<div class="acq-doc-err">${esc(r.error_message)}</div>` : '';
+    const note = r.parsing_status !== 'failed' && r.error_message
+      ? `<div class="acq-doc-note">${esc(r.error_message)}</div>` : '';
+    return `
+    <div class="acq-doc-row" data-doc-id="${esc(r.id)}">
+      <span class="acq-doc-kind ${esc(r.intake_kind || 'other')}">${esc(r.intake_kind || 'other')}</span>
+      <div class="acq-doc-main">
+        <div class="acq-doc-name">${esc(r.file_name || '(unnamed)')}</div>
+        <div class="acq-doc-meta">
+          <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>
+          ${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
+        </div>
+        ${err}${note}
+      </div>
+      ${opener}
+    </div>`;
+  }).join('');
+}
+
 async function _loadAcqReviews() {
   try {
     const { data: { user } } = await db.auth.getUser();
@@ -30462,6 +30659,11 @@ function selectAcquisitionReview(id) {
   _renderAcqLeaselist();
   _renderAcqInvoiceList();
   _updateAcqAnalyzeBtn();
+
+  // The documents this review was given. Rendered from the cache at once so the
+  // panel is never blank on a revisit, then refreshed from the database.
+  _renderAcqDocuments();
+  _acqLoadDocuments(id).then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });
 
   if (d.analysis) {
     _renderAcqReport(d.analysis, document.getElementById('acqReportContainer'));
@@ -30788,25 +30990,79 @@ async function acqHandleLeaseFiles(fileList) {
     _acqTenants.push(placeholder);
     _renderAcqLeaselist();
 
+    // THE ROW FIRST. That this file arrived is a fact, and a tab closed
+    // mid-extraction must not lose it. Everything after this updates that row.
+    const docRow = await _acqSaveDocument({
+      reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+      byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
+    });
+    if (docRow) placeholder._documentId = docRow.id;
+    _renderAcqDocuments();
+
+    let storage = { ref: null, reason: null };
     try {
-      const leaseText = await extractLeaseText(file);
+      // The original goes to storage while its text is being read — neither
+      // waits on the other, the shape processFile and the amendment path share.
+      const [stored, leaseText] = await Promise.all([
+        _acqStoreOriginal(file, review.id),
+        extractLeaseText(file),
+      ]);
+      storage = stored;
+
       let extracted;
+      let usedPdfDirect     = false;
+      let visionTextPromise = null;
       if (leaseText && leaseText.length >= 50) {
         extracted = await callClaudeForLease(leaseText, file.name);
       } else {
+        // A SCANNED LEASE MUST STILL BE ASKABLE. The vision path returns fields,
+        // not text, so the row's extracted_text would be null and every later
+        // increment that reads the document would find nothing. Intake and the
+        // amendment path both solve this with a second transcription pass; the
+        // same call is made here for the same reason.
+        usedPdfDirect     = true;
+        visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
+          console.warn('[acq] vision text pass failed:', file.name, e && e.message);
+          return null;
+        });
         extracted = await callClaudeWithPdfDirect(file);
       }
       if (!extracted) throw new Error('Extraction returned null');
+
+      const storedText = usedPdfDirect ? (await visionTextPromise) : leaseText;
       const normalized = mintTenantIdentity(normalizeTenant(extracted));
       Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
+      if (docRow) placeholder._documentId = docRow.id;
+
+      await _acqSaveDocument({
+        reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+        byteSize: file.size, contentType: file.type || null,
+        storagePath: storage.ref, extractedText: storedText || null,
+        // 'partial' is the honest word for "the fields were read, the text was
+        // not kept" — the same distinction lease_documents draws.
+        parsingStatus: storedText ? 'success' : 'partial',
+        extractionModel: extracted._extractionModel ?? null,
+        usedPdfDirect, errorMessage: storage.reason,
+        producedKind: 'tenant', producedId: normalized.id || null,
+      });
     } catch (e) {
       console.warn('[acq] lease extraction failed:', file.name, e.message);
       placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
       placeholder._status = 'error';
       placeholder._error  = e.message;
+      // A failed extraction used to leave nothing at all. The file was still
+      // given to the review, and the row says so — with the original attached
+      // when it reached storage, so the manager can open what was uploaded.
+      await _acqSaveDocument({
+        reviewId: review.id, fileName: file.name, intakeKind: 'lease',
+        byteSize: file.size, contentType: file.type || null,
+        storagePath: storage.ref, parsingStatus: 'failed',
+        errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
+      });
     }
 
     _renderAcqLeaselist();
+    _renderAcqDocuments();
     _updateAcqAnalyzeBtn();
   }
 
@@ -30815,9 +31071,10 @@ async function acqHandleLeaseFiles(fileList) {
   review.updated_at   = new Date().toISOString();
   {
     const failed = files.filter(f => _acqTenants.some(t => t._fileName === f.name && t._status === 'error')).map(f => f.name);
+    const documentIds = _acqDocRows(review.id).filter(r => files.some(f => f.name === r.file_name)).map(r => r.id);
     _acqRecord(review, { type: 'documents_added',
       summary: files.length + ' lease file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
-      meta: { kind: 'lease', files: files.map(f => f.name), failed } });
+      meta: { kind: 'lease', files: files.map(f => f.name), failed, documentIds } });
   }
   _saveAcqReview(review);
   document.getElementById('acqLeaseInput').value = '';
@@ -30830,12 +31087,31 @@ async function acqHandleInvoiceFiles(fileList) {
   if (!review) return;
 
   for (const file of files) {
-    const placeholder = { vendorName: file.name, amount: null, _status: 'pending', fileName: file.name };
+    // An id so the document row can name what this file produced. Invoices
+    // carried none; the analysis engine reads them positionally and is
+    // unaffected by one being present.
+    const placeholder = {
+      id: 'acqinv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      vendorName: file.name, amount: null, _status: 'pending', fileName: file.name,
+    };
     _acqInvoices.push(placeholder);
     _renderAcqInvoiceList();
 
+    // The row first — see acqHandleLeaseFiles.
+    const docRow = await _acqSaveDocument({
+      reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+      byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
+    });
+    if (docRow) placeholder._documentId = docRow.id;
+    _renderAcqDocuments();
+
+    let storage = { ref: null, reason: null };
     try {
-      const d = await callClaude(file, 'invoice_extraction');
+      const [stored, d] = await Promise.all([
+        _acqStoreOriginal(file, review.id),
+        callClaude(file, 'invoice_extraction'),
+      ]);
+      storage = stored;
       if (d) {
         const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
         let category     = d.category || 'other';
@@ -30850,17 +31126,32 @@ async function acqHandleInvoiceFiles(fileList) {
           invoiceDate: cleanHTML(d.invoiceDate || ''),
           _status:     'ok',
         });
+        // An invoice has no text layer to keep — the fields ARE what was read,
+        // so a successful extraction is 'success' rather than 'partial'.
+        await _acqSaveDocument({
+          reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+          byteSize: file.size, contentType: file.type || null,
+          storagePath: storage.ref, parsingStatus: 'success',
+          errorMessage: storage.reason,
+          producedKind: 'invoice', producedId: placeholder.id,
+        });
       } else {
-        placeholder._status = 'error';
-        placeholder._error  = 'Extraction returned null';
+        throw new Error('Extraction returned null');
       }
     } catch (e) {
       console.warn('[acq] invoice extraction failed:', file.name, e.message);
       placeholder._status = 'error';
       placeholder._error  = e.message;
+      await _acqSaveDocument({
+        reviewId: review.id, fileName: file.name, intakeKind: 'invoice',
+        byteSize: file.size, contentType: file.type || null,
+        storagePath: storage.ref, parsingStatus: 'failed',
+        errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
+      });
     }
 
     _renderAcqInvoiceList();
+    _renderAcqDocuments();
     _updateAcqAnalyzeBtn();
   }
 
@@ -30869,9 +31160,10 @@ async function acqHandleInvoiceFiles(fileList) {
   review.updated_at    = new Date().toISOString();
   {
     const failed = files.filter(f => _acqInvoices.some(i => i.fileName === f.name && i._status === 'error')).map(f => f.name);
+    const documentIds = _acqDocRows(review.id).filter(r => files.some(f => f.name === r.file_name)).map(r => r.id);
     _acqRecord(review, { type: 'documents_added',
       summary: files.length + ' invoice file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
-      meta: { kind: 'invoice', files: files.map(f => f.name), failed } });
+      meta: { kind: 'invoice', files: files.map(f => f.name), failed, documentIds } });
   }
   _saveAcqReview(review);
   document.getElementById('acqInvoiceInput').value = '';

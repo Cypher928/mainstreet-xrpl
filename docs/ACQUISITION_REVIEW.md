@@ -86,7 +86,7 @@ Each is small, separately approved, and verified before the next starts.
 | # | Increment | Status |
 |---|---|---|
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
-| P1-2 | Document Intake I — preserve every source (`acquisition_documents` table, migration 023, `/api/acquisition-documents`, originals in storage, extracted text kept, failed extractions kept as rows) | planned — needs migration authorization |
+| P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), `/api/acquisition-documents`, originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | Document Intake II — classification, families, versions (server-owned `document_classification` task; families grouped, never guessed; human confirms) | planned |
 | P1-4 | Lease Intelligence — abstraction per family, governing terms with state `verified · ai_extracted · missing · conflicting · unclear`; per-field confirm/correct as appended snapshots | planned |
 | P1-5 | Financial Intake — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
@@ -190,6 +190,80 @@ changed underneath it and checks the store is untouched.
 
 ---
 
+## 4b. P1-2 — every source is kept (shipped)
+
+### What changed
+
+`acqHandleLeaseFiles` read each file in the browser, kept the extracted fields
+in `review.data.tenants[]`, and threw the source away: no upload, no stored
+text, and a failed extraction left no record at all. Now every file gets a row
+in `acquisition_documents`, its original goes to the private `leases` bucket,
+and the review's Documents panel lists all of them with a control that opens
+each stored original.
+
+### The order, which is the point
+
+1. **The row first**, `parsing_status: 'pending'`. That a file arrived is a
+   fact; a tab closed mid-extraction must not lose it.
+2. The original goes to storage while the text is read — neither waits on the
+   other.
+3. The extraction lands and **updates that same row** (the upsert key is
+   `(review_id, file_name)`, so one file is one row).
+4. A failure updates it to `failed` **with its reason**, and keeps the original
+   if it reached storage. The file was still given to the review.
+
+### Storage
+
+The client asks `/api/upload` for `acq/<reviewId>/<timestamp>-<file>` in the
+`leases` bucket. That endpoint replaces every character outside
+`[A-Za-z0-9._-]`, so the object lands at
+`<uid>/acq_<reviewId>_<timestamp>-<file>` — one segment under the owner's id,
+which is exactly what `/api/document-url`'s ownership check reads. **No change
+to `/api/upload`'s bucket list, to `/api/document-url`, or to the storage
+policies in migration 011.** What is stored on the row is a reference
+(`bucket/path`), never a public URL (SEC-1).
+
+`api/upload.js`'s type allow-list gained `txt` and `webp`: the acquisition
+pickers have always accepted `.pdf,.txt` and `.pdf,.jpg,.jpeg,.png,.webp`, so a
+file the user was invited to choose was refused by the endpoint that stores it.
+Nothing noticed while acquisition uploaded nothing at all.
+
+### Statuses, and what each means
+
+| status | meaning |
+|---|---|
+| `pending` | the file arrived; nothing has been read from it yet |
+| `success` | read — a lease whose text was kept, or an invoice whose fields came back |
+| `partial` | a lease whose fields were read but whose text could not be kept |
+| `failed` | extraction failed; `error_message` says why, and the original is kept if it reached storage |
+
+A scanned lease takes the vision path, which returns fields and not text, so a
+second transcription pass runs alongside it — the same thing Lease Intake and
+the amendment path already do, for the same reason: a scanned document must
+still be readable later.
+
+### When the original cannot be stored
+
+Files above the upload limit are still read; the row keeps `storage_path` null
+and the panel says **"Original not on file"** rather than offering a control
+that opens nothing. The row carries the reason. Raising that limit needs
+chunked or direct-to-storage upload, which is not this increment (D-11).
+
+### When migration 023 has not been run
+
+`/api/acquisition-documents` answers `503` with `code: 'migration_missing'`
+naming the file. Uploads still extract — the workflow is not held hostage — and
+the panel says documents are **not being filed**, so a review never looks as
+though it simply has none.
+
+### No delete
+
+There is none, by design: preserving every source is the increment. `DELETE`
+answers 405 and says so. A removal would be an explicit archive workflow with
+its own column and its own approval (ARCHITECTURE_PRINCIPLES §4).
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,
@@ -205,7 +279,36 @@ changed underneath it and checks the store is untouched.
   re-derives it.
 - `tools/acquisition-workspace-mutation.js` — 25 mutants across the module
   and the glue; both suites must go red for each.
-- Both suites are registered in `test-regression.js`.
+
+P1-2:
+
+- `test-acquisition-documents.js` — drives `/api/acquisition-documents` for
+  real with Supabase stubbed at `fetch`: a caller may touch a document only
+  through a review they own, `user_id` comes from the token and never from the
+  body, unknown keys are dropped, the list does not ask for the text, `DELETE`
+  is 405, and a missing table is 503 naming migration 023. Plus source-pinned
+  checks that the row is written before extraction, a failure leaves a row, the
+  stored value is a reference, and the panel offers an opener.
+- `test-e2e-acquisition-documents.js` — the walk, against stand-ins that
+  flatten the object name exactly as `/api/upload` does and upsert on
+  `(review_id, file_name)` as the table constrains: the row is visible while
+  the extraction is still running, three files leave three rows with the
+  failure's reason on screen, the original is addressed under the owner's id,
+  re-opening the review reads them back, an oversize file says its original is
+  not on file, and with the table absent the panel says documents are not being
+  filed while extraction continues.
+- `tools/verify-migration-023.js` — **executes** the migration against a
+  throwaway PostgreSQL cluster (no Supabase project is contacted): it applies,
+  re-applies unchanged, enforces RLS with no anon policy, isolates one user's
+  documents from another's, refuses a document whose owner is not its review's
+  owner, cascades on review deletion, rejects a duplicate file name and
+  out-of-list values, moves `updated_at` on update, and rolls back cleanly —
+  after which it applies again.
+- `tools/acquisition-documents-mutation.js` — 25 mutants across the endpoint,
+  the intake and the migration SQL itself.
+- `test-security.js` gains the acquisition Documents panel as a
+  document-bearing surface (§9), rendered through the real renderer.
+- Every suite above is registered in `test-regression.js`.
 
 ---
 
@@ -216,7 +319,7 @@ Each belongs to the increment that needs it; none is decided here.
 | # | Decision | Needed by |
 |---|---|---|
 | D-2 | **The 13 columns of the lease matrix.** Today's Rent Roll tab shows 8 (Tenant · Suite · Sq Ft · Lease Term · Base Rent/yr · Renewal · Deposit · CAM Structure). The 13 must be supplied. | P1-8 |
-| D-3 | **Where acquisition documents live.** Recommended: a new `acquisition_documents` table (additive, isolated). Alternative: relax `lease_documents.property_id` and add `acquisition_review_id`, which touches three ownership checks shared with the managed-property path. Either needs a Pilot migration, authorized explicitly. | P1-2 |
+| ~~D-3~~ | **RESOLVED** — acquisition documents live in their own `acquisition_documents` table (migration 023), isolated from `lease_documents`. The object store is shared (the existing private `leases` bucket, `acq_<reviewId>_` naming), so no bucket or storage policy changed. | P1-2 · done |
 | D-4 | **Team activity / multi-user.** `acquisition_reviews` RLS is owner-only; team access is named in the IA and not implemented. P1-1 records activity for the owner. Sharing and roles are out of scope unless authorized. | later |
 | D-5 | **Lifecycle representation.** Done in P1-1 as `data.stage` in jsonb; the `status` column and its constraint are unchanged so Command Center and portfolio actions keep working. Whether `status` should grow is not proposed. | — |
 | D-6 | **Obligations and options extraction.** The current contract extracts only `renewal_options` and a boolean `audit_rights`. Adding fields to `lease_extraction` is a shared-contract change under the one-revision-one-re-extraction rule; recommended instead: a separate `acquisition_abstraction` task. | P1-4 |
@@ -224,6 +327,8 @@ Each belongs to the increment that needs it; none is decided here.
 | D-8 | **Stabilized / underwritten figures.** Assumed user-entered in-app; not imported from a model. | P1-7 |
 | D-9 | **Q&A scope.** Single document, or one family's governing documents? Cross-family questions stay a refusal (ARCHITECTURE_PRINCIPLES §1). | P1-9 |
 | D-10 | **Page numbers on extraction evidence.** Extraction quotes carry no page today; capturing one is a contract change. | P1-4 |
-| D-11 | **Large scans vs "preserve sources".** Originals over the request-body limit are read but not stored; direct-to-storage upload is new work. | P1-2 |
+| D-11 | **Large scans vs "preserve sources".** Still open. Originals over the upload limit are read, and the row now says the original is not on file with its reason — honest, but the source is still not kept. Raising it needs chunked or direct-to-storage upload. | a later increment |
 | D-12 | **Stage gating and auto-advance.** Which stage requires what, and whether any act (analysis run, documents added) should move the stage. P1-1 keeps the stage a manual marker. | P1-6 |
-| D-13 | **Existing Pilot reviews.** They upgrade in memory on load and on disk with their next change. Reading their count or shape means touching the Pilot database, which needs authorization. | P1-2 |
+| D-13 | **Existing Pilot reviews.** They upgrade in memory on load and on disk with their next change. Reading their count or shape means touching the Pilot database, which needs authorization. | open |
+| D-14 | **Same file name, different file.** The upsert key `(review_id, file_name)` means re-uploading a different document under a name already used replaces the row — the convention `lease_documents` already follows. Versions are P1-3's, and this is the case they have to answer. | P1-3 |
+| D-15 | **`review.data.documents[]`** — the empty array P1-1 added is still unused; the table is the one home. P1-3 either fills it with derived family structure or removes it. | P1-3 |

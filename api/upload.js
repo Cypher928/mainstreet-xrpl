@@ -50,13 +50,23 @@ async function _verifyUser(req, res) {
 }
 
 // Allowed file types: extension → canonical MIME type.
+//
+// `txt` and `webp` were added when Acquisition Review began preserving its
+// sources (P1-2). The app's own inputs have always accepted them — the
+// acquisition lease picker takes `.pdf,.txt` and the invoice picker
+// `.pdf,.jpg,.jpeg,.png,.webp` — so a file a user was invited to choose was
+// refused by the endpoint that stores it. Nothing noticed while acquisition
+// uploaded nothing at all. Both land in a private bucket, behind the same
+// size check and the same per-user path as every other upload.
 const ALLOWED_TYPES = {
   pdf:  'application/pdf',
   csv:  'text/csv',
+  txt:  'text/plain',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   png:  'image/png',
   jpg:  'image/jpeg',
   jpeg: 'image/jpeg',
+  webp: 'image/webp',
 };
 
 // Returns an error string if the file is not allowed, or null if valid.
