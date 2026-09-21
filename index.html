@@ -6135,14 +6135,21 @@
     .acq-docs-warn { color: var(--c-fbbf24, #fbbf24); }
     .acq-docs-warn code { font-size: 0.74rem; background: rgba(var(--line-rgb), 0.12);
       padding: 1px 5px; border-radius: 4px; }
-    .acq-doc-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-      border: 1px solid var(--theme-surface); border-radius: 8px; }
+    /* The row WRAPS rather than crushing the file name.
+       P1-3 put a type control and a Confirm button beside the opener, and the
+       chip, the controls and the opener all carry flex-shrink: 0 — so on a
+       phone the only flexible child, the one holding the file name, was
+       squeezed to nothing and `overflow-wrap: anywhere` then broke
+       SafeShield_Insurance_Lease.pdf one character per line. A real flex-basis
+       on the name means it wraps the row instead of collapsing. */
+    .acq-doc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 8px;
+      padding: 8px 10px; border: 1px solid var(--theme-surface); border-radius: 8px; }
     .acq-doc-kind { flex-shrink: 0; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.05em; padding: 2px 7px; border-radius: 9px;
       background: var(--theme-surface); color: var(--text-4); }
     .acq-doc-kind.lease   { color: var(--c-60a5fa); }
     .acq-doc-kind.invoice { color: var(--c-4ade80); }
-    .acq-doc-main { flex: 1; min-width: 0; }
+    .acq-doc-main { flex: 1 1 200px; min-width: 0; }
     .acq-doc-name { font-size: 0.82rem; color: var(--text-1); overflow-wrap: anywhere; }
     .acq-doc-meta { font-size: 0.72rem; color: var(--text-5); margin-top: 2px; }
     .acq-doc-status.ok      { color: var(--c-4ade80); }
@@ -6186,6 +6193,25 @@
     .acq-doc-confirm { background: none; border: 1px solid var(--c-4ade80); color: var(--c-4ade80);
       padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; }
     .acq-doc-confirm:hover { background: rgba(74, 222, 128, 0.12); }
+
+    /* On a phone the classification controls take a line of their own, under
+       the file name, instead of competing with it for a 320px row. Nothing is
+       hidden: the type control, Confirm and the opener are all still there,
+       and the desktop single-line row above is untouched. */
+    @media (max-width: 680px) {
+      .acq-doc-row  { align-items: flex-start; }
+      .acq-doc-kind { order: 1; margin-top: 2px; }
+      .acq-doc-main { order: 2; flex: 1 1 0; }
+      /* A zero-height, full-width flex item: everything ordered after it starts
+         a new line, so the controls never share the name's line. */
+      .acq-doc-row::after { content: ''; order: 3; flex: 0 0 100%; height: 0; margin: 0; }
+      .acq-doc-actions { order: 4; flex: 1 1 auto; min-width: 0; }
+      .acq-doc-type    { flex: 1 1 auto; min-width: 0; max-width: none; }
+      .acq-doc-open,
+      .acq-doc-nofile  { order: 5; flex: 0 0 auto; }
+      /* Touch targets, now that they are no longer crammed into a row. */
+      .acq-doc-type, .acq-doc-confirm, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
+    }
 
     /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */
     .acq-stage-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

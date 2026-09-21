@@ -441,6 +441,12 @@ const SUITES = [
   { label: 'Acquisition classification (P1-3)',         cmd: 'node test-acquisition-classification.js' },
   { label: 'Acquisition classification walk (e2e, P1-3)', cmd: 'node test-e2e-acquisition-classification.js' },
   { label: 'Migration 024 applies and rolls back',      cmd: 'node tools/verify-migration-024.js' },
+  // The panel on a phone. P1-3's type control and Confirm button turned the
+  // document row into four flex children that all refused to shrink, so the
+  // one holding the file name collapsed to nothing and names broke one
+  // character per line. This measures the laid-out geometry at real iPhone
+  // widths — a stylesheet reading would not have caught it.
+  { label: 'Acquisition documents on a phone (e2e)',    cmd: 'node test-e2e-acquisition-documents-mobile.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
