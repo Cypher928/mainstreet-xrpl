@@ -5,7 +5,8 @@
  *
  *   node tools/acquisition-report-mutation.js
  *
- * P1-7 / R-2 draws questions 3 and 4 from the frozen R-1 model. Every rule it
+ * P1-7 / R-2 drew questions 3 and 4, and R-3 questions 1 and 2, from the frozen
+ * R-1 model. Every rule they
  * keeps fails silently: a blank where "Not established" belongs still looks
  * like a tidy table; a contradiction with one side dropped still looks like an
  * answer; a derived figure labelled "Source" reads perfectly until somebody
@@ -68,6 +69,34 @@
  *     S10  the control is removed from the Lease Terms card
  *     S11  the view is not loaded
  *
+ *   R-3, question 1 — acquisition-report-view.js
+ *     Q01  property-level facts are not said to be missing
+ *     Q02  the review's name is not said to be a label
+ *     Q03  documents in no leasehold are dropped
+ *     Q04  a replaced upload is counted as an unfiled document
+ *     Q05  the leasehold roster is dropped
+ *     Q06  the roster's document counts are wrong
+ *     Q07  question 1's identity table is dropped
+ *     Q08  a deal-level entered figure is dropped
+ *     Q09  the review is not named
+ *     Q10  question 1 is drawn as pending again
+ *     Q11  question 1 is left out of the coverage count
+ *
+ *   R-3, question 2 — acquisition-report-view.js / index.html
+ *     Q12  the three income sources are dropped
+ *     Q13  the rent roll and GL columns show $0 instead of "Not on file"
+ *     Q14  the rent roll and GL notes are dropped
+ *     Q15  "financial intake is not yet included" is dropped
+ *     Q16  a contested contractual rent shows one figure
+ *     Q17  a missing contractual rent is drawn blank
+ *     Q18  the contractual cell carries a state the model did not give
+ *     Q19  the contractual cell loses its state chip
+ *     Q20  the source columns are not the model's
+ *     Q21  with no leasehold, the contractual note is dropped
+ *     Q22  question 2's term table is dropped
+ *     Q23  a Q2-keyed entered figure is dropped
+ *     Q24  the source headings stop wrapping, pushing the table off the page
+ *
  * A FAILING BASELINE IS NOT A PASS.
  */
 const fs = require('fs');
@@ -79,6 +108,12 @@ const ROOT = path.join(__dirname, '..');
 const V = 'acquisition-report-view.js';
 const S = 'script.js';
 const H = 'index.html';
+const IDENT_TAIL = "    html += termTables(q, opts, 'Fact');\n"
+  + "    if (q.emptyNote) html += '<p class=\"acqr-empty\">' + esc(q.emptyNote) + '</p>';\n"
+  + "    html += enteredHtml(q.entered, opts);";
+const INCOME_TAIL = "    html += termTables(q, opts, 'Term');\n"
+  + "    if (q.emptyNote) html += '<p class=\"acqr-empty\">' + esc(q.emptyNote) + '</p>';\n"
+  + "    html += enteredHtml(q.entered, opts);";
 
 const MUTANTS = [
   // ── states and origins ───────────────────────────────────────────────────
@@ -127,9 +162,11 @@ const MUTANTS = [
   { id: 'V13', file: V, why: 'the caveat on a proposed document\'s clause is dropped',
     from: "      + (ev.docStatus && ev.docStatus !== 'confirmed' && ev.docStatus !== 'corrected'",
     to:   '      + (false' },
+  // Anchored on renderObligations' own tail: R-3 reuses the same line in
+  // questions 1 and 2, which have their own mutants (Q08, Q23).
   { id: 'V14', file: V, why: 'entered figures are dropped from the report',
-    from: '    html += enteredHtml(q.entered, opts);',
-    to:   '' },
+    from: "    html += enteredHtml(q.entered, opts);\n    return html + '</section>';\n  }\n\n  /** Figures a person entered.",
+    to:   "    return html + '</section>';\n  }\n\n  /** Figures a person entered." },
 
   // ── question 4 ───────────────────────────────────────────────────────────
   { id: 'V15', file: V, why: 'a document with no original is offered an opener',
@@ -203,6 +240,82 @@ const MUTANTS = [
   { id: 'S11', file: H, why: 'the view is not loaded',
     from: '<script src="acquisition-report-view.js"></script>',
     to:   '' },
+
+  // ── R-3, question 1 ──────────────────────────────────────────────────────
+  { id: 'Q01', file: V, why: 'property-level facts are not said to be missing',
+    from: "'<span class=\"acqr-missing-value\">Property-level facts — address, site, building area, title — are not established.</span>'",
+    to:   "''" },
+  { id: 'Q02', file: V, why: 'the review\'s name is not said to be a label',
+    from: "'<div class=\"acqr-note\">The name this review was given. It is a label, not a fact any document establishes.</div>'",
+    to:   "''" },
+  { id: 'Q03', file: V, why: 'documents in no leasehold are dropped',
+    from: 'return d && !d.leasehold && !d.superseded; }',
+    to:   'return false; }' },
+  { id: 'Q04', file: V, why: 'a replaced upload is counted as an unfiled document',
+    from: 'return d && !d.leasehold && !d.superseded; }',
+    to:   'return d && !d.leasehold; }' },
+  { id: 'Q05', file: V, why: 'the leasehold roster is dropped',
+    from: "    if (ls.length) {\n      html += '<ul class=\"acqr-roster\">'",
+    to:   "    if (false) {\n      html += '<ul class=\"acqr-roster\">'" },
+  { id: 'Q06', file: V, why: 'the roster\'s document counts are wrong',
+    from: "esc(plural(l.documentCount || 0, 'document', 'documents'))",
+    to:   "esc(plural(0, 'document', 'documents'))" },
+  { id: 'Q07', file: V, why: 'question 1\'s identity table is dropped',
+    from: IDENT_TAIL,
+    to:   IDENT_TAIL.replace("    html += termTables(q, opts, 'Fact');\n", '') },
+  { id: 'Q08', file: V, why: 'a deal-level entered figure is dropped',
+    from: IDENT_TAIL,
+    to:   IDENT_TAIL.replace('    html += enteredHtml(q.entered, opts);', '') },
+  { id: 'Q09', file: V, why: 'the review is not named',
+    from: "esc(m.reviewName || 'Acquisition Review')",
+    to:   "esc('Acquisition Review')" },
+  { id: 'Q10', file: V, why: 'question 1 is drawn as pending again',
+    from: "      if (q.id === 'what_am_i_buying') body += renderIdentity(q, m, opts);",
+    to:   "      if (false) body += renderIdentity(q, m, opts);" },
+  { id: 'Q11', file: V, why: 'question 1 is left out of the coverage count',
+    from: "  var RENDERED = ['what_am_i_buying', 'what_income', 'what_obligations', 'what_evidence'];",
+    to:   "  var RENDERED = ['what_income', 'what_obligations', 'what_evidence'];" },
+
+  // ── R-3, question 2 ──────────────────────────────────────────────────────
+  { id: 'Q12', file: V, why: 'the three income sources are dropped',
+    from: '    html += sourcesHtml(q.sources);',
+    to:   '' },
+  { id: 'Q13', file: V, why: 'the rent roll and GL columns show $0 instead of "Not on file"',
+    from: "+ '<span class=\"acqr-missing-value\">Not on file</span></span>');",
+    to:   "+ '<span class=\"acqr-value\">$0</span></span>');" },
+  { id: 'Q14', file: V, why: 'the rent roll and GL notes are dropped',
+    from: "    absent.forEach(function (s) {\n      if (s.id === 'contractual') return;",
+    to:   "    absent.forEach(function (s) {\n      return;" },
+  { id: 'Q15', file: V, why: '"financial intake is not yet included" is dropped',
+    from: '    if (absent.some(function (s) { return s.pendingIncrement; })) {',
+    to:   '    if (false) {' },
+  { id: 'Q16', file: V, why: 'a contested contractual rent shows one figure',
+    from: "      : contested ? '<span class=\"acqr-contested\">Contested</span>'",
+    to:   "      : false ? '<span class=\"acqr-contested\">Contested</span>'" },
+  { id: 'Q17', file: V, why: 'a missing contractual rent is drawn blank',
+    from: "    var v = x.state === 'missing' ? '<span class=\"acqr-missing-value\">Not established</span>'",
+    to:   "    var v = x.state === 'missing' ? ''" },
+  { id: 'Q18', file: V, why: 'the contractual cell carries a state the model did not give',
+    from: "    return '<span data-source=\"contractual\" data-state=\"' + esc(x.state || 'missing') + '\"'",
+    to:   "    return '<span data-source=\"contractual\" data-state=\"' + 'verified' + '\"'" },
+  { id: 'Q19', file: V, why: 'the contractual cell loses its state chip',
+    from: "+ '>' + stateChip(x) + ' ' + v + '</span>';",
+    to:   "+ '>' + v + '</span>';" },
+  { id: 'Q20', file: V, why: 'the source columns are not the model\'s',
+    from: "list.map(function (s) { return '<th>' + esc(s.label) + '</th>'; })",
+    to:   "list.map(function (s) { return '<th>Source</th>'; })" },
+  { id: 'Q21', file: V, why: 'with no leasehold, the contractual note is dropped',
+    from: '    } else if (contractual.note) {',
+    to:   '    } else if (false) {' },
+  { id: 'Q22', file: V, why: 'question 2\'s term table is dropped',
+    from: INCOME_TAIL,
+    to:   INCOME_TAIL.replace("    html += termTables(q, opts, 'Term');\n", '') },
+  { id: 'Q23', file: V, why: 'a Q2-keyed entered figure is dropped',
+    from: INCOME_TAIL,
+    to:   INCOME_TAIL.replace('    html += enteredHtml(q.entered, opts);', '') },
+  { id: 'Q24', file: H, why: 'the source headings stop wrapping, pushing the table off the page',
+    from: '    .rpt-table.acqr-sources-table th:not(:first-child) { white-space: normal; }',
+    to:   '' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-report-mut-'));
@@ -222,6 +335,7 @@ const ENV = Object.assign({}, process.env, { ACQ_REPORT_GIT_ROOT: ROOT });
 const SUITES = [
   ['node', 'test-acquisition-report.js'],
   ['node', 'test-acquisition-report-view.js'],
+  ['node', 'test-acquisition-report-q1q2.js'],
   ['node', 'test-e2e-acquisition-report.js'],
 ];
 function runSuites() {

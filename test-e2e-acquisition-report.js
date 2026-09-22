@@ -1,6 +1,8 @@
 // test-e2e-acquisition-report.js
 // ============================================================================
-// Acquisition Review P1-7 / R-2 — Acquisition Report v2, walked in the real page.
+// Acquisition Review P1-7 / R-2 and R-3 — Acquisition Report v2, walked in the
+// real page. R-2 drew questions 3 and 4; R-3 adds 1 (what am I buying) and 2
+// (what income am I buying), checked row for row against the same model.
 //
 // The pure suite proves the view draws the model faithfully. This proves the
 // page does: that the control exists without the CAM analysis, that the report
@@ -56,6 +58,11 @@ const DOCS = [
                           "The initial term shall be fifteen (15) years, subject to Tenant's renewal options as set forth herein.", 2, 0.4),
       audit_rights:    EV(true, 'Tenant shall have the right to audit Landlord records.', 5, 0.95),
       cap:             EV(4, 'CAM increases are capped at 4% annually.', 4, 0.95),
+      // R-3: identity and income, as the Pilot reads them.
+      suite:           EV('Anchor Unit A-1', 'Premises: Anchor Unit A-1', 1, 0.9),
+      leased_sqft:     EV(65000, 'approximately 65,000 rentable square feet', 1, 0.95),
+      base_rent:       EV(1202500, 'Tenant agrees to pay base rent of $18.50 per square foot annually.', 3, 0.95),
+      admin_fee_pct:   EV(10, 'an administrative fee of ten percent (10%)', 5, 0.9),
       tenant_improvement_allowance: EV(650000, 'Landlord shall provide an allowance of $10.00 per rentable square foot.', 6, 0.9),
     }),
     created_at: '2026-09-21T12:31:02Z' },
@@ -72,6 +79,9 @@ const DOCS = [
       renewal_options: EV('one additional five-year renewal option following expiration of the then-current term',
                           'The Tenant shall have   one additional five-year renewal option', 1, 0.99),
       cap:             EV(3, 'controllable Common Area Maintenance expense increases shall not exceed   3% per year', 1, 0.99),
+      suite:           EV('Anchor Unit A-1', 'Suite: Anchor Unit A-1', 1, 0.9),
+      base_rent:       EV(1251250, 'the annual base rent for the Premises shall be   $19.25 per rentable square foot', 1, 0.97),
+      security_deposit: EV(100000, 'Tenant shall deposit $100,000 as security', 2, 0.97),
       assignment_consent: EV('Landlord consent not to be unreasonably withheld',
                              'Landlord’s consent to assignment shall not be unreasonably withheld.', 1, 0.95),
     }),
@@ -90,9 +100,21 @@ const DECISIONS = [
     action: 'confirm', previous_value: 'Landlord consent not to be unreasonably withheld', new_value: null,
     source_document_id: 'd-amd', source_quote: 'Landlord’s consent to assignment shall not be unreasonably withheld.',
     source_page: 1, decided_by: UID, decided_at: '2026-09-22T15:30:00Z', note: null, created_at: '2026-09-22T15:30:00Z' },
+  // R-3: the suite a person corrected on the Pilot (A-1 → A-3), and a deposit a person confirmed.
+  { id: 'dec-3', review_id: REVIEW_ID, user_id: UID, family_id: FAM, field_key: 'suite',
+    action: 'correct', previous_value: 'Anchor Unit A-1', new_value: 'Anchor Unit A-3',
+    source_document_id: 'd-amd', source_quote: 'Suite: Anchor Unit A-1', source_page: 1,
+    decided_by: UID, decided_at: '2026-09-22T15:40:00Z', note: null, created_at: '2026-09-22T15:40:00Z' },
+  { id: 'dec-4', review_id: REVIEW_ID, user_id: UID, family_id: FAM, field_key: 'security_deposit',
+    action: 'confirm', previous_value: 100000, new_value: null,
+    source_document_id: 'd-amd', source_quote: 'Tenant shall deposit $100,000 as security', source_page: 2,
+    decided_by: UID, decided_at: '2026-09-22T15:41:00Z', note: null, created_at: '2026-09-22T15:41:00Z' },
 ];
 const ASSUMPTIONS = [{ key: 'guaranty_limit', label: 'Underwritten guaranty limit', value: 500000,
-                       at: '2026-09-22T12:00:00Z', by: 'pm@example.com' }];
+                       at: '2026-09-22T12:00:00Z', by: 'pm@example.com' },
+                     // R-3: a deal-level figure with no lease field — question 1 must keep it.
+                     { key: 'exit_cap_rate', label: 'Underwritten exit cap rate', value: '7.25%',
+                       at: '2026-09-22T12:05:00Z', by: 'pm@example.com' }];
 
 const DB = `
 (function(){
@@ -315,6 +337,24 @@ const DB = `
                                  d.readFailedBecause || '', d.originalOnFile].join(':')),
       q1keys: [].concat(...m.questions[0].sections.map(s => s.facts)).map(f => f.key),
       q2keys: [].concat(...m.questions[1].sections.map(s => s.facts)).map(f => f.key),
+      q1: [].concat(...m.questions[0].sections.map(s => s.facts)).map(f =>
+        [f.key, f.state, f.origin || '', f.derived ? 'D' : ''].join(':')),
+      q2: [].concat(...m.questions[1].sections.map(s => s.facts)).map(f =>
+        [f.key, f.state, f.origin || '', f.derived ? 'D' : ''].join(':')),
+      q1entered: (m.questions[0].entered || []).map(f => [f.key, f.state, f.origin || ''].join(':')),
+      reviewName: m.reviewName,
+      leaseholds: m.leaseholds.map(l => l.familyId + ':' + l.label + ':' + l.documentCount),
+      unfiled: q4.documents.filter(d => !d.leasehold && !d.superseded).map(d => d.fileName),
+      sources: m.questions[1].sources.map(src => src.id + ':' + src.state + ':' +
+        (src.leaseholds || []).map(l => l.leaseholdId + '=' + l.baseRent.state).join('|')),
+      // what the page should hold, counted from the model — not hard-coded
+      factRows: [0, 1, 2].reduce((n, i) => n + [].concat(...m.questions[i].sections.map(s => s.facts)).length
+                                            + (m.questions[i].entered || []).length, 0),
+      incomeRows: (m.questions[1].sources[0].leaseholds || []).length,
+      docRows: q4.documents.length,
+      competingItems: [0, 1, 2].reduce((n, i) => n + [].concat(...m.questions[i].sections.map(s => s.facts))
+        .filter(f => f.state === 'issue' && f.competing.length >= 2)
+        .reduce((k, f) => k + f.competing.length, 0), 0),
     };
   });
 
@@ -360,6 +400,40 @@ const DB = `
               landlord: rowOf('landlord_work') },
       missingRows: [].map.call(q3.querySelectorAll('.acqr-leasehold .acqr-fact[data-state="missing"]'), txt),
       legend: txt(root.querySelector('.acqr-legend')),
+      q1: (() => { const q = root.querySelector('[data-q="what_am_i_buying"]'); return q ? {
+        rows: [].map.call(q.querySelectorAll('.acqr-leasehold .acqr-fact'), r =>
+          [r.getAttribute('data-key'), r.getAttribute('data-state'), r.getAttribute('data-origin') || '',
+           r.getAttribute('data-derived') === 'true' ? 'D' : ''].join(':')),
+        entered: [].map.call(q.querySelectorAll('.acqr-entered .acqr-fact'), r =>
+          [r.getAttribute('data-key'), r.getAttribute('data-state'), r.getAttribute('data-origin') || ''].join(':')),
+        property: txt(q.querySelector('[data-property="true"]')),
+        propertyState: (q.querySelector('.acqr-property-facts') || { getAttribute: () => null }).getAttribute('data-state'),
+        roster: [].map.call(q.querySelectorAll('.acqr-roster li'), li => li.getAttribute('data-leasehold') + '|' + txt(li)),
+        unfiledNote: txt(q.querySelector('[data-unfiled]')),
+        counts: txt(q.querySelector('.acqr-counts')),
+        text: txt(q),
+        suite: txt(q.querySelector('.acqr-fact[data-key="suite"]')),
+        sqft: txt(q.querySelector('.acqr-fact[data-key="leased_sqft"]')),
+        missing: [].map.call(q.querySelectorAll('.acqr-leasehold .acqr-fact[data-state="missing"]'), r => r.getAttribute('data-key') + '|' + txt(r)),
+      } : null; })(),
+      q2: (() => { const q = root.querySelector('[data-q="what_income"]'); return q ? {
+        rows: [].map.call(q.querySelectorAll('.acqr-leasehold .acqr-fact'), r =>
+          [r.getAttribute('data-key'), r.getAttribute('data-state'), r.getAttribute('data-origin') || '',
+           r.getAttribute('data-derived') === 'true' ? 'D' : ''].join(':')),
+        // textContent, not innerText: the heading row is uppercased by CSS.
+        heads: [].map.call(q.querySelectorAll('.acqr-sources th'), th => th.textContent.replace(/\s+/g, ' ').trim()),
+        sources: [].map.call(q.querySelectorAll('.acqr-income'), tr => tr.getAttribute('data-leasehold') + '|' +
+          [].map.call(tr.querySelectorAll('[data-source]'), c => c.getAttribute('data-source') + '=' + c.getAttribute('data-state')).join(',')),
+        sourcesText: txt(q.querySelector('.acqr-sources')),
+        intake: txt(q.querySelector('[data-financial-intake="not-included"]')),
+        rent: txt(q.querySelector('.acqr-leasehold .acqr-fact[data-key="base_rent"]')),
+        rentCompeting: q.querySelectorAll('.acqr-leasehold .acqr-fact[data-key="base_rent"] .acqr-competing-item').length,
+        rentLead: txt(q.querySelector('.acqr-leasehold .acqr-fact[data-key="base_rent"] .acqr-evidence-lead')),
+        deposit: txt(q.querySelector('.acqr-fact[data-key="security_deposit"]')),
+        depositState: (q.querySelector('.acqr-fact[data-key="security_deposit"]') || { getAttribute: () => null }).getAttribute('data-state'),
+        admin: txt(q.querySelector('.acqr-fact[data-key="admin_fee_pct"]')),
+        text: txt(q),
+      } : null; })(),
     };
   });
 
@@ -408,8 +482,9 @@ const DB = `
       .map(c => (c.closest('tr').getAttribute('data-key') || c.closest('tr').getAttribute('data-doc')) + ':' + c.scrollWidth + '>' + c.clientWidth);
     return { boxes, clipped };
   });
+  // Q1 leasehold + entered, Q2 sources + leasehold, Q3 leasehold + entered, Q4.
   check('1280px: no report table scrolls sideways',
-        wide.boxes.length === 3 && wide.boxes.every(b => b.scroll <= b.client + 1),
+        wide.boxes.length === 7 && wide.boxes.every(b => b.scroll <= b.client + 1),
         wide.boxes.map(b => b.scroll + '/' + b.client).join(' '));
   check('1280px: no cell’s text is cut off', wide.clipped.length === 0, wide.clipped.slice(0, 4).join(', ') || 'none');
 
@@ -491,23 +566,82 @@ const DB = `
   const still = await page.evaluate(() => getComputedStyle(document.getElementById('reportOverlay')).display);
   check('the report stays open behind it', still === 'block', still);
 
-  // ── 5 · Q1, Q2, Q5 are drawn in place as not yet answered ──────────────
-  check('the report says it answers 2 of 5 questions',
-        d1.coverage.drawn === '2' && d1.coverage.of === '5' && /not a complete acquisition report/.test(d1.coverage.text),
+  // ── 5 · only Q5 is still drawn in place as not yet answered (R-3) ───────
+  check('the report says it answers 4 of 5 questions',
+        d1.coverage.drawn === '4' && d1.coverage.of === '5' && /not a complete acquisition report/.test(d1.coverage.text),
         d1.coverage.text.slice(0, 120));
   check('all five questions appear, in §7 order', JSON.stringify(d1.order) === JSON.stringify(
         ['what_am_i_buying', 'what_income', 'what_obligations', 'what_evidence', 'what_needs_attention']),
         d1.order.join(','));
-  check('Q1, Q2 and Q5 are marked pending, not skipped',
-        JSON.stringify(d1.pending) === JSON.stringify(['what_am_i_buying', 'what_income', 'what_needs_attention']),
-        d1.pending.join(','));
-  check('each pending question warns against being read as an answer',
-        d1.pendingText.length === 3 && d1.pendingText.every(t => /Nothing here should be read as an answer/.test(t)));
-  const leaked = d1.allKeys.filter(k => exp.q1keys.indexOf(k) >= 0 || exp.q2keys.indexOf(k) >= 0);
-  check('no Q1 or Q2 term leaks into this version — not even the contested CAM cap',
-        leaked.length === 0 && d1.allKeys.indexOf('cap') < 0, leaked.join(',') || 'none');
+  check('Q5 alone is marked pending, not skipped',
+        JSON.stringify(d1.pending) === JSON.stringify(['what_needs_attention']), d1.pending.join(','));
+  check('and warns against being read as an answer',
+        d1.pendingText.length === 1 && /Nothing here should be read as an answer/.test(d1.pendingText[0]));
+  check('each term appears in exactly one question — Q1, Q2 and Q3 keys never repeat',
+        d1.allKeys.filter(k => exp.q1keys.indexOf(k) >= 0).length === exp.q1keys.length
+        && d1.allKeys.filter(k => exp.q2keys.indexOf(k) >= 0).length === exp.q2keys.length,
+        d1.allKeys.length + ' keys');
   check('the legend explains every state and the derived mark',
         ['Verified', 'Assumption', 'Issue', 'Missing', 'Derived — calculated from lease terms'].every(w => d1.legend.indexOf(w) >= 0));
+
+  // ── 5a · Q1 — what am I buying? (R-3) ────────────────────────────────────
+  const Q1d = d1.q1;
+  check('Q1 is drawn', !!Q1d);
+  check('Q1 on screen is exactly the model — key, state, origin, derived, in order',
+        JSON.stringify(Q1d.rows) === JSON.stringify(exp.q1) && exp.q1.length === 6, Q1d.rows.join(','));
+  check('the property is the review\'s name, said to be a label and not a document fact',
+        Q1d.property.indexOf(exp.reviewName) === 0 && /It is a label, not a fact any document establishes\./.test(Q1d.property),
+        Q1d.property.slice(0, 90));
+  check('property-level facts are drawn Missing, not left out',
+        Q1d.propertyState === 'missing' && /Property-level facts — address, site, building area, title — are not established\./.test(Q1d.property));
+  check('the roster is every leasehold in the model, with its document count',
+        Q1d.roster.length === exp.leaseholds.length && exp.leaseholds.every((l, i) => {
+          const [id, label, n] = l.split(':'); return Q1d.roster[i] === id + '|' + label + ' — ' + n + ' documents'; }),
+        Q1d.roster.join(' ; '));
+  check('a document in no leasehold is counted and named', exp.unfiled.length === 1
+        && /Documents in no leasehold 1/.test(Q1d.counts) && Q1d.unfiledNote.indexOf(exp.unfiled[0]) >= 0,
+        Q1d.unfiledNote);
+  check('a suite a person corrected reads Verified, with the corrected value and who changed it',
+        /Verified/.test(Q1d.suite) && /Anchor Unit A-3/.test(Q1d.suite) && /Corrected by a person\./.test(Q1d.suite),
+        Q1d.suite.slice(0, 120));
+  check('an AI-read area reads AI-read · not confirmed, with its clause',
+        /AI-read · not confirmed/.test(Q1d.sqft) && /65,000/.test(Q1d.sqft) && /Source:/.test(Q1d.sqft), Q1d.sqft.slice(0, 120));
+  check('commencement, expiration and lease type read Not established',
+        ['start_date', 'end_date', 'lease_type'].every(k => Q1d.missing.some(x => x.startsWith(k + '|') && /Not established/.test(x))),
+        Q1d.missing.map(x => x.split('|')[0]).join(','));
+  check('no leased area is totalled', !/total/i.test(Q1d.text));
+  check('a deal-level entered figure is kept in Q1, labelled Entered · no document',
+        JSON.stringify(Q1d.entered) === JSON.stringify(exp.q1entered) && Q1d.entered.indexOf('exit_cap_rate:assumption:entered') >= 0
+        && /Underwritten exit cap rate/.test(Q1d.text), Q1d.entered.join(','));
+
+  // ── 5b · Q2 — what income am I actually buying? (R-3) ────────────────────
+  const Q2d = d1.q2;
+  check('Q2 is drawn', !!Q2d);
+  check('Q2 on screen is exactly the model — key, state, origin, derived, in order',
+        JSON.stringify(Q2d.rows) === JSON.stringify(exp.q2) && exp.q2.length === 10, Q2d.rows.join(','));
+  check('all three income sources head the table: contractual, rent roll, general ledger',
+        JSON.stringify(Q2d.heads) === JSON.stringify(['Leasehold', 'Contractual (from the leases)',
+          'Rent roll (as the seller states it)', 'General ledger (as the books show it)']), Q2d.heads.join(' | '));
+  const expSrc = exp.sources[0].split(':')[2].split('|').map(x => x.split('=')).map(([id, st]) =>
+    id + '|contractual=' + st + ',rent_roll=missing,gl=missing');
+  check('each leasehold\'s contractual cell carries the model\'s state; rent roll and GL are Missing',
+        JSON.stringify(Q2d.sources) === JSON.stringify(expSrc), Q2d.sources.join(' ; '));
+  check('the rent roll and GL say Not on file, not zero, and carry no figure',
+        (Q2d.sourcesText.match(/Not on file/g) || []).length === 2 * exp.incomeRows
+        && /No rent roll is on file\. This column is not zero — it is unevidenced\./.test(Q2d.sourcesText)
+        && /No general ledger is on file\. This column is not zero — it is unevidenced\./.test(Q2d.sourcesText));
+  check('the page says financial intake is not yet part of the review',
+        /Financial intake — the rent roll and the general ledger — is not yet part of Acquisition Review\./.test(Q2d.intake), Q2d.intake);
+  check('two calculated base rents that disagree are Contested, each side shown and marked derived',
+        /Contested/.test(Q2d.rent) && Q2d.rentCompeting === 2 && (Q2d.rent.match(/Derived — calculated from lease terms/g) || []).length >= 2
+        && /Neither value has been selected\./.test(Q2d.rent), Q2d.rent.slice(0, 120));
+  check('and no single Source is named for it', Q2d.rentLead === '', Q2d.rentLead);
+  check('the contested rent is not shown as either figure in the sources table',
+        !/\$1,202,500|\$1,251,250/.test(Q2d.sourcesText) && /Contested/.test(Q2d.sourcesText));
+  check('a deposit a person confirmed reads Verified — Confirmed by a person',
+        Q2d.depositState === 'verified' && /\$100,000/.test(Q2d.deposit) && /Confirmed by a person\./.test(Q2d.deposit), Q2d.deposit.slice(0, 120));
+  check('an AI-read admin fee reads AI-read · not confirmed', /AI-read · not confirmed/.test(Q2d.admin), Q2d.admin.slice(0, 80));
+  check('nothing adds income into one total', !/total/i.test(Q2d.text));
 
   // ── 6 · fresh reads: a decision made after load reaches the report ─────
   await page.evaluate(() => { if (typeof closeReport === 'function') closeReport(); });
@@ -546,14 +680,14 @@ const DB = `
     const m = await p3.evaluate(() => {
       const root = document.querySelector('#rptBody [data-report="acquisition-v2"]');
       const vw = document.documentElement.clientWidth;
-      const rows = [].map.call(root.querySelectorAll('.acqr-fact, .acqr-doc'), r => {
+      const rows = [].map.call(root.querySelectorAll('.acqr-fact, .acqr-doc, .acqr-income'), r => {
         const b = r.getBoundingClientRect();
         return { key: r.getAttribute('data-key') || r.getAttribute('data-doc'), right: Math.round(b.right), width: Math.round(b.width),
-                 chip: !!r.querySelector('.acqr-chip, [data-read]') };
+                 kind: r.className, chip: !!r.querySelector('.acqr-chip, [data-read]') };
       });
       // On a phone each <td> is a card line: heading on the left, content on
       // the right. Everything a cell says must sit in the content column.
-      const cells = [].map.call(root.querySelectorAll('.acqr-fact td, .acqr-doc td'), td => {
+      const cells = [].map.call(root.querySelectorAll('.acqr-fact td, .acqr-doc td, .acqr-income td'), td => {
         const tr = td.getBoundingClientRect();
         const kids = [].filter.call(td.childNodes, n => n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()));
         const inner = td.querySelector(':scope > .acqr-cell');
@@ -569,18 +703,26 @@ const DB = `
           `document ${m.scroll}px, body ${m.bodyScroll}px, viewport ${m.vw}px`);
     check('375px: every row fits inside the viewport', m.rows.every(r => r.right <= m.vw + 1),
           m.rows.filter(r => r.right > m.vw + 1).map(r => r.key + '@' + r.right).join(',') || m.rows.length + ' rows fit');
-    // 11 obligations + 1 entered figure + 3 documents
-    check('375px: every row keeps its state', m.rows.length === 15 && m.rows.every(r => r.chip),
-          m.rows.length + ' rows');
-    // 12 fact rows × 3 cells + 3 documents × 4 cells
-    check('375px: every cell holds its content as one block', m.cells.length === 48 && m.cells.every(c => c.ok),
+    // Every fact row of Q1–Q3 (entered included), every document, every income row — counted from the model.
+    const em = await expectedModel(p3);
+    const wantRows = em.factRows + em.docRows + em.incomeRows;
+    check('375px: every row keeps its state', m.rows.length === wantRows && wantRows >= 30 && m.rows.every(r => r.chip),
+          m.rows.length + ' rows of ' + wantRows);
+    // fact rows × 3 cells, documents × 4, income rows × 4 (leasehold + three sources)
+    const wantCells = em.factRows * 3 + em.docRows * 4 + em.incomeRows * 4;
+    check('375px: every cell holds its content as one block', m.cells.length === wantCells && m.cells.every(c => c.ok),
           m.cells.filter(c => !c.ok).length + ' of ' + m.cells.length + ' cells split');
     check('375px: nothing a cell says is dealt into the heading gutter',
           m.cells.every(c => c.outOfColumn === 0 && c.gutter > 40),
           'gutters ' + [...new Set(m.cells.map(c => c.gutter))].join(',') + 'px; misplaced '
           + m.cells.reduce((a, c) => a + c.outOfColumn, 0));
-    check('375px: both sides of the contradiction stay on screen',
-          m.competing.length === 2 && m.competing.every(x => x <= m.vw + 1), m.competing.join(','));
+    check('375px: both sides of every contradiction stay on screen',
+          m.competing.length === em.competingItems && em.competingItems === 6 && m.competing.every(x => x <= m.vw + 1),
+          m.competing.join(','));
+    if (process.env.SHOT_Q12) {
+      await p3.evaluate(() => document.querySelector('#rptBody [data-q="what_income"]').scrollIntoView());
+      await p3.screenshot({ path: process.env.SHOT_Q12, fullPage: false });
+    }
     if (process.env.SHOT) {
       await p3.evaluate(() => document.querySelector('#rptBody [data-q="what_obligations"]').scrollIntoView());
       await p3.screenshot({ path: process.env.SHOT, fullPage: false });

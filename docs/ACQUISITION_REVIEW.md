@@ -1687,3 +1687,74 @@ Three things the tests passed and the screenshots did not:
 Q1 and Q2 (R-3), Q5 and the assumptions display beyond Q3 (R-4), and the
 closing validation (R-5). No assumption-entry or editing workflow exists or
 was added.
+
+## 7b. P1-7 R-3 — questions 1 and 2 (built; awaiting review)
+
+**Status: uncommitted, awaiting approval. Nothing deployed. No migration, no
+new serverless function, no change to `script.js`.** R-1 is unchanged (same
+sha256). R-2 changed in exactly two places — its list of questions drawn in
+full, and the dispatch in `renderReport` — and a test renders question 3 and 4
+with the committed R-2 view and with this one and requires identical markup.
+
+### Where every figure comes from
+
+Only the R-1 model. Nothing here reads the review, the documents or the
+decisions directly.
+
+| Asked | From the model |
+|---|---|
+| The property | `reviewName` — the name a person gave the review, shown as a label and not a fact |
+| Property-level facts (address, site, building area, title) | none — no document is read for them. Drawn **Missing**, never left out |
+| Leaseholds in the workspace | `leaseholds[]` — label and document count |
+| Documents in no leasehold | question 4's documents with no leasehold, excluding replaced uploads |
+| Tenant, suite, leased sq ft, commencement, expiration, lease type | question 1's six fields per leasehold |
+| Deal-level entered figures (no lease field) | question 1's `entered` |
+| Rent, deposit and the eight expense-recovery terms | question 2's ten fields per leasehold |
+| Contractual vs rent roll vs GL | question 2's `sources` — contractual is each leasehold's base-rent fact; rent roll and GL are `missing`, `pendingIncrement: P1-5` |
+
+`review.data.totalSqFt` is not in the model, so the report does not show it.
+Showing it would mean a second source of truth beside the frozen projection.
+
+### What the page says, and may not say
+
+- **The property is a name.** "The name this review was given. It is a label,
+  not a fact any document establishes." Then, as Missing: "Property-level
+  facts — address, site, building area, title — are not established."
+- **Every leasehold, and every document in none**, by name, with what that
+  means: nothing such a document says is reported under a leasehold.
+- **No totals.** Leased area and rent are shown per leasehold; nothing is
+  summed across leaseholds whose figures are in different states.
+- **Established means confirmed.** In this model a figure is `verified` only
+  when a person confirmed or corrected it against a document; the row says
+  which ("Confirmed by a person." / "Corrected by a person."). An AI reading
+  of the lease that nobody checked is an Assumption, labelled AI-read.
+- **Three income columns, not one.** "Base rent, by source": contractual, rent
+  roll, general ledger, side by side. Rent roll and GL read **Missing · Not
+  on file**, with the model's own note ("This column is not zero — it is
+  unevidenced."), and the page says financial intake is not yet part of
+  Acquisition Review. A contested contractual rent reads Contested there, not
+  either figure; both sides, each marked derived, are in the table below.
+
+### What the browser found
+
+The income-sources table overflowed at 1280px — its headings are sentences
+and report tables keep headings on one line. Scoped to that table, they now
+wrap; the walk checks no report table scrolls sideways.
+
+### Verified
+
+- `test-acquisition-report-q1q2.js` 60/60, `test-acquisition-report-view.js`
+  75/75 (three R-2 scope assertions moved from "2 of 5" to "4 of 5"),
+  `test-acquisition-report.js` 86/86.
+- `test-e2e-acquisition-report.js` 75/75 — Q1 and Q2 row for row against the
+  model in the real page; 1280px and 375px.
+- `tools/acquisition-report-mutation.js` 59/59 killed (R-2's 35 plus 24 for
+  R-3), no survivors.
+- Full regression 201 suites: 197 pass; the 4 failures are the four
+  pre-existing ones (Live extraction walk, Billing readiness consistency, Ask
+  AI intent coverage, Broken promises).
+
+### Not done in R-3
+
+Question 5 (R-4), assumption display beyond what questions 1–3 already show
+(R-4), and the closing validation (R-5). No financial intake was simulated.

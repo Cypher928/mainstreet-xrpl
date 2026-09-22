@@ -4173,6 +4173,18 @@
     .acqr-unchosen { margin-top: 4px; font-size: 0.72rem; font-weight: 700; color: var(--c-f87171); }
     .acqr-empty { color: var(--text-3); font-style: italic; font-size: 0.84rem; margin: 0 0 20px; }
     .acqr-pending .acqr-qtitle { opacity: 0.6; }
+    /* R-3: the property block, the leasehold roster and the income sources. */
+    .acqr-property { margin: 0 0 12px; }
+    .acqr-property-facts { margin-top: 8px; font-size: 0.8rem; line-height: 1.6; }
+    .acqr-roster { margin: 0 0 12px; padding-left: 18px; font-size: 0.82rem; line-height: 1.7; color: var(--text-1); }
+    .acqr-roster-docs { color: var(--text-3); font-size: 0.74rem; }
+    .acqr-sources { margin: 0 0 18px; }
+    /* The source names are sentences ("Rent roll (as the seller states it)");
+       left nowrap they pushed the table past its scroll box at desktop width. */
+    .rpt-table.acqr-sources-table th:not(:first-child) { white-space: normal; }
+    .rpt-table.acqr-sources-table td, .rpt-table.acqr-sources-table th { width: 25%; }
+    .acqr-intake { margin-top: 8px; padding: 8px 12px; border-radius: 8px; font-size: 0.78rem; line-height: 1.5;
+      color: var(--text-2); border: 1px dashed rgba(var(--line-rgb),0.3); }
     .acq-report-v2-btn { margin-left: auto; }
     .rpt-kpi {
       flex: 1; min-width: 110px; padding: 18px 14px;

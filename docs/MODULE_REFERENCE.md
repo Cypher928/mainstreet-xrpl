@@ -94,12 +94,13 @@ access at load time and are Node-testable via `vm`.
 - **Frozen:** pinned by sha256 in `test-acquisition-report-view.js`.
 - **Tests:** `test-acquisition-report.js`.
 
-## acquisition-report-view.js — Acquisition Report v2: the view (Phase 1, P1-7 R-2)
-- **Purpose:** draws what `acquisition-report.js` decided — questions 3 and 4 in full, questions 1, 2 and 5 in place as not yet included. Decides nothing itself.
-- **Inputs/Outputs:** `renderReport(model, { linkFor, typeLabel })` → HTML string; also `factRow`, `stateChip`, `renderObligations`, `renderEvidence`, `renderPending`, `formatValue`, `esc`. Pure; the page injects `docLinkHtml` as `linkFor`.
+## acquisition-report-view.js — Acquisition Report v2: the view (Phase 1, P1-7 R-2 / R-3)
+- **Purpose:** draws what `acquisition-report.js` decided — questions 1–4 in full (R-2: 3 and 4; R-3: 1 and 2), question 5 in place as not yet included. Decides nothing itself.
+- **Inputs/Outputs:** `renderReport(model, { linkFor, typeLabel })` → HTML string; also `renderIdentity` (Q1), `renderIncome` (Q2), `renderObligations` (Q3), `renderEvidence` (Q4), `renderPending`, `factRow`, `stateChip`, `formatValue`, `esc`. Pure; the page injects `docLinkHtml` as `linkFor`.
+- **Q1 and Q2:** the property is the review's name, said to be a label; property-level facts are drawn Missing; every leasehold and every document in none is listed; nothing is totalled. Income is shown by source — contractual, rent roll, general ledger — with the latter two Missing · Not on file until financial intake exists.
 - **Rules it keeps:** missing is "Not established", never blank or zero; AI-read and entered assumptions are labelled apart; a derived figure's clause is "Calculated from", never "Source"; a contradiction shows both sides and picks neither; every table cell holds its content in one `.acqr-cell` so the phone card layout cannot split it.
 - **Wired by:** `generateAcquisitionReportV2()` in `script.js`, from `#acqReportV2Btn` on the Lease Terms card. Writes nothing; calls no AI.
-- **Tests:** `test-acquisition-report-view.js`, `test-e2e-acquisition-report.js`, `tools/acquisition-report-mutation.js`.
+- **Tests:** `test-acquisition-report-view.js`, `test-acquisition-report-q1q2.js`, `test-e2e-acquisition-report.js`, `tools/acquisition-report-mutation.js`.
 
 ## Reports
 - **lease-review-packets.js** (lender summary etc.), **escrow-draw-packets.js** (draw package), plus script.js report generators (Master, Reconciliation Summary, Tenant Statements, CSV exports). Pattern: engine data → HTML → print window.

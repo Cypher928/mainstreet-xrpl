@@ -267,11 +267,13 @@ section('7 · the report does not pretend to be complete');
     ['what_am_i_buying', 'what_income', 'what_obligations', 'what_evidence', 'what_needs_attention']
       .map(id => HTML.indexOf('data-q="' + id + '"')).every((p, i, a) => p >= 0 && (i === 0 || p > a[i - 1])));
   const pending = (HTML.match(/data-pending="true"/g) || []).length;
-  check('questions 1, 2 and 5 are drawn IN PLACE as not yet included', pending === 3, `${pending}`);
-  check('each says nothing there is an answer',
-    (HTML.match(/Nothing here should be read as an answer to this question\./g) || []).length === 3);
-  check('the report opens by saying it answers 2 of 5 questions',
-    /data-drawn="2" data-of="5"/.test(HTML) && /This report currently answers 2 of 5 questions\./.test(HTML));
+  // R-3 draws questions 1 and 2; question 5 is still drawn in place.
+  check('question 5 is drawn IN PLACE as not yet included',
+    pending === 1 && /data-q="what_needs_attention" data-pending="true"/.test(HTML), `${pending}`);
+  check('and says nothing there is an answer',
+    (HTML.match(/Nothing here should be read as an answer to this question\./g) || []).length === 1);
+  check('the report opens by saying it answers 4 of 5 questions',
+    /data-drawn="4" data-of="5"/.test(HTML) && /This report currently answers 4 of 5 questions\./.test(HTML));
   check('and that it is not a complete acquisition report', /It is not a complete acquisition report\./.test(HTML));
   check('there is a legend for every chip on the page',
     ['Verified', 'Assumption', 'Issue', 'Missing'].every(w => new RegExp('acqr-chip[^>]*>' + w + '<').test(between(HTML, 'acqr-legend', '</div>'))));

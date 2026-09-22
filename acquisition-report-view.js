@@ -3,15 +3,16 @@
  * acquisition-report-view.js — Acquisition Report v2, drawn.
  *
  * Phase 1 of Acquisition Review (docs/ACQUISITION_REVIEW.md §7), increment
- * P1-7, step R-2: questions 3 and 4.
+ * P1-7. Step R-2 drew questions 3 and 4; step R-3 adds 1 and 2.
  *
+ *   1. What am I buying?
+ *   2. What income am I actually buying?
  *   3. What obligations am I inheriting?
  *   4. What documents and evidence prove it?
  *
- * These two first because they are the two the P1-4 model answers in full
- * today. Questions 1, 2 and 5 are drawn IN THEIR PLACE as not yet included,
- * rather than being left out: a report that silently skips a question reads as
- * though it answered it.
+ * Question 5 is drawn IN ITS PLACE as not yet included, rather than being
+ * left out: a report that silently skips a question reads as though it
+ * answered it.
  *
  * THE ONE RULE THIS FILE KEEPS
  *
@@ -51,9 +52,9 @@
   };
   var DERIVED_LABEL = 'Derived — calculated from lease terms';
 
-  // The questions this step draws in full. The rest are drawn as not yet
-  // included, in their place.
-  var RENDERED = ['what_obligations', 'what_evidence'];
+  // The questions drawn in full. The rest are drawn as not yet included, in
+  // their place.
+  var RENDERED = ['what_am_i_buying', 'what_income', 'what_obligations', 'what_evidence'];
 
   function esc(v) {
     return String(v === null || v === undefined ? '' : v)
@@ -241,6 +242,152 @@
       + '</tbody></table></div>';
   }
 
+  // ── R-3: questions 1 and 2 ──────────────────────────────────────────────
+  //
+  // Drawn from the same model, with the same row, chip and evidence as Q3.
+  // renderObligations is left exactly as R-2 shipped it; these share its
+  // parts, not its code path, so a change here cannot move question 3.
+
+  /** One table per leasehold, every field the model gives, under `factHead`. */
+  function termTables(q, opts, factHead) {
+    return (q.sections || []).map(function (s) {
+      return '<div class="acqr-leasehold" data-leasehold="' + esc(s.leaseholdId || '') + '">'
+        + '<div class="acqr-leasehold-name">' + esc(s.label) + '</div>'
+        + '<table class="rpt-table acqr-table"><thead><tr>'
+        + '<th>' + esc(factHead) + '</th><th>State</th><th>What the documents say</th>'
+        + '</tr></thead><tbody>'
+        + (s.facts || []).map(function (f) { return factRow(f, opts); }).join('')
+        + '</tbody></table></div>';
+    }).join('');
+  }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  /**
+   * Q1 — the property, the leaseholds on file, and who each one is.
+   *
+   * The model knows the property only by the name a person gave the review.
+   * No document is read for a property-level fact (address, site, building
+   * area, title), so that is said, as Missing, rather than left out — a
+   * report that opens on a name and then lists tenants reads as though the
+   * building had been established.
+   */
+  function renderIdentity(q, model, opts) {
+    if (!q) return '';
+    var m = model || {};
+    var html = '<section class="acqr-question" data-q="' + esc(q.id) + '">' + questionHead(q);
+
+    html += '<div class="acqr-property" data-property="true">'
+      + '<div class="acqr-leasehold-name">' + esc(m.reviewName || 'Acquisition Review') + '</div>'
+      + '<div class="acqr-note">The name this review was given. It is a label, not a fact any document establishes.</div>'
+      + '<div class="acqr-property-facts" data-state="missing">'
+      +   '<span class="acqr-chip acqr-missing" data-state="missing">Missing</span> '
+      +   '<span class="acqr-missing-value">Property-level facts — address, site, building area, title — are not established.</span>'
+      +   '<div class="acqr-note">No document is read for them yet. What follows is per leasehold, from the leases.</div>'
+      + '</div></div>';
+
+    // What the workspace holds: each leasehold, and every document that is in
+    // none — nothing such a document says can appear under a leasehold.
+    var ls = Array.isArray(m.leaseholds) ? m.leaseholds : [];
+    var q4 = (m.questions || []).filter(function (x) { return x && x.id === 'what_evidence'; })[0];
+    var unfiled = (q4 && Array.isArray(q4.documents) ? q4.documents : [])
+      .filter(function (d) { return d && !d.leasehold && !d.superseded; });
+    html += '<div class="acqr-counts">'
+      + '<span class="acqr-count" data-count="leaseholds">Leaseholds ' + esc(ls.length) + '</span>'
+      + '<span class="acqr-count" data-count="unfiled">Documents in no leasehold ' + esc(unfiled.length) + '</span>'
+      + '</div>';
+    if (ls.length) {
+      html += '<ul class="acqr-roster">' + ls.map(function (l) {
+        return '<li data-leasehold="' + esc(l.familyId || '') + '">' + esc(l.label)
+          + ' <span class="acqr-roster-docs">— ' + esc(plural(l.documentCount || 0, 'document', 'documents')) + '</span></li>';
+      }).join('') + '</ul>';
+    }
+    if (unfiled.length) {
+      html += '<div class="acqr-note" data-unfiled="' + unfiled.length + '">'
+        + esc(plural(unfiled.length, 'document is', 'documents are'))
+        + ' not filed into any leasehold, so nothing '
+        + (unfiled.length === 1 ? 'it says' : 'they say') + ' is reported under one: '
+        + unfiled.map(function (d) { return esc(d.fileName); }).join(', ') + '.</div>';
+    }
+
+    if (q.empty) return html + '<p class="acqr-empty">' + esc(q.emptyNote) + '</p></section>';
+    html += countsHtml(q.summary);
+    html += termTables(q, opts, 'Fact');
+    if (q.emptyNote) html += '<p class="acqr-empty">' + esc(q.emptyNote) + '</p>';
+    html += enteredHtml(q.entered, opts);
+    return html + '</section>';
+  }
+
+  /** The contractual figure in one cell: its state, then its value or why there is none. */
+  function sourceValue(f) {
+    var x = f || {};
+    var shown = formatValue(x.value, x.type);
+    var contested = x.state === 'issue' && Array.isArray(x.competing) && x.competing.length >= 2;
+    var v = x.state === 'missing' ? '<span class="acqr-missing-value">Not established</span>'
+      : contested ? '<span class="acqr-contested">Contested</span>'
+      : shown === null ? '<span class="acqr-missing-value">No value read</span>'
+      : '<span class="acqr-value">' + esc(shown) + '</span>';
+    return '<span data-source="contractual" data-state="' + esc(x.state || 'missing') + '"'
+      + (x.derived ? ' data-derived="true"' : '') + '>' + stateChip(x) + ' ' + v + '</span>';
+  }
+
+  /**
+   * §7: contractual income next to what the rent roll claims and what the GL
+   * shows — not merged into one number. The model carries all three sources
+   * even when two are not on file; so does the page, so a buyer can see the
+   * contractual column is the only column.
+   */
+  function sourcesHtml(sources) {
+    var list = Array.isArray(sources) ? sources.filter(Boolean) : [];
+    if (!list.length) return '';
+    var contractual = list.filter(function (s) { return s.id === 'contractual'; })[0] || { leaseholds: [] };
+    var absent = list.filter(function (s) { return !s.available; });
+    var html = '<div class="acqr-sources" data-sources="' + list.length + '">'
+      + '<div class="acqr-leasehold-name">Base rent, by source</div>'
+      + '<div class="acqr-note">Each column says only what its own source says. They are not merged into one number.</div>';
+    var rows = (contractual.leaseholds || []).map(function (l) {
+      return '<tr class="acqr-income" data-leasehold="' + esc(l.leaseholdId || '') + '">'
+        + cell('acqr-label', esc(l.label))
+        + list.map(function (s) {
+            if (s.id === 'contractual') return cell('', sourceValue(l.baseRent));
+            return cell('', '<span data-source="' + esc(s.id) + '" data-state="' + esc(s.state || 'missing') + '">'
+              + '<span class="acqr-chip acqr-missing" data-state="missing">Missing</span> '
+              + '<span class="acqr-missing-value">Not on file</span></span>');
+          }).join('')
+        + '</tr>';
+    }).join('');
+    if (rows) {
+      html += '<table class="rpt-table acqr-table acqr-sources-table"><thead><tr><th>Leasehold</th>'
+        + list.map(function (s) { return '<th>' + esc(s.label) + '</th>'; }).join('')
+        + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    } else if (contractual.note) {
+      html += '<p class="acqr-empty">' + esc(contractual.note) + '</p>';
+    }
+    absent.forEach(function (s) {
+      if (s.id === 'contractual') return;
+      html += '<div class="acqr-note" data-absent-source="' + esc(s.id) + '">' + esc(s.note || '') + '</div>';
+    });
+    if (absent.some(function (s) { return s.pendingIncrement; })) {
+      html += '<div class="acqr-intake" data-financial-intake="not-included">'
+        + 'Financial intake — the rent roll and the general ledger — is not yet part of Acquisition Review. '
+        + 'Until it is, the only income this report can state is what the leases say.</div>';
+    }
+    return html + '</div>';
+  }
+
+  /** Q2 — what the leases oblige the tenant to pay, and what else would say so. */
+  function renderIncome(q, opts) {
+    if (!q) return '';
+    var html = '<section class="acqr-question" data-q="' + esc(q.id) + '">' + questionHead(q);
+    html += sourcesHtml(q.sources);
+    if (q.empty) return html + '<p class="acqr-empty">' + esc(q.emptyNote) + '</p></section>';
+    html += countsHtml(q.summary);
+    html += termTables(q, opts, 'Term');
+    if (q.emptyNote) html += '<p class="acqr-empty">' + esc(q.emptyNote) + '</p>';
+    html += enteredHtml(q.entered, opts);
+    return html + '</section>';
+  }
+
   /** Q4 — every document, what it is, and whether it can be trusted yet. */
   function renderEvidence(q, opts) {
     if (!q) return '';
@@ -338,8 +485,8 @@
   }
 
   /**
-   * The report body, in §7's order. Questions this step draws are drawn in
-   * full; the others are drawn in place as not yet included.
+   * The report body, in §7's order. Questions in RENDERED are drawn in full;
+   * the others are drawn in place as not yet included.
    */
   function renderReport(model, opts) {
     var m = model || {};
@@ -352,7 +499,9 @@
     var body = coverageHtml(m) + legendHtml();
     (m.questions || []).forEach(function (q) {
       if (!q) return;
-      if (q.id === 'what_obligations') body += renderObligations(q, opts);
+      if (q.id === 'what_am_i_buying') body += renderIdentity(q, m, opts);
+      else if (q.id === 'what_income') body += renderIncome(q, opts);
+      else if (q.id === 'what_obligations') body += renderObligations(q, opts);
       else if (q.id === 'what_evidence') body += renderEvidence(q, opts);
       else body += renderPending(q);
     });
@@ -370,6 +519,8 @@
     formatValue: formatValue,
     stateChip: stateChip,
     factRow: factRow,
+    renderIdentity: renderIdentity,
+    renderIncome: renderIncome,
     renderObligations: renderObligations,
     renderEvidence: renderEvidence,
     renderPending: renderPending,

@@ -509,6 +509,11 @@ const SUITES = [
   // original from inside it, and lays it out at 375px.
   { label: 'Acquisition report model (P1-7 R-1)',       cmd: 'node test-acquisition-report.js' },
   { label: 'Acquisition report view (P1-7 R-2)',        cmd: 'node test-acquisition-report-view.js' },
+  // R-3 adds questions 1 and 2 from the same model: the property as a name
+  // and not a fact, every leasehold and every document in none, and income
+  // with the rent roll and GL shown as not on file rather than left out.
+  // It byte-compares R-2's Q3/Q4 markup against the committed view.
+  { label: 'Acquisition report Q1 + Q2 (P1-7 R-3)',     cmd: 'node test-acquisition-report-q1q2.js' },
   { label: 'Acquisition Report v2 walk (e2e, P1-7 R-2)', cmd: 'node test-e2e-acquisition-report.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
