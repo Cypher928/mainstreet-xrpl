@@ -6205,6 +6205,23 @@
     .acq-doc-reabstract:hover { border-color: var(--text-3); }
     .acq-doc-reabstract[disabled] { opacity: 0.5; cursor: default; }
 
+    /* ── Unfiled: why, and the one thing a person may do (Issue B) ──────────
+       A lease document with no leasehold used to say nothing at all, so a
+       review could hold correct documents and an empty Lease Terms panel with
+       no way to tell why. It now names the reason. The control appears only
+       where a PERSON is the only one who can settle it, and its wording is
+       load-bearing: MainStreet has not decided this is the original lease. */
+    .acq-doc-unfiled { margin-top: 6px; padding: 7px 9px; border-radius: 7px;
+      background: rgba(251, 191, 36, 0.07); border: 1px solid rgba(251, 191, 36, 0.22);
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .acq-doc-unfiled-why { flex: 1 1 220px; min-width: 0; font-size: 0.74rem;
+      line-height: 1.45; color: var(--text-3); }
+    .acq-doc-begin { flex: 0 0 auto; background: none; border: 1px solid rgba(251, 191, 36, 0.5);
+      color: var(--c-fbbf24, #fbbf24); padding: 4px 11px; border-radius: 6px;
+      font-size: 0.72rem; cursor: pointer; }
+    .acq-doc-begin:hover { border-color: var(--c-fbbf24, #fbbf24);
+      background: rgba(251, 191, 36, 0.12); }
+
     /* ── Lease Terms (P1-4 / P4-3) ─────────────────────────────────────────
        Same card language as Documents. The row wraps from the start: a term
        carries a label, a state, a value, a source, a clause and up to four
@@ -6280,6 +6297,10 @@
       .acq-doc-nofile  { order: 5; flex: 0 0 auto; }
       /* Touch targets, now that they are no longer crammed into a row. */
       .acq-doc-type, .acq-doc-confirm, .acq-doc-reabstract, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
+      /* At 375px the reason and its control stack rather than squeezing the
+         button off the row. */
+      .acq-doc-unfiled { flex-direction: column; align-items: stretch; gap: 7px; }
+      .acq-doc-begin   { width: 100%; padding-top: 7px; padding-bottom: 7px; }
     }
 
     /* Review stage chips (P1-1). One row under the header: done · current · upcoming. */

@@ -439,6 +439,16 @@ const SUITES = [
   // nobody confirmed never renders as confirmed. They also pin D-14: a second
   // upload of a used file name keeps BOTH sources.
   { label: 'Acquisition classification (P1-3)',         cmd: 'node test-acquisition-classification.js' },
+  // P4-3 remediation, Issue B. P1-3's proposeFamily may only START a leasehold
+  // from an original lease — correct, and untouched. But acqSetDocType, the
+  // path a PERSON takes, ran no family step at all, so a review could hold
+  // correctly classified lease documents forever with family_id null and the
+  // Lease Terms panel would render its empty message with nothing on screen to
+  // say why. That was the Pilot's exact state. This pins the human path: a
+  // correction files the document, a match is a PROPOSAL, a new leasehold is
+  // confirmed by a human, relatives are offered and never taken, and with no
+  // tenant read nothing is written at all.
+  { label: 'Acquisition family lifecycle (Issue B)',    cmd: 'node test-acquisition-family-lifecycle.js' },
   { label: 'Acquisition classification walk (e2e, P1-3)', cmd: 'node test-e2e-acquisition-classification.js' },
   { label: 'Migration 024 applies and rolls back',      cmd: 'node tools/verify-migration-024.js' },
   // P1-4 / P4-1. What each document SAYS, stored as evidence on its row: 27

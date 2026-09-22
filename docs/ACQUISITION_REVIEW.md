@@ -1157,6 +1157,119 @@ code, and owner/operator CAM are all untouched.
 
 ---
 
+## 4j. P4-3 remediation, Issue B — a leasehold can begin
+
+Found in the same live session as Issue A, on the Pilot, 2026-09-22.
+
+### What was wrong
+
+The Maple Plaza review held three correctly classified documents and **zero
+leaseholds**, and the Lease Terms panel rendered *"No leasehold has been
+identified yet"* — because `_renderAcqTerms` iterates families, and there were
+none. The evidence was real and sitting on the rows. It simply had nowhere to
+be shown.
+
+Two doors, both shut:
+
+- `proposeFamily` (P1-3) may start a leasehold **only** from an
+  `original_lease`. That is right, and nothing here changes it: a machine that
+  decides an amendment is the beginning of a lease history has decided
+  something it cannot know.
+- `acqSetDocType` — the path a **person** takes — ran no family step at all. It
+  clears a family on the way OUT (D-17) and did nothing on the way IN.
+
+So the review was stuck. No document in it was an original lease, and
+correcting one by hand would not have helped.
+
+### The shape of the fix
+
+A person is in a different position from the classifier: they can see the
+document. `familyForCorrection` sits **alongside** `proposeFamily` with two
+powers it does not have and one they share.
+
+| Situation | Result | Status / source |
+|---|---|---|
+| Corrected to `original_lease` | the leasehold **begins** | `confirmed` / `human` |
+| "This begins the leasehold" clicked | the leasehold **begins** | `confirmed` / `human` |
+| One leasehold already names the tenant | filed there | `proposed` / `ai` |
+| More than one names it | nothing written, reason shown, **no** control offered | — |
+| No tenant could be read | nothing written, reason shown | — |
+| No leasehold on file for this tenant | nothing written, reason shown, control offered | — |
+
+`confirmed` on a new leasehold is honest rather than generous: the family is
+created FROM that document and holds only it, so the document being in its own
+leasehold is a tautology, not an inference. A tenant-name match is the opposite
+— two strings agreeing after normalisation is a machine reading them — so it is
+a proposal, and P1-3's rule stands.
+
+### Where a tenant may come from
+
+`tenantHintFor` reads, in order: the P4-1 terms reading of **this** document,
+then the tenant record `lease_extraction` produced **from this document**
+(`produced_id`). Nothing else. Not the file name, not a sibling, not a guess.
+With neither, every caller declines and says so.
+
+### Relatives are offered, never taken
+
+When a leasehold is established, `unfiledSiblings` finds same-tenant documents
+in the review that are current, lease-family and unfiled. Each is filed
+`proposed` / `ai` with its **own** appended history entry on its **own** row,
+and confirmed individually through the control that already exists. There is
+deliberately no "accept all": each filing is a separate claim about a separate
+document.
+
+### The wording, which is load-bearing
+
+> No matching leasehold found. This document can begin a leasehold if you
+> confirm that it belongs to this tenant's lease history.
+>
+> **[ This begins the leasehold ]**
+
+It does not say MainStreet identified the original lease, because MainStreet
+identified nothing. It asks the person to confirm something narrower that they
+can check against the document in front of them. The document's **type** is
+untouched — an amendment that begins a leasehold is still an amendment.
+
+### D-17 is preserved exactly
+
+The two branches test opposite conditions and cannot both run:
+
+```js
+if (AD.isFamilyType(nextType) && !row.family_id)  { …file it… }      // new
+if (!AD.isFamilyType(nextType) && row.family_id)  { …clear it… }     // D-17
+```
+
+Correcting OUT still clears the family, still PRESERVES `parent_document_id`
+and `relationship`, and still flags `relationship_status = 'needs_review'` with
+its own history entry.
+
+### No migration
+
+`family_source` already admits `ai | human | inherited` (024), the action word
+is the existing `confirmed` rather than a new one `classificationEntry` would
+silently coerce, and nothing writes a new column.
+
+### Verified
+
+- `test-acquisition-family-lifecycle.js` — 93 checks, including that
+  `proposeFamily` is unchanged branch for branch.
+- `test-e2e-acquisition-classification.js` — 90 checks (was 54): §7b–7d walk
+  the whole thing in the real page, including the 375px geometry and that the
+  page introduces no horizontal scroll.
+- `tools/acquisition-classification-mutation.js` — 53/53 killed, zero
+  survivors, including **B02**, which puts the Pilot's bug back.
+
+### One thing the walk exposed about the tests themselves
+
+The classification walk's `lease_extraction` stub answered
+`tenant_name: 'Coastal Outfitters'` for **every** upload, so a Harbor document
+"produced" a Coastal tenant — something that cannot happen in production, where
+extraction reads the document in front of it. That unfaithfulness was invisible
+until Issue B started reading `produced_id`. Both stubs now derive the tenant
+from the text, as the classification stub always did.
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

@@ -278,17 +278,30 @@ function leaseText(tenant, marker) {
   await page.route('**/api/claude', async route => {
     const post = route.request().postData() || '';
     let body = {}; try { body = JSON.parse(post); } catch (_) {}
+    const text = (body.messages && body.messages[0] && body.messages[0].content) || '';
     if (body.task === 'document_classification') {
-      const text = (body.messages && body.messages[0] && body.messages[0].content) || '';
       classifyCalls.push(text);
+      // The tenant comes from the TEXT, in every branch. A stub that answers
+      // the same tenant whatever it is handed files every document into one
+      // leasehold and makes a walk prove nothing.
+      const who = /Harbor Cafe/.test(text) ? 'Harbor Cafe' : 'Coastal Outfitters';
       let r;
       if (/AMENDMENT/.test(text))        r = { docType: 'amendment', docDate: '2024-05-01', tenantName: /Harbor Cafe/.test(text) ? 'Harbor Cafe' : 'Coastal Outfitters, LLC', confidence: 0.88, evidence: 'FIRST AMENDMENT TO LEASE' };
+      else if (/SIDE LETTER/.test(text)) r = { docType: 'side_letter', docDate: '2024-07-01', tenantName: who, confidence: 0.90, evidence: 'SIDE LETTER' };
       else if (/RENT ROLL/.test(text))   r = { docType: 'rent_roll', docDate: '2024-06-30', tenantName: null, confidence: 0.94, evidence: 'RENT ROLL' };
       else if (/ILLEGIBLE/.test(text))   r = { docType: 'unknown', docDate: null, tenantName: null, confidence: 0.12, evidence: null };
-      else                               r = { docType: 'original_lease', docDate: '2023-03-01', tenantName: 'Coastal Outfitters', confidence: 0.95, evidence: 'LEASE AGREEMENT' };
+      else                               r = { docType: 'original_lease', docDate: '2023-03-01', tenantName: who, confidence: 0.95, evidence: 'LEASE AGREEMENT' };
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(r) });
     }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LEASE_FIXTURE) });
+    // LEASE EXTRACTION reads the document in front of it, so the stub must
+    // too. It used to answer `Coastal Outfitters` for every upload, which meant
+    // a Harbor document "produced" a Coastal tenant — a thing that cannot
+    // happen in production, and one that hid a whole class of bug: `produced_id`
+    // names the tenant THIS document was read to name, and Issue B's family
+    // step uses it when the terms reading has not landed.
+    const t = /Harbor Cafe/.test(text) ? 'Harbor Cafe' : 'Coastal Outfitters';
+    return route.fulfill({ status: 200, contentType: 'application/json',
+                           body: JSON.stringify({ ...LEASE_FIXTURE, tenant_name: t }) });
   });
 
   await page.addInitScript(DB);
@@ -516,6 +529,188 @@ function leaseText(tenant, marker) {
         supersededPanel[0] ? supersededPanel[0].text.slice(0, 80) : 'not rendered');
   check('and its original still opens — the source did not leave the record',
         supersededPanel.length === 1 && supersededPanel[0].opens, 'no opener on the replaced row');
+
+  // ── 7b · a leasehold can BEGIN from a human correction (Issue B) ─────────
+  //
+  // `harbor-amendment.txt` is the Pilot's exact state, reproduced: a correctly
+  // classified lease-family document whose tenant has no lease on file. Before
+  // this increment it sat unfiled forever — the AI may not start a leasehold
+  // from an amendment (correct), and `acqSetDocType` ran no family step at all
+  // (the gap). The review could hold real lease documents and render an empty
+  // Lease Terms panel with nothing on screen to say why.
+  const famsBefore = (await fams()).length;
+  const orphanNow  = await named('harbor-amendment.txt');
+  check('7b: the orphan amendment is still unfiled, as P1-3 left it',
+        !!orphanNow && !orphanNow.family_id && orphanNow.family_status === 'unfiled',
+        orphanNow ? `${orphanNow.family_id} / ${orphanNow.family_status}` : 'no row');
+
+  const unfiledUI = await page.evaluate((id) => {
+    const row = document.querySelector(`.acq-doc-row[data-doc-id="${id}"]`);
+    if (!row) return null;
+    const box = row.querySelector('.acq-doc-unfiled');
+    return { why: box ? (box.querySelector('.acq-doc-unfiled-why') || {}).innerText || '' : null,
+             hasBtn: !!row.querySelector('.acq-doc-begin'),
+             btnText: (row.querySelector('.acq-doc-begin') || {}).innerText || '',
+             family: row.getAttribute('data-family') };
+  }, orphanNow.id);
+  check('7b: the panel now SAYS it has no leasehold rather than saying nothing',
+        !!unfiledUI && !!unfiledUI.why, unfiledUI ? String(unfiledUI.why).slice(0, 70) : 'no notice');
+  check('7b: and offers the one action a person may take',
+        !!unfiledUI && unfiledUI.hasBtn && /begins the leasehold/i.test(unfiledUI.btnText),
+        unfiledUI ? unfiledUI.btnText : '');
+  check('7b: the wording asks the person to confirm it belongs to this tenant\'s lease history',
+        !!unfiledUI && /can begin a leasehold if you confirm/i.test(unfiledUI.why), unfiledUI ? unfiledUI.why : '');
+  check('7b: and NEVER claims MainStreet decided it is the original lease',
+        !!unfiledUI && !/original lease/i.test(unfiledUI.why), unfiledUI ? unfiledUI.why : '');
+
+  const noBtnOnFiled = await page.evaluate((id) =>
+    !document.querySelector(`.acq-doc-row[data-doc-id="${id}"] .acq-doc-begin`), lease.id);
+  check('7b: a document already in a leasehold is offered nothing', noBtnOnFiled);
+  const noBtnOnRentRoll = await page.evaluate((id) =>
+    !document.querySelector(`.acq-doc-row[data-doc-id="${id}"] .acq-doc-begin`), rr.id);
+  check('7b: nor is a rent roll — it belongs to the review, not to a lease', noBtnOnRentRoll);
+
+  // 375px, on the real laid-out row — a notice and a control added to a row
+  // that was already four flex children is exactly how P1-3 broke the file
+  // name column, and a stylesheet reading would not have caught that.
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.waitForTimeout(150);
+  const phone = await page.evaluate((id) => {
+    const panel = document.getElementById('acqDocsList');
+    const row   = document.querySelector(`.acq-doc-row[data-doc-id="${id}"]`);
+    const box   = row && row.querySelector('.acq-doc-unfiled');
+    const btn   = row && row.querySelector('.acq-doc-begin');
+    const name  = row && row.querySelector('.acq-doc-name');
+    const nb    = name && name.getBoundingClientRect();
+    const cs    = name && getComputedStyle(name);
+    const lh    = cs ? (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2) : 0;
+    const pr    = panel.getBoundingClientRect();
+    return {
+      panelWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
+      docScroll: document.documentElement.scrollWidth,
+      docClient: document.documentElement.clientWidth,
+      noticeVisible: !!box && box.getBoundingClientRect().height > 0,
+      btnWidth: btn ? Math.round(btn.getBoundingClientRect().width) : 0,
+      btnRight: btn ? Math.round(btn.getBoundingClientRect().right) : 0,
+      panelRight: Math.round(pr.right),
+      nameWidth: nb ? Math.round(nb.width) : 0,
+      nameLines: (nb && lh) ? Math.round(nb.height / lh) : 0,
+      // Stacked, per the 680px rule, rather than squeezed onto one line.
+      stacked: !!(box && btn &&
+        Math.round(btn.getBoundingClientRect().top)
+          >= Math.round(box.querySelector('.acq-doc-unfiled-why').getBoundingClientRect().bottom) - 2),
+    };
+  }, orphanNow.id);
+  check('7b/375px: the notice and its control are visible', phone.noticeVisible && phone.btnWidth > 0,
+        `button ${phone.btnWidth}px`);
+  check('7b/375px: they stack instead of squeezing the button off the row', phone.stacked);
+  check('7b/375px: the control stays inside the panel',
+        phone.btnRight <= phone.panelRight + 1, `${phone.btnRight} vs ${phone.panelRight}`);
+  check('7b/375px: the file name column still has usable width',
+        phone.nameWidth >= 150, `${phone.nameWidth}px`);
+  check('7b/375px: the name still reads on a couple of lines', phone.nameLines <= 3, String(phone.nameLines));
+  check('7b/375px: the panel does not scroll sideways',
+        phone.scrollWidth <= phone.panelWidth + 1, `${phone.scrollWidth} in ${phone.panelWidth}`);
+  check('7b/375px: and the PAGE introduces no horizontal scroll',
+        phone.docScroll <= phone.docClient + 1, `${phone.docScroll} vs ${phone.docClient}`);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.waitForTimeout(150);
+
+  // A second Harbor document, so the sibling offer has something to offer.
+  await upload('harbor-side-letter.txt', 'SIDE LETTER\nTenant: Harbor Cafe, Inc.\n' + leaseText('Harbor Cafe'));
+  const sideLetter = await named('harbor-side-letter.txt');
+  check('7b: a second Harbor document is also unfiled beforehand',
+        !!sideLetter && !sideLetter.family_id, sideLetter ? String(sideLetter.family_id) : 'no row');
+
+  await page.click(`.acq-doc-row[data-doc-id="${orphanNow.id}"] .acq-doc-begin`);
+  await page.waitForFunction((id) => {
+    const r = window.__store.acquisition_documents.find(d => d.id === id);
+    return r && r.family_id;
+  }, orphanNow.id, { timeout: 15000 }).catch(() => {});
+
+  const famsAfter = await fams();
+  const begun     = await named('harbor-amendment.txt');
+  check('7b: clicking it creates exactly ONE leasehold',
+        famsAfter.length === famsBefore + 1, `${famsBefore} → ${famsAfter.length}`);
+  const harborFam = famsAfter.find(f => /Harbor Cafe/.test(f.label || ''));
+  check('7b: named for the tenant the document was READ to name — not for the file',
+        !!harborFam && !/harbor-amendment/.test(harborFam.label), harborFam ? harborFam.label : 'not created');
+  check('7b: the document is filed in it as CONFIRMED by a HUMAN — a person said it',
+        !!begun && begun.family_id === harborFam.id && begun.family_status === 'confirmed'
+        && begun.family_source === 'human',
+        begun ? `${begun.family_status} / ${begun.family_source}` : '');
+  check('7b: with an actor on the row, because 024 refuses a settled status naming nobody',
+        !!begun && begun.confirmed_by === UID, begun ? String(begun.confirmed_by) : '');
+  check('7b: its TYPE is untouched — an amendment that begins a leasehold is still an amendment',
+        !!begun && begun.doc_type === 'amendment' && begun.doc_type_status === orphanNow.doc_type_status,
+        begun ? `${begun.doc_type} / ${begun.doc_type_status}` : '');
+
+  const begunHist = (begun.classification_history || []);
+  check('7b: the history GREW — the earlier entries are all still there',
+        begunHist.length === (orphanNow.classification_history || []).length + 1,
+        `${(orphanNow.classification_history || []).length} → ${begunHist.length}`);
+  check('7b: and the new entry says a human confirmed the family',
+        begunHist.length > 0 && begunHist[begunHist.length - 1].field === 'family'
+        && begunHist[begunHist.length - 1].action === 'confirmed'
+        && begunHist[begunHist.length - 1].source === 'human',
+        JSON.stringify(begunHist[begunHist.length - 1] || {}));
+  check('7b: nothing rewrote what the AI had proposed earlier',
+        JSON.stringify(begunHist.slice(0, -1)) === JSON.stringify(orphanNow.classification_history || []));
+
+  const sl = await named('harbor-side-letter.txt');
+  check('7b: the same-tenant document already on file is OFFERED the new leasehold',
+        !!sl && sl.family_id === harborFam.id, sl ? String(sl.family_id) : '');
+  check('7b: as a PROPOSAL by `ai` — two names agreeing is a machine reading it',
+        !!sl && sl.family_status === 'proposed' && sl.family_source === 'ai',
+        sl ? `${sl.family_status} / ${sl.family_source}` : '');
+  check('7b: never auto-confirmed — each document is confirmed on its own',
+        !!sl && sl.family_status !== 'confirmed');
+  check('7b: and it got its own appended history entry, on its own row',
+        !!sl && (sl.classification_history || []).some(h => h && h.field === 'family' && h.action === 'proposed'),
+        JSON.stringify((sl.classification_history || []).map(h => h && h.action)));
+  const coastalUntouched = await named('coastal-lease.txt');
+  check('7b: a different tenant\'s lease was not swept in',
+        !!coastalUntouched && coastalUntouched.family_id !== harborFam.id);
+  const rrUntouched = await named('rent-roll-2024.txt');
+  check('7b: and the rent roll is still review-level', !!rrUntouched && !rrUntouched.family_id);
+
+  const goneUI = await page.evaluate((id) =>
+    !document.querySelector(`.acq-doc-row[data-doc-id="${id}"] .acq-doc-begin`), orphanNow.id);
+  check('7b: the control is gone once the leasehold exists', goneUI);
+
+  // ── 7c · correcting INTO a lease type now files the document ─────────────
+  const beforeCorrect = (await fams()).length;
+  await page.evaluate((id) => acqSetDocType(id, 'renewal'), rr.id);
+  await page.waitForFunction((id) => {
+    const r = window.__store.acquisition_documents.find(d => d.id === id);
+    return r && r.doc_type === 'renewal';
+  }, rr.id, { timeout: 15000 }).catch(() => {});
+  const correctedIn = await named('rent-roll-2024.txt');
+  check('7c: a rent roll corrected to a renewal is now filed, not left unfiled',
+        !!correctedIn && !!correctedIn.family_id, correctedIn ? String(correctedIn.family_id) : '');
+  check('7c: into the leasehold whose tenant it names, as a PROPOSAL',
+        !!correctedIn && correctedIn.family_status === 'proposed' && correctedIn.family_source === 'ai',
+        correctedIn ? `${correctedIn.family_status} / ${correctedIn.family_source}` : '');
+  check('7c: and no new leasehold was invented for it',
+        (await fams()).length === beforeCorrect, String((await fams()).length));
+  check('7c: the family entry is appended to its history, not written over it',
+        !!correctedIn && (correctedIn.classification_history || []).some(h => h && h.field === 'family'),
+        JSON.stringify((correctedIn.classification_history || []).map(h => h && h.field)));
+
+  // ── 7d · D-17 still clears the family on the way OUT ─────────────────────
+  await page.evaluate((id) => acqSetDocType(id, 'rent_roll'), rr.id);
+  await page.waitForFunction((id) => {
+    const r = window.__store.acquisition_documents.find(d => d.id === id);
+    return r && r.doc_type === 'rent_roll';
+  }, rr.id, { timeout: 15000 }).catch(() => {});
+  const correctedOut = await named('rent-roll-2024.txt');
+  check('7d: D-17 — correcting back OUT clears the leasehold again',
+        !!correctedOut && !correctedOut.family_id && correctedOut.family_status === 'unfiled',
+        correctedOut ? `${correctedOut.family_id} / ${correctedOut.family_status}` : '');
+  check('7d: and the history still holds both acts, in order',
+        !!correctedOut && (correctedOut.classification_history || []).length
+          > (correctedIn.classification_history || []).length - 1,
+        `${(correctedIn.classification_history || []).length} → ${(correctedOut.classification_history || []).length}`);
 
   // ── 8 · nothing crossed an owner ─────────────────────────────────────────
   const crossed = await page.evaluate(async () => {

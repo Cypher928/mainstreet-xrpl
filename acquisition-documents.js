@@ -510,6 +510,136 @@
                      docTypeLabel(type).toLowerCase() + ' changes is not known.' };
   }
 
+  // ── The human correction path (P4-3 remediation, Issue B) ──────────────────
+  //
+  // proposeFamily above is the AI's, and it is right: a machine may only START
+  // a leasehold from an original lease, because deciding that an amendment is
+  // the beginning of a lease history is deciding something it cannot know.
+  // Nothing below changes a line of it.
+  //
+  // But that rule had no counterpart. `acqSetDocType` — the path a PERSON takes
+  // when they correct a document's type — never ran a family step at all. So a
+  // review could hold correctly classified lease documents forever with
+  // family_id null, which is exactly what the Pilot did: three classified
+  // documents, zero leaseholds, and a Lease Terms panel with nothing to render
+  // because a family is what it iterates over.
+  //
+  // A person is in a different position from the classifier. They can see the
+  // document. These functions give that position its two extra powers, and
+  // nothing more.
+
+  /**
+   * The tenant this document names — from evidence ALREADY ON THE ROW.
+   *
+   * Never from the file name, never from a sibling document, never invented.
+   * The order is what the document itself was read to say (P4-1 evidence),
+   * then a hint the caller already holds. Null when there is neither, and null
+   * is an answer: every caller declines rather than guessing at a tenant.
+   */
+  function tenantHintFor(doc) {
+    var d  = doc || {};
+    var ev = d.abstracted_fields && d.abstracted_fields.fields;
+    var read = (ev && ev.tenant_name && typeof ev.tenant_name.value === 'string')
+      ? _str(ev.tenant_name.value, 300) : null;
+    return read || _str(d.tenant_hint || d.tenantHint, 300);
+  }
+
+  /** The suite this document names, on the same terms. Null is an answer. */
+  function suiteHintFor(doc) {
+    var d  = doc || {};
+    var ev = d.abstracted_fields && d.abstracted_fields.fields;
+    return (ev && ev.suite && typeof ev.suite.value === 'string') ? _str(ev.suite.value, 120) : null;
+  }
+
+  /**
+   * Where a PERSON's correction puts this document.
+   *
+   * Three outcomes, and the difference between them is the whole design:
+   *
+   *   existing  one leasehold already names this tenant. Filed there as a
+   *             PROPOSAL — the person said what the document IS, not where it
+   *             belongs, and two names agreeing after normalisation is a
+   *             machine's reading. P1-3's rule stands.
+   *   new       the person corrected it to `original_lease`, or used the
+   *             explicit "this begins the leasehold" control. Either way a
+   *             PERSON said it, so the filing is `confirmed` by `human`.
+   *   none      with the reason, in words, which the caller must show. This is
+   *             the branch that matters most: it is where MainStreet declines
+   *             to invent a leasehold, and `canBegin` marks the one case a
+   *             person is allowed to settle.
+   *
+   * `opts.beginLeasehold` is reachable only from a control a person clicks.
+   * Nothing on the classification path may pass it.
+   */
+  function familyForCorrection(doc, families, opts) {
+    var o    = opts || {};
+    var d    = doc || {};
+    var type = d.doc_type || d.docType || null;
+    if (!type || type === 'unknown') {
+      return { kind: 'none', reason: 'The document type is not known yet.' };
+    }
+    if (!isFamilyType(type)) {
+      return { kind: 'none', reason: docTypeLabel(type) + ' belongs to the review, not to a lease.' };
+    }
+    var hint  = tenantHintFor(d);
+    var party = normalizeParty(hint || '');
+    if (!party) {
+      return { kind: 'none',
+               reason: 'No tenant has been read from this document yet, so which leasehold it belongs to is not known.' };
+    }
+
+    var matches = (Array.isArray(families) ? families : []).filter(function (fam) {
+      return fam && normalizeParty(fam.tenant_hint || fam.label) === party;
+    });
+    if (matches.length === 1) {
+      return { kind: 'existing', familyId: matches[0].id,
+               status: 'proposed', source: 'ai',
+               reason: 'The tenant matches this leasehold.' };
+    }
+    if (matches.length > 1) {
+      return { kind: 'none',
+               reason: 'More than one leasehold names this tenant — which one is a decision for a person.' };
+    }
+
+    if (type === 'original_lease' || o.beginLeasehold === true) {
+      return { kind: 'new', status: 'confirmed', source: 'human',
+               label: _str(hint, 300), tenantHint: _str(hint, 300), suiteHint: suiteHintFor(d),
+               reason: type === 'original_lease'
+                 ? 'A person identified this as the original lease, which begins the leasehold.'
+                 : 'A person used this document to begin the leasehold.' };
+    }
+
+    // The Pilot's exact state: an amendment for a tenant with no lease on file.
+    // MainStreet will not invent the leasehold, and says so — but a person may.
+    return { kind: 'none', canBegin: true,
+             reason: 'There is no lease on file for this tenant yet, so what this '
+                     + docTypeLabel(type).toLowerCase() + ' changes is not known.' };
+  }
+
+  /**
+   * The documents a newly-established leasehold should be OFFERED.
+   *
+   * Offered, not given. The match is two tenant names agreeing after
+   * normalisation — a machine's reading — so every row this returns is filed
+   * as a proposal and confirmed on its own, one at a time. A blanket "accept
+   * all" is deliberately not on the table: each filing is a separate claim.
+   *
+   * Current, lease-family, not already filed anywhere, and never the anchor
+   * itself.
+   */
+  function unfiledSiblings(doc, documents) {
+    var d = doc || {};
+    var party = normalizeParty(tenantHintFor(d) || '');
+    if (!party) return [];
+    return (Array.isArray(documents) ? documents : []).filter(function (r) {
+      return r && r.id && r.id !== d.id
+        && !r.family_id
+        && isFamilyType(r.doc_type)
+        && isCurrent(r)
+        && normalizeParty(tenantHintFor(r) || '') === party;
+    });
+  }
+
   /**
    * What this document does to the lease it belongs to — proposed, never
    * asserted, and only when there is exactly one lease it could be.
@@ -791,6 +921,11 @@
     classificationEntry: classificationEntry,
     appendHistory: appendHistory,
     proposeFamily: proposeFamily,
+    // Issue B — the human correction path. proposeFamily is untouched.
+    tenantHintFor: tenantHintFor,
+    suiteHintFor: suiteHintFor,
+    familyForCorrection: familyForCorrection,
+    unfiledSiblings: unfiledSiblings,
     proposeRelationship: proposeRelationship,
     isCurrent: isCurrent,
     findSuperseded: findSuperseded,

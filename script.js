@@ -30988,8 +30988,33 @@ function _renderAcqDocuments() {
                      && r.abstraction_status !== 'success' && r.abstraction_status !== 'partial')
       ? `<button class="acq-doc-reabstract" data-doc-id="${esc(r.id)}" title="Read what this document says about the lease terms, from its stored text">Read terms</button>` : '';
 
+    // WHERE IT BELONGS, when it does not (Issue B). A lease-family document
+    // with no leasehold says WHY — the reason the module has always produced
+    // and the panel has always thrown away — and, in the one case only a
+    // person can settle, offers the one action they may take.
+    //
+    // The wording is deliberate. It does NOT say MainStreet decided this is
+    // the original lease, because MainStreet decided nothing: it says the
+    // document can BEGIN a leasehold if the person confirms it belongs to this
+    // tenant's lease history, which is a narrower claim they can actually
+    // check against the document in front of them.
+    let unfiled = '';
+    if (abstractable && current && !r.family_id) {
+      const v = AD.familyForCorrection(_acqWithEvidence(r), _acqFamilyRows(_activeAcqId));
+      if (v.kind === 'none') {
+        unfiled = '<div class="acq-doc-unfiled">'
+          + (v.canBegin
+              ? '<div class="acq-doc-unfiled-why">No matching leasehold found. '
+                + 'This document can begin a leasehold if you confirm that it belongs to this '
+                + 'tenant’s lease history.</div>'
+                + `<button class="acq-doc-begin" data-doc-id="${esc(r.id)}">This begins the leasehold</button>`
+              : `<div class="acq-doc-unfiled-why">${esc(v.reason)}</div>`)
+          + '</div>';
+      }
+    }
+
     return `
-    <div class="acq-doc-row${current ? '' : ' superseded'}" data-doc-id="${esc(r.id)}" data-doc-type="${esc(r.doc_type || '')}" data-doc-status="${esc(cls.status)}">
+    <div class="acq-doc-row${current ? '' : ' superseded'}" data-doc-id="${esc(r.id)}" data-doc-type="${esc(r.doc_type || '')}" data-doc-status="${esc(cls.status)}" data-family="${esc(r.family_status || 'unfiled')}">
       <span class="acq-doc-kind ${esc(r.intake_kind || 'other')}">${esc(r.intake_kind || 'other')}</span>
       <div class="acq-doc-main">
         <div class="acq-doc-name">${esc(r.file_name || '(unnamed)')}</div>
@@ -30999,7 +31024,7 @@ function _renderAcqDocuments() {
           · <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>${termsChip}
           ${r.doc_date ? ' · ' + esc(r.doc_date) : ''}${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
         </div>
-        ${rel}${supersededNote}${err}${note}
+        ${rel}${unfiled}${supersededNote}${err}${note}
       </div>
       <div class="acq-doc-actions">${typeControl}${confirmBtn}${readBtn}</div>
       ${opener}
@@ -31255,6 +31280,136 @@ async function acqReopenTerm(familyId, field) {
   _renderAcqTerms();
 }
 
+// ── Where a corrected document belongs (P4-3 remediation, Issue B) ───────────
+//
+// `_acqApplyClassification` has run a family step since P1-3. `acqSetDocType`
+// never did, so a person could correct a document INTO a lease type and it
+// would sit unfiled forever — the Pilot's exact state: three classified
+// documents, zero leaseholds, and a Lease Terms panel rendering its empty
+// message because a family is what it iterates.
+//
+// One row, with the two places a tenant may legitimately be read from merged
+// onto it — and NOTHING ELSE. Not the file name, not a sibling document, not a
+// guess.
+//
+//   1. the terms reading of THIS document (P4-1 evidence). The list read
+//      deliberately omits `abstracted_fields` — it is the largest column — so
+//      it comes from the `_acqEvidence` cache the Lease Terms panel fills.
+//   2. the tenant record lease extraction produced FROM this document, for a
+//      row whose terms reading has not run or did not land. Extracted data,
+//      not an inference, and second to what the document itself was read to
+//      say.
+//
+// A row with neither has no tenant, and every caller declines rather than
+// inventing one.
+function _acqWithEvidence(row) {
+  if (!row) return row;
+  const ev  = _acqEvidence.get(row.id);
+  const out = ev ? { ...row, abstracted_fields: ev } : { ...row };
+  if (!out.tenant_hint && row.produced_kind === 'tenant') {
+    const produced = _acqProducedLabel(row);
+    if (produced) out.tenant_hint = produced;
+  }
+  return out;
+}
+
+/**
+ * Ask the module where this document belongs, and — only when the answer is a
+ * NEW leasehold — create it. Returns the verdict plus the columns to write.
+ *
+ * `opts.beginLeasehold` comes from one control a person clicks and from
+ * nowhere else; no classification path passes it.
+ */
+async function _acqFamilyForHuman(reviewId, row, docType, opts = {}) {
+  const AD  = _AD();
+  const doc = { ..._acqWithEvidence(row), doc_type: docType };
+  const v   = AD.familyForCorrection(doc, _acqFamilyRows(reviewId), opts);
+
+  if (v.kind === 'existing') {
+    // A tenant-name match is a MACHINE's reading, whoever set the type. P1-3's
+    // rule holds: it is filed as a proposal and a person confirms it.
+    return { verdict: v, familyId: null, patch: {
+      familyId: v.familyId, familyStatus: 'proposed', familySource: 'ai',
+      historyEntry: { action: 'proposed', field: 'family', from: row.family_id || null,
+                      to: v.familyId, source: 'ai' },
+    } };
+  }
+  if (v.kind === 'new') {
+    const created = await _acqSaveFamily(reviewId, {
+      label: v.label, tenantHint: v.tenantHint, suiteHint: v.suiteHint, familyKind: 'lease',
+    });
+    if (!created) {
+      return { verdict: { kind: 'none', reason: 'The leasehold could not be filed — try again.' },
+               familyId: null, patch: null };
+    }
+    // `confirmed` by `human`, because a PERSON said it and because the family
+    // was created FROM this document and holds only it: the document being in
+    // its own leasehold is a tautology, not an inference.
+    return { verdict: v, familyId: created.id, patch: {
+      familyId: created.id, familyStatus: 'confirmed', familySource: 'human',
+      historyEntry: { action: 'confirmed', field: 'family', from: row.family_id || null,
+                      to: created.id, source: 'human', actor: _acqActor() },
+    } };
+  }
+  return { verdict: v, familyId: null, patch: null };
+}
+
+/**
+ * A leasehold that has just been established may already have relatives on
+ * file. They are OFFERED to it, never taken.
+ *
+ * Every one is `proposed` / `ai`, gets its own appended history entry on its
+ * own row, and is confirmed individually through the control that already
+ * exists. There is deliberately no "accept all": each filing is a separate
+ * claim about a separate document.
+ */
+async function _acqProposeSiblings(reviewId, row, familyId) {
+  const AD   = _AD();
+  const rows = _acqDocRows(reviewId).map(_acqWithEvidence);
+  const sibs = AD.unfiledSiblings(_acqWithEvidence(row), rows);
+  for (const s of sibs) {
+    await _acqSaveDocument({
+      reviewId, intakeId: s.intake_id, fileName: s.file_name,
+      familyId, familyStatus: 'proposed', familySource: 'ai',
+      classificationHistory: AD.appendHistory(s.classification_history, {
+        action: 'proposed', field: 'family', from: null, to: familyId, source: 'ai',
+      }),
+    });
+  }
+  return sibs.length;
+}
+
+/**
+ * "This begins the leasehold" — the one thing only a person may do.
+ *
+ * MainStreet has NOT decided this document is the original lease, and the
+ * screen says so in those words. What the person confirms is narrower and
+ * checkable: that this document belongs to this tenant's lease history. The
+ * document's TYPE is untouched — an amendment that begins a leasehold is still
+ * an amendment, and its classification status is still whatever it was.
+ */
+async function acqBeginLeasehold(docId) {
+  const AD  = _AD();
+  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  if (!row || !AD.isFamilyType(row.doc_type) || row.family_id) return;
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return;
+
+  const step = await _acqFamilyForHuman(_activeAcqId, row, row.doc_type, { beginLeasehold: true });
+  if (!step.patch) { _renderAcqDocuments(); return; }
+
+  const saved = await _acqSaveDocument({
+    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    familyId: step.patch.familyId, familyStatus: step.patch.familyStatus,
+    familySource: step.patch.familySource,
+    // 024's trigger refuses a settled status that names nobody.
+    confirmedBy: user.id, confirmedAt: new Date().toISOString(),
+    classificationHistory: AD.appendHistory(row.classification_history, step.patch.historyEntry),
+  });
+  if (saved && step.familyId) await _acqProposeSiblings(_activeAcqId, saved, step.familyId);
+  _renderAcqDocuments();
+}
+
 // The panel is re-rendered wholesale, so the controls inside it are reached by
 // delegation from the container, bound once.
 function _acqBindDocControls(el) {
@@ -31265,6 +31420,8 @@ function _acqBindDocControls(el) {
     if (btn) { ev.preventDefault(); acqConfirmDocType(btn.getAttribute('data-doc-id')); }
     const rd = ev.target.closest && ev.target.closest('.acq-doc-reabstract');
     if (rd) { ev.preventDefault(); acqReabstractDocument(rd.getAttribute('data-doc-id')); }
+    const bl = ev.target.closest && ev.target.closest('.acq-doc-begin');
+    if (bl) { ev.preventDefault(); acqBeginLeasehold(bl.getAttribute('data-doc-id')); }
   });
   el.addEventListener('change', (ev) => {
     const sel = ev.target.closest && ev.target.closest('.acq-doc-type');
@@ -31314,6 +31471,28 @@ async function acqSetDocType(docId, nextType) {
     }),
   };
 
+  // A type that NOW belongs to a leasehold is filed into one (Issue B).
+  //
+  // The mirror of the D-17 branch below, and mutually exclusive with it by
+  // construction: this runs only when the new type IS a lease-family type,
+  // that one only when it is not. Neither can undo the other.
+  //
+  // It runs only for a document that has no family yet — a correction from
+  // renewal to amendment does not re-file a document somebody already placed.
+  let familyStep = null;
+  if (AD.isFamilyType(nextType) && !row.family_id) {
+    familyStep = await _acqFamilyForHuman(_activeAcqId, row, nextType);
+    if (familyStep.patch) {
+      fields.familyId     = familyStep.patch.familyId;
+      fields.familyStatus = familyStep.patch.familyStatus;
+      fields.familySource = familyStep.patch.familySource;
+      fields.classificationHistory =
+        AD.appendHistory(fields.classificationHistory, familyStep.patch.historyEntry);
+    }
+    // A decline writes NOTHING. The document stays unfiled and the panel shows
+    // the reason — which is the honest outcome, not a silent one.
+  }
+
   // A type that no longer belongs to a leasehold leaves the family it was in.
   //
   // D-17 (P4-3): it does NOT take its relationship with it any more. A
@@ -31334,6 +31513,11 @@ async function acqSetDocType(docId, nextType) {
     }
   }
   const savedRow = await _acqSaveDocument(fields);
+  // A leasehold that has just come into existence may already have relatives
+  // on file. They are proposed to it, never taken (Issue B).
+  if (savedRow && familyStep && familyStep.familyId) {
+    await _acqProposeSiblings(_activeAcqId, savedRow, familyStep.familyId);
+  }
   _renderAcqDocuments();
 
   // WHAT IT SAYS, revisited (P1-4). A document corrected INTO a lease-family
