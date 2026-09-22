@@ -463,12 +463,25 @@ function leaseText(tenant, marker) {
         !!corrected && corrected.doc_type_confidence === null, corrected ? String(corrected.doc_type_confidence) : '');
 
   // A type that no longer belongs to a leasehold must leave it.
+  //
+  // D-17 (P1-4 / P4-3) changed what happens to the RELATIONSHIP when it does.
+  // P1-3 discarded the parent and the relationship outright. That destroyed a
+  // fact — a document that amended a lease yesterday still amended it today —
+  // so they are now preserved and flagged `needs_review` for a person. The
+  // family still goes, which is what this check has always been about.
   await page.evaluate((id) => acqSetDocType(id, 'rent_roll'), amd.id);
   await page.waitForTimeout(400);
   const moved = await named('coastal-amendment.txt');
   check('a document corrected to a review-level type leaves the leasehold',
-        !!moved && !moved.family_id && !moved.parent_document_id,
-        moved ? `${moved.family_id} / ${moved.parent_document_id}` : '');
+        !!moved && !moved.family_id && moved.family_status === 'unfiled',
+        moved ? `${moved.family_id} / ${moved.family_status}` : '');
+  check('but KEEPS the relationship it had, flagged for review (D-17)',
+        !!moved && moved.parent_document_id === lease.id && moved.relationship === 'amends'
+        && moved.relationship_status === 'needs_review',
+        moved ? `${moved.relationship} → ${moved.parent_document_id} (${moved.relationship_status})` : '');
+  check('and the flagging is recorded in the audit trail',
+        !!moved && (moved.classification_history || []).some(h => h.action === 'needs_review' && h.field === 'relationship'),
+        moved ? JSON.stringify((moved.classification_history || []).map(h => h.action)) : '');
 
   // ── 7 · D-14, in the browser ─────────────────────────────────────────────
   const beforeReupload = (await docs()).length;

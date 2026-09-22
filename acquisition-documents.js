@@ -159,7 +159,11 @@
 
   var TYPE_STATUSES   = ['unclassified', 'proposed', 'confirmed', 'corrected'];
   var FAMILY_STATUSES = ['unfiled', 'proposed', 'confirmed'];
-  var REL_STATUSES    = ['proposed', 'confirmed'];
+  // D-17 (P1-4 / P4-3): `needs_review` joins the two. A document reclassified
+  // out of a lease family keeps the relationship it had and is flagged for a
+  // person, rather than having the link discarded to keep two columns tidy.
+  // Migration 026 widened the matching CHECK.
+  var REL_STATUSES    = ['proposed', 'confirmed', 'needs_review'];
   // A status that asserts something as settled. Migration 024's trigger refuses
   // one of these with no confirmed_by; buildPayload refuses it here too, so the
   // mistake is caught before it reaches the database rather than as a 500.
@@ -390,7 +394,12 @@
     var o = (e && typeof e === 'object') ? e : {};
     var entry = {
       at:     _str(o.at, 40) || new Date().toISOString(),
-      action: ['proposed', 'confirmed', 'corrected', 'inherited'].indexOf(o.action) >= 0 ? o.action : 'proposed',
+      // `needs_review` is D-17's act (P1-4 / P4-3): a relationship preserved
+      // and flagged when its document was reclassified out of the lease
+      // family. Without it here the entry was silently rewritten to
+      // `proposed`, and the trail recorded the opposite of what happened.
+      action: ['proposed', 'confirmed', 'corrected', 'inherited', 'needs_review'].indexOf(o.action) >= 0
+                ? o.action : 'proposed',
       field:  ['doc_type', 'family', 'relationship'].indexOf(o.field) >= 0 ? o.field : 'doc_type',
       from:   o.from === undefined ? null : o.from,
       to:     o.to === undefined ? null : o.to,
@@ -755,6 +764,7 @@
     RELATIONSHIP_FOR_TYPE: RELATIONSHIP_FOR_TYPE,
     TYPE_STATUSES: TYPE_STATUSES,
     FAMILY_STATUSES: FAMILY_STATUSES,
+    REL_STATUSES: REL_STATUSES,
     CONFIRMED_STATUSES: CONFIRMED_STATUSES,
     HISTORY_CAP: HISTORY_CAP,
     docTypeLabel: docTypeLabel,

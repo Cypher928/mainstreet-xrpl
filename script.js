@@ -30640,13 +30640,152 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
   if (!built.ok) {
     return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });
   }
-  return _acqSaveDocument({
+  const saved = await _acqSaveDocument({
     ...base,
     abstractedFields:  built.abstraction,
     abstractionStatus: built.status,
     abstractionModel:  built.abstraction.model,
     abstractedAt:      built.abstraction.at,
   });
+  // The list select does not return the evidence column, so the Lease Terms
+  // panel would not see this reading until the next full load. Cache what was
+  // just written, which is the same object the database now holds.
+  if (saved && saved.id) _acqEvidence.set(saved.id, built.abstraction);
+  return saved;
+}
+
+// ── Lease terms: what the documents establish, and what a person decided (P4-3)
+//
+// P4-1 recorded what each document says. P4-2 turned a family of those into one
+// set of terms with a state each. This is the third piece: the human acts, and
+// the screen they happen on.
+//
+// The AI evidence is NEVER modified from here. A decision is a row in
+// acquisition_term_decisions; `abstracted_fields` on the document is left
+// exactly as the model wrote it, so rejecting a reading does not delete it and
+// correcting a term does not rewrite the document. The resolver lays one over
+// the other at read time.
+
+const _acqDecisions = new Map();   // reviewId → rows
+function _acqDecisionRows(reviewId) { return _acqDecisions.get(reviewId) || []; }
+
+// One review's decisions, oldest first — the order they were made, which is
+// the order the resolver replays them in.
+async function _acqLoadDecisions(reviewId) {
+  if (!reviewId) return [];
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return [];
+    const { data, error } = await db
+      .from('acquisition_term_decisions')
+      .select(_AT().DECISION_SELECT)
+      .eq('review_id', reviewId)
+      .eq('user_id', user.id)
+      .order('decided_at', { ascending: true });
+    if (error) {
+      if (_AD().schemaGap(error)) { _acqDecisionsMissing(error); return []; }
+      console.warn('[acq] could not load decisions:', error.message);
+      return [];
+    }
+    _acqDecisionsUnavailable = false;
+    _acqDecisions.set(reviewId, Array.isArray(data) ? data : []);
+    return _acqDecisionRows(reviewId);
+  } catch (e) {
+    console.warn('[acq] _acqLoadDecisions failed:', e && e.message);
+    return [];
+  }
+}
+
+// The decisions table is behind the code. Say so where the person can see it,
+// and keep showing the terms — an absent migration must not hide the reading.
+let _acqDecisionsUnavailable = false;
+function _acqDecisionsMissing(error) {
+  _acqDecisionsUnavailable = true;
+  console.warn('[acq] decisions unavailable — run migrations/026_acquisition_term_decisions.sql', error && error.message);
+}
+
+// Record one human act. Append-only: this INSERTS, it never updates, because
+// the history is the feature and migration 026 refuses anything else.
+async function _acqSaveDecision(fields, term) {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const built = _AT().buildDecisionPayload(_activeAcqId, user.id, fields, term);
+    if (!built.ok) {
+      showToast('⚠️ ' + built.error, { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+      return null;
+    }
+    const { data, error } = await db
+      .from('acquisition_term_decisions')
+      .insert(built.payload)
+      .select(_AT().DECISION_SELECT);
+    if (error) {
+      if (_AD().schemaGap(error)) {
+        _acqDecisionsMissing(error);
+        showToast('⚠️ Decisions are not being filed — run migrations/026_acquisition_term_decisions.sql in Supabase.',
+          { color: '#92400e', textColor: '#fef3c7', duration: 9000 });
+        return null;
+      }
+      console.error('[acq] decision save failed:', error.message, '| code:', error.code);
+      return null;
+    }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row) {
+      const rows = _acqDecisionRows(_activeAcqId).slice();
+      rows.push(row);
+      _acqDecisions.set(_activeAcqId, rows);
+    }
+    return row;
+  } catch (e) {
+    console.warn('[acq] _acqSaveDecision failed:', e && e.message);
+    return null;
+  }
+}
+
+// The evidence, fetched separately and on purpose.
+//
+// LIST_SELECT deliberately leaves `abstracted_fields` behind: it is 27 entries
+// with quotes per document, and the Documents panel shows a status chip, not a
+// clause. The Lease Terms panel is the one screen that needs the whole thing,
+// so it asks for exactly that column, once per review, the same way
+// _acqLoadDocumentText asks for the text of one row.
+const _acqEvidence = new Map();   // documentId → abstracted_fields
+
+async function _acqLoadEvidence(reviewId) {
+  if (!reviewId) return;
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return;
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .select('id, abstracted_fields')
+      .eq('review_id', reviewId)
+      .eq('user_id', user.id);
+    if (error) {
+      if (!_AD().schemaGap(error)) console.warn('[acq] could not load evidence:', error.message);
+      return;
+    }
+    (Array.isArray(data) ? data : []).forEach(r => {
+      if (r && r.id && r.abstracted_fields) _acqEvidence.set(r.id, r.abstracted_fields);
+    });
+  } catch (e) {
+    console.warn('[acq] _acqLoadEvidence failed:', e && e.message);
+  }
+}
+
+// One family's terms, resolved. Pure inputs: the documents on screen, the
+// evidence they carry, and the decisions on file.
+function _acqFamilyTerms(familyId) {
+  const AT = _AT();
+  if (!AT || !familyId) return null;
+  const docs = _acqDocRows(_activeAcqId)
+    .filter(d => d && d.family_id === familyId)
+    // The row from the list has no evidence column; put it back for the
+    // resolver without writing it into the cached row.
+    .map(d => _acqEvidence.has(d.id) ? Object.assign({}, d, { abstracted_fields: _acqEvidence.get(d.id) }) : d);
+  const decisions = _acqDecisionRows(_activeAcqId).filter(d => d && d.family_id === familyId);
+  const r = AT.resolveFamilyTerms(docs, decisions);
+  return r.ok ? r : null;
 }
 
 // A person asks for a document to be read (again). The text is already on the
@@ -30853,6 +30992,223 @@ function _renderAcqDocuments() {
 
   el.innerHTML = parts.filter(Boolean).join('');
   _acqBindDocControls(el);
+  _renderAcqTerms();
+}
+
+// ── The Lease Terms panel (P4-3) ─────────────────────────────────────────────
+// One section per leasehold: every term, its state, the document and clause
+// behind it, and the two acts a person can take on it.
+//
+// What this screen refuses to do is the point of it. A missing term is listed
+// saying no document establishes it, rather than shown as a blank or a zero. A
+// contradiction shows BOTH values with the documents asserting them and waits
+// for a person. A figure the clause does not literally state says so. And
+// Confirm and Correct are disabled, with the reason, while the governing
+// document is still unclassified or a proposal.
+
+const _ACQ_TERM_STATE = {
+  verified:     { label: 'Verified',     cls: 'verified' },
+  ai_extracted: { label: 'AI extracted', cls: 'ai'       },
+  conflicting:  { label: 'Conflicting',  cls: 'conflict' },
+  unclear:      { label: 'Unclear',      cls: 'unclear'  },
+  missing:      { label: 'Missing',      cls: 'missing'  },
+};
+
+// A term's value as a person reads it. `null` is never rendered as 0 or blank:
+// the missing row says so in words instead.
+function _acqTermValue(term) {
+  const v = term.value;
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  const type = term.type;
+  if (typeof v === 'number') {
+    if (type === 'percent') return v + '%';
+    if (type === 'money')   return '$' + v.toLocaleString('en-US');
+    return v.toLocaleString('en-US');
+  }
+  return String(v);
+}
+
+function _renderAcqTerms() {
+  const el = document.getElementById('acqTermsList');
+  if (!el) return;
+  const AT = _AT(), AD = _AD();
+  const families = _acqFamilyRows(_activeAcqId);
+  const countEl = document.getElementById('acqTermsCount');
+
+  if (!AT || !families.length) {
+    if (countEl) countEl.textContent = '';
+    el.innerHTML = '<div class="acq-terms-empty">No leasehold has been identified yet. '
+      + 'Classify a lease in Documents above and its terms appear here.</div>';
+    return;
+  }
+
+  const warn = _acqDecisionsUnavailable
+    ? '<div class="acq-docs-warn">Decisions are <strong>not being filed</strong> — this project’s database is behind the app. '
+      + 'Run <code>migrations/026_acquisition_term_decisions.sql</code> in Supabase to keep them.</div>'
+    : '';
+
+  let totalVerified = 0, totalTerms = 0;
+  const sections = families.map(fam => {
+    const resolved = _acqFamilyTerms(fam.id);
+    if (!resolved) return '';
+    const s = resolved.summary;
+    totalVerified += s.verified; totalTerms += s.total;
+
+    const rows = AT.FIELDS.map(field => {
+      const term = resolved.terms[field];
+      const st   = _ACQ_TERM_STATE[term.state] || _ACQ_TERM_STATE.missing;
+      const shown = _acqTermValue(term);
+
+      // MISSING IS NOT NONE, on screen.
+      const valueHtml = shown === null
+        ? `<span class="acq-term-missing">${esc(term.state === 'missing'
+             ? 'No document on file establishes this'
+             : 'No value could be read')}</span>`
+        : `<span class="acq-term-value">${esc(shown)}</span>`;
+
+      // Provenance: the document, and the clause it came from.
+      const src = term.governingDocumentName
+        ? `<div class="acq-term-src">${esc(term.governingDocumentName)}`
+          + (term.governingDocType ? ' · ' + esc(AD.docTypeLabel(term.governingDocType)) : '')
+          + (term.page != null ? ' · p.' + esc(term.page) : '')
+          + (term.confidence != null ? ` · <span class="acq-term-conf">confidence ${esc(term.confidence)}</span>` : '')
+          + '</div>' : '';
+      const quote = term.quote
+        ? `<div class="acq-term-quote">&ldquo;${esc(term.quote)}&rdquo;</div>` : '';
+
+      // A figure the clause does not literally state.
+      const derived = term.derived
+        ? `<div class="acq-term-derived">⚠ Calculated, not quoted: the clause gives a rate or a component, not this figure.</div>` : '';
+
+      // A contradiction shows BOTH values and the documents asserting them.
+      const conflict = (term.contradictions && term.contradictions.length)
+        ? `<div class="acq-term-conflict">Documents disagree: `
+          + term.contradictions.map(c =>
+              esc((c.values || []).join(' vs ')) + ' (' + esc((c.documents || []).join(', ')) + ')').join('; ')
+          + `. Nothing has been chosen for you.</div>` : '';
+
+      const superseded = (term.supersededValues && term.supersededValues.length)
+        ? `<div class="acq-term-superseded">Replaced ${esc(String(term.supersededValues[0].value))}`
+          + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '') + '</div>' : '';
+
+      const decided = term.decision
+        ? `<div class="acq-term-decided">${esc(term.note || '')}</div>` : '';
+
+      const blocked = (!term.canConfirm && term.state !== 'missing')
+        ? `<div class="acq-term-blocked">${esc(term.blockedReason || 'This term cannot be confirmed yet.')}</div>` : '';
+
+      // The gate, on screen: disabled with the reason, rather than accepted
+      // and silently capped.
+      const actionable = term.state !== 'missing';
+      const gate = term.canConfirm ? '' : ' disabled';
+      const gateTitle = term.canConfirm ? '' : ` title="${esc(term.blockedReason || '')}"`;
+      const actions = actionable ? `
+        <div class="acq-term-actions">
+          <button class="acq-term-confirm" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Confirm</button>
+          <button class="acq-term-correct" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Correct</button>
+          <button class="acq-term-reject"  data-field="${esc(field)}" data-family="${esc(fam.id)}">Reject</button>
+          ${term.decision ? `<button class="acq-term-reopen" data-field="${esc(field)}" data-family="${esc(fam.id)}">Reopen</button>` : ''}
+        </div>` : '';
+
+      return `
+      <div class="acq-term-row ${esc(st.cls)}" data-field="${esc(field)}" data-state="${esc(term.state)}"${term.derived ? ' data-derived="1"' : ''}>
+        <div class="acq-term-main">
+          <div class="acq-term-head">
+            <span class="acq-term-label">${esc(term.label)}</span>
+            <span class="acq-term-state ${esc(st.cls)}">${esc(st.label)}</span>
+          </div>
+          ${valueHtml}
+          ${src}${quote}${derived}${conflict}${superseded}${decided}${blocked}
+        </div>
+        ${actions}
+      </div>`;
+    }).join('');
+
+    const sub = [
+      s.verified + ' verified', s.ai_extracted + ' AI', s.conflicting + ' conflicting',
+      s.unclear + ' unclear', s.missing + ' missing',
+    ].join(' · ');
+
+    return `<div class="acq-term-group" data-family="${esc(fam.id)}">
+        <div class="acq-term-group-head">
+          <span class="acq-term-group-title">${esc(fam.label)}</span>
+          <span class="acq-term-group-sub">${esc(sub)}</span>
+        </div>${rows}</div>`;
+  }).filter(Boolean).join('');
+
+  if (countEl) countEl.textContent = totalTerms ? `${totalVerified} of ${totalTerms} verified` : '';
+  el.innerHTML = warn + (sections || '<div class="acq-terms-empty">No lease documents have been read for terms yet.</div>');
+  _acqBindTermControls(el);
+}
+
+// Delegated, bound once — the panel is re-rendered wholesale.
+function _acqBindTermControls(el) {
+  if (!el || el._acqTermsBound) return;
+  el._acqTermsBound = true;
+  el.addEventListener('click', (ev) => {
+    const t = ev.target;
+    const hit = (sel) => t.closest && t.closest(sel);
+    const btn = hit('.acq-term-confirm') || hit('.acq-term-correct') || hit('.acq-term-reject') || hit('.acq-term-reopen');
+    if (!btn || btn.disabled) return;
+    ev.preventDefault();
+    const field = btn.getAttribute('data-field');
+    const family = btn.getAttribute('data-family');
+    if (btn.classList.contains('acq-term-confirm')) acqConfirmTerm(family, field);
+    else if (btn.classList.contains('acq-term-correct')) acqCorrectTerm(family, field);
+    else if (btn.classList.contains('acq-term-reject'))  acqRejectTerm(family, field);
+    else if (btn.classList.contains('acq-term-reopen'))  acqReopenTerm(family, field);
+  });
+}
+
+// ── The four acts ────────────────────────────────────────────────────────────
+// Each one is an INSERT. None of them touches the document's evidence.
+
+function _acqTermFor(familyId, field) {
+  const r = _acqFamilyTerms(familyId);
+  return r && r.terms ? r.terms[field] : null;
+}
+
+async function acqConfirmTerm(familyId, field) {
+  const term = _acqTermFor(familyId, field);
+  if (!term) return;
+  await _acqSaveDecision({ familyId, fieldKey: field, action: 'confirm',
+    sourceDocumentId: term.governingDocumentId || undefined,
+    sourceQuote: term.quote || undefined,
+    sourcePage: term.page == null ? undefined : term.page }, term);
+  _renderAcqTerms();
+}
+
+async function acqCorrectTerm(familyId, field) {
+  const term = _acqTermFor(familyId, field);
+  if (!term) return;
+  const current = _acqTermValue(term);
+  const next = (typeof prompt === 'function')
+    ? prompt(`Correct “${term.label}”.\n\nWhat the documents say: ${current === null ? 'nothing' : current}`,
+             current === null ? '' : current)
+    : null;
+  if (next === null || String(next).trim() === '') return;
+  await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
+    newValue: String(next).trim(),
+    // The AI reading being replaced is recorded, not overwritten.
+    previousValue: term.value == null ? undefined : String(term.value),
+    sourceDocumentId: term.governingDocumentId || undefined }, term);
+  _renderAcqTerms();
+}
+
+async function acqRejectTerm(familyId, field) {
+  const term = _acqTermFor(familyId, field);
+  if (!term) return;
+  await _acqSaveDecision({ familyId, fieldKey: field, action: 'reject',
+    previousValue: term.value == null ? undefined : String(term.value) }, term);
+  _renderAcqTerms();
+}
+
+async function acqReopenTerm(familyId, field) {
+  const term = _acqTermFor(familyId, field);
+  if (!term) return;
+  await _acqSaveDecision({ familyId, fieldKey: field, action: 'reopen' }, term);
+  _renderAcqTerms();
 }
 
 // The panel is re-rendered wholesale, so the controls inside it are reached by
@@ -30914,11 +31270,24 @@ async function acqSetDocType(docId, nextType) {
     }),
   };
 
-  // A type that no longer belongs to a leasehold leaves the family it was in,
-  // and takes its relationship with it — a rent roll does not amend a lease.
+  // A type that no longer belongs to a leasehold leaves the family it was in.
+  //
+  // D-17 (P4-3): it does NOT take its relationship with it any more. A
+  // document that amended a lease yesterday still amended it today, and
+  // discarding the link to keep two columns tidy destroys a fact nobody can
+  // recover. The parent and the relationship are PRESERVED and flagged
+  // `needs_review` for a person to settle; migration 026 admits that value.
   if (!AD.isFamilyType(nextType) && row.family_id) {
     fields.familyId = null; fields.familyStatus = 'unfiled'; fields.familySource = null;
-    fields.parentDocumentId = null; fields.relationship = null; fields.relationshipStatus = null;
+    if (row.parent_document_id && row.relationship) {
+      fields.parentDocumentId  = row.parent_document_id;
+      fields.relationship      = row.relationship;
+      fields.relationshipStatus = 'needs_review';
+      fields.classificationHistory = AD.appendHistory(fields.classificationHistory, {
+        action: 'needs_review', field: 'relationship', from: row.relationship_status || null,
+        to: 'needs_review', source: 'human', actor: _acqActor(),
+      });
+    }
   }
   const savedRow = await _acqSaveDocument(fields);
   _renderAcqDocuments();
@@ -31201,6 +31570,11 @@ function selectAcquisitionReview(id) {
   _renderAcqDocuments();
   _acqLoadFamilies(id)
     .then(() => _acqLoadDocuments(id))
+    // P4-3: the decisions too, because a term's state is the documents AND
+    // what a person decided about them. Loading them after the documents
+    // means the first paint of the terms panel already carries both.
+    .then(() => _acqLoadDecisions(id))
+    .then(() => _acqLoadEvidence(id))
     .then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });
 
   if (d.analysis) {

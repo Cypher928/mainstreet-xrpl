@@ -5,9 +5,12 @@ shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
 in progress under the approved plan in §4d. Increment P4-1 is CLOSED — built,
 validated locally, migration 025 applied to Pilot, deployed to
 www.mainstreet-review.com and validated in the live browser on a real lease
-(§4e, §4f). Increment P4-2 is BUILT and awaiting review (§4g): the term
-resolver, headless, with no UI, no migration and nothing user-visible.**
-P4-3 and P4-V do not start until P4-2 is reviewed. Production (`main`,
+(§4e, §4f). Increment P4-2 is CLOSED — the term resolver, shipped
+to `pilot` and verified against the owner-operator CAM path (§4g). Increment
+P4-3 is BUILT and awaiting review (§4h): the append-only decision history, the
+four human acts and the Lease Terms panel. Migration 026 is executed against a
+throwaway cluster but NOT applied to Pilot, and the P4-3 code is NOT pushed.**
+P4-V does not start until P4-3 is reviewed. Production (`main`,
 mainstreetcam.com, the production Supabase project) is not touched by this
 work.
 
@@ -97,7 +100,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-1 | **Workspace record & lifecycle foundation** — `acquisition-workspace.js`; idempotent `upgradeReview`; stage model; activity model; conditional save with conflict protection; stage chips in the detail header | **shipped** |
 | P1-2 | **Document Intake I — preserve every source** — `acquisition_documents` (migration 023), written from the browser under RLS (no new serverless function), originals in the private bucket, text kept, failed extractions kept as rows, Documents panel | **shipped** (migration applied separately) |
 | P1-3 | **Document Intake II — classification, families, versions** — migration 024; server-owned `document_classification` task on the existing `/api/claude`; families grouped, never guessed; every reading a proposal until a person confirms it; D-14 answered so a re-upload keeps both sources | **shipped** |
-| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 shipped and browser-validated (§4f); P4-2 built, awaiting review (§4g); P4-3 not started** |
+| P1-4 | **Lease Intelligence** — approved plan in §4d: 27 fields, per-document evidence, the existing reasoner reused with an optional field list, five term states with the classification ceiling, per-field append-only decisions, no write-back | **P4-1 and P4-2 shipped (§4f, §4g); P4-3 built, awaiting review (§4h); P4-V not started** |
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
@@ -781,11 +784,15 @@ because `isAbstractable(null)` is false — honest silence rather than a promise
 
 ---
 
-## 4g. P4-2 — the term resolver (built; awaiting review)
+## 4g. P4-2 — the term resolver (shipped)
 
-**Status: built and validated locally. Headless by design — no UI, no
-migration, no schema change, nothing deployed that a person can see yet. The
-Lease Terms panel and the decisions table are P4-3.**
+**Status: shipped to `pilot` as `5cc8cd1` and deployed. Headless by design — no
+UI, no migration, no schema change, nothing a person can see. After deployment
+the owner-operator CAM path was re-verified: twenty of twenty-one
+lease-intelligence and CAM suites passed, and the one failure
+(`test-e2e-property-mismatch.js`) fails identically on the commit before P4-2,
+because it needs live network and a sign-in this session cannot reach. The
+Lease Terms panel and the decisions table are P4-3 (§4h).**
 
 ### The one change to `lease-intelligence.js`, and nothing else
 
@@ -898,6 +905,100 @@ the ceiling), `correct` replaces the value and records the person, `reject`
 keeps what the document said and stops presenting it as the answer, `reopen`
 returns the term to the documents. Latest by `decided_at` wins, array order is
 irrelevant, and a decision on one field says nothing about any other.
+
+---
+
+## 4h. P4-3 — the human decisions and the Lease Terms panel (built; awaiting review)
+
+**Status: built and validated locally. Migration 026 is written and executed
+against a throwaway cluster but NOT applied to Pilot, and the code is NOT
+pushed.** The Documents panel and the Lease Terms panel both name 026's
+columns, so shipping the code first would degrade them; the order is the same
+as P4-1's: review → authorize 026 → apply → push → verify.
+
+### `acquisition_term_decisions` — append-only, and why
+
+A decision is an EVENT, not a property of a term. "Confirmed at 4%, then
+corrected to 5%, then reopened" is three facts about three moments, and a
+column keeps only the last. One row per human act, per field, per family, with
+the approved shape: `field_key` `action` ∈ `confirm · correct · reject ·
+reopen`, `previous_value` `new_value`, `source_document_id` `source_quote`
+`source_page`, `decided_by` (not null) `decided_at` `note`. Owner-only RLS, no
+anon policy, composite keys on `user_id` to reviews, families and documents.
+
+**The AI evidence is never touched from here.** It stays in
+`acquisition_documents.abstracted_fields` where 025 put it. A correction
+records the new value beside the one it replaced; it does not reach into the
+document. A rejection does not delete a reading. The resolver lays one record
+over the other at read time.
+
+### Append-only, corrected by execution
+
+The first version of the trigger refused **every** UPDATE and DELETE. Running
+it against a real cluster showed why that was wrong: the database performs its
+own UPDATEs and DELETEs here. `on delete set null` clears `family_id` when a
+family is deleted, and `on delete cascade` removes decisions when their review
+is deleted. A blanket refusal made a family or a review **undeletable** for
+ever once one decision existed.
+
+The guarantee has to protect the decision, not forbid the statement. So:
+
+- Everything that makes a decision a decision — action, values, citation,
+  actor, timestamps — is immutable. Changing any of them is refused.
+- The two nullable foreign keys may be cleared to NULL and never repointed,
+  which is exactly what the cascades do.
+- A DELETE is allowed only when the review itself is already gone, which is
+  the cascade doing its work. Every other delete still has its review, and is
+  refused.
+
+### The four acts
+
+| act | effect on the term | effect on the evidence |
+|---|---|---|
+| `confirm` | `verified`, subject to the ceiling | none |
+| `correct` | value replaced, `verified`, previous value recorded | none |
+| `reject` | `unclear`; the reading and clause are KEPT | none |
+| `reopen` | back to what the documents say; no decision in force | none |
+
+Latest by `decided_at` wins, array order is irrelevant, a reopen clears the
+conclusion and not the history, and a decision on one field says nothing about
+any other.
+
+### The gate
+
+Confirm and Correct are refused while the governing document's classification
+is `unclassified` or `proposed`. Enforced in **two** places: `buildDecisionPayload`
+returns the reason, so a disabled button is a courtesy rather than the
+enforcement, and the panel disables the controls with that reason on the
+control and in a row of its own. Reject and Reopen are deliberately NOT gated —
+saying a reading is wrong does not require first agreeing what the document is.
+
+### The panel
+
+One section per leasehold under Documents. Each term shows its label, a state
+chip for all five states, its value, the governing document with page and
+confidence, the clause in quotation marks, and up to four controls. Beyond that:
+
+- **Missing is a sentence**, "No document on file establishes this", never a
+  blank or a zero, and it offers no Confirm or Correct because there is nothing
+  to confirm.
+- **A contradiction shows both values and both documents** and says nothing was
+  chosen for you.
+- **A derived figure says so**: "Calculated, not quoted: the clause gives a
+  rate or a component, not this figure." The `base_rent` case from the live
+  P4-1 run is exactly this.
+- Superseded values and the decision in force each get their own line.
+- The evidence column is fetched by itself (`id, abstracted_fields`) rather
+  than being added to the documents list, which P4-1 deliberately kept lean.
+
+### D-17
+
+Reclassifying a document out of a lease-family type no longer discards its
+parent and relationship. They are PRESERVED and `relationship_status` becomes
+`needs_review`, appended to `classification_history` with its actor. A document
+that amended a lease yesterday still amended it today, and throwing the link
+away to keep two columns tidy destroys a fact nobody can recover. Migration 026
+widens the check; `acqSetDocType` writes it.
 
 ---
 
@@ -1063,6 +1164,45 @@ P1-4 / P4-2:
   keeps the reading, and a decision on one field settles only that field. It
   also pins the increment's boundaries — no network, no DOM, no storage, no
   migration 026, and no Lease Terms UI in `script.js` or `index.html`.
+P1-4 / P4-3:
+
+- `test-acquisition-decisions.js` — the eight points the increment was asked to
+  prove, in order: the gate refuses Confirm and Correct on an unclassified or
+  proposed document while leaving Reject available; a correction records the
+  value it replaced and never writes to the document; a rejection keeps the
+  reading, the clause and the provenance; a reopen returns the term to the
+  documents and removes no history; a contradiction keeps both values and both
+  documents; a missing term stays missing in words and offers nothing to
+  confirm; a derived figure is flagged rather than presented as quoted; and
+  every decision carries an actor taken from the session and a timestamp. Plus
+  the write contract, the panel's markup and phone rules, D-17, and migration
+  026 read as text.
+- `test-e2e-acquisition-terms.js` — the walk, against a stand-in that enforces
+  026's append-only trigger, its actor rule, owner-only RLS and its composite
+  keys: the panel lists 27 terms per leasehold; Confirm is disabled with the
+  reason and clicking it records nothing; confirming the DOCUMENT opens the
+  gate; Confirm writes one decision with an actor and a time while the
+  evidence stays byte-identical; Correct records `4 → 6` and the document still
+  says 4%; Reject keeps the reading and stops presenting it; Reopen leaves all
+  three rows; a contradiction shows both values and both file names; a missing
+  term reads as a sentence with no controls; the derived figure says it was
+  calculated; an UPDATE and a DELETE are both refused; nothing crosses an
+  owner; a reload rebuilds every state from the two tables; and at 375 px the
+  term keeps its width while the controls take their own line.
+- `tools/verify-migration-026.js` — **executes** 026 against a throwaway
+  cluster on top of 000 + 006 + 023 + 024 + 025: 83 checks. Append-only is
+  refused for the owner as much as anyone, a decision cannot name another
+  author, nothing points across owners, RLS admits the owner and nobody else,
+  **recording confirm, correct and reject leaves `abstracted_fields`
+  byte-identical**, a correction keeps `previous_value`, four acts on one field
+  are four rows with the latest in force, deleting a family unfiles its
+  decisions while deleting a review takes them, D-17 accepts `needs_review`
+  without disturbing the old two values, and the rollback removes exactly
+  026 while REFUSING to narrow D-17 under a live `needs_review` row.
+- `tools/acquisition-decisions-mutation.js` — 37 mutants across the gate, the
+  write contract, the decision overlay, the panel, the data layer, the
+  migration SQL and D-17.
+
 - `tools/acquisition-resolver-mutation.js` — 35 mutants across the reasoner
   seam, the document filter, the support check, the five states, contradictions,
   the ceiling, the decision overlay and the lineage cross-check. **34 of 34

@@ -296,6 +296,16 @@
     side_letter:    'side_letter',
   };
 
+  // The columns a decisions list asks for. Everything 026 stores: a decision
+  // is small, and the history is the feature.
+  var DECISION_COLUMNS = [
+    'id', 'review_id', 'family_id', 'field_key', 'action',
+    'previous_value', 'new_value',
+    'source_document_id', 'source_quote', 'source_page',
+    'decided_by', 'decided_at', 'note', 'created_at',
+  ];
+  var DECISION_SELECT = DECISION_COLUMNS.join(', ');
+
   var TERM_STATES = ['verified', 'ai_extracted', 'conflicting', 'unclear', 'missing'];
   // How settled a state is, for applying a ceiling. `conflicting` and
   // `missing` are NOT points on this scale — they are different facts about
@@ -676,6 +686,92 @@
     return { ok: true, terms: terms, input: input, reasonerResult: res, summary: summarizeTerms(terms) };
   }
 
+  // ── Writing a decision (P4-3) ─────────────────────────────────────────────
+  //
+  // The mirror of acquisition-documents.js buildPayload: camelCase in,
+  // snake_case out, through an allow-list, with user_id from the session and
+  // every unknown key dropped. Migration 026 enforces the same rules in the
+  // database; refusing here too turns a constraint violation into a named
+  // mistake at the call site, which is where it can be fixed.
+  var DECISION_WRITABLE = {
+    family_id:          function (v) { return _str(v, 64); },
+    field_key:          function (v) { return _str(v, 120); },
+    action:             function (v) { return DECISION_ACTIONS.indexOf(v) >= 0 ? v : null; },
+    previous_value:     function (v) { return v == null ? null : _str(String(v), 4000); },
+    new_value:          function (v) { return v == null ? null : _str(String(v), 4000); },
+    source_document_id: function (v) { return _str(v, 64); },
+    source_quote:       function (v) { return _str(v, QUOTE_MAX); },
+    source_page:        _page,
+    decided_by:         function (v) { return _str(v, 64); },
+    decided_at:         function (v) { return _str(v, 40); },
+    note:               function (v) { return _str(v, 2000); },
+  };
+  var DECISION_CAMEL = {
+    familyId: 'family_id', fieldKey: 'field_key', action: 'action',
+    previousValue: 'previous_value', newValue: 'new_value',
+    sourceDocumentId: 'source_document_id', sourceQuote: 'source_quote', sourcePage: 'source_page',
+    decidedBy: 'decided_by', decidedAt: 'decided_at', note: 'note',
+  };
+
+  /**
+   * The row to write for one human act on one term.
+   *
+   * `term` is the RESOLVED term the person acted on. It supplies two things
+   * nothing else can: the classification gate, and the value being replaced.
+   *
+   * THE GATE. Confirm and Correct are refused while the governing document is
+   * `unclassified` or `proposed`. That is the approved rule, and it lives here
+   * rather than only in the UI so that a disabled button is a courtesy rather
+   * than the enforcement. Reject and Reopen are NOT gated: saying "this
+   * reading is wrong" does not require having first agreed what the document
+   * is.
+   *
+   * PREVIOUS VALUE. A correction records what it replaced. The caller may pass
+   * one; when it does not, the term's current value is used, so a correction
+   * can never silently lose the AI reading it overrode.
+   */
+  function buildDecisionPayload(reviewId, userId, fields, term) {
+    var f = (fields && typeof fields === 'object') ? fields : {};
+    if (!reviewId) return { ok: false, error: 'Missing reviewId' };
+    if (!userId)   return { ok: false, error: 'Missing userId' };
+
+    var payload = { review_id: reviewId, user_id: userId, decided_by: userId };
+    for (var camel in DECISION_CAMEL) {
+      if (!Object.prototype.hasOwnProperty.call(DECISION_CAMEL, camel)) continue;
+      if (f[camel] === undefined) continue;
+      payload[DECISION_CAMEL[camel]] = DECISION_WRITABLE[DECISION_CAMEL[camel]](f[camel]);
+    }
+    // The actor is the session's, never the caller's. 026's trigger refuses a
+    // row whose decided_by is not its user_id; this makes that unreachable.
+    payload.decided_by = userId;
+    if (!payload.decided_at) payload.decided_at = new Date().toISOString();
+
+    if (!payload.field_key) return { ok: false, error: 'fieldKey must be a non-empty string' };
+    if (!payload.action)    return { ok: false, error: 'action must be one of ' + DECISION_ACTIONS.join(', ') };
+
+    if (payload.action === 'correct' && !payload.new_value) {
+      return { ok: false, error: 'A correction must carry the value it corrects to' };
+    }
+
+    if (payload.action === 'confirm' || payload.action === 'correct') {
+      if (!term) return { ok: false, error: 'Confirming or correcting a term needs the term it acts on' };
+      if (term.state === 'missing') {
+        return { ok: false, error: 'No document establishes this term, so there is nothing to ' + payload.action + '.' };
+      }
+      if (!term.canConfirm) {
+        return { ok: false, error: term.blockedReason
+          || 'The document this term comes from is not confirmed yet. Confirm or correct the document type first.' };
+      }
+    }
+
+    // What the term read before this act, so the correction records what it
+    // replaced rather than erasing it.
+    if (payload.previous_value === undefined && term && term.value !== null && term.value !== undefined) {
+      payload.previous_value = _str(String(term.value), 4000);
+    }
+    return { ok: true, payload: payload };
+  }
+
   /** What a family's terms amount to. Never throws. */
   function summarizeTerms(terms) {
     var t = (terms && typeof terms === 'object') ? terms : {};
@@ -714,6 +810,11 @@
     buildReasonerInput: buildReasonerInput,
     classificationCeiling: classificationCeiling,
     latestDecision: latestDecision,
+    DECISION_WRITABLE: DECISION_WRITABLE,
+    DECISION_CAMEL: DECISION_CAMEL,
+    DECISION_COLUMNS: DECISION_COLUMNS,
+    DECISION_SELECT: DECISION_SELECT,
+    buildDecisionPayload: buildDecisionPayload,
     resolveTerms: resolveTerms,
     resolveFamilyTerms: resolveFamilyTerms,
     summarizeTerms: summarizeTerms,

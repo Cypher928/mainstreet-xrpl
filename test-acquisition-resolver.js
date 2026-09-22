@@ -738,19 +738,19 @@ t('P4-2 writes nothing — the module has no network, no DOM and no storage', ()
   }
 });
 
-t('and the decisions table is not written here — that is P4-3', () => {
+// P4-2 guarded its own boundary by asserting that migration 026, the
+// decisions table and the Lease Terms UI did not yet exist. P4-3 is the
+// increment approved to add all three, so those guards have served their
+// purpose and are superseded by `test-acquisition-decisions.js`. What stays
+// here is the part that must hold forever: the RESOLVER itself never reaches
+// the database. It is handed documents and decisions and returns terms.
+t('the resolver still reads the decisions table only through its argument', () => {
   const src = code('acquisition-terms.js');
-  ok(!/acquisition_term_decisions/.test(src), 'P4-2 names the P4-3 table');
-  ok(!fs.existsSync(path.join(ROOT, 'migrations/026_acquisition_term_decisions.sql')),
-     'migration 026 exists — that is P4-3');
-});
-
-t('no Lease Terms UI was added — that is P4-3', () => {
-  const s = code('script.js');
-  ok(!/resolveFamilyTerms|resolveTerms|acq-term-row|_renderAcqTerms/.test(s),
-     'script.js already calls the resolver — P4-3 has begun');
-  ok(!/acq-term/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')),
-     'index.html already carries Lease Terms markup');
+  ok(!/from\(['"]acquisition_term_decisions/.test(src),
+     'acquisition-terms.js queries the decisions table directly');
+  ok(!/\bdb\b\s*\./.test(src), 'acquisition-terms.js reaches a database client');
+  ok(/function resolveTerms\(reasonerResult, documents, decisions/.test(src),
+     'decisions no longer arrive as an argument');
 });
 
 console.log('\n' + '─'.repeat(64));

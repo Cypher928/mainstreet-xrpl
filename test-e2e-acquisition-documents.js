@@ -387,10 +387,21 @@ function leaseText(tenant, marker) {
         reads.length > 0 && reads.every(r =>
           r.filters.some(f => f[0] === 'review_id') && r.filters.some(f => f[0] === 'user_id' && f[1] === UID)),
         JSON.stringify((reads[0] || {}).filters || null));
+  // The LIST read specifically — the one that fills the panel, identified by
+  // asking for file_name. Later increments added targeted single-document
+  // reads of one heavy column by id (P1-4's text and evidence), which are a
+  // different kind of query: unordered by design, and each asks for exactly
+  // the one column its caller needs.
+  const listReads = reads.filter(r => r.select && /file_name/.test(r.select));
   check('the list is ordered oldest first and leaves the text behind',
-        reads.every(r => r.order && r.order[0] === 'created_at' && r.order[1] === true
-                         && r.select && !/extracted_text/.test(r.select)),
-        JSON.stringify((reads[0] || {}).order || null));
+        listReads.length > 0 && listReads.every(r =>
+          r.order && r.order[0] === 'created_at' && r.order[1] === true
+          && !/extracted_text/.test(r.select)),
+        JSON.stringify((listReads[0] || {}).order || null));
+  check('and no read of the table drags the text along with a list of rows',
+        reads.every(r => !/extracted_text/.test(r.select || '')
+                         || /^id, extracted_text$/.test(String(r.select).trim())),
+        reads.map(r => r.select).filter(s => /extracted_text/.test(s || '')).join(' | ') || 'none ask for it');
 
   // ── 3 · the original, and how it is addressed ────────────────────────────
   check('the original went to the private leases bucket',

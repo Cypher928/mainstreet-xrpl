@@ -460,6 +460,16 @@ const SUITES = [
   // flagged derived rather than presented as evidence, and a silence is never
   // a zero.
   { label: 'Acquisition term resolver (P4-2)',          cmd: 'node test-acquisition-resolver.js' },
+  // P1-4 / P4-3. The human half: an append-only decision history, the four
+  // acts, and the Lease Terms panel. Nearly everything these defend is a
+  // refusal to destroy something — a rejection keeps the reading, a correction
+  // records what it replaced, a reopen removes the conclusion and not the
+  // history, and a confirmation cannot outrank the document's classification.
+  // The walk drives the real page against a stand-in that enforces 026's
+  // append-only trigger, its actor rule and its composite keys.
+  { label: 'Acquisition term decisions (P4-3)',         cmd: 'node test-acquisition-decisions.js' },
+  { label: 'Acquisition Lease Terms walk (e2e, P4-3)',  cmd: 'node test-e2e-acquisition-terms.js' },
+  { label: 'Migration 026 applies and rolls back',      cmd: 'node tools/verify-migration-026.js' },
   // The panel on a phone. P1-3's type control and Confirm button turned the
   // document row into four flex children that all refused to shrink, so the
   // one holding the file name collapsed to nothing and names broke one

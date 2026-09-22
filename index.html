@@ -6205,6 +6205,64 @@
     .acq-doc-reabstract:hover { border-color: var(--text-3); }
     .acq-doc-reabstract[disabled] { opacity: 0.5; cursor: default; }
 
+    /* ── Lease Terms (P1-4 / P4-3) ─────────────────────────────────────────
+       Same card language as Documents. The row wraps from the start: a term
+       carries a label, a state, a value, a source, a clause and up to four
+       controls, and on a phone those cannot share one line. */
+    .acq-terms-card { background: var(--theme-surface); border: 1px solid #1e293b;
+      border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+    .acq-terms-list { display: flex; flex-direction: column; gap: 2px; }
+    .acq-terms-empty { color: var(--text-4); font-size: 0.8rem; padding: 10px 2px; }
+    .acq-term-group { margin-top: 10px; }
+    .acq-term-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+      padding: 6px 2px; border-bottom: 1px solid #1e293b; margin-bottom: 4px; }
+    .acq-term-group-title { font-weight: 700; color: var(--text-2); font-size: 0.85rem; }
+    .acq-term-group-sub { font-size: 0.7rem; color: var(--text-4); }
+
+    .acq-term-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; row-gap: 6px;
+      padding: 8px 2px; border-bottom: 1px solid rgba(30, 41, 59, 0.6); }
+    .acq-term-main { flex: 1 1 240px; min-width: 0; }
+    .acq-term-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .acq-term-label { font-weight: 600; color: var(--text-3); font-size: 0.78rem; }
+    .acq-term-state { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
+      border-radius: 8px; padding: 1px 6px; border: 1px solid currentColor; white-space: nowrap; }
+    .acq-term-state.verified { color: var(--c-4ade80); }
+    .acq-term-state.ai       { color: var(--c-fbbf24, #fbbf24); }
+    .acq-term-state.conflict { color: var(--c-f87171); }
+    .acq-term-state.unclear  { color: #c084fc; }
+    .acq-term-state.missing  { color: var(--text-4); }
+
+    .acq-term-value { display: block; margin-top: 3px; font-size: 0.85rem; color: var(--text-2); font-weight: 600;
+      overflow-wrap: anywhere; }
+    /* Missing reads as a sentence, never as a blank or a zero. */
+    .acq-term-missing { display: block; margin-top: 3px; font-size: 0.76rem; color: var(--text-4); font-style: italic; }
+    .acq-term-src { font-size: 0.68rem; color: var(--text-4); margin-top: 3px; overflow-wrap: anywhere; }
+    .acq-term-conf { color: var(--text-4); }
+    .acq-term-quote { font-size: 0.72rem; color: var(--text-3); margin-top: 3px;
+      border-left: 2px solid #334155; padding-left: 8px; overflow-wrap: anywhere; }
+    .acq-term-derived { font-size: 0.7rem; color: var(--c-fbbf24, #fbbf24); margin-top: 4px; overflow-wrap: anywhere; }
+    .acq-term-conflict { font-size: 0.72rem; color: var(--c-f87171); margin-top: 4px; overflow-wrap: anywhere; }
+    .acq-term-superseded { font-size: 0.68rem; color: var(--text-4); margin-top: 3px; overflow-wrap: anywhere; }
+    .acq-term-decided { font-size: 0.7rem; color: var(--c-4ade80); margin-top: 3px; overflow-wrap: anywhere; }
+    .acq-term-blocked { font-size: 0.7rem; color: var(--text-4); margin-top: 4px; overflow-wrap: anywhere; }
+
+    .acq-term-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .acq-term-actions button { background: none; border: 1px solid #334155; color: var(--text-3);
+      padding: 3px 9px; border-radius: 6px; font-size: 0.7rem; cursor: pointer; white-space: nowrap; }
+    .acq-term-confirm:not([disabled]) { border-color: var(--c-4ade80); color: var(--c-4ade80); }
+    .acq-term-reject:not([disabled])  { border-color: var(--c-f87171); color: var(--c-f87171); }
+    .acq-term-actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
+    .acq-term-actions button:not([disabled]):hover { border-color: var(--text-3); }
+
+    /* On a phone the controls take their own line under the term, the same way
+       the Documents row does, so the value and its clause keep full width. */
+    @media (max-width: 680px) {
+      .acq-term-row::after { content: ''; order: 3; flex: 0 0 100%; height: 0; }
+      .acq-term-main    { flex: 1 1 100%; }
+      .acq-term-actions { order: 4; flex: 1 1 auto; min-width: 0; }
+      .acq-term-actions button { padding-top: 6px; padding-bottom: 6px; }
+    }
+
     /* On a phone the classification controls take a line of their own, under
        the file name, instead of competing with it for a 320px row. Nothing is
        hidden: the type control, Confirm and the opener are all still there,
@@ -7503,6 +7561,18 @@
       <span class="acq-docs-count" id="acqDocsCount"></span>
     </div>
     <div class="acq-docs-list" id="acqDocsList"></div>
+  </div>
+
+  <!-- Lease Terms (P1-4 / P4-3). One section per leasehold: every term, how
+       settled it is, the document and clause behind it, and what a person may
+       do about it. Rendered by _renderAcqTerms. A missing term is LISTED as
+       missing rather than hidden, and a contradiction shows both values. -->
+  <div class="acq-terms-card" id="acqTermsCard">
+    <div class="acq-docs-head">
+      <h3>&#x1F4CB; Lease Terms</h3>
+      <span class="acq-docs-count" id="acqTermsCount"></span>
+    </div>
+    <div class="acq-terms-list" id="acqTermsList"></div>
   </div>
 
   <!-- Total SqFt + Analyze -->
