@@ -138,8 +138,7 @@ per family by P4-2, like `extracted_text` is read per document); the three
 bookkeeping columns are. The existing owner policy covers the new columns; no
 new policy, table or function.
 
-**What a person decided (migration 026, P1-4 / P4-3 — written, not yet
-applied).** `acquisition_term_decisions` is one row per human act on one lease
+**What a person decided (migration 026, P1-4 / P4-3 — applied to Pilot).** `acquisition_term_decisions` is one row per human act on one lease
 term: `confirm · correct · reject · reopen`, with `previous_value`,
 `new_value`, an optional citation (`source_document_id`, `source_quote`,
 `source_page`), `decided_by` NOT NULL and `decided_at`. The current decision is
@@ -264,7 +263,7 @@ acquisition review the same way.
 | 024 | classification / family / version columns on `acquisition_documents`, `acquisition_document_families`, the `intake_id` identity swap and the coherence trigger | What each source IS, which leasehold it belongs to, what it changed, and what replaced it (P1-3). Answers D-14 so a re-upload keeps both sources. Pilot only; rollback in `024_..._rollback.sql`, which **refuses** to restore 023's unique key while that would mean destroying a preserved source; executed end-to-end by `tools/verify-migration-024.js` |
 | 025 | `abstracted_fields`, `abstraction_status`, `abstraction_model`, `abstracted_at` on `acquisition_documents`; three checks and one partial index | What each document SAYS about each of 27 lease terms, with the clause behind it (P1-4, P4-1). Pilot only; rollback in `025_..._rollback.sql`; executed end-to-end by `tools/verify-migration-025.js`. **Applied to Pilot 2026-09-21** (`20260921201418_025_acquisition_abstraction`) with the three existing documents verified byte-identical and `pending`; first real abstraction written 2026-09-21 20:30:55Z (27 fields, 10 evidenced, 17 missing) and verified in place — see `docs/ACQUISITION_REVIEW.md` §4f. |
 
-| 026 | `acquisition_term_decisions` (append-only human decisions on lease terms) + the D-17 widening of `acq_docs_relationship_status_check` to admit `needs_review` | What a PERSON decided about a term, so a term can read `verified` at all (P1-4, P4-3). Append-only by trigger; the AI evidence in `abstracted_fields` is never modified from here. Pilot only; rollback in `026_..._rollback.sql`, which **refuses** to narrow D-17 while a document sits in `needs_review`; executed end-to-end by `tools/verify-migration-026.js`. **Written and verified; NOT yet applied to Pilot — awaiting review of P4-3.** |
+| 026 | `acquisition_term_decisions` (append-only human decisions on lease terms) + the D-17 widening of `acq_docs_relationship_status_check` to admit `needs_review` | What a PERSON decided about a term, so a term can read `verified` at all (P1-4, P4-3). Append-only by trigger; the AI evidence in `abstracted_fields` is never modified from here. Pilot only; rollback in `026_..._rollback.sql`, which **refuses** to narrow D-17 while a document sits in `needs_review`; executed end-to-end by `tools/verify-migration-026.js`. **Applied to Pilot 2026-09-22** with the three existing documents verified byte-identical and the decisions table empty. |
 
 Migrations are plain SQL applied via the Supabase SQL editor (no migration
 runner in-repo). New migrations: next number, idempotent

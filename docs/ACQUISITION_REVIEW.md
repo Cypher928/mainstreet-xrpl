@@ -8,8 +8,9 @@ www.mainstreet-review.com and validated in the live browser on a real lease
 (§4e, §4f). Increment P4-2 is CLOSED — the term resolver, shipped
 to `pilot` and verified against the owner-operator CAM path (§4g). Increment
 P4-3 is BUILT and awaiting review (§4h): the append-only decision history, the
-four human acts and the Lease Terms panel. Migration 026 is executed against a
-throwaway cluster but NOT applied to Pilot, and the P4-3 code is NOT pushed.**
+four human acts and the Lease Terms panel. Migration 026 is APPLIED to the
+Pilot project and verified in place; the P4-3 code is committed as `edc1de9`
+and NOT yet pushed.**
 P4-V does not start until P4-3 is reviewed. Production (`main`,
 mainstreetcam.com, the production Supabase project) is not touched by this
 work.
@@ -910,11 +911,49 @@ irrelevant, and a decision on one field says nothing about any other.
 
 ## 4h. P4-3 — the human decisions and the Lease Terms panel (built; awaiting review)
 
-**Status: built and validated locally. Migration 026 is written and executed
-against a throwaway cluster but NOT applied to Pilot, and the code is NOT
-pushed.** The Documents panel and the Lease Terms panel both name 026's
-columns, so shipping the code first would degrade them; the order is the same
-as P4-1's: review → authorize 026 → apply → push → verify.
+**Status: built and validated locally; migration 026 APPLIED to the Pilot
+project and verified in place (see "Applied to Pilot" below); the code is
+committed as `edc1de9` and NOT yet pushed.** The Documents panel and the Lease
+Terms panel both name 026's columns, so shipping the code first would degrade
+them; the order is the same as P4-1's: review → authorize 026 → apply → push →
+verify. The push is the remaining step.
+
+### Applied to Pilot
+
+**2026-09-22**, Supabase migration `20260922010643_026_acquisition_term_decisions`,
+applied verbatim from `edc1de9`. Verified in place:
+
+- 15 columns with the documented types, nullability and defaults; 9
+  constraints including the three composite foreign keys with their
+  `ON DELETE` column lists; 2 indexes beside the primary key; 3 triggers
+  (actor, no-update, no-delete); RLS enabled with exactly two policies
+  (owner and service_role) and **none for anon**.
+- D-17: `acq_docs_relationship_status_check` now admits `needs_review`
+  alongside `proposed` and `confirmed`. No document currently carries a
+  relationship status, so nothing was re-validated into or out of the change.
+- **Existing data untouched.** 10 reviews, 3 documents, 0 families before and
+  after, and a fingerprint over every document's identity, text, classification,
+  relationship, abstraction and history is **identical** either side of the
+  migration. The decisions table came up empty, as it should.
+- A behavioural probe on throwaway rows, rolled back in full, confirmed 24
+  checks: every immutable field refuses a real change (action, field_key,
+  previous_value, new_value, decided_by, decided_at, created_at, source_quote,
+  source_page, note, review_id), a single delete and a blanket delete are both
+  refused, the actor rule and the action and correction constraints hold on
+  insert, **deleting a family clears the document's family reference and
+  unfiles its decisions without the append-only guard blocking it**, and
+  **deleting a review cascades its decisions away**. Nothing persisted: no
+  probe rows remain and the document fingerprint is unchanged.
+- `tools/verify-migration-026.js` on a throwaway cluster: **83 passed, 0 failed.**
+
+One thing worth recording because it looks like a hole and is not. An UPDATE
+that sets a column to the value it already holds is allowed, because the guard
+compares values and a no-op changes nothing. The first probe hit this by
+writing `decided_at = now()`, which inside one transaction equals the
+insert-time value. Re-tested with `decided_at + interval '1 day'`, an explicit
+literal, and a change to `created_at`, all three were refused and the stored
+timestamp was verified unchanged. The guard is sound; the first probe was
+measuring a no-op.
 
 ### `acquisition_term_decisions` — append-only, and why
 
