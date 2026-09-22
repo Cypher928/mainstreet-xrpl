@@ -654,16 +654,45 @@ async function _authHeaders() {
 
 // Single entry-point for every Claude API call.
 // Proxies through /api/claude — API key stays server-side.
-async function claudeFetch(body) {
+//
+// `opts.timeoutMs` RAISES this caller's patience above the default, and exists
+// because the default was BELOW the server's own ceiling. /api/claude may run
+// for 60s (vercel.json maxDuration); this fetch gave up at 58s. The acquisition
+// abstraction lives in that window, and the result was that a reply the server
+// had produced correctly was aborted by the browser two seconds early and
+// stored as `failed`. Correct work, thrown away.
+//
+// The rule, and the reason the argument is opt-in rather than a new default:
+//
+//     caller ceiling  >  function maxDuration  >  the server's Anthropic bound
+//
+// A caller that waits longer than the function may live can only ever abort a
+// request the platform has already killed — so an abort can no longer destroy a
+// success. Every existing caller keeps the 58s default untouched; only
+// _acqAbstractDocument raises it, and only because only it needs to.
+//
+// The thrown Error carries `status` and `upstreamTimeout` so a caller can tell
+// "the model took too long" (504) from "the model refused" (500) and record
+// WHICH, rather than filing every failure under one word. See
+// AcquisitionTerms.ABSTRACTION_ERRORS.
+async function claudeFetch(body, opts = {}) {
   const resp = await _fetchWithTimeout('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
-  });
+  }, opts.timeoutMs);
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
-    try { const b = await resp.json(); detail = b?.error?.message || b?.message || detail; } catch {}
-    throw new Error(detail);
+    let parsed = null;
+    try { parsed = await resp.json(); detail = parsed?.error?.message || parsed?.message || detail; } catch {}
+    const err = new Error(detail);
+    err.status = resp.status;
+    err.upstreamTimeout = resp.status === 504 || parsed?.timeout === true;
+    // The server names the cause when it can tell them apart — `unparsable` is
+    // not something a status code can say. Carried as-is; the vocabulary is
+    // AcquisitionTerms.ABSTRACTION_ERRORS and it validates there, not here.
+    if (typeof parsed?.reason === 'string') err.reason = parsed.reason;
+    throw err;
   }
   return resp.json();
 }
@@ -30604,16 +30633,17 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
   const base = { reviewId, intakeId: docRow.intake_id, fileName: docRow.file_name };
 
   if (!AT.isAbstractable(docRow.doc_type)) {
-    return _acqSaveDocument({ ...base, abstractionStatus: 'skipped' });
+    // `skipped` is not a failure, so it clears any reason a previous reading left.
+    return _acqSaveDocument({ ...base, abstractionStatus: 'skipped', abstractionError: null });
   }
   const body = String(text || '').trim();
   if (body.length < 40) {
-    return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });
+    return _acqSaveDocument({ ...base, abstractionStatus: 'failed', abstractionError: 'no_text' });
   }
 
   _acqAbstracting.add(docRow.id);
   _renderAcqDocuments();
-  let reading = null;
+  let reading = null, failure = null;
   try {
     reading = await claudeFetch({
       task: 'acquisition_abstraction',
@@ -30627,9 +30657,18 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
         `Document type (as classified): ${docRow.doc_type}\n\n` +
         `Document text:\n${body.slice(0, 120000)}`
       }],
+    }, {
+      // ABOVE /api/claude's 60s maxDuration, not below it. The default 58s sat
+      // INSIDE the window the function is allowed to run, so a reading that
+      // took 59 seconds was aborted by this browser and recorded as `failed`
+      // while the server was returning it successfully. Waiting longer than the
+      // platform lets the function live means an abort here can only ever
+      // follow a request the platform already killed.
+      timeoutMs: 75000,
     });
   } catch (e) {
-    console.warn('[acq] abstraction failed:', docRow.file_name, e && e.message);
+    failure = AT.abstractionErrorFor(e);
+    console.warn('[acq] abstraction failed:', docRow.file_name, failure, '·', e && e.message);
   }
   _acqAbstracting.delete(docRow.id);
 
@@ -30638,7 +30677,10 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
     at: new Date().toISOString(),
   });
   if (!built.ok) {
-    return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });
+    // A reply arrived and carried no fields, or no reply arrived at all. Both
+    // are `failed`; they are not the same failure, and the row now says which.
+    return _acqSaveDocument({ ...base, abstractionStatus: 'failed',
+                              abstractionError: failure || 'no_fields' });
   }
   const saved = await _acqSaveDocument({
     ...base,
@@ -30646,6 +30688,8 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
     abstractionStatus: built.status,
     abstractionModel:  built.abstraction.model,
     abstractedAt:      built.abstraction.at,
+    // A reading that lands clears the reason the last attempt left behind.
+    abstractionError:  null,
   });
   // The list select does not return the evidence column, so the Lease Terms
   // panel would not see this reading until the next full load. Cache what was
@@ -31307,7 +31351,7 @@ async function acqSetDocType(docId, nextType) {
       _renderAcqDocuments();
     } else if (!isAbstractable && row.abstraction_status !== 'skipped') {
       await _acqSaveDocument({ reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
-                               abstractionStatus: 'skipped' });
+                               abstractionStatus: 'skipped', abstractionError: null });
       _renderAcqDocuments();
     }
   }

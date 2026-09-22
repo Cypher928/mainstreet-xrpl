@@ -1041,6 +1041,122 @@ widens the check; `acqSetDocType` writes it.
 
 ---
 
+## 4i. P4-3 remediation, Issue A — the reading that was thrown away
+
+Found by the first live browser test of P4-3, on the Pilot, 2026-09-22.
+
+### What happened
+
+A lease amendment was uploaded to the Maple Plaza review. It parsed cleanly
+(3,081 characters, readable), classified as `amendment` at confidence 0.95, and
+the terms panel reported **"Terms could not be read."** The row said
+`abstraction_status = 'failed'`, `abstracted_fields = {}`, no model, no
+timestamp, and `error_message = null` — nothing to say which of the three code
+paths that write `failed` had written it.
+
+The server's own logs said something else. `/api/claude` had returned **HTTP
+200** with valid 27-field evidence, including `cap: 3` with the clause behind it
+at confidence 0.97. Grouped by status code over the window: four requests, all
+200, zero errors.
+
+The arithmetic tells the rest. The abstraction request began at `03:15:49.6`
+(the client's own `classification_history.at`, corroborated by the server log).
+The `failed` row was written at `03:16:51.139` — **61.5 seconds later**. The
+only timeout in that path was `_fetchWithTimeout`'s 58,000 ms default.
+
+The browser gave up at 58 seconds. `vercel.json` gives the function 60. A
+correct answer arriving in the two-second gap was aborted by the client and
+filed under a word that described none of it.
+
+### The invariant that was inverted
+
+```
+        BEFORE                              AFTER
+  client        58s   ← gives up       client        75s
+  maxDuration   60s                    maxDuration   60s
+  Anthropic   unbounded                Anthropic     45s   ← gives up
+```
+
+A ceiling must be *above* the ceiling of the thing it waits on. Then a client
+abort implies the platform had already killed the function, so there was no
+success to discard. The fix is that sentence, made true in three files.
+
+**A1 — the server bounds itself.** `api/claude.js` wraps the Anthropic call in
+an `AbortController` at 45s — the same constant, for the same reason and in the
+same words, as `api/ask-lease.js` — and answers **504** with
+`reason: 'upstream_timeout'` rather than folding a timeout into the generic 500.
+The handler now always answers inside its budget.
+
+**A2 — the client waits longer than the function may live.** `claudeFetch(body,
+opts)` takes an optional `opts.timeoutMs`, exactly as `explainFetch` already
+did. The 58s default is **unchanged**, so every existing caller is untouched;
+`_acqAbstractDocument` alone passes 75,000. 58 was not nudged to 60: two seconds
+is not a margin, and the suite pins at least ten.
+
+**A3 — the work was made to fit.** The prompt asked the model to
+`Report EVERY one of these 27 fields, each exactly once`, so an amendment that
+changes four terms emitted twenty-three objects of nulls token by token — and
+output tokens are where the wall-clock went. It now asks for the fields the
+document **establishes** and to omit the rest.
+
+The stored contract is unchanged, because it was never the model's to keep:
+`buildAbstraction` walks `FIELDS` and normalises every absent key to
+`{value:null, quote:null, page:null, confidence:null}`. All 27 are stored either
+way, and an omitted key and an explicit null are byte-identical on the row.
+MISSING IS NOT NONE is *strengthened* — omitting a key is now how the model says
+MISSING, and an explicit denial ("Tenant shall have no option to renew") must
+carry its key, because a denial is a finding and not an absence.
+
+**A4 — a failure says why.** Migration 027 adds `abstraction_error text`, one of
+six words or null:
+
+| reason | what it means |
+|---|---|
+| `no_text` | there was no usable text on the row to read |
+| `transport` | the request never completed: aborted, or the network went |
+| `upstream_timeout` | the server reached Claude; Claude did not answer in time |
+| `upstream_error` | the server reached Claude; Claude answered with an error |
+| `unparsable` | an answer came back and it was not JSON we could read |
+| `no_fields` | valid JSON, but it carried no `fields` object |
+
+It is **not** a sixth `abstraction_status` — a status says where a reading got
+to, a reason says why it stopped — and it is **not** `error_message`, which
+belongs to the parsing stage and would have been overwritten by it. Two CHECKs:
+one of the six or null, and only on a `failed` row, so a reading that later
+lands cannot keep wearing the reason its first attempt failed with. A landed
+reading and a `skipped` document both clear it explicitly.
+
+### What was NOT done
+
+Not A-durable. Making a server-side success impossible to lose needs the server
+to write the row, and the only way to do that without a thirteenth Vercel
+function (the Hobby ceiling; `api/` holds exactly twelve) is to put
+acquisition-specific write logic inside the generic `/api/claude` task endpoint
+— reversing OA-1. The honest limit of the synchronous design, stated rather than
+hidden: if the tab closes mid-call, the answer is still lost. Retry is safe and
+idempotent (`(review_id, intake_id)`), and "Read terms" already offers it.
+
+`vercel.json`, `lease-intelligence.js`, the P4-2/P4-3 resolver and decision
+code, and owner/operator CAM are all untouched.
+
+### Verified
+
+- `test-acquisition-transport.js` — 91 checks. Reads the three constants from
+  the three files that set them; drives the real handler with the real
+  `AbortController` at 1/1500 scale to prove the 504 fires on its own; and
+  reproduces the live failure at 1/1000 scale — a 59s answer is lost under the
+  old ceiling and **kept** under the new one, while a 90s answer still aborts.
+- `tools/verify-migration-027.js` — 62 checks against a throwaway PostgreSQL
+  cluster, including that the evidence stays byte-identical and that the
+  rollback takes exactly what 027 added.
+- `test-e2e-acquisition-abstraction.js` — all six reasons written through the
+  real page into a stand-in enforcing 027's two checks; a failure never
+  disturbs evidence the row already had.
+- `tools/acquisition-terms-mutation.js` — 59/59 killed, zero survivors,
+  including A06, which restores the 58s ceiling and is the live bug itself.
+
+---
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

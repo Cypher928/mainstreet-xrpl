@@ -144,7 +144,13 @@ t('every one of the 27 field names appears in the prompt as a field line, exactl
     const hits = PROMPT.match(new RegExp('^\\s{2}' + f + '\\s{2,}', 'gm')) || [];
     eq(hits.length, 1, f);
   }
-  ok(/exactly these keys/.test(PROMPT));
+  ok(/Use them exactly as spelled/.test(PROMPT), 'the prompt no longer pins the key spellings');
+  // A4/A3: the model is asked for what the document ESTABLISHES, not for 27
+  // objects most of which are null. The STORED contract is unchanged —
+  // buildAbstraction fills the rest — and test-acquisition-transport.js §7
+  // proves all 27 still land.
+  ok(/Report ONLY the fields THIS DOCUMENT ESTABLISHES/.test(PROMPT));
+  ok(/omitting a key is how you say MISSING/.test(PROMPT));
 });
 
 t('and no field line that the module does not know', () => {
@@ -522,15 +528,21 @@ t('the file name is given as context and the prompt is told not to read from it'
 });
 
 t('a document that is not a lease-family document is skipped, honestly', () => {
-  ok(/if \(!AT\.isAbstractable\(docRow\.doc_type\)\) \{\s*return _acqSaveDocument\(\{ \.\.\.base, abstractionStatus: 'skipped' \}\);/.test(ABS));
+  ok(/if \(!AT\.isAbstractable\(docRow\.doc_type\)\) \{/.test(ABS));
+  // `skipped` is not a failure, so it carries no failure reason (027).
+  ok(/abstractionStatus: 'skipped', abstractionError: null/.test(ABS));
 });
 
 t('no text and a failed call are both `failed`, and neither erases the evidence the row had', () => {
-  ok(/body\.length < 40\) \{\s*return _acqSaveDocument\(\{ \.\.\.base, abstractionStatus: 'failed' \}\);/.test(ABS));
-  ok(/if \(!built\.ok\) \{\s*return _acqSaveDocument\(\{ \.\.\.base, abstractionStatus: 'failed' \}\);/.test(ABS));
-  const failedWrites = ABS.match(/abstractionStatus: 'failed' \}/g) || [];
+  // Both still `failed` — and since A4 each SAYS WHY, which is the whole point:
+  // the live amendment failed with nothing on the row to distinguish the two.
+  ok(/body\.length < 40\) \{\s*return _acqSaveDocument\(\{ \.\.\.base, abstractionStatus: 'failed', abstractionError: 'no_text' \}\);/.test(ABS));
+  ok(/if \(!built\.ok\) \{[\s\S]{0,240}?abstractionStatus: 'failed',\s*\n\s*abstractionError: failure \|\| 'no_fields' \}\);/.test(ABS));
+  const failedWrites = ABS.match(/abstractionStatus: 'failed'/g) || [];
   eq(failedWrites.length, 2);
   ok(!/abstractionStatus: 'failed', abstractedFields/.test(ABS) && !/abstractedFields: \{\}/.test(ABS), 'a failure writes over the evidence');
+  // And the two reasons are never the same word.
+  ok(/'no_text'/.test(ABS) && /'no_fields'/.test(ABS));
 });
 
 t('a read writes all four columns together, from buildAbstraction and nothing else', () => {

@@ -272,11 +272,13 @@ Return ONLY valid JSON. No explanation. No markdown. Start with { and end with }
 
 {
   "fields": {
-    "<field>": { "value": <typed value> | null, "quote": string | null, "page": number | null, "confidence": 0.0-1.0 | null }
+    "<field>": { "value": <typed value>, "quote": string, "page": number | null, "confidence": 0.0-1.0 }
   }
 }
 
-Report EVERY one of these 27 fields, each exactly once, under exactly these keys:
+Report ONLY the fields THIS DOCUMENT ESTABLISHES. Omit every other key entirely — do not emit a placeholder object for a term the document does not address. The reader fills the rest in; a page of nulls costs time and establishes nothing.
+
+These are the only 27 keys that exist. Use them exactly as spelled:
 
   cap                           number   — annual CAM / operating-expense increase cap; a percentage as a plain number (5 for "5%"), or a dollar amount
   cap_base_amount               number   — the dollar base the cap is measured from, when stated
@@ -307,12 +309,13 @@ Report EVERY one of these 27 fields, each exactly once, under exactly these keys
   co_tenancy                    string   — any co-tenancy condition and its remedy
 
 RULES:
-- value: what THIS document establishes for the term, in the type shown. Use null when this document does not address the term. Do not carry a value over from what a lease "usually" says, from the file name, or from any other document.
-- MISSING IS NOT NONE. If the document says nothing about a term, value is null and quote is null. If the document EXPLICITLY denies or waives a term — "Tenant shall have no option to renew", "there shall be no cap on Operating Expenses", "Tenant waives any right to audit" — that is a VALUE (the denying language for a string field; 0 for a number field; false for a boolean), with the clause as its quote. Never report an unaddressed term as 0, false, "none" or "".
-- quote: the exact verbatim span of the document that establishes the value — copied character for character, at most 600 characters, the shortest span that establishes it. Never paraphrase. A value with no quote will not be trusted, so if you cannot quote it, report the value as null.
+- value: what THIS document establishes for the term, in the type shown. Do not carry a value over from what a lease "usually" says, from the file name, or from any other document.
+- MISSING IS NOT NONE, and omitting a key is how you say MISSING. If the document says nothing about a term, leave its key out. If the document EXPLICITLY denies or waives a term — "Tenant shall have no option to renew", "there shall be no cap on Operating Expenses", "Tenant waives any right to audit" — that is a VALUE and the key MUST be present (the denying language for a string field; 0 for a number field; false for a boolean), with the clause as its quote. An explicit denial is a finding, not an absence. Never report an unaddressed term as 0, false, "none" or "".
+- quote: the exact verbatim span of the document that establishes the value — copied character for character, at most 600 characters, the shortest span that establishes it. Never paraphrase. A value with no quote will not be trusted, so if you cannot quote it, leave the key out.
 - page: the page number from the nearest preceding "--- Page N ---" marker in the text, ONLY when such a marker is present and you are certain. Otherwise null. Never guess a page.
-- confidence: your confidence that the value is what this document establishes, 0.0 to 1.0. Null when value is null.
-- An amendment, side letter or estoppel usually addresses only a few terms. Report null for the rest. Do not invent what an amendment does not change.
+- confidence: your confidence that the value is what this document establishes, 0.0 to 1.0.
+- An amendment, side letter or estoppel usually addresses only a few terms. Emit only those few. Do not invent what an amendment does not change.
+- If the document establishes nothing at all, return {"fields": {}}. That is a valid answer.
 - Never infer anything from the file name. Read the document.`;
 
 /**
@@ -344,6 +347,14 @@ const CLAUDE_TASKS = {
   // of up to 600 characters: ~200 tokens a field when every one is addressed,
   // which an original lease can do. A truncated reply is unparseable and the
   // whole reading is lost, so the ceiling sits above the worst case.
+  //
+  // The prompt now asks for ESTABLISHED fields only (Issue A3). An amendment
+  // that changes four terms answers in four objects instead of twenty-seven,
+  // and output tokens are where the wall-clock went: the live failure was a
+  // reading that ran past the browser's fetch ceiling and was discarded. The
+  // stored contract is unchanged — acquisition-terms.js buildAbstraction walks
+  // FIELDS and normalises every absent key to {value,quote,page,confidence} of
+  // nulls, so all 27 are stored either way.
   acquisition_abstraction:  { system: _withBoundary(ACQUISITION_ABSTRACTION_SYSTEM),  maxTokens: 6000 },
 };
 

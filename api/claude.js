@@ -39,6 +39,24 @@ if (!_SB_URL || !_SB_ANON) {
 // brakes runaway loops and single-client hammering, not a determined attacker.
 const { checkRate, sendRateLimited } = require('./_rate-limit');
 
+// ── The timeout hierarchy (P4-3 remediation, Issue A) ────────────────────────
+//
+//   client ceiling  >  this function's maxDuration  >  this bound
+//        75s        >             60s               >      45s
+//
+// It has to read in that order, and it did not. The acquisition abstraction
+// asks for 27 fields with quotes; the call ran past the browser's 58s fetch
+// ceiling, the browser aborted, and a response the server had ALREADY PRODUCED
+// CORRECTLY was thrown away and recorded as `failed`. The work was done and
+// discarded, which is the worst of both.
+//
+// This is the innermost bound, and it is the one that makes the rest true: with
+// Anthropic capped at 45s the handler always answers inside its 60s budget —
+// with data, or with a named failure — so a client that waits 75s can never
+// abort a request that was about to succeed. The constant is deliberately the
+// same as api/ask-lease.js's, for the same reason and in the same words.
+const ANTHROPIC_TIMEOUT = 45000;  // ms — fail clearly before Vercel's 60s maxDuration
+
 // Verifies the Supabase JWT from the Authorization header.
 // Returns the user object on success; sends 401/500 and returns null on failure.
 async function _verifyUser(req, res) {
@@ -113,10 +131,14 @@ module.exports = async function handler(req, res) {
     messages,
   };
 
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT);
+
   let anthropicResp;
   try {
     anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type':      'application/json',
         'anthropic-version': '2023-06-01',
@@ -125,14 +147,28 @@ module.exports = async function handler(req, res) {
       body: JSON.stringify(payload),
     });
   } catch (err) {
+    // 504, not 500. "The model took too long" and "the model refused" are
+    // different facts about a request, and a caller that stores WHY a reading
+    // failed can only do so if the server told it apart. See the abstraction
+    // failure vocabulary in acquisition-terms.js (upstream_timeout).
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      console.error('[Mainstreet] Anthropic timed out after', ANTHROPIC_TIMEOUT, 'ms — task:', resolved.name);
+      return res.status(504).json({
+        error: `Claude did not answer within ${Math.round(ANTHROPIC_TIMEOUT / 1000)}s`,
+        timeout: true,
+        reason: 'upstream_timeout',
+      });
+    }
     console.error('[Mainstreet] Fetch failed:', err);
-    return res.status(500).json({ error: 'Failed to reach Anthropic' });
+    return res.status(500).json({ error: 'Failed to reach Anthropic', reason: 'upstream_error' });
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!anthropicResp.ok) {
     const errText = await anthropicResp.text();
     console.error('[Mainstreet] Anthropic error:', errText);
-    return res.status(500).json({ error: 'Anthropic API error', details: errText });
+    return res.status(500).json({ error: 'Anthropic API error', details: errText, reason: 'upstream_error' });
   }
 
   let json;
@@ -140,14 +176,14 @@ module.exports = async function handler(req, res) {
     json = await anthropicResp.json();
   } catch (err) {
     console.error('[Mainstreet] JSON parse failed:', err);
-    return res.status(500).json({ error: 'Invalid JSON from Anthropic' });
+    return res.status(500).json({ error: 'Invalid JSON from Anthropic', reason: 'unparsable' });
   }
 
   const text = json?.content?.[0]?.text;
 
   if (!text) {
     console.error('[Mainstreet] No content returned:', json);
-    return res.status(500).json({ error: 'No content from Claude' });
+    return res.status(500).json({ error: 'No content from Claude', reason: 'upstream_error' });
   }
 
   // Clean + extract JSON
@@ -159,7 +195,7 @@ module.exports = async function handler(req, res) {
 
   if (!match) {
     console.error('[Mainstreet] No JSON found in response. Full text:', cleaned);
-    return res.status(500).json({ error: 'No JSON in response', rawText: cleaned.slice(0, 200) });
+    return res.status(500).json({ error: 'No JSON in response', rawText: cleaned.slice(0, 200), reason: 'unparsable' });
   }
 
   let data;
@@ -167,7 +203,7 @@ module.exports = async function handler(req, res) {
     data = JSON.parse(match[0]);
   } catch (err) {
     console.error('[Mainstreet] JSON parse failed. Fragment:', match[0].slice(0, 300));
-    return res.status(500).json({ error: 'Failed to parse JSON', fragment: match[0].slice(0, 200) });
+    return res.status(500).json({ error: 'Failed to parse JSON', fragment: match[0].slice(0, 200), reason: 'unparsable' });
   }
 
   // Unwrap single-element arrays so callers always receive an object

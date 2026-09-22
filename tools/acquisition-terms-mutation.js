@@ -74,6 +74,10 @@ const S = 'script.js';
 const M = 'migrations/025_acquisition_abstraction.sql';
 const R = 'migrations/025_acquisition_abstraction_rollback.sql';
 const T = 'api/_claude-tasks.js';
+// P4-3 remediation, Issue A.
+const K   = 'api/claude.js';
+const M27 = 'migrations/027_acquisition_abstraction_error.sql';
+const R27 = 'migrations/027_acquisition_abstraction_error_rollback.sql';
 
 const MUTANTS = [
   // ── the module ───────────────────────────────────────────────────────────
@@ -134,8 +138,8 @@ const MUTANTS = [
     from: "      if (!ev || typeof ev !== 'object' || !Object.prototype.hasOwnProperty.call(ev, 'fields') || !payload.abstracted_at) {",
     to:   "      if (!ev || typeof ev !== 'object' || !Object.prototype.hasOwnProperty.call(ev, 'fields')) {" },
   { id: 'D03', file: D, why: 'the evidence column joins the list select',
-    from: "    'abstraction_status', 'abstraction_model', 'abstracted_at',\n  ];",
-    to:   "    'abstraction_status', 'abstraction_model', 'abstracted_at', 'abstracted_fields',\n  ];" },
+    from: "    'abstraction_status', 'abstraction_model', 'abstracted_at', 'abstraction_error',\n  ];",
+    to:   "    'abstraction_status', 'abstraction_model', 'abstracted_at', 'abstraction_error', 'abstracted_fields',\n  ];" },
   { id: 'D04', file: D, why: 'a missing 025 column is blamed on 024',
     from: '    return (col && MIGRATION_FOR_COLUMN[col]) || MIGRATION_FOR_COLUMNS;',
     to:   '    return MIGRATION_FOR_COLUMNS;' },
@@ -145,11 +149,11 @@ const MUTANTS = [
 
   // ── the data layer ───────────────────────────────────────────────────────
   { id: 'C01', file: S, why: 'a rent roll is sent to the abstraction task',
-    from: "  if (!AT.isAbstractable(docRow.doc_type)) {\n    return _acqSaveDocument({ ...base, abstractionStatus: 'skipped' });\n  }",
-    to:   "  if (false) {\n    return _acqSaveDocument({ ...base, abstractionStatus: 'skipped' });\n  }" },
+    from: "  if (!AT.isAbstractable(docRow.doc_type)) {",
+    to:   "  if (false) {" },
   { id: 'C02', file: S, why: 'a failed read wipes the evidence the row had',
-    from: "  if (!built.ok) {\n    return _acqSaveDocument({ ...base, abstractionStatus: 'failed' });\n  }",
-    to:   "  if (!built.ok) {\n    return _acqSaveDocument({ ...base, abstractionStatus: 'failed', abstractedFields: {}, abstractedAt: null, abstractionModel: null });\n  }" },
+    from: "    return _acqSaveDocument({ ...base, abstractionStatus: 'failed',\n                              abstractionError: failure || 'no_fields' });",
+    to:   "    return _acqSaveDocument({ ...base, abstractionStatus: 'failed', abstractionError: failure || 'no_fields', abstractedFields: {}, abstractedAt: null, abstractionModel: null });" },
   { id: 'C03', file: S, why: 'the status lands without its evidence',
     from: '    abstractedFields:  built.abstraction,\n    abstractionStatus: built.status,',
     to:   '    abstractionStatus: built.status,' },
@@ -163,8 +167,8 @@ const MUTANTS = [
     from: "    } else if (!isAbstractable && row.abstraction_status !== 'skipped') {",
     to:   "    } else if (false) {" },
   { id: 'C07', file: S, why: 'the abstraction writes the terms it read into the tenant record',
-    from: '  if (!built.ok) {\n    return _acqSaveDocument',
-    to:   '  { const _t = _acqTenants.find(t => t._documentId === docRow.id); if (_t && built.ok && built.abstraction.fields.cap.value !== null) _t.cap = built.abstraction.fields.cap.value; }\n  if (!built.ok) {\n    return _acqSaveDocument' },
+    from: '  if (!built.ok) {',
+    to:   '  { const _t = _acqTenants.find(t => t._documentId === docRow.id); if (_t && built.ok && built.abstraction.fields.cap.value !== null) _t.cap = built.abstraction.fields.cap.value; }\n  if (!built.ok) {' },
   { id: 'C08', file: S, why: 'the chip is shown on a rent roll',
     from: '    const termsChip = (abstractable && abs)',
     to:   '    const termsChip = (abs)' },
@@ -191,14 +195,82 @@ const MUTANTS = [
 
   // ── the prompt ───────────────────────────────────────────────────────────
   { id: 'P01', file: T, why: 'the prompt stops saying MISSING IS NOT NONE',
-    from: '- MISSING IS NOT NONE. If the document says nothing about a term, value is null and quote is null.',
-    to:   '- If the document says nothing about a term, value is null and quote is null.' },
+    from: '- MISSING IS NOT NONE, and omitting a key is how you say MISSING.',
+    to:   '- If the document says nothing about a term, leave its key out.' },
   { id: 'P02', file: T, why: 'a field is dropped from the prompt',
     from: '  co_tenancy                    string   — any co-tenancy condition and its remedy\n',
     to:   '' },
   { id: 'P03', file: T, why: 'the prompt no longer forbids inferring from the file name',
     from: '- Never infer anything from the file name. Read the document.',
     to:   '- Use the file name as a hint.' },
+
+  // ── P4-3 remediation, Issue A: the transport ─────────────────────────────
+  // A reading that SUCCEEDED was discarded because the client gave up before
+  // the server was allowed to. Every mutant here puts one plank of that fix
+  // back the way it was.
+  { id: 'A01', file: K, why: 'the Anthropic call is unbounded again — the server may outlive its own function',
+    from: '      method: \'POST\',\n      signal: controller.signal,',
+    to:   '      method: \'POST\',' },
+  { id: 'A02', file: K, why: 'a timeout is reported as 500, indistinguishable from a refusal',
+    from: '      return res.status(504).json({',
+    to:   '      return res.status(500).json({' },
+  { id: 'A03', file: K, why: 'an unreadable reply is blamed on the model instead of named',
+    from: "    return res.status(500).json({ error: 'No JSON in response', rawText: cleaned.slice(0, 200), reason: 'unparsable' });",
+    to:   "    return res.status(500).json({ error: 'No JSON in response', rawText: cleaned.slice(0, 200), reason: 'upstream_error' });" },
+  { id: 'A04', file: K, why: 'the bound is 90s — longer than the function may live, so it can never fire',
+    from: 'const ANTHROPIC_TIMEOUT = 45000;',
+    to:   'const ANTHROPIC_TIMEOUT = 90000;' },
+  { id: 'A05', file: S, why: 'claudeFetch ignores the ceiling it is handed',
+    from: '  }, opts.timeoutMs);',
+    to:   '  });' },
+  { id: 'A06', file: S, why: 'THE LIVE BUG, RESTORED: the abstraction waits 58s again',
+    from: '      timeoutMs: 75000,',
+    to:   '      timeoutMs: 58000,' },
+  { id: 'A07', file: S, why: '58 is simply nudged to 60 — equal to maxDuration, no margin at all',
+    from: '      timeoutMs: 75000,',
+    to:   '      timeoutMs: 60000,' },
+  { id: 'A08', file: S, why: 'the raised ceiling is given to EVERY Claude call, not just this one',
+    from: 'function _fetchWithTimeout(url, opts, ms = 58000) {',
+    to:   'function _fetchWithTimeout(url, opts, ms = 75000) {' },
+  { id: 'A09', file: S, why: 'a failure is recorded with no reason — the state that took server logs to diagnose',
+    from: "                              abstractionError: failure || 'no_fields' });",
+    to:   '                              });' },
+  { id: 'A10', file: S, why: 'every failure is called no_fields, whatever actually happened',
+    from: '    failure = AT.abstractionErrorFor(e);',
+    to:   '    failure = null;' },
+  { id: 'A11', file: S, why: 'no text to read is reported as a reply with no fields',
+    from: "    return _acqSaveDocument({ ...base, abstractionStatus: 'failed', abstractionError: 'no_text' });",
+    to:   "    return _acqSaveDocument({ ...base, abstractionStatus: 'failed', abstractionError: 'no_fields' });" },
+  { id: 'A12', file: S, why: 'a landed reading keeps the reason its last attempt failed with',
+    from: '    abstractedAt:      built.abstraction.at,\n    // A reading that lands clears the reason the last attempt left behind.\n    abstractionError:  null,',
+    to:   '    abstractedAt:      built.abstraction.at,' },
+  { id: 'A13', file: A, why: 'a 504 is called a client transport failure',
+    from: "    if (e.upstreamTimeout === true || e.status === 504) return 'upstream_timeout';",
+    to:   "    if (e.upstreamTimeout === true || e.status === 504) return 'transport';" },
+  { id: 'A14', file: A, why: 'any word the server sends is trusted as a reason',
+    from: '    if (ABSTRACTION_ERRORS.indexOf(e.reason) >= 0) return e.reason;',
+    to:   "    if (typeof e.reason === 'string') return e.reason;" },
+  { id: 'A15', file: A, why: 'an unknown failure is guessed at instead of called transport',
+    from: "    if (typeof e.status === 'number') return 'upstream_error';\n    return 'transport';",
+    to:   "    if (typeof e.status === 'number') return 'upstream_error';\n    return 'upstream_error';" },
+  { id: 'A16', file: D, why: 'a reason outside the six is written through to the database',
+    from: '    abstraction_error:  _oneOf(ABSTRACTION_ERRORS, null),',
+    to:   '    abstraction_error:  function (v) { return v; },' },
+  { id: 'A17', file: D, why: 'the reason is dropped from the list read, so the chip cannot explain itself',
+    from: "'abstracted_at', 'abstraction_error',\n  ];",
+    to:   "'abstracted_at',\n  ];" },
+  { id: 'A18', file: M27, why: '027 accepts any word as a reason',
+    from: "      check (abstraction_error is null\n             or abstraction_error in ('no_text', 'transport', 'upstream_timeout',\n                                      'upstream_error', 'unparsable', 'no_fields'));",
+    to:   '      check (true);' },
+  { id: 'A19', file: M27, why: 'a reason may ride on a reading that succeeded',
+    from: "      check (abstraction_error is null or abstraction_status = 'failed');",
+    to:   '      check (true);' },
+  { id: 'A20', file: R27, why: "027's rollback takes the evidence column with it",
+    from: '  drop column if exists abstraction_error;',
+    to:   '  drop column if exists abstraction_error,\n  drop column if exists abstracted_fields;' },
+  { id: 'A21', file: T, why: 'the prompt demands all 27 be emitted again — the slow answer returns',
+    from: 'Report ONLY the fields THIS DOCUMENT ESTABLISHES.',
+    to:   'Report EVERY one of these 27 fields, each exactly once.' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-terms-mut-'));
@@ -215,8 +287,10 @@ for (const f of FILES) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8')
 // Cheapest first: a mutant that dies in the contract suite never pays for the
 // cluster or the browser.
 const SUITES = [
+  ['node', 'test-acquisition-transport.js'],
   ['node', 'test-acquisition-terms.js'],
   ['node', 'tools/verify-migration-025.js'],
+  ['node', 'tools/verify-migration-027.js'],
   ['node', 'test-e2e-acquisition-abstraction.js'],
 ];
 function runSuites() {

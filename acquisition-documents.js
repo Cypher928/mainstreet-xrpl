@@ -85,7 +85,9 @@
     // evidence itself. abstracted_fields is 27 entries with quotes and, like
     // extracted_text, is read by the code that reasons from it (P4-2), one
     // family at a time, not by a list that only shows a status chip.
-    'abstraction_status', 'abstraction_model', 'abstracted_at',
+    // `abstraction_error` (027) rides with them: it is one short word and the
+    // chip that says a reading failed is the place a person asks WHY.
+    'abstraction_status', 'abstraction_model', 'abstracted_at', 'abstraction_error',
   ];
   var LIST_SELECT = LIST_COLUMNS.join(', ');
 
@@ -173,6 +175,11 @@
   // repeated here because this module loads first and depends on nothing, and
   // a test holds the three equal.
   var ABSTRACTION_STATUSES = ['pending', 'success', 'partial', 'failed', 'skipped'];
+  // P4-3 remediation (Issue A4). WHY a reading failed, when one did. Migration
+  // 027 holds the same six as a CHECK; acquisition-terms.js holds them as the
+  // vocabulary; a test holds all three equal.
+  var ABSTRACTION_ERRORS = ['no_text', 'transport', 'upstream_timeout',
+                            'upstream_error', 'unparsable', 'no_fields'];
 
   function docTypeLabel(t) { return (DOC_TYPES[t] && DOC_TYPES[t].label) || 'Unclassified'; }
   function docTypeTier(t)  { return (DOC_TYPES[t] && DOC_TYPES[t].tier)  || 0; }
@@ -254,6 +261,13 @@
     abstraction_status: _oneOf(ABSTRACTION_STATUSES, 'pending'),
     abstraction_model:  function (v) { return _str(v, 255); },
     abstracted_at:      function (v) { return _str(v, 40); },
+    // WHY a reading failed (027). One of the six words in
+    // AcquisitionTerms.ABSTRACTION_ERRORS, or null. The list is repeated here
+    // for the same reason ABSTRACTION_STATUSES is — this module loads first and
+    // depends on nothing — and a test holds the two equal. Anything outside the
+    // vocabulary becomes null rather than being written through: a reason
+    // nobody can look up is not a reason.
+    abstraction_error:  _oneOf(ABSTRACTION_ERRORS, null),
   };
 
   // camelCase in the app, snake_case in the table.
@@ -273,6 +287,7 @@
     classificationHistory: 'classification_history',
     abstractedFields: 'abstracted_fields', abstractionStatus: 'abstraction_status',
     abstractionModel: 'abstraction_model', abstractedAt: 'abstracted_at',
+    abstractionError: 'abstraction_error',
   };
 
   /**
@@ -669,6 +684,7 @@
     abstraction_status: 'migrations/025_acquisition_abstraction.sql',
     abstraction_model:  'migrations/025_acquisition_abstraction.sql',
     abstracted_at:      'migrations/025_acquisition_abstraction.sql',
+    abstraction_error:  'migrations/027_acquisition_abstraction_error.sql',
   };
 
   function migrationFor(table) {
@@ -753,6 +769,7 @@
     migrationForError: migrationForError,
     missingColumnName: missingColumnName,
     ABSTRACTION_STATUSES: ABSTRACTION_STATUSES,
+    ABSTRACTION_ERRORS: ABSTRACTION_ERRORS,
     isMissingTable: isMissingTable,
     isMissingColumn: isMissingColumn,
     schemaGap: function (error) { return isMissingTable(error) || isMissingColumn(error); },

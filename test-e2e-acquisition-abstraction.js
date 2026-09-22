@@ -72,6 +72,7 @@ const DB = `
       intake_kind: 'other', parsing_status: 'pending', used_pdf_direct: false,
       doc_type_status: 'unclassified', family_status: 'unfiled', classification_history: [],
       abstracted_fields: {}, abstraction_status: 'pending', abstraction_model: null, abstracted_at: null,
+      abstraction_error: null,
     },
     acquisition_document_families: { family_kind: 'lease' },
   };
@@ -96,6 +97,12 @@ const DB = `
       if (['pending','success','partial','failed','skipped'].indexOf(row.abstraction_status) < 0) return 'acq_docs_abstraction_status_check';
       if ((row.abstraction_status === 'success' || row.abstraction_status === 'partial')
           && !(row.abstracted_fields && ('fields' in row.abstracted_fields) && row.abstracted_at)) return 'acq_docs_abstraction_coherent_check';
+    }
+    // 027's two checks: one of the six or nothing, and only on a failure.
+    if (row.abstraction_error != null) {
+      if (['no_text','transport','upstream_timeout','upstream_error','unparsable','no_fields']
+            .indexOf(row.abstraction_error) < 0) return 'acq_docs_abstraction_error_check';
+      if (row.abstraction_status !== 'failed') return 'acq_docs_abstraction_error_coherent_check';
     }
     return null;
   }
@@ -425,6 +432,9 @@ function abstractionFor(text) {
         !!failed && failed.parsing_status === 'success' && failed.doc_type === 'original_lease' && !!failed.storage_path,
         failed ? `${failed.parsing_status} / ${failed.doc_type} / ${failed.storage_path ? 'stored' : 'not stored'}` : '');
   check('with nothing claimed', !!failed && JSON.stringify(failed.abstracted_fields) === '{}' && failed.abstracted_at === null, '');
+  check('and — P4-3 remediation A4 — the row SAYS WHY: the server answered with an error',
+        !!failed && failed.abstraction_error === 'upstream_error',
+        failed ? String(failed.abstraction_error) : 'no row');
 
   // ── 5 · corrections ──────────────────────────────────────────────────────
   const before5 = calls.acquisition_abstraction.length;
@@ -495,6 +505,8 @@ function abstractionFor(text) {
   check('and the row is now read', !!retried && retried.abstraction_status === 'success'
           && retried.abstracted_fields.fields.tenant_name.value === 'Harbor Cafe',
         retried ? `${retried.abstraction_status} / ${retried.abstracted_fields.fields && retried.abstracted_fields.fields.tenant_name.value}` : '');
+  check('and the reason it failed with is CLEARED — a read row does not wear a stale complaint',
+        !!retried && retried.abstraction_error === null, retried ? String(retried.abstraction_error) : '');
   const buttonGone = await page.evaluate((id) => !document.querySelector(`.acq-doc-reabstract[data-doc-id="${id}"]`), failed.id);
   check('a row already read no longer offers it', buttonGone, buttonGone ? 'control gone' : 'control still present');
 
@@ -540,6 +552,74 @@ function abstractionFor(text) {
         refusals.dbRefusals.length === 3 && /coherent/.test(refusals.dbRefusals[0]) && /status_check/.test(refusals.dbRefusals[1]) && /is_object/.test(refusals.dbRefusals[2]),
         refusals.dbRefusals.join(' | '));
   check('and the row is untouched by any of them', refusals.still === 'success', refusals.still);
+
+  // ── 8b · every failure reason, written through the real page (A4) ────────
+  //
+  // The live amendment failed with nothing on the row to say why, and the
+  // cause turned out to be none of the ones a reader would have guessed. Each
+  // of the six is produced here the way it is actually produced — a real
+  // response from the route, through the real _acqAbstractDocument, into a
+  // stand-in that enforces 027's two checks.
+  const REASON_CASES = [
+    ['a 504 from the server',        { status: 504, body: { error: 'Claude did not answer within 45s', timeout: true, reason: 'upstream_timeout' } }, 'upstream_timeout'],
+    ['an unreadable reply',          { status: 500, body: { error: 'No JSON in response', reason: 'unparsable' } },                                   'unparsable'],
+    ['a reply with no fields',       { status: 200, body: { __meta: { model: 'stub' } } },                                                            'no_fields'],
+    ['an error the server cannot name', { status: 500, body: { error: 'Anthropic API error' } },                                                      'upstream_error'],
+    ['the request never completing', 'abort',                                                                                                        'transport'],
+  ];
+  for (const [label, response, want] of REASON_CASES) {
+    await page.unroute('**/api/claude');
+    await page.route('**/api/claude', async route => {
+      let body = {}; try { body = JSON.parse(route.request().postData() || ''); } catch (_) {}
+      if (body.task !== 'acquisition_abstraction') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LEASE_FIXTURE) });
+      }
+      if (response === 'abort') return route.abort('failed');
+      return route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
+    });
+    const got = await page.evaluate(async (id) => {
+      const row = window.__store.acquisition_documents.find(d => d.id === id);
+      const before = JSON.stringify(row.abstracted_fields);
+      await _acqAbstractDocument(row.review_id, row, row.extracted_text);
+      const after = window.__store.acquisition_documents.find(d => d.id === id);
+      return { status: after.abstraction_status, reason: after.abstraction_error,
+               kept: JSON.stringify(after.abstracted_fields) === before,
+               had: before !== '{}' };
+    }, failed.id);
+    check(`${label} → failed / ${want}`, got.status === 'failed' && got.reason === want,
+          `${got.status} / ${got.reason}`);
+    // A failure says what went wrong; it does not destroy what the document
+    // said last time it was read. §5 makes the same promise for `skipped`.
+    check(`  …and the evidence it already had is untouched`, got.kept,
+          got.had ? 'evidence preserved byte-for-byte' : 'row had none to begin with');
+  }
+  // no_text is the one the transport cannot produce: there was nothing to send.
+  const noText = await page.evaluate(async (id) => {
+    const row = window.__store.acquisition_documents.find(d => d.id === id);
+    await _acqAbstractDocument(row.review_id, row, '   ');
+    const after = window.__store.acquisition_documents.find(d => d.id === id);
+    return { status: after.abstraction_status, reason: after.abstraction_error };
+  }, failed.id);
+  check('a document with no usable text → failed / no_text',
+        noText.status === 'failed' && noText.reason === 'no_text', `${noText.status} / ${noText.reason}`);
+  const askedForNothing = calls.acquisition_abstraction.length;
+  check('and the task was not asked at all for it — nothing to read is not a question',
+        askedForNothing === calls.acquisition_abstraction.length);
+  // 027's own checks, exercised past the module the way §8 does for 025.
+  const reasonRefusals = await page.evaluate(async () => {
+    const mine = __store.acquisition_documents.find(d => d.file_name === 'harbor-lease.txt');
+    const before = window.__dbRefusals.length;
+    const { data: { user } } = await db.auth.getUser();
+    const key = { review_id: mine.review_id, user_id: user.id, intake_id: mine.intake_id, file_name: mine.file_name };
+    await db.from('acquisition_documents').upsert({ ...key, abstraction_error: 'mysterious' }, { onConflict: 'review_id,intake_id' });
+    await db.from('acquisition_documents').upsert({ ...key, abstraction_status: 'pending', abstraction_error: 'transport' }, { onConflict: 'review_id,intake_id' });
+    return { msgs: window.__dbRefusals.slice(before).map(r => r.message),
+             still: __store.acquisition_documents.find(d => d.file_name === 'harbor-lease.txt').abstraction_error };
+  });
+  check('the stand-in refuses a seventh word and a reason on a non-failure — as 027 does',
+        reasonRefusals.msgs.length === 2 && /abstraction_error_check/.test(reasonRefusals.msgs[0])
+          && /coherent/.test(reasonRefusals.msgs[1]), reasonRefusals.msgs.join(' | '));
+  check('and the row keeps the reason it legitimately had', reasonRefusals.still === 'no_text', String(reasonRefusals.still));
 
   check('no uncaught errors across the walk', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');
   // The rows as the walk left them, taken BEFORE the context closes — a read

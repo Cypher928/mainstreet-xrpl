@@ -470,6 +470,17 @@ const SUITES = [
   { label: 'Acquisition term decisions (P4-3)',         cmd: 'node test-acquisition-decisions.js' },
   { label: 'Acquisition Lease Terms walk (e2e, P4-3)',  cmd: 'node test-e2e-acquisition-terms.js' },
   { label: 'Migration 026 applies and rolls back',      cmd: 'node tools/verify-migration-026.js' },
+  // P4-3 remediation, Issue A. A reading that SUCCEEDED was thrown away: the
+  // browser's fetch ceiling (58s) sat below the function's own (60s), so a
+  // correct 27-field answer arriving at 59 seconds was aborted by the client
+  // and filed as `failed` with nothing on the row to say why. This pins the
+  // hierarchy that makes that impossible — 75s client > 60s function > 45s
+  // Anthropic — by reading all three from the files that set them, and
+  // reproduces the live failure at 1/1000 scale to prove the same answer now
+  // survives. It also holds the six failure reasons equal across the module,
+  // the document contract and migration 027.
+  { label: 'Acquisition abstraction transport (A1–A4)', cmd: 'node test-acquisition-transport.js' },
+  { label: 'Migration 027 applies and rolls back',      cmd: 'node tools/verify-migration-027.js' },
   // The panel on a phone. P1-3's type control and Confirm button turned the
   // document row into four flex children that all refused to shrink, so the
   // one holding the file name collapsed to nothing and names broke one

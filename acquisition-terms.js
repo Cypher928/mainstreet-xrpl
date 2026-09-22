@@ -90,6 +90,45 @@
   };
 
   var ABSTRACTION_STATUSES = ['pending', 'success', 'partial', 'failed', 'skipped'];
+
+  // ── WHY a reading failed ───────────────────────────────────────────────────
+  //
+  // `failed` was written three different ways and told you nothing about which.
+  // A live document came back `failed` with abstracted_fields {}, error_message
+  // null and no other trace, while the server logs showed the call had actually
+  // SUCCEEDED and the browser had aborted two seconds early. Diagnosing that
+  // took the server's logs; the row should have said it.
+  //
+  // These six are the whole vocabulary, and migration 027 stores the chosen one
+  // in its own column. `abstraction_status` is NOT widened — a reason is a
+  // reason, not a sixth status, and `error_message` belongs to the parsing
+  // stage and is not borrowed for this.
+  var ABSTRACTION_ERRORS = [
+    'no_text',           // there was no usable text on the row to read
+    'transport',         // the request never completed: aborted, or the network went
+    'upstream_timeout',  // the server reached Claude and Claude did not answer in time
+    'upstream_error',    // the server reached Claude and Claude answered with an error
+    'unparsable',        // an answer came back and it was not JSON we could read
+    'no_fields',         // valid JSON, but it carried no `fields` object
+  ];
+
+  /**
+   * Which of the six a thrown request failure is.
+   *
+   * Pure, and deliberately separate from the call site: the call site has the
+   * error object, this has the vocabulary, and a test can exercise every branch
+   * without a browser or a network. Anything unrecognised is `transport` — the
+   * honest answer for "the request did not come back and we cannot say more",
+   * never a guess at a more specific cause.
+   */
+  function abstractionErrorFor(e) {
+    if (!e) return 'transport';
+    if (ABSTRACTION_ERRORS.indexOf(e.reason) >= 0) return e.reason;
+    if (e.name === 'AbortError' || e.name === 'TimeoutError') return 'transport';
+    if (e.upstreamTimeout === true || e.status === 504) return 'upstream_timeout';
+    if (typeof e.status === 'number') return 'upstream_error';
+    return 'transport';
+  }
   var EVIDENCE_SCHEMA_VERSION = 1;
   var QUOTE_MAX = 600;
   var TEXT_MAX  = 1000;
@@ -792,6 +831,8 @@
     FIELDS: FIELDS,
     FIELD_META: FIELD_META,
     ABSTRACTION_STATUSES: ABSTRACTION_STATUSES,
+    ABSTRACTION_ERRORS: ABSTRACTION_ERRORS,
+    abstractionErrorFor: abstractionErrorFor,
     EVIDENCE_SCHEMA_VERSION: EVIDENCE_SCHEMA_VERSION,
     QUOTE_MAX: QUOTE_MAX,
     normalizeFieldValue: normalizeFieldValue,
