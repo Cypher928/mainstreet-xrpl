@@ -30751,10 +30751,13 @@ function _acqDecisionsMissing(error) {
 // Record one human act. Append-only: this INSERTS, it never updates, because
 // the history is the feature and migration 026 refuses anything else.
 async function _acqSaveDecision(fields, term) {
+  // The review this act is about, captured before the first await — see
+  // "Cross-review isolation".
+  const reviewId = _activeAcqId;
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return null;
-    const built = _AT().buildDecisionPayload(_activeAcqId, user.id, fields, term);
+    const built = _AT().buildDecisionPayload(reviewId, user.id, fields, term);
     if (!built.ok) {
       showToast('⚠️ ' + built.error, { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
       return null;
@@ -30775,9 +30778,9 @@ async function _acqSaveDecision(fields, term) {
     }
     const row = Array.isArray(data) ? data[0] : null;
     if (row) {
-      const rows = _acqDecisionRows(_activeAcqId).slice();
+      const rows = _acqDecisionRows(reviewId).slice();
       rows.push(row);
-      _acqDecisions.set(_activeAcqId, rows);
+      _acqDecisions.set(reviewId, rows);
     }
     return row;
   } catch (e) {
@@ -30835,10 +30838,11 @@ function _acqFamilyTerms(familyId) {
 // A person asks for a document to be read (again). The text is already on the
 // row; nothing is re-uploaded.
 async function acqReabstractDocument(docId) {
-  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
   if (!row || _acqAbstracting.has(docId)) return;
   const text = await _acqLoadDocumentText(docId);
-  await _acqAbstractDocument(_activeAcqId, row, text);
+  await _acqAbstractDocument(reviewId, row, text);
   _renderAcqDocuments();
 }
 
@@ -31390,23 +31394,24 @@ async function _acqProposeSiblings(reviewId, row, familyId) {
  */
 async function acqBeginLeasehold(docId) {
   const AD  = _AD();
-  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
   if (!row || !AD.isFamilyType(row.doc_type) || row.family_id) return;
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) return;
 
-  const step = await _acqFamilyForHuman(_activeAcqId, row, row.doc_type, { beginLeasehold: true });
+  const step = await _acqFamilyForHuman(reviewId, row, row.doc_type, { beginLeasehold: true });
   if (!step.patch) { _renderAcqDocuments(); return; }
 
   const saved = await _acqSaveDocument({
-    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    reviewId, intakeId: row.intake_id, fileName: row.file_name,
     familyId: step.patch.familyId, familyStatus: step.patch.familyStatus,
     familySource: step.patch.familySource,
     // 024's trigger refuses a settled status that names nobody.
     confirmedBy: user.id, confirmedAt: new Date().toISOString(),
     classificationHistory: AD.appendHistory(row.classification_history, step.patch.historyEntry),
   });
-  if (saved && step.familyId) await _acqProposeSiblings(_activeAcqId, saved, step.familyId);
+  if (saved && step.familyId) await _acqProposeSiblings(reviewId, saved, step.familyId);
   _renderAcqDocuments();
 }
 
@@ -31435,12 +31440,13 @@ function _acqBindDocControls(el) {
 // is not a confirmation.
 
 async function acqConfirmDocType(docId) {
-  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
   if (!row || !row.doc_type) return;
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) return;
   await _acqSaveDocument({
-    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    reviewId, intakeId: row.intake_id, fileName: row.file_name,
     docType: row.doc_type, docTypeStatus: 'confirmed', docTypeSource: 'human',
     confirmedBy: user.id, confirmedAt: new Date().toISOString(),
     // A confirmed type settles where it was filed too — the person saw both.
@@ -31455,13 +31461,14 @@ async function acqConfirmDocType(docId) {
 
 async function acqSetDocType(docId, nextType) {
   const AD  = _AD();
-  const row = _acqDocRows(_activeAcqId).find(r => r && r.id === docId);
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
   if (!row || !AD.DOC_TYPES[nextType] || nextType === row.doc_type) return;
   const { data: { user } } = await db.auth.getUser();
   if (!user?.id) return;
 
   const fields = {
-    reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+    reviewId, intakeId: row.intake_id, fileName: row.file_name,
     docType: nextType, docTypeStatus: 'corrected', docTypeSource: 'human',
     docTypeConfidence: null,
     confirmedBy: user.id, confirmedAt: new Date().toISOString(),
@@ -31481,7 +31488,7 @@ async function acqSetDocType(docId, nextType) {
   // renewal to amendment does not re-file a document somebody already placed.
   let familyStep = null;
   if (AD.isFamilyType(nextType) && !row.family_id) {
-    familyStep = await _acqFamilyForHuman(_activeAcqId, row, nextType);
+    familyStep = await _acqFamilyForHuman(reviewId, row, nextType);
     if (familyStep.patch) {
       fields.familyId     = familyStep.patch.familyId;
       fields.familyStatus = familyStep.patch.familyStatus;
@@ -31516,7 +31523,7 @@ async function acqSetDocType(docId, nextType) {
   // A leasehold that has just come into existence may already have relatives
   // on file. They are proposed to it, never taken (Issue B).
   if (savedRow && familyStep && familyStep.familyId) {
-    await _acqProposeSiblings(_activeAcqId, savedRow, familyStep.familyId);
+    await _acqProposeSiblings(reviewId, savedRow, familyStep.familyId);
   }
   _renderAcqDocuments();
 
@@ -31531,10 +31538,10 @@ async function acqSetDocType(docId, nextType) {
     const isAbstractable  = AT.isAbstractable(nextType);
     if (isAbstractable && !wasAbstractable) {
       const text = await _acqLoadDocumentText(docId);
-      await _acqAbstractDocument(_activeAcqId, savedRow, text);
+      await _acqAbstractDocument(reviewId, savedRow, text);
       _renderAcqDocuments();
     } else if (!isAbstractable && row.abstraction_status !== 'skipped') {
-      await _acqSaveDocument({ reviewId: _activeAcqId, intakeId: row.intake_id, fileName: row.file_name,
+      await _acqSaveDocument({ reviewId, intakeId: row.intake_id, fileName: row.file_name,
                                abstractionStatus: 'skipped', abstractionError: null });
       _renderAcqDocuments();
     }
@@ -32119,16 +32126,47 @@ function acqSaveSqft(val) {
   _updateAcqAnalyzeBtn();
 }
 
+// ── Cross-review isolation ────────────────────────────────────────────────────
+//
+// An upload runs for minutes — each file is extracted, classified and read for
+// its terms — and a person may open or create another review while it does.
+// `_acqTenants` / `_acqInvoices` / `_activeAcqId` describe whatever review is on
+// SCREEN, and selectAcquisitionReview re-points them. An operation that kept
+// reading them after an `await` wrote one review's files into another's list,
+// and then saved that list over the review it started in (Pilot, 2026-09-22:
+// Maple Plaza tenants appearing in a newly created review).
+//
+// So every long operation captures the review it belongs to BEFORE its first
+// await, works on that review's own lists, and draws only while that review is
+// still the one open. Nothing here changes what is stored when nobody switches.
+function _acqIsActive(review) {
+  return !!review && _activeAcqId === review.id;
+}
+
+// The list an upload appends to: the review's own. When the review is on
+// screen it is the list the screen shows (the same array), so a person watching
+// sees each file arrive exactly as before; it is also set as the review's
+// stored list, so leaving and coming back mid-upload shows the upload's rows.
+function _acqWorkingList(review, key, displayed) {
+  review.data = review.data || {};
+  const list = _acqIsActive(review) && Array.isArray(displayed) ? displayed
+    : (Array.isArray(review.data[key]) ? review.data[key] : []);
+  review.data[key] = list;
+  return list;
+}
+
 async function acqHandleLeaseFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  // Captured now, before anything is awaited — see "Cross-review isolation".
+  const tenants = _acqWorkingList(review, 'tenants', _acqTenants);
 
   for (const file of files) {
     const placeholder = { tenant_name: file.name, _status: 'pending', _fileName: file.name };
-    _acqTenants.push(placeholder);
-    _renderAcqLeaselist();
+    tenants.push(placeholder);
+    if (_acqIsActive(review)) _renderAcqLeaselist();
 
     // THE ROW FIRST. That this file arrived is a fact, and a tab closed
     // mid-extraction must not lose it. Everything after this updates that row,
@@ -32228,16 +32266,21 @@ async function acqHandleLeaseFiles(fileList) {
       });
     }
 
-    _renderAcqLeaselist();
-    _renderAcqDocuments();
-    _updateAcqAnalyzeBtn();
+    if (_acqIsActive(review)) {
+      _renderAcqLeaselist();
+      _renderAcqDocuments();
+      _updateAcqAnalyzeBtn();
+    }
   }
 
   review.data = review.data || {};
-  review.data.tenants = _acqTenants.filter(t => t._status !== 'error');
+  review.data.tenants = tenants.filter(t => t._status !== 'error');
   review.updated_at   = new Date().toISOString();
+  // On screen, the failed rows stay visible until the review is next opened —
+  // as they always have. Off screen, this review's list is not the screen's.
+  if (_acqIsActive(review)) _acqTenants = tenants;
   {
-    const failed = files.filter(f => _acqTenants.some(t => t._fileName === f.name && t._status === 'error')).map(f => f.name);
+    const failed = files.filter(f => tenants.some(t => t._fileName === f.name && t._status === 'error')).map(f => f.name);
     const documentIds = _acqDocRows(review.id).filter(r => files.some(f => f.name === r.file_name)).map(r => r.id);
     _acqRecord(review, { type: 'documents_added',
       summary: files.length + ' lease file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
@@ -32252,6 +32295,8 @@ async function acqHandleInvoiceFiles(fileList) {
   if (!files.length) return;
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  // Captured now, before anything is awaited — see "Cross-review isolation".
+  const invoices = _acqWorkingList(review, 'invoices', _acqInvoices);
 
   for (const file of files) {
     // An id so the document row can name what this file produced. Invoices
@@ -32261,8 +32306,8 @@ async function acqHandleInvoiceFiles(fileList) {
       id: 'acqinv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
       vendorName: file.name, amount: null, _status: 'pending', fileName: file.name,
     };
-    _acqInvoices.push(placeholder);
-    _renderAcqInvoiceList();
+    invoices.push(placeholder);
+    if (_acqIsActive(review)) _renderAcqInvoiceList();
 
     // The row first — see acqHandleLeaseFiles.
     const intakeId = _acqMintIntakeId();
@@ -32327,16 +32372,19 @@ async function acqHandleInvoiceFiles(fileList) {
       });
     }
 
-    _renderAcqInvoiceList();
-    _renderAcqDocuments();
-    _updateAcqAnalyzeBtn();
+    if (_acqIsActive(review)) {
+      _renderAcqInvoiceList();
+      _renderAcqDocuments();
+      _updateAcqAnalyzeBtn();
+    }
   }
 
   review.data = review.data || {};
-  review.data.invoices = _acqInvoices.filter(i => i._status !== 'error' && i.amount);
+  review.data.invoices = invoices.filter(i => i._status !== 'error' && i.amount);
   review.updated_at    = new Date().toISOString();
+  if (_acqIsActive(review)) _acqInvoices = invoices;
   {
-    const failed = files.filter(f => _acqInvoices.some(i => i.fileName === f.name && i._status === 'error')).map(f => f.name);
+    const failed = files.filter(f => invoices.some(i => i.fileName === f.name && i._status === 'error')).map(f => f.name);
     const documentIds = _acqDocRows(review.id).filter(r => files.some(f => f.name === r.file_name)).map(r => r.id);
     _acqRecord(review, { type: 'documents_added',
       summary: files.length + ' invoice file' + (files.length === 1 ? '' : 's') + ' added' + (failed.length ? ' (' + failed.length + ' failed extraction)' : ''),
@@ -32372,8 +32420,12 @@ async function runAcquisitionAnalysis() {
 
     await _saveAcqReview(review);
     _renderAcqSection(_acqReviews);
-    _renderAcqReport(report, document.getElementById('acqReportContainer'));
-    _renderAcqConvertAction(review);
+    // The report container belongs to whichever review is open NOW. This
+    // review's analysis is stored on it and drawn when it is next opened.
+    if (_acqIsActive(review)) {
+      _renderAcqReport(report, document.getElementById('acqReportContainer'));
+      _renderAcqConvertAction(review);
+    }
   } catch (e) {
     console.error('[acq] analysis failed:', e.message);
     const cont = document.getElementById('acqReportContainer');

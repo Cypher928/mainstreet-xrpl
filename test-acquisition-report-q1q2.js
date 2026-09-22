@@ -362,8 +362,12 @@ section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
     let scriptHead = null;
     try { scriptHead = execFileSync('git', ['show', 'edcf259:script.js'], { cwd: gitRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); }
     catch (_) { scriptHead = null; }
-    check('script.js is unchanged — the glue already hands over the whole model',
-      scriptHead !== null && scriptHead === fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8'));
+    // R-3 needed no glue change. script.js has since changed for cross-review
+    // isolation (§4k), so what is pinned is the v2 glue itself.
+    const v2Of = (src) => (src.match(/^async function generateAcquisitionReportV2\(\) \{[\s\S]*?^\}/m) || [''])[0];
+    check('the v2 glue is unchanged — it already hands over the whole model',
+      scriptHead !== null && v2Of(scriptHead).length > 500
+      && v2Of(scriptHead) === v2Of(fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8')));
   }
   const apiFiles = fs.readdirSync(path.join(ROOT, 'api')).filter(f => f.endsWith('.js') && !f.startsWith('_'));
   check('no new serverless function — api/ still holds twelve', apiFiles.length === 12, String(apiFiles.length));

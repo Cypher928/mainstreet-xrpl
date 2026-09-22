@@ -417,7 +417,11 @@ t('the database refuses a row that names anybody else', () => {
 t('the data layer takes the actor from the session, never from the form', () => {
   const D = fnBody(S, '_acqSaveDecision');
   ok(/const \{ data: \{ user \} \} = await db\.auth\.getUser\(\)/.test(D));
-  ok(/buildDecisionPayload\(_activeAcqId, user\.id, fields, term\)/.test(D));
+  ok(/buildDecisionPayload\(reviewId, user\.id, fields, term\)/.test(D));
+  // The review is captured before sign-in is awaited — a person who opens
+  // another review meanwhile must not have the decision filed against it.
+  ok(D.indexOf('const reviewId = _activeAcqId;') >= 0
+     && D.indexOf('const reviewId = _activeAcqId;') < D.indexOf('await db.auth.getUser()'));
 });
 
 t('the resolver surfaces the actor and time on the term', () => {

@@ -240,7 +240,13 @@ section('8 · D-17 is preserved, and the two branches are exclusive');
     /fields\.relationshipStatus = 'needs_review';/.test(setDocType)
     && /action: 'needs_review', field: 'relationship'/.test(setDocType));
   check('correcting INTO a lease type now runs the family step',
-    /if \(AD\.isFamilyType\(nextType\) && !row\.family_id\) \{\s*\n\s*familyStep = await _acqFamilyForHuman\(_activeAcqId, row, nextType\);/.test(setDocType));
+    /if \(AD\.isFamilyType\(nextType\) && !row\.family_id\) \{\s*\n\s*familyStep = await _acqFamilyForHuman\(reviewId, row, nextType\);/.test(setDocType));
+  // Cross-review isolation: the review is the one captured before any await,
+  // never whichever review is open when the await returns.
+  check('…in the review captured before the first await, not the one open afterwards',
+    setDocType.indexOf('const reviewId = _activeAcqId;') >= 0
+    && setDocType.indexOf('const reviewId = _activeAcqId;') < setDocType.indexOf('await ')
+    && !/_activeAcqId/.test(setDocType.slice(setDocType.indexOf('await '))));
   check('the two branches test opposite conditions — they cannot both run',
     setDocType.includes('if (AD.isFamilyType(nextType) && !row.family_id) {')
     && setDocType.includes('if (!AD.isFamilyType(nextType) && row.family_id) {'));

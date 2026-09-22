@@ -574,7 +574,10 @@ t('at intake, the document is read AFTER it is stored and AFTER it is classified
 
 t('a correction INTO a lease-family type re-reads the document from its stored text; OUT of one marks it skipped', () => {
   const SET = fnBody(S, 'acqSetDocType');
-  ok(/if \(isAbstractable && !wasAbstractable\) \{\s*const text = await _acqLoadDocumentText\(docId\);\s*await _acqAbstractDocument\(_activeAcqId, savedRow, text\);/.test(SET));
+  ok(/if \(isAbstractable && !wasAbstractable\) \{\s*const text = await _acqLoadDocumentText\(docId\);\s*await _acqAbstractDocument\(reviewId, savedRow, text\);/.test(SET));
+  // …for the review captured before the first await (cross-review isolation).
+  ok(SET.indexOf('const reviewId = _activeAcqId;') >= 0
+     && SET.indexOf('const reviewId = _activeAcqId;') < SET.indexOf('await '));
   ok(/else if \(!isAbstractable && row\.abstraction_status !== 'skipped'\)/.test(SET));
   ok(/abstractionStatus: 'skipped'/.test(SET));
   ok(!/abstractedFields/.test(SET), 'a correction rewrites the evidence');

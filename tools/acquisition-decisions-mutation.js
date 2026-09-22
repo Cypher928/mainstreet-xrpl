@@ -170,8 +170,8 @@ const MUTANTS = [
     from: "      .from('acquisition_term_decisions')\n      .insert(built.payload)",
     to:   "      .from('acquisition_term_decisions')\n      .upsert(built.payload, { onConflict: 'review_id,field_key' })" },
   { id: 'D02', file: S, why: "the decision write also stamps the document's abstraction columns",
-    from: '    const row = Array.isArray(data) ? data[0] : null;\n    if (row) {\n      const rows = _acqDecisionRows(_activeAcqId).slice();',
-    to:   '    const row = Array.isArray(data) ? data[0] : null;\n    if (row && term && term.governingDocumentId) { _acqEvidence.delete(term.governingDocumentId); }\n    if (row) {\n      const rows = _acqDecisionRows(_activeAcqId).slice();' },
+    from: '    const row = Array.isArray(data) ? data[0] : null;\n    if (row) {\n      const rows = _acqDecisionRows(reviewId).slice();',
+    to:   '    const row = Array.isArray(data) ? data[0] : null;\n    if (row && term && term.governingDocumentId) { _acqEvidence.delete(term.governingDocumentId); }\n    if (row) {\n      const rows = _acqDecisionRows(reviewId).slice();' },
   { id: 'D03', file: S, why: 'the decisions read is not scoped to the owner',
     from: "      .select(_AT().DECISION_SELECT)\n      .eq('review_id', reviewId)\n      .eq('user_id', user.id)",
     to:   "      .select(_AT().DECISION_SELECT)\n      .eq('review_id', reviewId)" },
@@ -179,8 +179,10 @@ const MUTANTS = [
     from: "      .select('id, abstracted_fields')\n      .eq('review_id', reviewId)\n      .eq('user_id', user.id)",
     to:   "      .select('id, abstracted_fields')\n      .eq('review_id', reviewId)" },
   { id: 'D05', file: S, why: 'the evidence is written into the cached document row',
-    from: '    .map(d => _acqEvidence.has(d.id) ? Object.assign({}, d, { abstracted_fields: _acqEvidence.get(d.id) }) : d);',
-    to:   '    .map(d => { if (_acqEvidence.has(d.id)) d.abstracted_fields = _acqEvidence.get(d.id); return d; });' },
+    // Anchored on the comment above it: the v2 report glue (P1-7) repeats the
+    // same .map line, and an ambiguous anchor mutates whichever comes first.
+    from: '    // resolver without writing it into the cached row.\n    .map(d => _acqEvidence.has(d.id) ? Object.assign({}, d, { abstracted_fields: _acqEvidence.get(d.id) }) : d);',
+    to:   '    // resolver without writing it into the cached row.\n    .map(d => { if (_acqEvidence.has(d.id)) d.abstracted_fields = _acqEvidence.get(d.id); return d; });' },
   { id: 'D06', file: S, why: 'the correction does not carry the value it replaces',
     from: '    previousValue: term.value == null ? undefined : String(term.value),\n    sourceDocumentId: term.governingDocumentId || undefined }, term);',
     to:   '    sourceDocumentId: term.governingDocumentId || undefined }, term);' },

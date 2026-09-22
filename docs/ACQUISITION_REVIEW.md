@@ -1270,6 +1270,50 @@ from the text, as the classification stub always did.
 
 ---
 
+## 4k. Cross-review isolation — one review's work never lands in another
+
+### What happened
+
+On the Pilot (2026-09-22) a newly created review showed Maple Plaza's tenants.
+Nothing was stored in the new review; the leak was in the browser. An upload
+runs for minutes — each file is extracted, classified and read for its terms —
+and `acqHandleLeaseFiles` captured its review at the start but kept appending
+to `_acqTenants`, the list of whichever review is ON SCREEN, which
+`selectAcquisitionReview` re-points. Opening or creating another review
+mid-upload moved the remaining files into that review's list, and the upload
+then saved that list over its own review — dropping the tenants it had.
+
+The same shape was in the invoice upload (`_acqInvoices`), in the analysis run
+(its report drawn into whichever review was open when the save returned), and
+in every document and term act that read `_activeAcqId` after an `await`
+(confirm type, correct type, begin leasehold, re-read, confirm/correct/reject/
+reopen a term). Documents upsert on `(review_id, intake_id)`, so a stale review
+id did not update the right row — it inserted a copy under the other review.
+
+### The fix
+
+Every long action captures the review it belongs to before its first await and
+works on that review's own lists; it redraws only while that review is still
+open. Uploads append to `review.data.tenants` / `.invoices` — when the review is
+on screen, the same array the screen shows, so nothing changes for a person who
+does not switch. The analysis stores its result on its review and draws it only
+if that review is open. The document and term acts use the review id captured
+at entry. No migration; no stored shape changed.
+
+Not changed here, deliberately: one tenant row per uploaded lease file (a lease
+and its amendment, or a re-upload, are separate rows). That is the tenant/
+leasehold model, and a separate decision.
+
+### Verified
+
+`test-e2e-acquisition-isolation.js` walks every one of those actions with the
+switch made mid-flight, in both directions, and checks the screen, the review
+in memory and the stored row. Against the code before the fix it fails 22 of
+its 44 checks — including a confirmed document filed as a new row under the
+other review, and a term decision recorded against it. `tools/acquisition-
+isolation-mutation.js` undoes each part of the fix in turn; every mutant is
+killed.
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

@@ -515,6 +515,12 @@ const SUITES = [
   // It byte-compares R-2's Q3/Q4 markup against the committed view.
   { label: 'Acquisition report Q1 + Q2 (P1-7 R-3)',     cmd: 'node test-acquisition-report-q1q2.js' },
   { label: 'Acquisition Report v2 walk (e2e, P1-7 R-2)', cmd: 'node test-e2e-acquisition-report.js' },
+  // Cross-review isolation. Found on the Pilot: a new review showed Maple
+  // Plaza's tenants, because an upload kept writing to the review ON SCREEN
+  // after the person opened another — and then saved that list over its own.
+  // Every long action (lease and invoice uploads, the analysis, each document
+  // and term act) is walked with the switch made mid-flight, both directions.
+  { label: 'Acquisition cross-review isolation (e2e)',  cmd: 'node test-e2e-acquisition-isolation.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
