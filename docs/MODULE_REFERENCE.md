@@ -88,6 +88,19 @@ access at load time and are Node-testable via `vm`.
 - **And why a reading failed (P4-3 remediation, A4):** `ABSTRACTION_ERRORS` is the whole vocabulary — `no_text · transport · upstream_timeout · upstream_error · unparsable · no_fields` — and `abstractionErrorFor(e)` maps a thrown request failure onto it, answering `transport` for anything it cannot place rather than guessing at a cause. The same six are enforced by `acquisition-documents.js` (which writes them to `abstraction_error`) and by migration 027 (which stores them); a test holds all three equal. `abstraction_status` is deliberately NOT widened: a status says where a reading got to, a reason says why it stopped. Added because a live document came back `failed` with nothing on the row to distinguish three different causes, and the real one — a client abort of a request the server had already answered — was none of them.
 - **Tests:** `test-acquisition-terms.js`, `test-e2e-acquisition-abstraction.js`, `tools/verify-migration-025.js`, `tools/acquisition-terms-mutation.js`, `test-acquisition-resolver.js`, `tools/acquisition-resolver-mutation.js`, `test-acquisition-decisions.js`, `test-e2e-acquisition-terms.js`, `tools/verify-migration-026.js`, `tools/acquisition-decisions-mutation.js`, `test-acquisition-transport.js`, `tools/verify-migration-027.js`.
 
+## acquisition-report.js — Acquisition Report v2: the model (Phase 1, P1-7 R-1)
+- **Purpose:** projects the P1-4 model (terms, decisions, documents, leaseholds) and `data.assumptions[]` into the buyer's five questions (`docs/ACQUISITION_REVIEW.md` §7, §7a). Decides the four report states — `verified · assumption · issue · missing` — with `origin` (`ai_read` / `entered`) and `derived` carried alongside.
+- **Inputs/Outputs:** `buildReport(review, families, documents, decisions, opts)` → `{ ok, questions[], leaseholds[], summary }`; `projectTerm`, `projectAssumption`, `summarize`. Pure; `opts.terms` / `opts.reasoner` may inject `AcquisitionTerms` / `LeaseIntelligence` (tests do).
+- **Frozen:** pinned by sha256 in `test-acquisition-report-view.js`.
+- **Tests:** `test-acquisition-report.js`.
+
+## acquisition-report-view.js — Acquisition Report v2: the view (Phase 1, P1-7 R-2)
+- **Purpose:** draws what `acquisition-report.js` decided — questions 3 and 4 in full, questions 1, 2 and 5 in place as not yet included. Decides nothing itself.
+- **Inputs/Outputs:** `renderReport(model, { linkFor, typeLabel })` → HTML string; also `factRow`, `stateChip`, `renderObligations`, `renderEvidence`, `renderPending`, `formatValue`, `esc`. Pure; the page injects `docLinkHtml` as `linkFor`.
+- **Rules it keeps:** missing is "Not established", never blank or zero; AI-read and entered assumptions are labelled apart; a derived figure's clause is "Calculated from", never "Source"; a contradiction shows both sides and picks neither; every table cell holds its content in one `.acqr-cell` so the phone card layout cannot split it.
+- **Wired by:** `generateAcquisitionReportV2()` in `script.js`, from `#acqReportV2Btn` on the Lease Terms card. Writes nothing; calls no AI.
+- **Tests:** `test-acquisition-report-view.js`, `test-e2e-acquisition-report.js`, `tools/acquisition-report-mutation.js`.
+
 ## Reports
 - **lease-review-packets.js** (lender summary etc.), **escrow-draw-packets.js** (draw package), plus script.js report generators (Master, Reconciliation Summary, Tenant Statements, CSV exports). Pattern: engine data → HTML → print window.
 

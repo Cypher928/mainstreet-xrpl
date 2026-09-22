@@ -1578,3 +1578,112 @@ replacement for them.
 The existing CAM reconciliation product is untouched. It is the right tool for
 an owner-operator, and Report v2 is a different report for a different reader —
 not a rewrite of it.
+
+## 7a. P1-7 — Acquisition Report v2, R-1 and R-2 (built; awaiting review)
+
+**Status: uncommitted, awaiting approval. Nothing deployed. No migration, no
+new serverless function (`api/` still holds twelve).** Built against §7 and the
+P1-7 decisions recorded with it (C-1 separate entry point, C-3 assumption
+origins, C-4 derived values).
+
+### R-1 — the model (`acquisition-report.js`, frozen)
+
+A pure projection of what P1-4 already knows into §7's five questions. It
+decides the report's four states and nothing else:
+
+| P1-4 term state | report state |
+|---|---|
+| verified | **verified** |
+| ai_extracted | **assumption**, `origin: ai_read` |
+| unclear, derived (a figure calculated from a rate) | **assumption**, `origin: ai_read`, derived |
+| unclear, otherwise (a clause with no readable value, or a value with no clause) | **issue** |
+| conflicting | **issue**, with every competing value |
+| missing | **missing** |
+
+An assumption always carries its origin — `ai_read` (read by AI, not
+confirmed) or `entered` (a person entered it; no document) — and the two are
+never counted or drawn under one label. `derived` rides alongside the state
+rather than replacing it: a figure calculated from a clause that states a rate
+is still verified, an assumption or an issue on its own terms, and is marked
+**Derived — calculated from lease terms** wherever it appears. A contradiction
+outranks derived: two calculations that disagree are an issue, with each side
+still marked derived. The 27 fields are partitioned across Q1 (6), Q2 (10) and
+Q3 (11) — total and disjoint, and a test holds it so.
+
+R-1 is frozen: the R-2 view suite pins its sha256
+(`c9d2fc8a…bfbe6`), so any change to it has to be deliberate.
+
+### R-2 — questions 3 and 4, drawn (`acquisition-report-view.js`)
+
+A second report beside the existing one, not a rewrite of it. The v1
+Acquisition Decision Report (`generateAcquisitionReport`) is byte-for-byte
+unchanged, still needs the CAM analysis and invoices, and still lives only
+after the analysis has run. v2's control (**📘 Acquisition Report v2**) is on
+the Lease Terms card, because v2 needs neither.
+
+`generateAcquisitionReportV2()` re-reads the evidence and the decisions (a
+decision recorded in another tab belongs in the report), hands them with the
+leaseholds and documents to `AcquisitionReport.buildReport`, and draws the
+result with `AcquisitionReportView.renderReport`. It computes no state, drops
+no fact, calls no AI and writes nothing.
+
+What the page shows:
+
+- **Coverage first.** "This report currently answers 2 of 5 questions. It is
+  not a complete acquisition report." Questions 1, 2 and 5 are drawn in their
+  place as not yet included — "Nothing here should be read as an answer to
+  this question." — never skipped.
+- **Q3, one table per leasehold, all eleven obligations.** A missing term says
+  **Not established**. An AI read says **AI-read · not confirmed**. A derived
+  figure's clause is led **Calculated from:**, never **Source:**. A
+  contradiction reads **Contested**, lists both values each with its own
+  document, page and quote, and says **Neither value has been selected.** — and
+  names no single Source, which would read as a choice.
+- **Entered figures apart.** Anything in `data.assumptions[]` is drawn in its
+  own "Entered by a person" table labelled **Entered · no document**. An entry
+  does not fill the leasehold's row for the same term; that row stays Missing.
+- **Q4, every document.** Whether its original is on file (and an opener that
+  asks for a signed link from inside the report when it is), whether its type
+  and filing were confirmed by a person or only proposed, and whether it was
+  read for terms — with the reason when a read failed.
+
+### What the browser found
+
+Three things the tests passed and the screenshots did not:
+
+- **At 375px** the report tables become cards, and each `<td>` a two-column
+  grid — heading on the left, content on the right. A cell with several
+  children had them dealt across both columns: a contradiction's two sides
+  landed in the heading gutter. Nothing overflowed, so a width check alone
+  passed. Every cell now holds its content in one `.acqr-cell` wrapper, and
+  the walk checks that nothing a cell says sits left of its content column.
+- **At 1280px** report tables set every column but the first to `nowrap`, so
+  a clause ran past its table's scroll box and its end was cut off. The v2
+  table's own rule lost on specificity; it now wins, and the walk checks that
+  no report table scrolls sideways.
+- **A contested row also named a single "Source:"** — the evidence of one
+  side — directly under "Neither value has been selected", which reads as a
+  choice. A contested row's provenance is its competing list, each side with
+  its own document, page and quote; the single Source is no longer drawn
+  there. The model is unchanged.
+
+### Verified
+
+- `test-acquisition-report.js` 86/86 (R-1, unchanged; sha256 pinned).
+- `test-acquisition-report-view.js` 75/75 — every Q3/Q4 row corresponds to the
+  model; v1 `generateAcquisitionReport` identical to HEAD; `api/` holds 12; no
+  migration 028.
+- `test-e2e-acquisition-report.js` 52/52 in the real page — no analysis
+  needed; opening writes nothing and calls no AI; the original opens from
+  inside the report; a decision and a reading recorded after load both reach
+  it; 1280px and 375px layout.
+- `tools/acquisition-report-mutation.js` 35/35 killed, no survivors.
+- Full regression 200 suites: 196 pass; the 4 failures are the four
+  pre-existing ones (Live extraction walk, Billing readiness consistency, Ask
+  AI intent coverage, Broken promises).
+
+### Not done in R-2
+
+Q1 and Q2 (R-3), Q5 and the assumptions display beyond Q3 (R-4), and the
+closing validation (R-5). No assumption-entry or editing workflow exists or
+was added.

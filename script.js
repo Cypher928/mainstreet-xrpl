@@ -33090,6 +33090,58 @@ function generateAcquisitionReport() {
   openReport('Acquisition Decision Report — ' + propName, body);
 }
 
+// ── Acquisition Report v2 (P1-7) ─────────────────────────────────────────────
+//
+// A SECOND report, for a different reader. generateAcquisitionReport above is
+// the owner-operator's: it is built from the CAM analysis, needs invoices, and
+// the Rent Roll tab and the Convert flow read what it produces. It is not
+// touched. This one answers the buyer's five questions (ACQUISITION_REVIEW.md
+// §7) from the P1-4 model and needs NO analysis run and NO invoices — which is
+// why its control lives on the Lease Terms card, not beside the Decision Report
+// button, which only exists once the CAM analysis has run.
+//
+// The model is acquisition-report.js (R-1) and nothing else: this glue gathers
+// what the page already holds, re-reads the two things that change underneath
+// it (the evidence and the decisions), and hands them over. It computes no
+// state, drops no fact and writes nothing.
+async function generateAcquisitionReportV2() {
+  const AR = window.AcquisitionReport, AV = window.AcquisitionReportView;
+  const review = _acqReviews.find(r => r && r.id === _activeAcqId);
+  if (!review || !AR || !AV) {
+    showToast('Open an acquisition review first.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  // Fresh reads, not the panel's cache: a decision recorded in another tab, or
+  // a reading that landed a moment ago, belongs in the report.
+  await _acqLoadEvidence(review.id);
+  await _acqLoadDecisions(review.id);
+
+  const documents = _acqDocRows(review.id)
+    .map(d => _acqEvidence.has(d.id) ? Object.assign({}, d, { abstracted_fields: _acqEvidence.get(d.id) }) : d);
+  const model = AR.buildReport(review, _acqFamilyRows(review.id), documents,
+                               _acqDecisionRows(review.id), {});
+
+  const now      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const propName = review.name || 'Acquisition Review';
+  const s        = model.summary || {};
+  const body = `
+  ${_rptHeader(propName, 'Acquisition Report v2', now, now, [
+    { label: 'Leaseholds', value: String((model.leaseholds || []).length) },
+    { label: 'Verified',   value: String(s.verified || 0) },
+    { label: 'Issues',     value: String(s.issue || 0) },
+    { label: 'Missing',    value: String(s.missing || 0) },
+  ])}
+  ${AV.renderReport(model, {
+    linkFor:   (path, name) => window.docLinkHtml
+      ? docLinkHtml(path, esc(name), { className: 'acqr-open', title: 'Open ' + name })
+      : esc(name),
+    typeLabel: (t) => _AD().docTypeLabel(t),
+  })}
+  ${_rptFooter(propName, 'Acquisition Report v2', now)}`;
+
+  openReport('Acquisition Report v2 — ' + propName, body);
+}
+
 function _genUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0;

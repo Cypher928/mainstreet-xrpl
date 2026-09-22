@@ -497,6 +497,19 @@ const SUITES = [
   // character per line. This measures the laid-out geometry at real iPhone
   // widths — a stylesheet reading would not have caught it.
   { label: 'Acquisition documents on a phone (e2e)',    cmd: 'node test-e2e-acquisition-documents-mobile.js' },
+  // P1-7, Acquisition Report v2. R-1 is the pure projection of the P1-4 model
+  // into the buyer's five questions and four states (verified · assumption ·
+  // issue · missing), with origin and derived carried alongside; it is frozen
+  // and the view suite pins it by hash. R-2 draws questions 3 and 4 from that
+  // model and nothing else: every row on screen must be the model's row, a
+  // missing term must say so, a contradiction must show both sides and pick
+  // neither, a derived figure must never be labelled as stated, and questions
+  // 1, 2 and 5 are drawn in place as not yet answered. The walk opens it in the
+  // real page with no CAM analysis, proves opening it writes nothing, opens an
+  // original from inside it, and lays it out at 375px.
+  { label: 'Acquisition report model (P1-7 R-1)',       cmd: 'node test-acquisition-report.js' },
+  { label: 'Acquisition report view (P1-7 R-2)',        cmd: 'node test-acquisition-report-view.js' },
+  { label: 'Acquisition Report v2 walk (e2e, P1-7 R-2)', cmd: 'node test-e2e-acquisition-report.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.

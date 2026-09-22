@@ -4120,6 +4120,60 @@
     .ai-inv-review { margin-top: 10px; padding: 12px; background: rgba(139,92,246,0.07); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; font-size: 0.83rem; color: var(--text-2); line-height: 1.6; }
     .ai-inv-review strong { color: var(--c-a78bfa); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px; }
     .rpt-kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 28px; }
+
+    /* ── Acquisition Report v2 (P1-7) ─────────────────────────────────────
+       Four states and nothing else, each with its own colour, and the two
+       things that ride beside them — an assumption's origin and a derived
+       figure — drawn as quieter tags so they qualify the state rather than
+       compete with it. A missing value reads as words, never as a blank. */
+    .acqr-coverage { border: 1px solid rgba(251,191,36,0.35); background: rgba(251,191,36,0.07);
+      border-radius: 8px; padding: 10px 14px; margin: 0 0 16px; font-size: 0.8rem; line-height: 1.6;
+      color: var(--text-2); }
+    .acqr-cov { display: inline-block; margin: 4px 8px 0 0; padding: 1px 8px; border-radius: 999px;
+      font-size: 0.72rem; border: 1px solid rgba(var(--line-rgb),0.15); }
+    .acqr-cov-on  { color: var(--c-4ade80); border-color: rgba(74,222,128,0.4); }
+    .acqr-cov-off { color: var(--text-4); font-style: italic; }
+    .acqr-legend { font-size: 0.74rem; color: var(--text-3); line-height: 2; margin: 0 0 22px; }
+    .acqr-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.7rem;
+      font-weight: 700; letter-spacing: 0.02em; border: 1px solid transparent; white-space: nowrap; }
+    .acqr-verified   { color: var(--c-4ade80); border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.08); }
+    .acqr-assumption { color: var(--c-93c5fd); border-color: rgba(147,197,253,0.45); background: rgba(147,197,253,0.08); }
+    .acqr-issue      { color: var(--c-f87171); border-color: rgba(248,113,113,0.5);  background: rgba(248,113,113,0.08); }
+    .acqr-missing    { color: var(--text-3);   border-color: rgba(var(--line-rgb),0.25); background: transparent; border-style: dashed; }
+    .acqr-origin, .acqr-derived { display: inline-block; margin: 3px 0 0 6px; font-size: 0.68rem;
+      color: var(--text-3); white-space: nowrap; }
+    .acqr-derived { color: var(--c-fbbf24); }
+    .acqr-counts { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 12px; font-size: 0.75rem; }
+    .acqr-count { padding: 1px 8px; border-radius: 6px; border: 1px solid rgba(var(--line-rgb),0.15); }
+    .acqr-count-sub { color: var(--text-3); }
+    .acqr-leasehold { margin: 0 0 18px; }
+    .acqr-leasehold-name { font-weight: 700; font-size: 0.86rem; color: var(--text-1); margin: 10px 0 6px; }
+    .acqr-table td { vertical-align: top; }
+    /* Report tables default every column but the first to nowrap and 1px
+       wide, so a figure never wraps mid-value. This table's columns hold
+       clauses, not figures: left as nowrap, a quote ran past the table's
+       scroll box and its end was never seen. Specific enough to win over
+       .rpt-table td:not(:first-child), which comes later in this sheet. */
+    .rpt-table.acqr-table td:not(:first-child) { white-space: normal; }
+    .rpt-table.acqr-table td.acqr-label  { width: 22%; }
+    .rpt-table.acqr-table td.acqr-state  { width: 18%; min-width: 120px; }
+    .rpt-table.acqr-table td.acqr-detail { width: 60%; min-width: 240px; }
+    .acqr-value { font-weight: 600; color: var(--text-1); }
+    .acqr-missing-value { color: var(--text-3); font-style: italic; }
+    .acqr-contested { color: var(--c-f87171); font-weight: 700; }
+    .acqr-evidence { margin-top: 6px; font-size: 0.74rem; color: var(--text-3); }
+    .acqr-evidence-lead { font-weight: 700; }
+    .acqr-quote { margin: 4px 0 0; padding: 3px 8px; border-left: 2px solid rgba(var(--line-rgb),0.2);
+      font-style: italic; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
+    .acqr-evidence-caveat, .acqr-note { font-size: 0.72rem; color: var(--text-3); margin-top: 4px; white-space: normal; }
+    .acqr-competing { list-style: none; margin: 6px 0 0; padding: 0; }
+    .acqr-competing-item { padding: 5px 0; border-top: 1px dashed rgba(var(--line-rgb),0.15); white-space: normal; }
+    .acqr-competing-value { font-weight: 700; color: var(--text-1); }
+    .acqr-competing-doc { color: var(--text-3); font-size: 0.74rem; }
+    .acqr-unchosen { margin-top: 4px; font-size: 0.72rem; font-weight: 700; color: var(--c-f87171); }
+    .acqr-empty { color: var(--text-3); font-style: italic; font-size: 0.84rem; margin: 0 0 20px; }
+    .acqr-pending .acqr-qtitle { opacity: 0.6; }
+    .acq-report-v2-btn { margin-left: auto; }
     .rpt-kpi {
       flex: 1; min-width: 110px; padding: 18px 14px;
       background: rgba(var(--line-rgb), 0.025); border: 1px solid rgba(var(--line-rgb), 0.07);
@@ -7592,6 +7646,13 @@
     <div class="acq-docs-head">
       <h3>&#x1F4CB; Lease Terms</h3>
       <span class="acq-docs-count" id="acqTermsCount"></span>
+      <!-- P1-7: Acquisition Report v2. Here rather than beside the Decision
+           Report button because that one only exists once the CAM analysis
+           has run, which needs invoices — and §7 says a buyer's report must
+           not. -->
+      <button type="button" class="acq-export-btn acq-report-v2-btn" id="acqReportV2Btn"
+              onclick="generateAcquisitionReportV2()"
+              title="The buyer's report: what the documents establish, and what they do not">&#x1F4D8; Acquisition Report v2</button>
     </div>
     <div class="acq-terms-list" id="acqTermsList"></div>
   </div>
@@ -8645,6 +8706,9 @@
 <script src="acquisition-documents.js"></script>
 <!-- Acquisition Review Phase 1 (P1-4, P4-1): the 27 lease terms and the shape of what one document says about each — pure; script.js asks the server-owned acquisition_abstraction task and stores the result on the document row. -->
 <script src="acquisition-terms.js"></script>
+<!-- Acquisition Review Phase 1 (P1-7, R-1/R-2): the buyer's five questions as a model, and that model drawn — both pure. The model is built from the P1-4 resolver and decides every state; the view renders it and decides nothing. Needs no CAM analysis and no invoices. -->
+<script src="acquisition-report.js"></script>
+<script src="acquisition-report-view.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>
