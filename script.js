@@ -30920,15 +30920,21 @@ function _renderAcqDocuments() {
     countEl.textContent = rows.length ? rows.length + (rows.length === 1 ? ' file on record' : ' files on record') : '';
   }
 
+  // The Lease Terms panel is painted on EVERY pass through here, the early
+  // returns included. It used to be painted only at the end, so a review with
+  // no documents never reached it and the panel kept showing the previous
+  // review's leaseholds — Maple Plaza's terms under a review that had none.
   if (_acqDocsUnavailable) {
     // Whichever migration is actually missing — see _acqDocsMissing.
     const gapFile = _acqSchemaGapFile || 'migrations/023_acquisition_documents.sql';
     el.innerHTML = '<div class="acq-docs-warn">Documents are being read but <strong>not filed</strong> — this project’s database is behind the app. '
       + 'Run <code>' + esc(gapFile) + '</code> in Supabase to keep the originals.</div>';
+    _renderAcqTerms();
     return;
   }
   if (!rows.length) {
     el.innerHTML = '<div class="acq-docs-empty">No documents on file yet. Every lease and invoice uploaded above is kept here with its original.</div>';
+    _renderAcqTerms();
     return;
   }
 

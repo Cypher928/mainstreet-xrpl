@@ -333,6 +333,14 @@ const WRAP = `
     invoices: (document.getElementById('acqInvoiceList') || {}).innerText || '',
     report: ((document.getElementById('acqReportContainer') || {}).innerHTML || '').trim(),
   }));
+  // The Lease Terms panel — painted from the open review's families, and the
+  // one panel that was NOT repainted when an empty review was opened.
+  const terms = () => page.evaluate(() => ({
+    count: ((document.getElementById('acqTermsCount') || {}).innerText || '').trim(),
+    text: ((document.getElementById('acqTermsList') || {}).innerText || '').replace(/\s+/g, ' ').trim(),
+    families: _acqFamilyRows(_activeAcqId).length,
+  }));
+  const EMPTY_TERMS = /No leasehold has been identified yet/;
   // Sample the screen while work belonging to another review is in flight.
   async function watch(until, pattern, ms = 30000) {
     const seen = []; const t0 = Date.now();
@@ -362,6 +370,10 @@ const WRAP = `
   const LAKE = (await screen()).active;
   check('a new review is created and opened mid-upload', LAKE && LAKE !== MAPLE && (await screen()).title === 'Lake View',
         (await screen()).title);
+  const t1 = await terms();
+  check('MAPLE → LAKE: the Lease Terms panel is repainted for the new review — no Maple leasehold',
+        t1.families === 0 && EMPTY_TERMS.test(t1.text) && !/ShopRite/.test(t1.text) && t1.count === '',
+        JSON.stringify({ count: t1.count, text: t1.text.slice(0, 70) }));
   const leak1 = await watch(async () => {
     const s = await stored(MAPLE); return s && s.tenants.includes('Prime Wellness Spa');
   }, /Luxe|Prime/);
@@ -379,6 +391,10 @@ const WRAP = `
   check('both new documents are filed under Maple',
         ['Luxe_Nails_Lease.txt', 'Prime_Wellness_Spa_Lease.txt'].every(n => mapleDocs1.some(d => d.file_name === n)), mapleDocs1.map(d => d.file_name).join(', '));
   check('the new review is still the one on screen', (await screen()).active === LAKE);
+  const t1b = await terms();
+  check('MAPLE → LAKE: after Maple\'s upload finishes, the Lease Terms panel still shows nothing of Maple\'s',
+        EMPTY_TERMS.test(t1b.text) && !/ShopRite|Luxe|Prime/.test(t1b.text) && t1b.count === '',
+        JSON.stringify({ count: t1b.count, text: t1b.text.slice(0, 70) }));
 
   // ── 2 · the new review → Maple, mid-upload ──────────────────────────────
   const mapleBefore2 = await stored(MAPLE);
@@ -572,6 +588,54 @@ const WRAP = `
         lv2 && JSON.stringify(lv2.docs) === JSON.stringify(lakeIds) && lakeIds.length === 1, lv2 && lv2.docs.join(','));
   check('v2 report for the other review shows no Maple leasehold', lv2 && lv2.leaseholds.indexOf(FAM) < 0);
   await page.evaluate(() => { if (typeof closeReport === 'function') closeReport(); });
+
+  // ── 9 · the Lease Terms panel follows the review, with nothing in flight ─
+  // Give Lake View a leasehold of its own: its Oak lease, corrected to an
+  // original lease, begins one. Now both reviews have terms to show.
+  await page.evaluate((id) => selectAcquisitionReview(id), LAKE);
+  await page.waitForTimeout(900);
+  await page.evaluate((docId) => acqSetDocType(docId, 'original_lease'), (await docsOf(LAKE)).find(d => d.file_name === 'Oak_Tenant_Lease.txt').id);
+  await waitFor(() => /Oak Tenant/.test((document.getElementById('acqTermsList') || {}).innerText || ''), 20000);
+  const tLake = await terms();
+  check('Lake View\'s Lease Terms show its own leasehold and count',
+        tLake.families === 1 && /Oak Tenant/.test(tLake.text) && !/ShopRite|Sunrise/.test(tLake.text) && /of 27 verified/.test(tLake.count),
+        JSON.stringify({ count: tLake.count, text: tLake.text.slice(0, 60) }));
+  await page.evaluate((id) => selectAcquisitionReview(id), MAPLE);
+  await page.waitForTimeout(900);
+  const tMaple = await terms();
+  const mapleFamCount = await page.evaluate((m) => _acqFamilyRows(m).length, MAPLE);
+  check('populated → populated: Maple\'s Lease Terms show Maple\'s leaseholds, not Lake View\'s',
+        tMaple.families === mapleFamCount && mapleFamCount >= 2 && /ShopRite/.test(tMaple.text) && !/Oak Tenant/.test(tMaple.text)
+        && new RegExp('of ' + (27 * mapleFamCount) + ' verified').test(tMaple.count),
+        JSON.stringify({ count: tMaple.count, families: mapleFamCount }));
+  await page.evaluate((id) => selectAcquisitionReview(id), LAKE);
+  await page.waitForTimeout(900);
+  const tLake2 = await terms();
+  check('populated → populated: back on Lake View, only its leasehold', /Oak Tenant/.test(tLake2.text) && !/ShopRite/.test(tLake2.text) && /of 27 verified/.test(tLake2.count),
+        JSON.stringify({ count: tLake2.count }));
+  // An empty review opened with nothing in flight at all — the plain case.
+  await page.evaluate(() => createAcquisitionReview());
+  await page.waitForTimeout(1200);
+  const THIRD = (await screen()).active;
+  const tEmpty = await terms();
+  check('populated → empty: an empty review\'s Lease Terms say so, and show no other review\'s terms',
+        THIRD !== LAKE && THIRD !== MAPLE && EMPTY_TERMS.test(tEmpty.text) && !/Oak Tenant|ShopRite/.test(tEmpty.text) && tEmpty.count === '',
+        JSON.stringify({ count: tEmpty.count, text: tEmpty.text.slice(0, 70) }));
+  // …and when the documents table is missing, the panel is still repainted.
+  await page.evaluate((id) => selectAcquisitionReview(id), LAKE);
+  await page.waitForTimeout(900);
+  // Read at the FIRST paint, synchronously after the open: when the table is
+  // really missing the loads keep the flag set, so that paint is also the last.
+  const tGap = await page.evaluate((id) => {
+    _acqDocsUnavailable = true;
+    selectAcquisitionReview(id);
+    const snap = { text: ((document.getElementById('acqTermsList') || {}).innerText || '').replace(/\s+/g, ' ').trim() };
+    _acqDocsUnavailable = false;
+    return snap;
+  }, THIRD);
+  await page.waitForTimeout(600);
+  check('with the documents table missing, the empty review still shows no other review\'s terms',
+        EMPTY_TERMS.test(tGap.text) && !/Oak Tenant|ShopRite/.test(tGap.text), tGap.text.slice(0, 70));
 
   check('no uncaught errors', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');
 

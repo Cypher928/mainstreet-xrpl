@@ -1304,14 +1304,28 @@ Not changed here, deliberately: one tenant row per uploaded lease file (a lease
 and its amendment, or a re-upload, are separate rows). That is the tenant/
 leasehold model, and a separate decision.
 
+### The panel that was not repainted
+
+The manual re-test after the fix still showed Maple Plaza's leaseholds under
+an empty review — in the Lease Terms panel only, with the report and the data
+clean. That was stale DOM, not stale state: `_renderAcqTerms()` was called
+only at the end of `_renderAcqDocuments()`, after the early return a review
+with no documents takes, so opening an empty review never repainted the panel
+and it kept whatever the previous review had painted. That predates the fix
+above and needs no upload at all. Both early returns now paint the panel
+before returning, and it draws its own "No leasehold has been identified yet".
+
 ### Verified
 
 `test-e2e-acquisition-isolation.js` walks every one of those actions with the
 switch made mid-flight, in both directions, and checks the screen, the review
 in memory and the stored row. Against the code before the fix it fails 22 of
 its 44 checks — including a confirmed document filed as a new row under the
-other review, and a term decision recorded against it. `tools/acquisition-
-isolation-mutation.js` undoes each part of the fix in turn; every mutant is
+other review, and a term decision recorded against it. It also reads the
+Lease Terms panel at every switch: into an empty review mid-upload, into an
+empty review with nothing in flight, between two populated reviews, and with
+the documents table missing. `tools/acquisition-isolation-mutation.js` undoes
+each part of the fix in turn, the two repaints included; every mutant is
 killed.
 
 ## 5. Verification

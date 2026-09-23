@@ -26,6 +26,10 @@
  *     I10  beginning a leasehold files the document in the review open after sign-in
  *     I11  a re-read writes to the review open after the text is fetched
  *
+ *   The Lease Terms panel on navigation — script.js
+ *     T01  a review with no documents leaves the previous review's terms on screen
+ *     T02  with the documents table missing, the previous review's terms stay
+ *
  * Not mutated, and why: the guarded redraws inside the upload loops draw the
  * list of the review that is open — correct either way, so reverting the guard
  * changes nothing a reader can see.
@@ -74,6 +78,12 @@ const MUTANTS = [
   { id: 'I11', file: S, why: 'a re-read writes to the review open after the text is fetched',
     from: '  await _acqAbstractDocument(reviewId, row, text);',
     to:   '  await _acqAbstractDocument(_activeAcqId, row, text);' },
+  { id: 'T01', file: S, why: "a review with no documents leaves the previous review's terms on screen",
+    from: "    el.innerHTML = '<div class=\"acq-docs-empty\">No documents on file yet. Every lease and invoice uploaded above is kept here with its original.</div>';\n    _renderAcqTerms();\n    return;",
+    to:   "    el.innerHTML = '<div class=\"acq-docs-empty\">No documents on file yet. Every lease and invoice uploaded above is kept here with its original.</div>';\n    return;" },
+  { id: 'T02', file: S, why: "with the documents table missing, the previous review's terms stay",
+    from: "      + 'Run <code>' + esc(gapFile) + '</code> in Supabase to keep the originals.</div>';\n    _renderAcqTerms();\n    return;",
+    to:   "      + 'Run <code>' + esc(gapFile) + '</code> in Supabase to keep the originals.</div>';\n    return;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-iso-mut-'));
