@@ -286,5 +286,51 @@ sec('J. One lifecycle, defined twice, in agreement');
      'J5 and the SQL enum has no actions the module does not know about');
 }
 
+// ── K. 022b — who may read, and who may call the helpers ───────────────────
+// 022 created the four service-role policies with no TO clause, so they
+// applied to PUBLIC with USING (true), and left the internal helpers
+// executable by PUBLIC. 022b is forward-only: 022 above is the record of what
+// Pilot ran and is not edited, so every assertion here is about 022b.
+// tools/verify-migration-022b.js executes both and proves the behaviour.
+sec('K. 022b scopes the service-role policies and closes the helpers');
+{
+  const RAWB  = fs.readFileSync('./migrations/022b_payment_access_scope.sql', 'utf8');
+  const SQLB  = RAWB.replace(/^\s*--.*$/gm, '');
+  const BACKB = fs.readFileSync('./migrations/022b_payment_access_scope_rollback.sql', 'utf8').replace(/^\s*--.*$/gm, '');
+  const TABLES = ['payments', 'payment_sources', 'payment_settlements', 'payment_events'];
+  const POLICY = { payments: 'payments_service_role_all', payment_sources: 'payment_sources_service_role_all',
+                   payment_settlements: 'payment_settlements_service_role_all', payment_events: 'payment_events_service_role_all' };
+
+  is(/PILOT PROJECT ONLY \(bhmktujbxdbvdmpybmad\)/.test(RAWB), 'K1 022b names Pilot as the target');
+  // The defect 022b exists for is still in 022, deliberately: forward-only.
+  const unscoped = TABLES.filter(t => new RegExp('create policy ' + POLICY[t] + ' on public\\.' + t + ' for all\\s+using \\(true\\)').test(SQL));
+  eq(unscoped.length, 4, 'K2 022 still carries the four unscoped policies — it is history, not edited');
+  for (const t of TABLES) {
+    is(new RegExp('alter policy ' + POLICY[t] + '\\s+on public\\.' + t + '\\s+to service_role;').test(SQLB),
+       'K3 022b re-targets ' + POLICY[t] + ' to service_role');
+  }
+  eq((SQLB.match(/alter policy/g) || []).length, 4, 'K4 and alters exactly four policies, nothing else');
+  is(!/\busing\b|\bwith check\b/i.test(SQLB), 'K5 USING and WITH CHECK are left exactly as 022 wrote them');
+  for (const sig of ['_payment_settled_total\\(uuid\\)', '_payment_derive_state\\(uuid\\)', '_payment_replay\\(uuid, uuid\\)']) {
+    is(new RegExp('revoke all on function public\\.' + sig + '\\s+from public, anon, authenticated, service_role;').test(SQLB),
+       'K6 022b revokes ' + sig.replace(/\\/g, '') + ' from public, anon, authenticated and service_role');
+  }
+  eq((SQLB.match(/^\s*revoke /gm) || []).length, 3, 'K7 and revokes exactly those three, nothing else');
+  is(!/\bgrant\b|\bcreate\b|\bdrop\b|alter table|\binsert\b|\bupdate\b|\bdelete\b|\btruncate\b/i.test(SQLB),
+     'K8 022b creates, drops, grants, alters no table and writes no row');
+  is(!/rlusd|xrpl|xrp\b|wallet|ripple|settlement_id|evidence_ref/i.test(SQLB.replace(/payment_settlements/g, '')),
+     'K9 and touches nothing XRPL, wallet or settlement-record related');
+  is(!/_payment_(settled_total|derive_state|replay)[\s\S]{0,80}to (public|anon|authenticated)/i.test(
+        fs.readdirSync('./migrations').filter(f => /\.sql$/.test(f) && !/rollback/.test(f) && f > '022b')
+          .map(f => fs.readFileSync('./migrations/' + f, 'utf8').replace(/^\s*--.*$/gm, '')).join('\n')),
+     'K10 no later migration re-grants the helpers');
+  // The rollback is the exact inverse, and says what it re-opens.
+  eq((BACKB.match(/alter policy \w+\s+on public\.\w+\s+to public;/g) || []).length, 4, 'K11 the rollback restores the four policies to PUBLIC');
+  eq((BACKB.match(/grant execute on function public\._payment_\w+\([^)]*\)\s+to public, anon, authenticated, service_role;/g) || []).length, 3,
+     'K12 and the three helpers\' EXECUTE');
+  is(/RE-OPENS the exposure/.test(fs.readFileSync('./migrations/022b_payment_access_scope_rollback.sql', 'utf8')),
+     'K13 and warns, in its header, that it re-opens the exposure');
+}
+
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
 process.exit(fail ? 1 : 0);

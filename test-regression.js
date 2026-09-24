@@ -525,6 +525,10 @@ const SUITES = [
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
   { label: 'Migration 023 applies and rolls back',      cmd: 'node tools/verify-migration-023.js' },
+  // Data API access, executed the same way. Each builds a Pilot-like database
+  // (the old automatic grants) and a post-October-30, 2026 one (nothing granted
+  // unless a migration grants it) and requires the exact same privileges in both.
+  { label: 'Migration 022b scopes payment access',       cmd: 'node tools/verify-migration-022b.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },
