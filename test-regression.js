@@ -27,6 +27,7 @@ const SUITES = [
   { label: 'Ask the Lease API',              cmd: 'node test-ask-lease.js' },
   { label: 'Lease Validation (Phase 23)',    cmd: 'node test-validate-lease.js' },
   { label: 'Escrow & Reserve engine (Phase 21)', cmd: 'node test-reserve-engine.js' },
+  { label: 'Migration 018b tenant portal privileges', cmd: 'node tools/verify-migration-018b.js' },
 ];
 
 let anyFailed = false;
