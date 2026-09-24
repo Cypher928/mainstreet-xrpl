@@ -24,7 +24,11 @@
  *   4  D-14 — the same file name twice in one review now KEEPS BOTH sources,
  *      and the superseded row keeps its original, its text and its type
  *   5  supersession is not a delete: the older row is still readable
- *   6  the families table has RLS, two policies, and nothing for anon
+ *   6  the families table has RLS, two policies, and nothing for anon; under
+ *      the post-October-30 default privileges it holds EXACTLY what 024b
+ *      grants — authenticated {SELECT, INSERT, UPDATE}, nobody else anything —
+ *      the owner's upsert (insert, then update on the same id, returning) works,
+ *      a DELETE is refused at the grant, and anon is refused outright (42501)
  *   7  one user cannot read, file into, or point at another user's rows —
  *      family, parent and supersession are all composite on user_id
  *   8  a proposal cannot become a confirmation with nobody confirming it
@@ -45,11 +49,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
+const { DEFAULTS, PRIVS } = require('./_pg-throwaway');
 
 const ROOT = path.join(__dirname, '..');
 const MIG  = path.join(ROOT, 'migrations');
 const M024 = path.join(MIG, '024_acquisition_document_classification.sql');
 const R024 = path.join(MIG, '024_acquisition_document_classification_rollback.sql');
+const M024B = path.join(MIG, '024b_acquisition_document_families_privileges.sql');
 
 const PGBIN = ['/usr/lib/postgresql/16/bin', '/usr/lib/postgresql/15/bin', '/usr/pgsql-16/bin', '/usr/local/bin']
   .find(d => { try { return fs.existsSync(path.join(d, 'initdb')) && fs.existsSync(path.join(d, 'postgres')); } catch (_) { return false; } });
@@ -119,6 +125,29 @@ function psqlFile(file) {
 /** True when the statement was REFUSED — which is what most of this proves. */
 function refused(sql) { return !psql(sql).ok; }
 
+/** Refused for lack of a privilege (SQLSTATE 42501) — not for any other reason. */
+function denied(sql) { const r = psql(sql); return !r.ok && /permission denied/i.test(r.out); }
+/** The exact table privileges a role holds, sorted: 'INSERT,SELECT', or '' for none. */
+function privs(table, role) {
+  const cols = PRIVS.map(p => `case when has_table_privilege('${role}', '${table}', '${p}') then '${p}' end`).join(', ');
+  return psql(`select concat_ws(',', ${cols});`).out.split(',').filter(Boolean).sort().join(',');
+}
+/** Assert a table's privileges for each API role EXACTLY — a missing grant and an excess one both fail. */
+function matrix(table, want) {
+  for (const [role, w] of Object.entries(want)) {
+    const got = privs(table, role);
+    check(`${table} · ${role} holds exactly {${w || '<none>'}}`, got === w, got === w ? '' : 'got {' + (got || '<none>') + '}');
+  }
+}
+// Supabase's default privileges from October 30, 2026: nothing created in
+// public is granted to anon, authenticated or service_role unless the migration
+// grants it. 000 and 006 predate the change and keep their grants; every
+// migration from 023 on is applied after this switch.
+function switchToPostOct30() {
+  const r = psql(DEFAULTS['post-2026-10-30']);
+  check('project switched to the post-2026-10-30 default privileges', r.ok, r.ok ? '' : r.out.slice(0, 200));
+}
+
 function cleanup() {
   try { if (server) pgRun('pg_ctl', ['-D', DATA, '-m', 'immediate', 'stop'], { stdio: 'ignore' }); } catch (_) {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
@@ -147,9 +176,10 @@ if (!up) { console.log('\nCannot continue without the cluster.'); process.exit(2
 pgRun('createdb', ['-h', SOCK, '-U', 'postgres', 'verifydb'], { stdio: 'ignore' });
 
 // The objects a Supabase project already has, which 000/006/023/024 reference.
-// The default privileges line is what makes the RLS assertions below mean
-// something: without a grant, a denied read would prove only that the grant
-// was missing, not that the policy worked.
+// 024 itself is applied under the post-October-30 default privileges, so the
+// families table is reachable only through what 024b grants. The RLS
+// assertions below run as authenticated AFTER 024b, so a denied read proves the
+// policy worked, not that a grant was missing.
 const boot = psql(`
   create extension if not exists pgcrypto;
   do $$ begin
@@ -164,12 +194,17 @@ const boot = psql(`
   $$;
   grant usage on schema auth to authenticated, service_role;
   grant usage on schema public to anon, authenticated, service_role;
+  -- 000 and 006 predate Supabase's October 30, 2026 change: they were created
+  -- under the automatic grants this line reproduces, and keep them. Every
+  -- migration from 023 on is applied AFTER switchToPostOct30(), so it holds
+  -- only what it grants itself.
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 `);
 check('Supabase prerequisites (roles, auth schema, auth.uid, grants) created', boot.ok, boot.ok ? '' : boot.out.slice(0, 200));
 
 section('prerequisite migrations, from the repo');
 for (const f of ['000_base_schema.sql', '006_acquisition_reviews.sql', '023_acquisition_documents.sql']) {
+  if (f === '023_acquisition_documents.sql') switchToPostOct30();
   const r = psqlFile(path.join(MIG, f));
   check(f + ' applies', r.ok, r.ok ? '' : r.out.slice(0, 300));
 }
@@ -201,6 +236,9 @@ const shapeBefore = shape();
 const second = psqlFile(M024);
 check('024 applies a SECOND time without error', second.ok, second.ok ? '' : second.out.slice(0, 400));
 check('and the shape is unchanged by the second run', shape() === shapeBefore);
+const g1 = psqlFile(M024B);
+check('024b applies after 024', g1.ok, g1.ok ? '' : g1.out.slice(0, 300));
+check('and applies a second time', psqlFile(M024B).ok);
 
 // ── 2 · the backfill ───────────────────────────────────────────────────────
 section('2 · a row that already existed keeps its identity');
@@ -284,9 +322,24 @@ const famA = psql(`set local role authenticated;
                    set local request.jwt.claim.sub = '${UA}';
                    select string_agg(label, ',' order by label) from public.acquisition_document_families;`);
 check('authenticated as A sees A\'s family and only A\'s', famA.out === 'Coastal Outfitters', famA.out || '(none)');
-const famAnon = psql(`set local role anon;
-                      select count(*) from public.acquisition_document_families;`);
-check('anon sees nothing at all', famAnon.out === '0', famAnon.out);
+check('anon is refused outright — at the grant, before RLS (42501)',
+  denied(`set local role anon; select count(*) from public.acquisition_document_families;`));
+matrix('public.acquisition_document_families', { anon: '', authenticated: 'INSERT,SELECT,UPDATE', service_role: '' });
+// script.js _acqSaveFamily: upsert on id, then .select() — insert, then the same
+// id again, both returning the row. Rolled back so later counts are unaffected.
+const FU = '99999999-0000-4000-8000-000000000099';
+const upsert = (label) => `insert into public.acquisition_document_families (id, review_id, user_id, label)
+    values ('${FU}','${RA}','${UA}','${label}')
+  on conflict (id) do update set label = excluded.label returning label;`;
+const ups = psql(`begin; set local role authenticated; set local request.jwt.claim.sub = '${UA}';
+                 ${upsert('First')} ${upsert('Renamed')} rollback;`);
+check('the owner\'s upsert works — insert, then update the same id, each returning the row',
+  ups.ok && ups.out === 'First\nRenamed', ups.ok ? ups.out.replace(/\n/g, ' | ') : ups.out.slice(0, 160));
+check('the owner cannot DELETE a family — no DELETE is granted (42501)',
+  denied(`set local role authenticated; set local request.jwt.claim.sub = '${UA}';
+          delete from public.acquisition_document_families where id = '${FA}';`));
+check('service_role holds nothing here — no server code uses this table (42501)',
+  denied(`set local role service_role; select count(*) from public.acquisition_document_families;`));
 
 // ── 6 · nothing may point across owners ────────────────────────────────────
 section('6 · family, parent and supersession are all composite on the owner');
@@ -428,9 +481,24 @@ check('and intake_id is gone',
 section('13 · applies again after the rollback');
 const again = psqlFile(M024);
 check('024 applies cleanly a third time, after a full rollback', again.ok, again.ok ? '' : again.out.slice(0, 400));
+check('the recreated families table holds NOTHING until 024b runs again (the October 30 default)',
+  ['anon', 'authenticated', 'service_role'].every(r => privs('public.acquisition_document_families', r) === ''));
+check('024b applies again', psqlFile(M024B).ok);
+matrix('public.acquisition_document_families', { anon: '', authenticated: 'INSERT,SELECT,UPDATE', service_role: '' });
 check('the families table is back with its RLS',
   psql(`select relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace
          where n.nspname='public' and c.relname='acquisition_document_families';`).out === 't');
+
+// ── the Pilot path ─────────────────────────────────────────────────────────
+section('Pilot path · the table already holds the old automatic grant');
+// Pilot built this table before October 30, 2026, so it holds every privilege
+// for all three API roles (observed read-only). The companion must NARROW that
+// to the same exact set, not only add to an empty one.
+psql(`grant all on public.acquisition_document_families to anon, authenticated, service_role;`);
+check('reproduced: anon holds every privilege, as on Pilot today',
+  privs('public.acquisition_document_families', 'anon') === PRIVS.slice().sort().join(','));
+check('024b applies over it', psqlFile(M024B).ok);
+matrix('public.acquisition_document_families', { anon: '', authenticated: 'INSERT,SELECT,UPDATE', service_role: '' });
 
 console.log('\n' + '─'.repeat(64));
 console.log(`RESULT: ${pass} passed, ${fail} failed`);

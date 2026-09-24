@@ -23,8 +23,11 @@
  *   4  a decision names an actor, and cannot name somebody else
  *   5  a decision CANNOT be filed on another owner's review, family or
  *      document — every key is composite on user_id
- *   6  RLS: the owner sees their decisions, another user sees none, anon sees
- *      nothing, and there is no anon policy
+ *   6  RLS: the owner sees their decisions, another user sees none, anon is
+ *      refused outright, and there is no anon policy; under the post-October-30
+ *      default privileges the table holds EXACTLY what 026c grants —
+ *      authenticated {SELECT, INSERT}, nobody else anything — and the owner's
+ *      insert + .select() works
  *   7  THE AI EVIDENCE IS NEVER TOUCHED: recording confirm, correct and reject
  *      leaves abstracted_fields byte-identical
  *   8  a correction keeps the value it replaced (previous_value)
@@ -45,11 +48,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
+const { DEFAULTS, PRIVS } = require('./_pg-throwaway');
 
 const ROOT = path.join(__dirname, '..');
 const MIG  = path.join(ROOT, 'migrations');
 const M026 = path.join(MIG, '026_acquisition_term_decisions.sql');
 const R026 = path.join(MIG, '026_acquisition_term_decisions_rollback.sql');
+const M026C = path.join(MIG, '026c_acquisition_term_decisions_privileges.sql');
 
 const PGBIN = ['/usr/lib/postgresql/16/bin', '/usr/lib/postgresql/15/bin', '/usr/pgsql-16/bin', '/usr/local/bin']
   .find(d => { try { return fs.existsSync(path.join(d, 'initdb')) && fs.existsSync(path.join(d, 'postgres')); } catch (_) { return false; } });
@@ -119,6 +124,29 @@ function psqlFile(file) {
 /** True when the statement was REFUSED — which is what most of this proves. */
 function refused(sql) { return !psql(sql).ok; }
 
+/** Refused for lack of a privilege (SQLSTATE 42501) — not for any other reason. */
+function denied(sql) { const r = psql(sql); return !r.ok && /permission denied/i.test(r.out); }
+/** The exact table privileges a role holds, sorted: 'INSERT,SELECT', or '' for none. */
+function privs(table, role) {
+  const cols = PRIVS.map(p => `case when has_table_privilege('${role}', '${table}', '${p}') then '${p}' end`).join(', ');
+  return psql(`select concat_ws(',', ${cols});`).out.split(',').filter(Boolean).sort().join(',');
+}
+/** Assert a table's privileges for each API role EXACTLY — a missing grant and an excess one both fail. */
+function matrix(table, want) {
+  for (const [role, w] of Object.entries(want)) {
+    const got = privs(table, role);
+    check(`${table} · ${role} holds exactly {${w || '<none>'}}`, got === w, got === w ? '' : 'got {' + (got || '<none>') + '}');
+  }
+}
+// Supabase's default privileges from October 30, 2026: nothing created in
+// public is granted to anon, authenticated or service_role unless the migration
+// grants it. 000 and 006 predate the change and keep their grants; every
+// migration from 023 on is applied after this switch.
+function switchToPostOct30() {
+  const r = psql(DEFAULTS['post-2026-10-30']);
+  check('project switched to the post-2026-10-30 default privileges', r.ok, r.ok ? '' : r.out.slice(0, 200));
+}
+
 function cleanup() {
   try { if (server) pgRun('pg_ctl', ['-D', DATA, '-m', 'immediate', 'stop'], { stdio: 'ignore' }); } catch (_) {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
@@ -160,13 +188,19 @@ const boot = psql(`
   $$;
   grant usage on schema auth to authenticated, service_role;
   grant usage on schema public to anon, authenticated, service_role;
+  -- 000 and 006 predate Supabase's October 30, 2026 change: they were created
+  -- under the automatic grants this line reproduces, and keep them. Every
+  -- migration from 023 on is applied AFTER switchToPostOct30(), so it holds
+  -- only what it grants itself.
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 `);
 check('Supabase prerequisites (roles, auth schema, auth.uid, grants) created', boot.ok, boot.ok ? '' : boot.out.slice(0, 200));
 
 section('prerequisite migrations, from the repo');
 for (const f of ['000_base_schema.sql', '006_acquisition_reviews.sql', '023_acquisition_documents.sql',
-                 '024_acquisition_document_classification.sql', '025_acquisition_abstraction.sql']) {
+                 '024_acquisition_document_classification.sql', '024b_acquisition_document_families_privileges.sql',
+                 '025_acquisition_abstraction.sql']) {
+  if (f === '023_acquisition_documents.sql') switchToPostOct30();
   const r = psqlFile(path.join(MIG, f));
   check(f + ' applies', r.ok, r.ok ? '' : r.out.slice(0, 300));
 }
@@ -216,6 +250,9 @@ const before = shape();
 const second = psqlFile(M026);
 check('026 applies a SECOND time without error', second.ok, second.ok ? '' : second.out.slice(0, 400));
 check('and the shape is unchanged by the second run', shape() === before);
+const g1 = psqlFile(M026C);
+check('026c applies after 026', g1.ok, g1.ok ? '' : g1.out.slice(0, 300));
+check('and applies a second time', psqlFile(M026C).ok);
 const COLUMNS = ['action', 'created_at', 'decided_at', 'decided_by', 'family_id', 'field_key', 'id',
                  'new_value', 'note', 'previous_value', 'review_id', 'source_document_id',
                  'source_page', 'source_quote', 'user_id'];
@@ -280,9 +317,12 @@ check('but clearing it while ALSO editing the decision is refused',
 check('and a cleared link cannot be repointed at another family',
   refused(`update public.acquisition_term_decisions set family_id='${FA}' where id='${anyId}';`));
 psql(`update public.acquisition_term_decisions set family_id=null where id='${anyId}';`);
-const asOwner = psql(`set local role authenticated; set local request.jwt.claim.sub='${UA}';
-                      update public.acquisition_term_decisions set note='mine to edit' where id='${anyId}';`);
-check('the OWNER cannot edit their own decision either', !asOwner.ok, asOwner.ok ? 'it was allowed' : '');
+check('the OWNER cannot edit their own decision either — refused at the grant, before the trigger (42501)',
+  denied(`set local role authenticated; set local request.jwt.claim.sub='${UA}';
+          update public.acquisition_term_decisions set note='mine to edit' where id='${anyId}';`));
+check('nor delete it (42501)',
+  denied(`set local role authenticated; set local request.jwt.claim.sub='${UA}';
+          delete from public.acquisition_term_decisions where id='${anyId}';`));
 
 // ── 4 · an actor, and only the right one ───────────────────────────────────
 section('4 · a decision names the person who made it');
@@ -324,8 +364,17 @@ check('the owner sees their own decisions', Number(seeA.out) === 5, seeA.out);
 const seeB = psql(`set local role authenticated; set local request.jwt.claim.sub='${UB}';
                    select count(*) from public.acquisition_term_decisions;`);
 check('another user sees none of them', seeB.out === '0', seeB.out);
-const seeAnon = psql(`set local role anon; select count(*) from public.acquisition_term_decisions;`);
-check('anon sees nothing at all', seeAnon.out === '0', seeAnon.out);
+check('anon is refused outright — at the grant, before RLS (42501)',
+  denied(`set local role anon; select count(*) from public.acquisition_term_decisions;`));
+matrix('public.acquisition_term_decisions', { anon: '', authenticated: 'INSERT,SELECT', service_role: '' });
+// script.js _acqSaveDecision: insert, then .select(). Rolled back so later counts are unaffected.
+const own = psql(`begin; set local role authenticated; set local request.jwt.claim.sub='${UA}';
+                  ${ins({ action: `'reject'`, field: `'renewal_options'`, family: 'null' })} returning field_key||':'||action;
+                  rollback;`);
+check('the owner records a decision and reads it back (insert + .select())',
+  own.ok && own.out === 'renewal_options:reject', own.ok ? own.out : own.out.slice(0, 160));
+check('service_role holds nothing here — no server code uses this table (42501)',
+  denied(`set local role service_role; select count(*) from public.acquisition_term_decisions;`));
 const writeB = psql(`set local role authenticated; set local request.jwt.claim.sub='${UB}';
                      ${ins({ user: UB, by: UB, family: 'null' })};`);
 check("another user cannot file a decision on this owner's review", !writeB.ok);
@@ -468,6 +517,21 @@ check('the table is back with its RLS and its append-only trigger',
             and tgname in ('trg_acq_term_decisions_no_update','trg_acq_term_decisions_no_delete');`).out === '2');
 check('and it is empty — the rollback really did destroy the history it warned about',
   psql(`select count(*) from public.acquisition_term_decisions;`).out === '0');
+check('the recreated table holds NOTHING until 026c runs again (the October 30 default)',
+  ['anon', 'authenticated', 'service_role'].every(r => privs('public.acquisition_term_decisions', r) === ''));
+check('026c applies again', psqlFile(M026C).ok);
+matrix('public.acquisition_term_decisions', { anon: '', authenticated: 'INSERT,SELECT', service_role: '' });
+
+// ── the Pilot path ─────────────────────────────────────────────────────────
+section('Pilot path · the table already holds the old automatic grant');
+// Pilot built this table before October 30, 2026, so it holds every privilege
+// for all three API roles (observed read-only). The companion must NARROW that
+// to the same exact set, not only add to an empty one.
+psql(`grant all on public.acquisition_term_decisions to anon, authenticated, service_role;`);
+check('reproduced: anon holds every privilege, as on Pilot today',
+  privs('public.acquisition_term_decisions', 'anon') === PRIVS.slice().sort().join(','));
+check('026c applies over it', psqlFile(M026C).ok);
+matrix('public.acquisition_term_decisions', { anon: '', authenticated: 'INSERT,SELECT', service_role: '' });
 
 console.log('\n' + '─'.repeat(64));
 console.log(`RESULT: ${pass} passed, ${fail} failed`);

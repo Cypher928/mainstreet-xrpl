@@ -529,6 +529,8 @@ const SUITES = [
   // (the old automatic grants) and a post-October-30, 2026 one (nothing granted
   // unless a migration grants it) and requires the exact same privileges in both.
   { label: 'Migration 022b scopes payment access',       cmd: 'node tools/verify-migration-022b.js' },
+  { label: 'Migration 015b tenant access privileges',    cmd: 'node tools/verify-migration-015b.js' },
+  { label: 'Migration 031 adopts pilot_requests',        cmd: 'node tools/verify-migration-031.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },

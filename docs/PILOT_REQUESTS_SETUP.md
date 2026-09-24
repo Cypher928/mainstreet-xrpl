@@ -1,4 +1,4 @@
-# Pilot request form — one-time database setup
+# Pilot request form — database setup
 
 The three **Request a Pilot** buttons on the marketing page open an in-page
 modal that posts to `api/pilot-request.js`. That function writes to a
@@ -16,40 +16,41 @@ visitor still has a way through.
 | Pilot / any preview deployment | **pilot** — `bhmktujbxdbvdmpybmad` |
 | Production | **production** — whatever `SUPABASE_URL` points at |
 
-So:
+## The table is a migration: `migrations/031_pilot_requests.sql`
 
-- **To test on the pilot environment now → run it on the PILOT project only.**
-- **Before promoting to production → run the same SQL on the PRODUCTION
-  project.** If you skip this, the form works on pilot and fails on the live
-  site, which is the worst of the three outcomes.
+This page used to carry SQL to paste into the SQL editor by hand. That is now
+`migrations/031_pilot_requests.sql`. Do not paste the old SQL any more.
 
-## The SQL
+What 031 does:
 
-Supabase dashboard → your project → **SQL Editor** → New query → paste → Run.
-It is safe to run twice; `if not exists` makes it idempotent.
+- **Creates the table only if it is missing**, with exactly the columns the old
+  SQL created. On Pilot the table already exists (created by hand), so 031
+  adopts it: no row is read, changed or removed.
+- **Refuses to run** if an existing `pilot_requests` has any other shape (a
+  column missing, extra, of another type or nullability, or no primary key),
+  rather than leaving a different table under the migration's name.
+- Keeps **RLS on with no policies**, and the `created_at desc` index.
+- **Grants exactly one privilege: `INSERT` to `service_role`.** The only caller
+  is the serverless function, with the service-role key and
+  `Prefer: return=minimal`, which needs nothing else. anon and authenticated get
+  nothing. Supabase stops granting new tables automatically on October 30,
+  2026, so on a project where 031 creates the table this grant is what lets the
+  form work at all. On Pilot it narrows the old automatic grant (every
+  privilege, for every API role) to that one.
 
-```sql
-create table if not exists public.pilot_requests (
-  id          uuid primary key default gen_random_uuid(),
-  created_at  timestamptz not null default now(),
-  name        text not null,
-  company     text not null,
-  email       text not null,
-  properties  text not null,
-  lease_name  text,
-  lease_path  text,
-  source      text,
-  user_agent  text
-);
+`tools/verify-migration-031.js` runs 031 against a throwaway local PostgreSQL:
+the hand-made-table path with existing leads, the new-table path, the refusals,
+and the function's insert in the statement shape PostgREST sends.
 
--- RLS on with NO policies: the service role key used by the serverless
--- function bypasses RLS, and nothing else can read the table. Leads are not
--- readable by any logged-in user, anonymous visitor, or the browser.
-alter table public.pilot_requests enable row level security;
+The rollback (`031_pilot_requests_rollback.sql`) restores the old grants and
+**never drops the table** — it holds real leads.
 
-create index if not exists pilot_requests_created_at_idx
-  on public.pilot_requests (created_at desc);
-```
+**Production** is a separate decision. 031 is written for Pilot; applying it to
+the production project needs its own explicit authorization.
+
+Leads are read in the SQL editor, as the table owner. After 031 they cannot be
+read through the Data API with any key, including the service-role key; that is
+intended.
 
 ## Optional — keeping the attached sample lease
 
@@ -81,9 +82,9 @@ The modal shows the reason it was given. The function distinguishes them:
 
 | Message | Meaning |
 |---|---|
-| "The pilot_requests table has not been created yet" | the SQL above has not been run on **that** project |
+| "The pilot_requests table has not been created yet" | `migrations/031_pilot_requests.sql` has not been applied to **that** project |
 | "Request store is not configured" | `PILOT_SUPABASE_SERVICE_ROLE_KEY` (preview) or `SUPABASE_SERVICE_ROLE_KEY` (production) is missing from the Vercel environment |
-| "Could not record the request" | the insert was rejected — check the function logs in Vercel |
+| "Could not record the request" | the insert was rejected — check the function logs in Vercel. `permission denied for table pilot_requests` means the `service_role` INSERT grant is missing: apply 031 |
 
 Vercel → your project → the deployment → **Functions** → `api/pilot-request`
 shows the server-side log line for each failure.

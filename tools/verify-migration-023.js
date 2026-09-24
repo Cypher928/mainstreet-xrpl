@@ -38,6 +38,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
+const { DEFAULTS, PRIVS } = require('./_pg-throwaway');
 
 const ROOT = path.join(__dirname, '..');
 const PGBIN = ['/usr/lib/postgresql/16/bin', '/usr/lib/postgresql/15/bin', '/usr/pgsql-16/bin', '/usr/local/bin']
@@ -115,6 +116,29 @@ function psqlFile(file) {
   }
 }
 
+/** Refused for lack of a privilege (SQLSTATE 42501) — not for any other reason. */
+function denied(sql) { const r = psql(sql); return !r.ok && /permission denied/i.test(r.out); }
+/** The exact table privileges a role holds, sorted: 'INSERT,SELECT', or '' for none. */
+function privs(table, role) {
+  const cols = PRIVS.map(p => `case when has_table_privilege('${role}', '${table}', '${p}') then '${p}' end`).join(', ');
+  return psql(`select concat_ws(',', ${cols});`).out.split(',').filter(Boolean).sort().join(',');
+}
+/** Assert a table's privileges for each API role EXACTLY — a missing grant and an excess one both fail. */
+function matrix(table, want) {
+  for (const [role, w] of Object.entries(want)) {
+    const got = privs(table, role);
+    check(`${table} · ${role} holds exactly {${w || '<none>'}}`, got === w, got === w ? '' : 'got {' + (got || '<none>') + '}');
+  }
+}
+// Supabase's default privileges from October 30, 2026: nothing created in
+// public is granted to anon, authenticated or service_role unless the migration
+// grants it. 000 and 006 predate the change and keep their grants; every
+// migration from 023 on is applied after this switch.
+function switchToPostOct30() {
+  const r = psql(DEFAULTS['post-2026-10-30']);
+  check('project switched to the post-2026-10-30 default privileges', r.ok, r.ok ? '' : r.out.slice(0, 200));
+}
+
 function cleanup() {
   try { if (server) pgRun('pg_ctl', ['-D', DATA, '-m', 'immediate', 'stop'], { stdio: 'ignore' }); } catch (_) {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
@@ -168,6 +192,7 @@ for (const f of ['000_base_schema.sql', '006_acquisition_reviews.sql']) {
   const r = psqlFile(path.join(ROOT, 'migrations', f));
   check(f + ' applies', r.ok, r.ok ? '' : r.out.slice(0, 300));
 }
+switchToPostOct30();
 
 // Two users and a review each — the fixture every assertion below reads.
 const UA = '11111111-1111-4111-8111-111111111111';
@@ -216,10 +241,11 @@ const asB = psql(`set local role authenticated;
                   set local request.jwt.claim.sub = '${UB}';
                   select string_agg(file_name, ',' order by file_name) from public.acquisition_documents;`);
 check('authenticated as user B sees B\'s document and only B\'s', asB.out === 'lease-b.pdf', asB.out || '(none)');
-const asAnon = psql(`set local role anon;
-                     select count(*) from public.acquisition_documents;`);
-check('anon is refused outright (no policy is a denial)',
-  !asAnon.ok || asAnon.out === '0', (asAnon.out || '').split('\n')[0].slice(0, 90));
+check('anon is refused outright — at the grant, before RLS (42501)',
+  denied(`set local role anon; select count(*) from public.acquisition_documents;`));
+section('4b · exact privileges — 023 grants them itself, so the October 30 change does not touch them');
+matrix('public.acquisition_documents', { anon: '', authenticated: 'DELETE,INSERT,SELECT,UPDATE',
+                                         service_role: 'DELETE,INSERT,SELECT,UPDATE' });
 const writeOther = psql(`set local role authenticated;
                          set local request.jwt.claim.sub = '${UA}';
                          insert into public.acquisition_documents (review_id, user_id, file_name)

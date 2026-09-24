@@ -43,6 +43,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
+const { DEFAULTS, PRIVS } = require('./_pg-throwaway');
 
 const ROOT = path.join(__dirname, '..');
 const MIG  = path.join(ROOT, 'migrations');
@@ -124,6 +125,29 @@ function psqlFile(file) {
 /** True when the statement was REFUSED — which is what most of this proves. */
 function refused(sql) { return !psql(sql).ok; }
 
+/** Refused for lack of a privilege (SQLSTATE 42501) — not for any other reason. */
+function denied(sql) { const r = psql(sql); return !r.ok && /permission denied/i.test(r.out); }
+/** The exact table privileges a role holds, sorted: 'INSERT,SELECT', or '' for none. */
+function privs(table, role) {
+  const cols = PRIVS.map(p => `case when has_table_privilege('${role}', '${table}', '${p}') then '${p}' end`).join(', ');
+  return psql(`select concat_ws(',', ${cols});`).out.split(',').filter(Boolean).sort().join(',');
+}
+/** Assert a table's privileges for each API role EXACTLY — a missing grant and an excess one both fail. */
+function matrix(table, want) {
+  for (const [role, w] of Object.entries(want)) {
+    const got = privs(table, role);
+    check(`${table} · ${role} holds exactly {${w || '<none>'}}`, got === w, got === w ? '' : 'got {' + (got || '<none>') + '}');
+  }
+}
+// Supabase's default privileges from October 30, 2026: nothing created in
+// public is granted to anon, authenticated or service_role unless the migration
+// grants it. 000 and 006 predate the change and keep their grants; every
+// migration from 023 on is applied after this switch.
+function switchToPostOct30() {
+  const r = psql(DEFAULTS['post-2026-10-30']);
+  check('project switched to the post-2026-10-30 default privileges', r.ok, r.ok ? '' : r.out.slice(0, 200));
+}
+
 function cleanup() {
   try { if (server) pgRun('pg_ctl', ['-D', DATA, '-m', 'immediate', 'stop'], { stdio: 'ignore' }); } catch (_) {}
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
@@ -165,14 +189,20 @@ const boot = psql(`
   $$;
   grant usage on schema auth to authenticated, service_role;
   grant usage on schema public to anon, authenticated, service_role;
+  -- 000 and 006 predate Supabase's October 30, 2026 change: they were created
+  -- under the automatic grants this line reproduces, and keep them. Every
+  -- migration from 023 on is applied AFTER switchToPostOct30(), so it holds
+  -- only what it grants itself.
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 `);
 check('Supabase prerequisites (roles, auth schema, auth.uid, grants) created', boot.ok, boot.ok ? '' : boot.out.slice(0, 200));
 
 section('prerequisite migrations, from the repo');
 for (const f of ['000_base_schema.sql', '006_acquisition_reviews.sql', '023_acquisition_documents.sql',
-                 '024_acquisition_document_classification.sql', '025_acquisition_abstraction.sql',
-                 '026_acquisition_term_decisions.sql']) {
+                 '024_acquisition_document_classification.sql', '024b_acquisition_document_families_privileges.sql',
+                 '025_acquisition_abstraction.sql', '026_acquisition_term_decisions.sql',
+                 '026c_acquisition_term_decisions_privileges.sql']) {
+  if (f === '023_acquisition_documents.sql') switchToPostOct30();
   const r = psqlFile(path.join(MIG, f));
   check(f + ' applies', r.ok, r.ok ? '' : r.out.slice(0, 300));
 }
@@ -346,8 +376,10 @@ const otherWrite = psql(`set local role authenticated; set local request.jwt.cla
   select count(*) from public.acquisition_documents where id='${BAD}' and abstraction_error='transport';`);
 check('another user\'s write reaches no row', otherWrite.ok && otherWrite.out.trim() === '0',
   otherWrite.out.slice(0, 160));
-const anonSee = psql(`set local role anon; select count(*) from public.acquisition_documents;`);
-check('anon sees no documents at all', !anonSee.ok || anonSee.out.trim() === '0');
+check('anon is refused outright — at the grant, before RLS (42501)',
+  denied(`set local role anon; select count(*) from public.acquisition_documents;`));
+matrix('public.acquisition_documents', { anon: '', authenticated: 'DELETE,INSERT,SELECT,UPDATE',
+                                         service_role: 'DELETE,INSERT,SELECT,UPDATE' });
 
 // ── 11 · 026 still holds ───────────────────────────────────────────────────
 section('11 · 026 is undisturbed');
