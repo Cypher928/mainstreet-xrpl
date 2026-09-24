@@ -521,6 +521,15 @@ const SUITES = [
   // Every long action (lease and invoice uploads, the analysis, each document
   // and term act) is walked with the switch made mid-flight, both directions.
   { label: 'Acquisition cross-review isolation (e2e)',  cmd: 'node test-e2e-acquisition-isolation.js' },
+  // §4l — one tenant row per leasehold. Found on the Pilot: a correction made
+  // in the Lease Terms panel (65,000 → 67,000) never reached the Rent Roll,
+  // which read one raw row per uploaded FILE. The analysis, the Rent Roll and
+  // its CSV, and conversion now read the projection built from the resolved
+  // terms; a raw row nothing represents is carried as unfiled and never reads
+  // as verified; a term no document establishes may be ENTERED, and is then
+  // verified with origin `entered` and no document, said so everywhere.
+  { label: 'Acquisition leasehold rows (§4l)',          cmd: 'node test-acquisition-leasehold.js' },
+  { label: 'Acquisition canonical rows walk (e2e, §4l)', cmd: 'node test-e2e-acquisition-canonical.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.

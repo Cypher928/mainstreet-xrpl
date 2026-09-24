@@ -194,6 +194,17 @@
 
     if (t.state === 'verified') {
       fact.state = 'verified';
+      // An ENTERED value (§4l): a person supplied it and no document supports
+      // it. It is verified — a person vouched for it — and it carries its
+      // origin and NO evidence, so nothing downstream can dress it as a
+      // clause. The other origin of a verified fact is a document, and that
+      // one carries its evidence as before.
+      if (t.support === 'entered') {
+        fact.origin   = 'entered';
+        fact.evidence = null;
+        fact.note     = t.note || 'Entered by a person. No document on file supports it.';
+        return fact;
+      }
       fact.note  = derived
         ? 'Confirmed by a person. The figure is calculated from the clause, not stated in it.'
         : (t.note || null);
@@ -522,13 +533,14 @@
 
   function _count(facts) {
     var out = { total: 0, verified: 0, assumption: 0, issue: 0, missing: 0,
-                assumption_ai_read: 0, assumption_entered: 0, derived: 0 };
+                assumption_ai_read: 0, assumption_entered: 0, verified_entered: 0, derived: 0 };
     (Array.isArray(facts) ? facts : []).forEach(function (f) {
       if (!f) return;
       out.total++;
       if (REPORT_STATES.indexOf(f.state) >= 0) out[f.state]++;
       if (f.state === 'assumption' && f.origin === 'ai_read') out.assumption_ai_read++;
       if (f.state === 'assumption' && f.origin === 'entered') out.assumption_entered++;
+      if (f.state === 'verified' && f.origin === 'entered') out.verified_entered++;
       if (f.derived) out.derived++;
     });
     return out;
@@ -537,7 +549,7 @@
   /** The whole report's counts, from the question summaries. Never throws. */
   function summarize(questions) {
     var out = { total: 0, verified: 0, assumption: 0, issue: 0, missing: 0,
-                assumption_ai_read: 0, assumption_entered: 0, derived: 0 };
+                assumption_ai_read: 0, assumption_entered: 0, verified_entered: 0, derived: 0 };
     (Array.isArray(questions) ? questions : []).forEach(function (q) {
       if (!q || !q.summary) return;
       Object.keys(out).forEach(function (k) { out[k] += (q.summary[k] || 0); });

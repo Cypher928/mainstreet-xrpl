@@ -50,6 +50,12 @@
     ai_read: 'AI-read · not confirmed',
     entered: 'Entered · no document',
   };
+  // A VERIFIED fact a person entered (§4l). It is verified — a person vouched
+  // for it — and the chip must say, every time, that no document is behind
+  // it. Never shortened: the whole sentence is the label.
+  var VERIFIED_ORIGIN_LABEL = {
+    entered: 'Entered by a person · No document on file supports this value',
+  };
   var DERIVED_LABEL = 'Derived — calculated from lease terms';
 
   // The questions drawn in full. The rest are drawn as not yet included, in
@@ -93,6 +99,10 @@
     if (st === 'assumption' && ORIGIN_LABEL[f.origin]) {
       html += '<span class="acqr-origin acqr-origin-' + esc(f.origin) + '" data-origin="'
         + esc(f.origin) + '">' + esc(ORIGIN_LABEL[f.origin]) + '</span>';
+    }
+    if (st === 'verified' && VERIFIED_ORIGIN_LABEL[f.origin]) {
+      html += '<span class="acqr-origin acqr-origin-' + esc(f.origin) + ' acqr-origin-verified" data-origin="'
+        + esc(f.origin) + '">' + esc(VERIFIED_ORIGIN_LABEL[f.origin]) + '</span>';
     }
     if (f.derived) {
       html += '<span class="acqr-derived" data-derived="true">' + esc(DERIVED_LABEL) + '</span>';
@@ -476,7 +486,7 @@
   /** The legend, so every chip on the page can be read without guessing. */
   function legendHtml() {
     return '<div class="acqr-legend">'
-      + '<span class="acqr-chip acqr-verified">Verified</span> a person confirmed it and a document supports it · '
+      + '<span class="acqr-chip acqr-verified">Verified</span> a person confirmed it and a document supports it — or, marked <span class="acqr-origin acqr-origin-entered acqr-origin-verified">Entered by a person</span>, a person supplied it and no document on file supports it · '
       + '<span class="acqr-chip acqr-assumption">Assumption</span> read by AI and not confirmed, or entered with no document · '
       + '<span class="acqr-chip acqr-issue">Issue</span> documents disagree, or a value has nothing behind it · '
       + '<span class="acqr-chip acqr-missing">Missing</span> nothing on file answers this · '

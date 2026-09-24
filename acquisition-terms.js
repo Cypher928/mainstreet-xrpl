@@ -352,6 +352,8 @@
   // contradiction into agreement.
   var STATE_STRENGTH = { verified: 3, ai_extracted: 2, unclear: 1 };
   var DECISION_ACTIONS = ['confirm', 'correct', 'reject', 'reopen'];
+  // What an entered term says about itself, everywhere it is shown (§4l).
+  var ENTERED_NOTE = 'Entered by a person. No document on file supports it.';
 
   // ── Does the quote actually say the value? ────────────────────────────────
   //
@@ -667,6 +669,27 @@
       note: d.note || null, previousValue: d.previous_value == null ? null : d.previous_value,
     };
 
+    // AN ENTERED VALUE (§4l). A correction on a term NO document establishes,
+    // citing no document, is a person supplying the value themselves. It is
+    // the canonical value — verified, because a person vouched for it — and
+    // it carries `support: 'entered'` so that no consumer can present it as
+    // something a document says. There is no governing document and no
+    // quote, so there is no ceiling to cap it: the ceiling is a fact about
+    // the document behind a reading, and this reading has none.
+    if (d.action === 'correct' && term.state === 'missing' && !d.source_document_id) {
+      term.value   = normalizeFieldValue(term.field, d.new_value, false);
+      term.quote   = null; term.page = null; term.confidence = null;
+      term.support = 'entered';
+      term.derived = false;
+      term.governingDocumentId = null; term.governingDocumentName = null;
+      term.governingDocType = null;    term.governingDocStatus = null;
+      term.ceiling = null; term.ceilingReason = null;
+      term.canConfirm = true; term.blockedReason = null;
+      term.state = 'verified';
+      term.note  = ENTERED_NOTE;
+      return term;
+    }
+
     if (d.action === 'reject') {
       // The person says the reading is wrong. The reading is kept — it is what
       // the document said — and the term stops presenting it as an answer.
@@ -792,6 +815,30 @@
       return { ok: false, error: 'A correction must carry the value it corrects to' };
     }
 
+    // ENTERING a value (§4l): a correction on a term no document establishes,
+    // asked for as such. It is the same row a correction writes — no
+    // migration — with every source column forced empty, so the row can
+    // never be read back as citing a document, and a note that says what it
+    // is. `entered` itself is not a column; it is dropped with every other
+    // key the allow-list does not name.
+    if (payload.action === 'correct' && f.entered === true) {
+      if (!term) return { ok: false, error: 'Entering a term needs the term it is entered for' };
+      if (term.state !== 'missing') {
+        return { ok: false, error: 'A document establishes this term. Correct the reading instead of entering a value.' };
+      }
+      var typed = normalizeFieldValue(payload.field_key, payload.new_value, false);
+      if (typed === null || typed === undefined) {
+        var meta = FIELD_META[payload.field_key] || {};
+        return { ok: false, error: 'That is not a ' + (meta.type || 'valid') + ' value for ' + (meta.label || payload.field_key) + '.' };
+      }
+      payload.source_document_id = null;
+      payload.source_quote = null;
+      payload.source_page = null;
+      payload.previous_value = null;
+      if (!payload.note) payload.note = ENTERED_NOTE;
+      return { ok: true, payload: payload };
+    }
+
     if (payload.action === 'confirm' || payload.action === 'correct') {
       if (!term) return { ok: false, error: 'Confirming or correcting a term needs the term it acts on' };
       if (term.state === 'missing') {
@@ -815,12 +862,13 @@
   function summarizeTerms(terms) {
     var t = (terms && typeof terms === 'object') ? terms : {};
     var out = { total: FIELDS.length, verified: 0, ai_extracted: 0, conflicting: 0,
-                unclear: 0, missing: 0, derived: 0, blocked: 0 };
+                unclear: 0, missing: 0, derived: 0, blocked: 0, entered: 0 };
     for (var i = 0; i < FIELDS.length; i++) {
       var term = t[FIELDS[i]];
       var st = (term && TERM_STATES.indexOf(term.state) >= 0) ? term.state : 'missing';
       out[st]++;
       if (term && term.derived) out.derived++;
+      if (term && term.support === 'entered') out.entered++;
       if (term && term.state !== 'missing' && !term.canConfirm) out.blocked++;
     }
     return out;
@@ -847,6 +895,7 @@
     TERM_STATES: TERM_STATES,
     STATE_STRENGTH: STATE_STRENGTH,
     DECISION_ACTIONS: DECISION_ACTIONS,
+    ENTERED_NOTE: ENTERED_NOTE,
     evidenceSupport: evidenceSupport,
     buildReasonerInput: buildReasonerInput,
     classificationCeiling: classificationCeiling,

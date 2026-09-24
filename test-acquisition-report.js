@@ -107,6 +107,26 @@ section('3 · the five term states become four report states');
   check('verified → verified, with no origin — it is not an assumption',
     ver.state === 'verified' && ver.origin === null);
 
+  // §4l: a verified term a person ENTERED. Still verified — a person vouched
+  // for it — but it carries its origin and no evidence, so nothing downstream
+  // can dress it as a clause.
+  const ent = AR.projectTerm(t({ state: 'verified', value: 25000, support: 'entered', quote: null,
+                                 governingDocumentId: null, note: 'Entered by a person. No document on file supports it.' }));
+  check('verified + support entered → verified with origin `entered`',
+    ent.state === 'verified' && ent.origin === 'entered');
+  check('and it carries NO evidence', ent.evidence === null);
+  check('its note says a person entered it and no document supports it',
+    /Entered by a person/.test(ent.note) && /No document on file supports/.test(ent.note), ent.note);
+  check('the value is still the value', ent.value === 25000);
+  // Even if a resolver ever attached a document to an entered term, the
+  // projection would not show it as evidence.
+  const entDoc = AR.projectTerm(t({ state: 'verified', value: 1, support: 'entered', quote: 'x', governingDocumentId: 'd' }));
+  check('an entered term never carries evidence, whatever else is on it', entDoc.evidence === null && entDoc.origin === 'entered');
+  check('an entered term is never a derived one', ent.derived === false);
+  check('the counts keep verified-by-document and verified-by-entry apart',
+    (() => { const c = AR.summarize([{ summary: { total: 2, verified: 2, verified_entered: 1 } }]);
+             return c.verified === 2 && c.verified_entered === 1; })());
+
   const noQuote = AR.projectTerm(t({ state: 'unclear', value: 4, support: 'none' }));
   check('unclear with NO clause behind it → issue',
     noQuote.state === 'issue' && /no supporting clause/.test(noQuote.note));
@@ -253,6 +273,22 @@ section('6 · the report, built from the Pilot\'s actual leasehold');
   check('the entered assumption is carried, separately from AI readings',
     rpt.summary.assumption_entered >= 1 && rpt.summary.assumption_ai_read >= 1,
     JSON.stringify({ entered: rpt.summary.assumption_entered, ai: rpt.summary.assumption_ai_read }));
+
+  // §4l: a term a person ENTERED (a correction on a missing term, citing no
+  // document) is verified, and counted apart from document-verified terms.
+  const withEntry = AR.buildReport(review, families, [lease, amendment], [
+    { id: 'dec-e', family_id: 'fam-1', field_key: 'security_deposit', action: 'correct',
+      previous_value: null, new_value: '25000', source_document_id: null, source_quote: null, source_page: null,
+      decided_by: 'u1', decided_at: '2026-09-23T10:00:00Z', note: 'Entered by a person. No document on file supports it.' },
+  ], WIRE);
+  const depFact = withEntry.questions[1].sections[0].facts.find(f => f.key === 'security_deposit');
+  check('an entered deposit reaches the report as verified, origin entered, with no evidence',
+    depFact && depFact.state === 'verified' && depFact.origin === 'entered' && depFact.evidence === null && depFact.value === 25000,
+    depFact && JSON.stringify([depFact.state, depFact.origin, depFact.evidence]));
+  check('and the report counts it apart from document-verified terms',
+    withEntry.summary.verified_entered === 1 && withEntry.questions[1].summary.verified_entered === 1
+    && rpt.summary.verified_entered === 0,
+    JSON.stringify({ report: withEntry.summary.verified_entered, q2: withEntry.questions[1].summary.verified_entered }));
   check('and the two never merge into one count',
     rpt.summary.assumption >= rpt.summary.assumption_entered + 0);
 

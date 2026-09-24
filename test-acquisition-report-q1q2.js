@@ -335,8 +335,9 @@ section('10 · every new table cell holds its content in one block');
 section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
 {
   const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
-  check('acquisition-report.js (R-1) is byte-for-byte what R-1 shipped',
-    sha('acquisition-report.js') === 'c9d2fc8a8b96cfa7d6f0900e102e6fab73b5942e43c82bd9c526af0cc96bfbe6');
+  // R-1 unfrozen once, for §4l's provenance change only; the pin follows it.
+  check('acquisition-report.js (R-1) is byte-for-byte the §4l revision',
+    sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a');
 
   // R-2's drawing of Q3 and Q4, from the committed view, against this one.
   const gitRoot = process.env.ACQ_REPORT_GIT_ROOT || ROOT;
@@ -352,10 +353,17 @@ section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
     const q3 = Q('what_obligations'), q4 = Q('what_evidence');
     check('Q3 markup is byte-identical to R-2\'s', R2.renderObligations(q3, OPTS) === AV.renderObligations(q3, OPTS));
     check('Q4 markup is byte-identical to R-2\'s', R2.renderEvidence(q4, OPTS) === AV.renderEvidence(q4, OPTS));
-    check('the row, chip and pending renderers are byte-identical to R-2\'s',
-      facts(Q('what_income')).concat(facts(q3)).every(f => R2.factRow(f, OPTS) === AV.factRow(f, OPTS)
+    // §4l unfroze the chip for ONE case: a verified fact with origin `entered`
+    // now carries its tag. Every other fact still draws as R-2 drew it.
+    const notEntered = (f) => !(f.state === 'verified' && f.origin === 'entered');
+    check('the row, chip and pending renderers are byte-identical to R-2\'s (outside §4l\'s one case)',
+      facts(Q('what_income')).concat(facts(q3)).filter(notEntered).every(f => R2.factRow(f, OPTS) === AV.factRow(f, OPTS)
                                                       && R2.stateChip(f) === AV.stateChip(f))
       && R2.renderPending(Q('what_needs_attention')) === AV.renderPending(Q('what_needs_attention')));
+    const ve = { key: 'cap', label: 'CAM cap', type: 'percent', state: 'verified', origin: 'entered', value: 4, evidence: null, competing: [] };
+    check('and that one case differs from R-2 by exactly the entered tag',
+      R2.stateChip(ve) !== AV.stateChip(ve) && AV.stateChip(ve).indexOf(R2.stateChip(ve)) === 0
+      && /Entered by a person · No document on file supports this value/.test(AV.stateChip(ve)));
     check('R-2\'s question list only GAINED questions 1 and 2',
       JSON.stringify(AV.RENDERED) === JSON.stringify(['what_am_i_buying', 'what_income'].concat(R2.RENDERED)),
       AV.RENDERED.join(','));

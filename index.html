@@ -6329,6 +6329,11 @@
     .acq-term-decided { font-size: 0.7rem; color: var(--c-4ade80); margin-top: 3px; overflow-wrap: anywhere; }
     .acq-term-blocked { font-size: 0.7rem; color: var(--text-4); margin-top: 4px; overflow-wrap: anywhere; }
 
+    /* §4l: a value a person entered says so beside its state, every time. */
+    .acq-term-entered { font-size: 0.64rem; color: var(--c-fbbf24, #fbbf24); border: 1px solid currentColor;
+      border-radius: 8px; padding: 1px 6px; overflow-wrap: anywhere; }
+    .acq-term-enter:not([disabled]) { border-color: var(--c-fbbf24, #fbbf24); color: var(--c-fbbf24, #fbbf24); }
+
     .acq-term-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
     .acq-term-actions button { background: none; border: 1px solid #334155; color: var(--text-3);
       padding: 3px 9px; border-radius: 6px; font-size: 0.7rem; cursor: pointer; white-space: nowrap; }
@@ -6531,6 +6536,16 @@
     .acq-ts-term    { white-space: nowrap; color: var(--text-4) !important; font-size: 0.78rem !important; }
     .acq-ts-cam     { font-size: 0.75rem !important; color: var(--text-4) !important; max-width: 200px; word-break: break-word; }
     .acq-ts-renewal { font-size: 0.78rem !important; max-width: 160px; }
+    /* §4l: what a Rent Roll cell says when it is not a plain value. */
+    .acq-rr-contested { color: var(--c-f87171); font-weight: 600; white-space: nowrap; }
+    .acq-rr-missing   { color: var(--text-4); font-style: italic; white-space: nowrap; }
+    .acq-rr-entered   { font-size: 0.62rem; color: var(--c-fbbf24, #fbbf24); border: 1px solid currentColor;
+      border-radius: 8px; padding: 0 5px; white-space: nowrap; vertical-align: middle; }
+    .acq-rr-unfiled   { font-size: 0.66rem; font-weight: 400; color: var(--c-fbbf24, #fbbf24); white-space: normal; margin-top: 2px; }
+    .acq-canonical-line { font-size: 0.72rem; color: var(--text-4); margin: -6px 0 8px; }
+    .acq-analysis-stale { font-size: 0.76rem; color: var(--c-fbbf24, #fbbf24); background: rgba(251, 191, 36, 0.08);
+      border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 7px; padding: 8px 12px; margin-bottom: 10px; }
+    .acq-analysis-stale .acq-stale-refresh { margin-left: 8px; }
 
     /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
     .pid-panel        { background: var(--theme-bg); border: 1px solid var(--theme-accent); border-radius: 10px;
@@ -8721,6 +8736,8 @@
 <!-- Acquisition Review Phase 1 (P1-7, R-1/R-2): the buyer's five questions as a model, and that model drawn — both pure. The model is built from the P1-4 resolver and decides every state; the view renders it and decides nothing. Needs no CAM analysis and no invoices. -->
 <script src="acquisition-report.js"></script>
 <script src="acquisition-report-view.js"></script>
+<!-- Acquisition Review Phase 1 (§4l): one tenant row per leasehold, from the resolved terms — pure. The Rent Roll, its CSV, the analysis and conversion read this projection; review.data.tenants[] stays the raw upload record. -->
+<script src="acquisition-leasehold.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>

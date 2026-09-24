@@ -1328,6 +1328,161 @@ the documents table missing. `tools/acquisition-isolation-mutation.js` undoes
 each part of the fix in turn, the two repaints included; every mutant is
 killed.
 
+## 4l. One tenant row per leasehold — the resolved terms are what everything reads (built; awaiting review)
+
+**Status: uncommitted, awaiting approval. Nothing deployed. No migration, no
+new serverless function. Production untouched.**
+
+### What happened
+
+On the Pilot a person corrected ShopRite's leased area from 65,000 to 67,000
+in the Lease Terms panel. The correction was recorded (a row in
+`acquisition_term_decisions`, and the panel and Report v2 showed it) and the
+Rent Roll went on saying 65,000. Two stores: the Lease Terms panel read the
+resolver's answer — the documents' readings with every decision laid over
+them — while the analysis, the Rent Roll, its CSV, the v1 Decision Report,
+Ask AI and conversion all read `review.data.tenants[]`, one row per uploaded
+FILE holding whatever the extraction said the day the file arrived. Nothing
+ever wrote a decision back to those rows, and nothing should: they are the
+raw upload record. In the same way a lease and its amendment counted as two
+tenants, and a term no document established (Security deposit) had no way
+to be supplied at all — `buildDecisionPayload` refused Confirm and Correct
+on a missing term, and `_applyDecision` capped anything with no governing
+document at `ai_extracted`.
+
+### The rule
+
+The resolved terms are the one source. `acquisition-leasehold.js` (pure)
+projects them into the tenant-row shape the engine, the Rent Roll and
+conversion already read: **one row per leasehold**, from
+`AcquisitionTerms.resolveFamilyTerms` over that family's documents and that
+family's decisions, with every alias the readers use (`cap` and `cam_cap`,
+`start_date` and `lease_start`). Then, after the leaseholds, **any raw row
+nothing represents** — a row whose document is in no leasehold, or a row
+from before P1-2 with no document at all — carried as it was extracted and
+marked `_source: 'unfiled'`, with no states, so nothing on it can read as
+verified. A raw row whose document is filed into a leasehold, or was
+replaced, is represented by that leasehold and is dropped from the
+projection — not from the review. `review.data.tenants[]` is never modified
+and never merged; the Documents panel still reads it.
+
+What a leasehold row carries, per field:
+
+| Resolved term | Row value | `_states[field]` | `cellState` |
+|---|---|---|---|
+| verified, from a document | the value | `verified` | `verified` |
+| verified, **entered** (below) | the value | `verified`, `_origins[field] = 'entered'` | `entered` |
+| ai_extracted / unclear | the value (or null) | as resolved | `read` |
+| conflicting | **null** — nothing was chosen | `conflicting` | `contested` |
+| missing | null | `missing` | `missing` |
+
+`attachStates` copies `_source · _leaseholdId · _states · _origins ·
+_unverified · _legacyWhy` onto the engine's `tenantSummary`, one to one, so
+every consumer of the stored analysis can say Contested or Not established
+instead of drawing a dash, and can tag an entered value.
+
+### Entering a term (decisions 1 and 2)
+
+A missing term offers **Enter**. The person is told, before typing and
+again on confirming, that no document establishes the term and the value
+will be recorded as theirs: *Verified · Entered by a person · No document
+on file supports this value.* The value is validated against the field's
+type before anything is written. What is written is the same row a
+correction writes — no migration — with `source_document_id`,
+`source_quote`, `source_page` and `previous_value` forced null and the note
+set, so the row can never be read back as citing a document; `entered`
+itself is not a column and never reaches the payload. An entry on a term a
+document establishes is refused ("Correct the reading instead"); plain
+Confirm/Correct on a missing term are refused as before.
+
+Resolved, such a term is **verified** — a person vouched for it — with
+`support: 'entered'`, no governing document, no quote and no ceiling (the
+ceiling is a fact about the document behind a reading, and this reading has
+none). R-1 projects it as `state: 'verified', origin: 'entered', evidence:
+null` and counts it in `verified_entered`, apart from document-verified; R-2
+draws the Verified chip with the whole sentence beside it and no Source
+block, and the legend explains the mark. The four-state vocabulary is
+unchanged. The Lease Terms panel shows the same tag and offers Reopen only;
+reopening returns the term to missing and keeps the entry in the history.
+Nowhere is an entered value presented as document-supported evidence.
+
+### What each consumer now shows
+
+- **Analysis** (`_acqBuildAnalysis`): built from the projection; the report
+  carries `canonical { leaseholds, unfiled, dropped, resolverAvailable,
+  fingerprint, at }`. After every human act on a term the analysis, if one
+  exists, is rebuilt and saved on the review the act belongs to
+  (`_acqAfterAct` → `_acqRefreshAnalysis`), so the Rent Roll, the CSV, the
+  v1 Decision Report, Ask AI and drafting say what the Lease Terms say. A
+  review with no analysis is left alone.
+- **Rent Roll**: a line above the table says what the rows are ("1
+  leasehold from the lease terms · 1 row not in a leasehold (from file
+  extraction, not verified) · 2 source files represented by a leasehold").
+  Each row is addressable by `data-source` and `data-leasehold`. A
+  contested cell reads **Contested**, a missing one **Not established**, an
+  entered one carries an **Entered** tag; an unfiled row says *Not in a
+  leasehold · not verified* under its name and nothing on it is marked.
+- **An analysis from before this** (no `canonical` block — the Pilot's
+  today) or one older than the terms is flagged above the table: "This
+  analysis was run … before the Rent Roll read the lease terms" /
+  "The lease terms have changed since this analysis was run", with one
+  control, **Refresh from lease terms**. Staleness is judged only once the
+  review's families, documents, decisions and evidence have all loaded;
+  until then nothing is said. Opening a review writes nothing.
+- **CSV**: the resolved values, a contested cell as the word Contested, a
+  missing one empty, plus three columns — *Basis* (Leasehold / Not in a
+  leasehold — not verified), *Entered by a person* (the fields), *Contested*
+  (the fields).
+- **Conversion**: `buildPropertyFromReview` is given the review with the
+  projection in place of the raw rows, so the property gets one tenant per
+  leasehold, keyed on the family id, with the resolved values, `_source`,
+  `_origins` and, for an unfiled row, `_unverified` and its note. The
+  review's own `data.tenants[]` is untouched.
+- **Lake View, or any review with raw rows and no leasehold** (decision 4):
+  every row is unfiled, drawn with its file values and the not-verified
+  mark; no cell reads verified, entered, contested or established; the line
+  says 0 leaseholds. The Analyze control still enables from raw rows, and
+  from a leasehold whose raw rows were replaced.
+
+### Not done here (decision 5)
+
+No Lease Matrix, no new lease fields, no question 5, no tenant
+de-duplication beyond what a leasehold already is, no other report UX. Two
+raw rows for one tenant in a review with no leasehold stay two unfiled rows.
+
+### Verified
+
+- `test-acquisition-leasehold.js` 83/83 — the projection: contested is null,
+  entered carries its origin, raw rows are copied and never marked verified,
+  a row behind a leasehold is dropped and the drop is recorded, other
+  families' documents and decisions never reach a leasehold, no resolver
+  means null values and not stale file values.
+- `test-acquisition-decisions.js` 81/81 (14 new) — the entry contract, the
+  resolved entered term, no ceiling, reopen, the panel's Enter/Reopen
+  controls, every act refreshing the analysis on the review it belongs to.
+- `test-acquisition-report.js` 95/95, `test-acquisition-report-view.js`
+  82/82, `test-acquisition-report-q1q2.js` 61/61 — R-1 re-pinned at its §4l
+  sha; R-2's chip byte-identical to edcf259's for every fact except a
+  verified entered one, which differs by exactly the tag.
+- `test-e2e-acquisition-canonical.js` 60/60 — the pre-§4l analysis flagged
+  and refreshed (two files → one row); 65,000 → 67,000 reaching the Rent
+  Roll, the stored analysis and the v1 report while the raw rows keep
+  65,000; the deposit entered and shown with its provenance in the panel,
+  the Rent Roll and Report v2, the stored decision citing no document; the
+  CSV; the cap and suite contradictions still contested; conversion with
+  one tenant per leasehold, resolved values, the unfiled row marked, the
+  tenants table given the same rows; Lake View never verified. No page
+  error, no AI call, no new function, no migration.
+- `tools/acquisition-canonical-mutation.js` 36/36 killed — the projection,
+  the entry path, the report provenance and the glue. One mutant (the
+  verified-by-entry count) survived the first pass and exposed a test gap,
+  closed in `test-acquisition-report.js` before the re-run. The report
+  (59/59), decisions (41/41) and isolation (13/13) harnesses re-run
+  unchanged against this code.
+- Full regression 204 suites: 200 pass; the 4 failures are the four
+  pre-existing ones (Live extraction walk, Billing readiness consistency,
+  Ask AI intent coverage, Broken promises).
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

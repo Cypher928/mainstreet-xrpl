@@ -553,7 +553,9 @@ t('every value the panel prints into HTML is escaped', () => {
   const TEXT_CONTENT_ONLY = ['${totalVerified}', '${totalTerms}'];
   const interpolations = (R.match(/\$\{(?!esc\()[^}]*\}/g) || [])
     .filter(s => TEXT_CONTENT_ONLY.indexOf(s) === -1);
-  const suspicious = interpolations.filter(s => !/^\$\{(field|fam\.id|st\.cls|term\.|s\.|rows|sub|sections|warn|valueHtml|src|quote|derived|conflict|superseded|decided|blocked|actions|gate|gateTitle|actionable)/.test(s));
+  // §4l: enteredTag is a constant, reopen is built from esc()'d values, and
+  // enterGate is a constant attribute string.
+  const suspicious = interpolations.filter(s => !/^\$\{(field|fam\.id|st\.cls|term\.|s\.|rows|sub|sections|warn|valueHtml|src|quote|derived|conflict|superseded|decided|blocked|actions|gate|gateTitle|actionable|enteredTag|enteredAttr|reopen|enterGate)/.test(s));
   deq(suspicious, [], 'unescaped interpolation');
   ok(/countEl\.textContent = /.test(R), 'the counts are no longer set through textContent');
 });
@@ -598,6 +600,143 @@ t('the history entry keeps the action it was given — needs_review is not rewri
   eq(e.field, 'relationship');
   eq(AD.classificationEntry({ action: 'invented' }).action, 'proposed',
      'an unknown action is no longer normalised');
+});
+
+// ── §4l · entering a term no document establishes ───────────────────────────
+sec('§4l — a person may ENTER a missing term; it is verified, with no document');
+
+const MISSING_TERM = () => resolve([CONFIRMABLE]).terms.security_deposit;
+
+t('a missing term still refuses a plain correction and a confirmation', () => {
+  const c = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: '25000' }, MISSING_TERM());
+  ok(!c.ok && /nothing to correct/.test(c.error), JSON.stringify(c));
+  const k = payload({ fieldKey: 'security_deposit', action: 'confirm' }, MISSING_TERM());
+  ok(!k.ok && /nothing to confirm/.test(k.error), JSON.stringify(k));
+});
+
+t('asked for as an ENTRY, the correction is accepted with every source column empty', () => {
+  const r = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: '$25,000', entered: true }, MISSING_TERM());
+  ok(r.ok, r.error);
+  eq(r.payload.action, 'correct');
+  eq(r.payload.new_value, '$25,000');
+  eq(r.payload.source_document_id, null, 'an entry cites a document');
+  eq(r.payload.source_quote, null);
+  eq(r.payload.source_page, null);
+  eq(r.payload.previous_value, null, 'an entry claims to replace a reading');
+  eq(r.payload.note, T.ENTERED_NOTE);
+  ok(!('entered' in r.payload), 'the entered flag leaked into the row — it is not a column');
+});
+
+t('an entry cannot smuggle a document in through the fields', () => {
+  const r = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: '25000', entered: true,
+                      sourceDocumentId: 'C1', sourceQuote: 'says so', sourcePage: 3 }, MISSING_TERM());
+  ok(r.ok, r.error);
+  eq(r.payload.source_document_id, null);
+  eq(r.payload.source_quote, null);
+  eq(r.payload.source_page, null);
+});
+
+t('an entry on a term a document DOES establish is refused — correct the reading instead', () => {
+  const r = payload({ fieldKey: 'cap', action: 'correct', newValue: '5', entered: true }, resolve([CONFIRMABLE]).terms.cap);
+  ok(!r.ok && /Correct the reading instead/.test(r.error), JSON.stringify(r));
+});
+
+t('an entry that is not a value of the field\'s type is refused before it is written', () => {
+  const r = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: 'twenty five', entered: true }, MISSING_TERM());
+  ok(!r.ok && /not a money value/.test(r.error), JSON.stringify(r));
+  const d = payload({ fieldKey: 'end_date', action: 'correct', newValue: '03/01/2030', entered: true },
+                    resolve([CONFIRMABLE]).terms.end_date);
+  ok(!d.ok && /not a date value/.test(d.error), JSON.stringify(d));
+});
+
+t('resolved, the entered term is VERIFIED with support `entered` and no governing document', () => {
+  const r = resolve([CONFIRMABLE], [decision({ field_key: 'security_deposit', action: 'correct', new_value: '25000',
+                                               source_document_id: null, note: T.ENTERED_NOTE })]);
+  const term = r.terms.security_deposit;
+  eq(term.state, 'verified');
+  eq(term.value, 25000);
+  eq(term.support, 'entered');
+  eq(term.governingDocumentId, null);
+  eq(term.quote, null);
+  eq(term.derived, false);
+  eq(term.note, T.ENTERED_NOTE);
+  eq(term.canConfirm, true, 'an entered term cannot be reopened from the screen');
+  eq(term.decision.action, 'correct');
+});
+
+t('the ceiling does not cap it — there is no document for a ceiling to be about', () => {
+  const r = resolve([doc({ doc_type_status: 'proposed' }, { cap: E(4, 'capped at 4%') })],
+    [decision({ field_key: 'security_deposit', action: 'correct', new_value: '25000', source_document_id: null })]);
+  eq(r.terms.security_deposit.state, 'verified');
+  eq(r.terms.security_deposit.ceiling, null);
+});
+
+t('a correction that cites a document on a missing term is NOT an entry — the old path, capped', () => {
+  const r = resolve([CONFIRMABLE], [decision({ field_key: 'security_deposit', action: 'correct', new_value: '25000',
+                                               source_document_id: 'C1', source_quote: 'deposit of $25,000' })]);
+  eq(r.terms.security_deposit.support, 'stated');
+  eq(r.terms.security_deposit.governingDocumentId, 'C1');
+});
+
+t('reopening an entry returns the term to missing; the entry stays in the history', () => {
+  const H = [
+    decision({ field_key: 'security_deposit', action: 'correct', new_value: '25000', source_document_id: null, decided_at: '2026-09-23T10:00:00Z' }),
+    decision({ field_key: 'security_deposit', action: 'reopen', decided_at: '2026-09-23T11:00:00Z' }),
+  ];
+  const r = resolve([CONFIRMABLE], H);
+  eq(r.terms.security_deposit.state, 'missing');
+  eq(r.terms.security_deposit.value, null);
+  eq(H.length, 2);
+});
+
+t('the summary counts entered terms, and keeps counting them as verified', () => {
+  const r = resolve([CONFIRMABLE], [decision({ field_key: 'security_deposit', action: 'correct', new_value: '25000', source_document_id: null })]);
+  eq(r.summary.entered, 1);
+  ok(r.summary.verified >= 1);
+});
+
+t('the note is one string, shared with the projection', () => {
+  const AL = require('./acquisition-leasehold.js');
+  eq(AL.ENTERED_NOTE, T.ENTERED_NOTE);
+  ok(/Entered by a person/.test(T.ENTERED_NOTE) && /No document on file supports/.test(T.ENTERED_NOTE));
+});
+
+t('the screen offers Enter on a missing term, and Reopen alone on an entered one', () => {
+  const R = fnBody(S, '_renderAcqTerms');
+  ok(/acq-term-enter/.test(R), 'no Enter control');
+  ok(/const entered = term\.support === 'entered';/.test(R), 'the panel does not recognise an entered term');
+  ok(/Entered by a person · No document on file supports this value/.test(R), 'the entered tag is missing or shortened');
+  ok(/data-origin="entered"/.test(R));
+  ok(/const actions = entered \? `\s*<div class="acq-term-actions">\$\{reopen\}<\/div>`/.test(R),
+     'an entered term offers Confirm/Correct/Reject');
+  const Bind = fnBody(S, '_acqBindTermControls');
+  ok(/acq-term-enter/.test(Bind) && /acqEnterTerm\(family, field\)/.test(Bind), 'Enter is not bound');
+});
+
+t('the Enter handler refuses anything but a missing term, explains itself, validates, and asks', () => {
+  const En = fnBody(S, 'acqEnterTerm');
+  ok(/const reviewId = _activeAcqId;/.test(En), 'the review is not captured before the first await');
+  ok(/term\.state !== 'missing'\) return;/.test(En), 'Enter acts on a term a document establishes');
+  ok(/No document on file establishes this term/.test(En), 'the person is not told what they are doing');
+  ok(/AT\.normalizeFieldValue\(field, String\(typed\)\.trim\(\), false\)/.test(En), 'the typed value is not validated by type');
+  ok(/Verified · Entered by a person · No document on file supports this value\./.test(En), 'the confirmation does not name the provenance');
+  ok(/action: 'correct',\s*newValue: String\(typed\)\.trim\(\), entered: true/.test(En), 'the entry is not written as an entered correction');
+  ok(!/sourceDocumentId/.test(En), 'the entry cites a document');
+  ok(/await _acqAfterAct\(reviewId\);/.test(En), 'the analysis is not refreshed after an entry');
+});
+
+t('every act refreshes the analysis the terms feed (§4l), on the review it belongs to', () => {
+  for (const name of ['acqConfirmTerm', 'acqCorrectTerm', 'acqRejectTerm', 'acqReopenTerm', 'acqEnterTerm']) {
+    const B = fnBody(S, name);
+    ok(/const reviewId = _activeAcqId;/.test(B), name + ' does not capture the review first');
+    ok(/await _acqAfterAct\(reviewId\);/.test(B), name + ' does not refresh the analysis');
+  }
+  const After = fnBody(S, '_acqAfterAct');
+  ok(/_renderAcqTerms\(\);/.test(After) && /await _acqRefreshAnalysis\(reviewId\);/.test(After));
+  const Ref = fnBody(S, '_acqRefreshAnalysis');
+  ok(/if \(!review \|\| !review\.data \|\| !review\.data\.analysis\) return false;/.test(Ref),
+     'a review with no analysis is analysed behind the person\'s back');
+  ok(/if \(_acqIsActive\(review\)\)/.test(Ref), 'the refreshed report is drawn into whichever review is open');
 });
 
 // ── boundaries ──────────────────────────────────────────────────────────────

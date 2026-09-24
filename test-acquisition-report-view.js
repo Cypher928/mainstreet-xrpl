@@ -191,6 +191,27 @@ section('3 · an AI-read reading and an entered figure are never one label');
     /data-count="assumption_ai_read"/.test(Q3) && /data-count="assumption_entered"/.test(Q3));
   check('a bare "Assumption" chip never appears without its origin',
     rows(Q3, 'acqr-fact').filter(r => r.attrs.state === 'assumption').every(r => /acqr-origin/.test(r.inner)));
+
+  // §4l: a VERIFIED fact a person entered. Verified, and the chip says every
+  // time that no document is behind it — the whole sentence, never shortened.
+  const ve = { key: 'security_deposit', label: 'Security deposit', type: 'money', state: 'verified', origin: 'entered',
+               derived: false, value: 25000, evidence: null, competing: [],
+               note: 'Entered by a person. No document on file supports it.' };
+  const chip = AV.stateChip(ve);
+  check('a verified entered fact is labelled Verified', /acqr-chip acqr-verified"[^>]*>Verified</.test(chip));
+  check('and carries "Entered by a person · No document on file supports this value" beside it',
+    /data-origin="entered"/.test(chip) && /Entered by a person · No document on file supports this value/.test(chip));
+  check('the tag is the verified one, not the assumption one',
+    /acqr-origin-verified/.test(chip) && !/Entered · no document/.test(chip));
+  const veRow = AV.factRow(ve, OPTS);
+  check('the row shows the value, with no Source block — there is no document',
+    /\$25,000/.test(veRow) && !/acqr-evidence/.test(veRow) && !/Source:/.test(veRow));
+  check('the row is addressable as verified + entered',
+    /data-state="verified"/.test(veRow) && /data-origin="entered"/.test(veRow));
+  const vd = AV.stateChip({ state: 'verified', origin: null, derived: false });
+  check('a document-verified fact still has no origin tag', !/acqr-origin/.test(vd));
+  check('the legend explains the entered mark on a verified fact',
+    /acqr-legend[\s\S]*Entered by a person[\s\S]*no document on file supports it/.test(HTML));
 }
 
 // ── 4 · derived is not stated ──────────────────────────────────────────────
@@ -312,11 +333,14 @@ section('9 · the view is a view — it computes no state of its own');
 }
 
 // ── 10 · what R-2 must not have touched ────────────────────────────────────
-section('10 · R-1 frozen; v1, the CAM engine and P1-4 untouched');
+section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
 {
   const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
-  check('acquisition-report.js (R-1) is byte-for-byte what R-1 shipped',
-    sha('acquisition-report.js') === 'c9d2fc8a8b96cfa7d6f0900e102e6fab73b5942e43c82bd9c526af0cc96bfbe6',
+  // R-1 was frozen at edcf259 and unfrozen once, for §4l's provenance change
+  // only (a verified term with support `entered` carries origin `entered` and
+  // no evidence; `verified_entered` is counted). This is that file.
+  check('acquisition-report.js (R-1) is byte-for-byte the §4l revision',
+    sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a',
     sha('acquisition-report.js').slice(0, 12));
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
   const v1Now = (S.match(/^function generateAcquisitionReport\(\) \{[\s\S]*?^\}/m) || [''])[0];

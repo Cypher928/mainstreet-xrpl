@@ -30815,6 +30815,7 @@ async function _acqLoadEvidence(reviewId) {
     (Array.isArray(data) ? data : []).forEach(r => {
       if (r && r.id && r.abstracted_fields) _acqEvidence.set(r.id, r.abstracted_fields);
     });
+    _acqEvidenceLoaded.add(reviewId);
   } catch (e) {
     console.warn('[acq] _acqLoadEvidence failed:', e && e.message);
   }
@@ -30833,6 +30834,154 @@ function _acqFamilyTerms(familyId) {
   const decisions = _acqDecisionRows(_activeAcqId).filter(d => d && d.family_id === familyId);
   const r = AT.resolveFamilyTerms(docs, decisions);
   return r.ok ? r : null;
+}
+
+// ── One tenant row per leasehold (§4l) ───────────────────────────────────────
+//
+// The analysis, the Rent Roll, its CSV and conversion used to read
+// review.data.tenants[] — one row per uploaded FILE, holding what the
+// extraction said the day the file arrived. A person's correction went into
+// acquisition_term_decisions and was seen only by the Lease Terms panel, so
+// the Rent Roll showed 65,000 sf beside a report that said 67,000, and a lease
+// plus its amendment counted as two tenants.
+//
+// Every one of those consumers now reads the projection acquisition-leasehold.js
+// builds from the resolved terms: one row per leasehold, then any raw row
+// nothing represents (marked unfiled, never verified). review.data.tenants[]
+// is NOT modified — it stays the raw upload record, and the Documents panel
+// still reads it.
+function _AL() { return window.AcquisitionLeasehold; }
+
+// Which reviews have had their evidence read at least once, so a staleness
+// check never compares against terms that simply have not loaded yet.
+const _acqEvidenceLoaded = new Set();
+
+// What the projection needs, from the caches the panels already keep. No
+// await: the caller decides when a fresh load is wanted.
+function _acqLeaseholdInput(reviewId) {
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const d = (review && review.data) || {};
+  return {
+    families:  _acqFamilyRows(reviewId),
+    documents: _acqDocRows(reviewId)
+      .map(doc => _acqEvidence.has(doc.id) ? Object.assign({}, doc, { abstracted_fields: _acqEvidence.get(doc.id) }) : doc),
+    decisions: _acqDecisionRows(reviewId),
+    tenants:   Array.isArray(d.tenants) ? d.tenants : [],
+  };
+}
+
+// The canonical tenant rows for a review. Without the module (never in the
+// shipped page) the raw rows are used as before, marked as nothing.
+function _acqCanonicalRows(reviewId) {
+  const AL = _AL();
+  const input = _acqLeaseholdInput(reviewId);
+  if (!AL) return { rows: input.tenants.slice(), leaseholds: 0, unfiled: input.tenants.length, dropped: [], resolverAvailable: false };
+  return AL.leaseholdRows(input, { terms: _AT() });
+}
+
+// The rows the engine is given: named, and not a failed extraction.
+function _acqAnalysisRows(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(t => t && (t.tenant_name || t.tenantName) && t._status !== 'error');
+}
+
+// What the analysis was built from, so a later visit can tell whether the
+// terms have moved on since.
+function _acqCanonicalFingerprint(rows) {
+  const AE = window.AcquisitionEngine;
+  return JSON.stringify(_acqAnalysisRows(rows).map(r => [
+    r.id || null, r._source || null,
+    AE && typeof AE.normalizeAcqTenant === 'function' ? AE.normalizeAcqTenant(r) : null,
+    r._states || null, r._origins || null,
+  ]));
+}
+
+// The analysis for one review, from the canonical rows. Returns null when the
+// engine is not loaded. The states ride along on tenantSummary so the Rent
+// Roll can say Contested or Not established rather than drawing a dash.
+function _acqBuildAnalysis(review) {
+  const AE = window.AcquisitionEngine, AL = _AL();
+  if (!AE || !review) return null;
+  const d = review.data || {};
+  const canon    = _acqCanonicalRows(review.id);
+  const tenants  = _acqAnalysisRows(canon.rows);
+  const invoices = (Array.isArray(d.invoices) ? d.invoices : []).filter(i => i && i.amount && i._status !== 'error');
+  const sqft     = _acqIsActive(review) ? _acqSqFt : (d.totalSqFt || 0);
+  const report   = AE.buildAcquisitionReport(tenants, invoices, sqft);
+  if (AL) AL.attachStates(report.tenantSummary, tenants);
+  report.canonical = {
+    leaseholds: canon.leaseholds, unfiled: canon.unfiled,
+    dropped: canon.dropped.length, resolverAvailable: canon.resolverAvailable,
+    fingerprint: _acqCanonicalFingerprint(tenants), at: new Date().toISOString(),
+  };
+  return { report, tenants, invoices, sqft };
+}
+
+// After a person acts on a term, an analysis that exists is rebuilt from the
+// terms as they now stand, so the Rent Roll, the CSV and the Decision Report
+// say what the Lease Terms panel says. A review with no analysis yet is left
+// alone: nothing is on screen to be out of date.
+async function _acqRefreshAnalysis(reviewId) {
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  if (!review || !review.data || !review.data.analysis) return false;
+  const built = _acqBuildAnalysis(review);
+  if (!built) return false;
+  review.data.analysis = built.report;
+  review.updated_at = new Date().toISOString();
+  await _saveAcqReview(review);
+  _renderAcqSection(_acqReviews);
+  if (_acqIsActive(review)) {
+    _renderAcqReport(built.report, document.getElementById('acqReportContainer'));
+    _renderAcqConvertAction(review);
+  }
+  return true;
+}
+
+async function acqRefreshAnalysisFromTerms() {
+  const reviewId = _activeAcqId;
+  const ok = await _acqRefreshAnalysis(reviewId);
+  if (ok) showToast('Analysis refreshed from the lease terms.');
+}
+
+// Is the stored analysis older than the terms? Returns null while the terms
+// are not fully loaded (nothing can be said yet), '' when current, and a
+// sentence when it is behind.
+function _acqAnalysisStale(review) {
+  const a = review && review.data && review.data.analysis;
+  if (!a || !Array.isArray(a.tenantSummary)) return null;
+  const id = review.id;
+  if (!(_acqFamilies.has(id) && _acqDocs.has(id) && _acqDecisions.has(id) && _acqEvidenceLoaded.has(id))) return null;
+  if (!a.canonical) return 'This analysis was run from the uploaded files, before the Rent Roll read the lease terms.';
+  const canon = _acqCanonicalRows(id);
+  if (!canon.resolverAvailable) return null;
+  return _acqCanonicalFingerprint(canon.rows) === a.canonical.fingerprint
+    ? '' : 'The lease terms have changed since this analysis was run.';
+}
+
+function _acqUpdateStaleNotice() {
+  const review = _acqReviews.find(r => r && r.id === _activeAcqId);
+  const els = document.querySelectorAll('#acqReportContainer .acq-analysis-stale');
+  if (!els.length) return;
+  const why = review ? _acqAnalysisStale(review) : null;
+  els.forEach(el => {
+    if (!why) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.innerHTML = esc(why) + ' The figures below may not match the Lease Terms. '
+      + '<button class="acq-export-btn acq-stale-refresh" onclick="acqRefreshAnalysisFromTerms()">Refresh from lease terms</button>';
+  });
+}
+
+// The review as conversion reads it: the canonical rows in place of the raw
+// upload rows, so the property gets one tenant per leasehold with the
+// resolved values. The review itself is not modified.
+const _ACQ_ROW_PRIVATE = new Set(['_states', '_resolved', '_familyLabel', '_tenantNameFrom', '_documentCount', '_legacyWhy']);
+function _acqConversionReview(review) {
+  const canon = _acqCanonicalRows(review.id);
+  const rows  = _acqAnalysisRows(canon.rows).map(t => {
+    const o = {};
+    Object.keys(t).forEach(k => { if (!_ACQ_ROW_PRIVATE.has(k)) o[k] = t[k]; });
+    return o;
+  });
+  return Object.assign({}, review, { data: Object.assign({}, review.data || {}, { tenants: rows }) });
 }
 
 // A person asks for a document to be read (again). The text is already on the
@@ -31119,6 +31268,7 @@ function _renderAcqTerms() {
     if (countEl) countEl.textContent = '';
     el.innerHTML = '<div class="acq-terms-empty">No leasehold has been identified yet. '
       + 'Classify a lease in Documents above and its terms appear here.</div>';
+    _acqUpdateStaleNotice();
     return;
   }
 
@@ -31171,7 +31321,15 @@ function _renderAcqTerms() {
         ? `<div class="acq-term-superseded">Replaced ${esc(String(term.supersededValues[0].value))}`
           + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '') + '</div>' : '';
 
-      const decided = term.decision
+      // A value a person ENTERED (§4l): verified, and the row says every time
+      // that no document is behind it. The note is the tag; it is not
+      // repeated as a decision line.
+      const entered = term.support === 'entered';
+      const enteredTag = entered
+        ? `<span class="acq-term-entered" data-origin="entered">Entered by a person · No document on file supports this value</span>` : '';
+      const enteredAttr = entered ? ' data-origin="entered"' : '';
+
+      const decided = (term.decision && !entered)
         ? `<div class="acq-term-decided">${esc(term.note || '')}</div>` : '';
 
       const blocked = (!term.canConfirm && term.state !== 'missing')
@@ -31182,20 +31340,31 @@ function _renderAcqTerms() {
       const actionable = term.state !== 'missing';
       const gate = term.canConfirm ? '' : ' disabled';
       const gateTitle = term.canConfirm ? '' : ` title="${esc(term.blockedReason || '')}"`;
-      const actions = actionable ? `
+      const reopen = term.decision
+        ? `<button class="acq-term-reopen" data-field="${esc(field)}" data-family="${esc(fam.id)}">Reopen</button>` : '';
+      // A missing term has nothing to confirm, correct or reject. A person may
+      // ENTER it, and the value is then theirs: verified, with no document.
+      const enterGate = _acqDecisionsUnavailable ? ' disabled title="Decisions are not being filed — run migration 026 first."' : '';
+      const actions = entered ? `
+        <div class="acq-term-actions">${reopen}</div>`
+        : actionable ? `
         <div class="acq-term-actions">
           <button class="acq-term-confirm" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Confirm</button>
           <button class="acq-term-correct" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Correct</button>
           <button class="acq-term-reject"  data-field="${esc(field)}" data-family="${esc(fam.id)}">Reject</button>
-          ${term.decision ? `<button class="acq-term-reopen" data-field="${esc(field)}" data-family="${esc(fam.id)}">Reopen</button>` : ''}
-        </div>` : '';
+          ${reopen}
+        </div>` : `
+        <div class="acq-term-actions">
+          <button class="acq-term-enter" data-field="${esc(field)}" data-family="${esc(fam.id)}"${enterGate}>Enter</button>
+        </div>`;
 
       return `
-      <div class="acq-term-row ${esc(st.cls)}" data-field="${esc(field)}" data-state="${esc(term.state)}"${term.derived ? ' data-derived="1"' : ''}>
+      <div class="acq-term-row ${esc(st.cls)}" data-field="${esc(field)}" data-state="${esc(term.state)}"${term.derived ? ' data-derived="1"' : ''}${enteredAttr}>
         <div class="acq-term-main">
           <div class="acq-term-head">
             <span class="acq-term-label">${esc(term.label)}</span>
             <span class="acq-term-state ${esc(st.cls)}">${esc(st.label)}</span>
+            ${enteredTag}
           </div>
           ${valueHtml}
           ${src}${quote}${derived}${conflict}${superseded}${decided}${blocked}
@@ -31219,6 +31388,7 @@ function _renderAcqTerms() {
   if (countEl) countEl.textContent = totalTerms ? `${totalVerified} of ${totalTerms} verified` : '';
   el.innerHTML = warn + (sections || '<div class="acq-terms-empty">No lease documents have been read for terms yet.</div>');
   _acqBindTermControls(el);
+  _acqUpdateStaleNotice();
 }
 
 // Delegated, bound once — the panel is re-rendered wholesale.
@@ -31228,7 +31398,8 @@ function _acqBindTermControls(el) {
   el.addEventListener('click', (ev) => {
     const t = ev.target;
     const hit = (sel) => t.closest && t.closest(sel);
-    const btn = hit('.acq-term-confirm') || hit('.acq-term-correct') || hit('.acq-term-reject') || hit('.acq-term-reopen');
+    const btn = hit('.acq-term-confirm') || hit('.acq-term-correct') || hit('.acq-term-reject') || hit('.acq-term-reopen')
+             || hit('.acq-term-enter');
     if (!btn || btn.disabled) return;
     ev.preventDefault();
     const field = btn.getAttribute('data-field');
@@ -31237,6 +31408,7 @@ function _acqBindTermControls(el) {
     else if (btn.classList.contains('acq-term-correct')) acqCorrectTerm(family, field);
     else if (btn.classList.contains('acq-term-reject'))  acqRejectTerm(family, field);
     else if (btn.classList.contains('acq-term-reopen'))  acqReopenTerm(family, field);
+    else if (btn.classList.contains('acq-term-enter'))   acqEnterTerm(family, field);
   });
 }
 
@@ -31248,17 +31420,27 @@ function _acqTermFor(familyId, field) {
   return r && r.terms ? r.terms[field] : null;
 }
 
+// After any act: the panel, then the analysis the act may have changed (§4l).
+// The review is captured before the act's first await, so the refresh lands
+// on the review the act belongs to.
+async function _acqAfterAct(reviewId) {
+  _renderAcqTerms();
+  await _acqRefreshAnalysis(reviewId);
+}
+
 async function acqConfirmTerm(familyId, field) {
+  const reviewId = _activeAcqId;
   const term = _acqTermFor(familyId, field);
   if (!term) return;
   await _acqSaveDecision({ familyId, fieldKey: field, action: 'confirm',
     sourceDocumentId: term.governingDocumentId || undefined,
     sourceQuote: term.quote || undefined,
     sourcePage: term.page == null ? undefined : term.page }, term);
-  _renderAcqTerms();
+  await _acqAfterAct(reviewId);
 }
 
 async function acqCorrectTerm(familyId, field) {
+  const reviewId = _activeAcqId;
   const term = _acqTermFor(familyId, field);
   if (!term) return;
   const current = _acqTermValue(term);
@@ -31272,22 +31454,61 @@ async function acqCorrectTerm(familyId, field) {
     // The AI reading being replaced is recorded, not overwritten.
     previousValue: term.value == null ? undefined : String(term.value),
     sourceDocumentId: term.governingDocumentId || undefined }, term);
-  _renderAcqTerms();
+  await _acqAfterAct(reviewId);
 }
 
 async function acqRejectTerm(familyId, field) {
+  const reviewId = _activeAcqId;
   const term = _acqTermFor(familyId, field);
   if (!term) return;
   await _acqSaveDecision({ familyId, fieldKey: field, action: 'reject',
     previousValue: term.value == null ? undefined : String(term.value) }, term);
-  _renderAcqTerms();
+  await _acqAfterAct(reviewId);
 }
 
 async function acqReopenTerm(familyId, field) {
+  const reviewId = _activeAcqId;
   const term = _acqTermFor(familyId, field);
   if (!term) return;
   await _acqSaveDecision({ familyId, fieldKey: field, action: 'reopen' }, term);
-  _renderAcqTerms();
+  await _acqAfterAct(reviewId);
+}
+
+// ENTER a term no document establishes (§4l). The person is told, before and
+// after typing, that the value will be theirs and that no document supports
+// it; the row written is a correction with every source column empty, so it
+// can never be read back as citing a document.
+const _ACQ_TYPE_HINT = {
+  number: 'a number', money: 'a dollar amount', percent: 'a percentage',
+  date: 'a date as YYYY-MM-DD', boolean: 'yes or no', text: 'text',
+};
+async function acqEnterTerm(familyId, field) {
+  const reviewId = _activeAcqId;
+  const AT = _AT();
+  const term = _acqTermFor(familyId, field);
+  if (!AT || !term || term.state !== 'missing') return;
+  const meta = AT.FIELD_META[field] || {};
+  const hint = meta.type === 'enum' ? 'one of: ' + (meta.values || []).join(', ')
+             : (_ACQ_TYPE_HINT[meta.type] || 'a value');
+  const typed = (typeof prompt === 'function')
+    ? prompt(`Enter “${term.label}”.\n\nNo document on file establishes this term. What you enter will be recorded as `
+             + `entered by a person, with no document behind it.\n\nEnter ${hint}:`, '')
+    : null;
+  if (typed === null || String(typed).trim() === '') return;
+  const value = AT.normalizeFieldValue(field, String(typed).trim(), false);
+  if (value === null || value === undefined) {
+    showToast('⚠️ That is not ' + hint + '.', { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return;
+  }
+  const shown = _acqTermValue({ value, type: meta.type });
+  const sure = (typeof confirm === 'function')
+    ? confirm(`Record “${term.label}” as ${shown}?\n\nVerified · Entered by a person · No document on file supports this value.`)
+    : false;
+  if (!sure) return;
+  const row = await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
+    newValue: String(typed).trim(), entered: true }, term);
+  if (!row) return;
+  await _acqAfterAct(reviewId);
 }
 
 // ── Where a corrected document belongs (P4-3 remediation, Issue B) ───────────
@@ -32006,8 +32227,9 @@ async function convertAcquisitionToProperty() {
   if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Converting…'; }
 
   try {
-    // Build the property object from the review (pure engine function)
-    const prop = AcquisitionEngine.buildPropertyFromReview(review);
+    // Build the property object from the review (pure engine function) — from
+    // the canonical rows: one tenant per leasehold, resolved values (§4l).
+    const prop = AcquisitionEngine.buildPropertyFromReview(_acqConversionReview(review));
 
     // Register in _props immediately so portfolio renders without a round-trip
     _props.push(prop);
@@ -32112,7 +32334,8 @@ function _updateAcqAnalyzeBtn() {
   const btn  = document.getElementById('acqAnalyzeBtn');
   const note = document.getElementById('acqAnalyzeNote');
   if (!btn) return;
-  const hasTenants  = _acqTenants.some(t => t.tenant_name || t.tenantName);
+  // A leasehold is a tenant even when its raw upload rows were replaced (§4l).
+  const hasTenants  = _acqTenants.some(t => t.tenant_name || t.tenantName) || _acqFamilyRows(_activeAcqId).length > 0;
   const hasInvoices = _acqInvoices.some(i => i.amount);
   const hasSqFt     = _acqSqFt > 0;
   const ready = hasTenants && hasInvoices && hasSqFt;
@@ -32410,11 +32633,11 @@ async function runAcquisitionAnalysis() {
     const AE = window.AcquisitionEngine;
     if (!AE) throw new Error('AcquisitionEngine not loaded');
 
-    const tenants  = _acqTenants.filter(t => (t.tenant_name || t.tenantName) && t._status !== 'error');
-    const invoices = _acqInvoices.filter(i => i.amount && i._status !== 'error');
-    const report   = AE.buildAcquisitionReport(tenants, invoices, _acqSqFt);
+    // One row per leasehold, from the resolved terms (§4l) — not one per file.
+    review.data = review.data || {};
+    const built = _acqBuildAnalysis(review);
+    const { report, tenants, invoices } = built;
 
-    review.data      = review.data || {};
     review.data.analysis = report;
     review.status    = 'complete';
     review.updated_at = new Date().toISOString();
@@ -32626,7 +32849,9 @@ function _renderAcqReport(report, container) {
   </div>`;
 
   const riskTabContent = `${execSummaryInline}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  _acqRentRollReport   = report;
   const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
+  _acqRentRollReport   = null;
 
   container.innerHTML = `
   <div class="acq-report">
@@ -32641,6 +32866,43 @@ function _renderAcqReport(report, container) {
       ${rrTabContent}
     </div>
   </div>`;
+  _acqUpdateStaleNotice();
+}
+
+// ── What a Rent Roll row says about itself (§4l) ─────────────────────────────
+//
+// A row from a leasehold draws each cell as the resolved term stands:
+// Contested and Not established are words, never a dash; an entered value is
+// tagged. A row nothing represents — a raw upload row in no leasehold — is
+// marked as such and nothing on it is dressed as verified. A row from an
+// analysis run before §4l (no _source) draws as it always did.
+function _acqRentRollRowAttrs(t) {
+  if (!t || !t._source) return '';
+  return ` data-source="${esc(t._source)}"` + (t._leaseholdId ? ` data-leasehold="${esc(t._leaseholdId)}"` : '');
+}
+function _acqRentRollName(t) {
+  const AL = _AL();
+  const name = esc(t && t.tenant_name);
+  if (!AL || !t || t._source !== AL.SOURCE.UNFILED) return name;
+  return name + '<div class="acq-rr-unfiled" title="' + esc(AL.UNFILED_NOTE) + '">Not in a leasehold · not verified</div>';
+}
+function _acqRentRollCell(t, field, text) {
+  const AL = _AL();
+  if (!AL || !t || t._source !== AL.SOURCE.LEASEHOLD) return text;
+  const st = AL.cellState(t, field);
+  if (st === 'contested') return '<span class="acq-rr-contested" title="Documents disagree and nothing has been chosen">Contested</span>';
+  if (st === 'missing')   return '<span class="acq-rr-missing" title="No document on file establishes this">Not established</span>';
+  if (st === 'entered')   return text + ' <span class="acq-rr-entered" title="Verified · Entered by a person · No document on file supports this value">Entered</span>';
+  return text;
+}
+// One line above the table: what the rows are.
+function _acqCanonicalLine(report) {
+  const c = report && report.canonical;
+  if (!c) return '';
+  const parts = [`${c.leaseholds} leasehold${c.leaseholds === 1 ? '' : 's'} from the lease terms`];
+  if (c.unfiled) parts.push(`${c.unfiled} row${c.unfiled === 1 ? '' : 's'} not in a leasehold (from file extraction, not verified)`);
+  if (c.dropped) parts.push(`${c.dropped} source file${c.dropped === 1 ? '' : 's'} represented by a leasehold`);
+  return `<div class="acq-canonical-line" data-leaseholds="${c.leaseholds}" data-unfiled="${c.unfiled}">${esc(parts.join(' · '))}</div>`;
 }
 
 // ── Tab switching ──────────────────────────────────────────────────────────────
@@ -32678,15 +32940,16 @@ function _renderRentRollRows(ts) {
     const d = new Date(iso + 'T12:00:00');
     return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
   };
+  const C = _acqRentRollCell;
   return ts.map(t => `
-    <tr>
-      <td class="acq-ts-name">${esc(t.tenant_name)}</td>
-      <td>${esc(t.suite || '—')}</td>
-      <td>${fmtSqft(t.leased_sqft)}</td>
-      <td class="acq-ts-term">${fmtDate(t.lease_start)}&nbsp;–&nbsp;${fmtDate(t.lease_end)}</td>
-      <td>${fmtMoney(t.base_rent)}</td>
-      <td class="acq-ts-renewal">${esc(t.renewal_options || '—')}</td>
-      <td>${fmtMoney(t.security_deposit)}</td>
+    <tr${_acqRentRollRowAttrs(t)}>
+      <td class="acq-ts-name">${_acqRentRollName(t)}</td>
+      <td>${C(t, 'suite', esc(t.suite || '—'))}</td>
+      <td>${C(t, 'leased_sqft', fmtSqft(t.leased_sqft))}</td>
+      <td class="acq-ts-term">${C(t, 'start_date', fmtDate(t.lease_start))}&nbsp;–&nbsp;${C(t, 'end_date', fmtDate(t.lease_end))}</td>
+      <td>${C(t, 'base_rent', fmtMoney(t.base_rent))}</td>
+      <td class="acq-ts-renewal">${C(t, 'renewal_options', esc(t.renewal_options || '—'))}</td>
+      <td>${C(t, 'security_deposit', fmtMoney(t.security_deposit))}</td>
       <td class="acq-ts-cam">${esc(t.cam_structure || '—')}</td>
     </tr>`).join('');
 }
@@ -32707,6 +32970,10 @@ function _sortAcqRentRoll(col) {
     if (th.dataset.col === col) th.classList.add(_acqRentRollSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
   });
 }
+
+// The report whose Rent Roll tab is being drawn, for the line above the
+// table. Set by _renderAcqReport around its one call; null otherwise.
+let _acqRentRollReport = null;
 
 function _renderRentRollTab(rentRoll, tenantSummary) {
   if (!rentRoll) return '<div style="color:var(--text-4);padding:16px 0;">Run analysis to generate the rent roll.</div>';
@@ -32795,6 +33062,8 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
   return `
   ${kpiCards}
   <div class="acq-section-sub">Rent Roll</div>
+  ${_acqCanonicalLine(_acqRentRollReport)}
+  <div class="acq-analysis-stale" style="display:none"></div>
   <div class="acq-ts-scroll">
     <table class="acq-ts-table">
       <thead><tr>${thead}</tr></thead>
@@ -32819,13 +33088,33 @@ function acqExportRentRollCsv() {
     return;
   }
   const ts = review.data.analysis.tenantSummary;
+  // The resolved values (§4l), with three columns saying what each row is:
+  // its basis, the fields a person entered, and the fields still contested.
+  // A contested cell says so rather than carrying either figure.
+  const AL = _AL();
   const headers = ['Tenant','Suite','Sq Ft','Lease Start','Lease End',
-                   'Base Rent/yr','Renewal Options','Security Deposit','CAM Structure'];
+                   'Base Rent/yr','Renewal Options','Security Deposit','CAM Structure',
+                   'Basis','Entered by a person','Contested'];
   const escape  = v => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const CSV_FIELDS = [['suite','suite'], ['leased_sqft','leased_sqft'], ['lease_start','start_date'], ['lease_end','end_date'],
+                      ['base_rent','base_rent'], ['renewal_options','renewal_options'], ['security_deposit','security_deposit']];
+  const cell = (t, key, field) => {
+    const raw = t[key] ?? '';
+    if (!AL || t._source !== AL.SOURCE.LEASEHOLD) return raw;
+    const st = AL.cellState(t, field);
+    return st === 'contested' ? 'Contested' : st === 'missing' ? '' : raw;
+  };
+  const label = f => ((_AT() && _AT().FIELD_META[f]) || {}).label || f;
+  const basis = t => !AL || !t._source ? '' : t._source === AL.SOURCE.LEASEHOLD ? 'Leasehold' : 'Not in a leasehold — not verified';
+  const listOf = (t, pred) => (AL && t._source === AL.SOURCE.LEASEHOLD)
+    ? Object.keys(t._states || {}).filter(pred).map(label).join('; ') : '';
   const lines   = [headers, ...ts.map(t => [
-    t.tenant_name || '', t.suite || '', t.leased_sqft ?? '',
-    t.lease_start || '', t.lease_end || '', t.base_rent ?? '',
-    t.renewal_options || '', t.security_deposit ?? '', t.cam_structure || '',
+    t.tenant_name || '',
+    ...CSV_FIELDS.map(([key, field]) => cell(t, key, field)),
+    t.cam_structure || '',
+    basis(t),
+    listOf(t, f => (t._origins || {})[f] === 'entered'),
+    listOf(t, f => t._states[f] === 'conflicting'),
   ])].map(r => r.map(escape).join(','));
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
