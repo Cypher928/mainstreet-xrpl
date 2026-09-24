@@ -153,10 +153,12 @@ const MUTANTS = [
     from: '      const derived = term.derived',
     to:   '      const derived = false' },
   { id: 'U07', file: S, why: 'the contradiction is dropped from the row',
-    from: '      const conflict = (term.contradictions && term.contradictions.length)',
-    to:   '      const conflict = (false)' },
+    // §4m: the contradiction line now follows each document's own reading.
+    from: '        + ((term.contradictions && term.contradictions.length)',
+    to:   '        + ((false)' },
   { id: 'U08', file: S, why: 'the clause is dropped, so a verified value has no provenance',
-    from: '      const quote = term.quote',
+    // §4m: a contested term shows its clauses per document instead.
+    from: '      const quote = !contested && term.quote',
     to:   '      const quote = false' },
   { id: 'U09', file: S, why: 'the terms panel is not refreshed with the documents',
     from: '  _acqBindDocControls(el);\n  _renderAcqTerms();',

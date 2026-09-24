@@ -31237,7 +31237,7 @@ function _renderAcqDocuments() {
 const _ACQ_TERM_STATE = {
   verified:     { label: 'Verified',     cls: 'verified' },
   ai_extracted: { label: 'AI extracted', cls: 'ai'       },
-  conflicting:  { label: 'Conflicting',  cls: 'conflict' },
+  conflicting:  { label: 'Contested',    cls: 'conflict' },   // §4m: the documents disagree; nothing chosen
   unclear:      { label: 'Unclear',      cls: 'unclear'  },
   missing:      { label: 'Missing',      cls: 'missing'  },
 };
@@ -31267,57 +31267,94 @@ function _renderAcqTerms() {
   if (!AT || !families.length) {
     if (countEl) countEl.textContent = '';
     el.innerHTML = '<div class="acq-terms-empty">No leasehold has been identified yet. '
-      + 'Classify a lease in Documents above and its terms appear here.</div>';
+      + 'Classify a lease in Documents below and its terms appear here.</div>'
+      + (AT ? _acqUnfiledListHtml(_activeAcqId) : '');
+    _acqBindLeaseMatrixControls(el);
     _acqUpdateStaleNotice();
     return;
   }
+
+  // Lease Matrix → Leasehold Detail (§4m). The evidence below is drawn for the
+  // one leasehold whose record is open; with none open, the matrix is drawn
+  // instead. The header says how ready each LEASEHOLD is — never a count of
+  // every possible term; the record carries its own term counts.
+  const openId = _acqOpenLeaseholdId(families);
+  const LM = _LM();
 
   const warn = _acqDecisionsUnavailable
     ? '<div class="acq-docs-warn">Decisions are <strong>not being filed</strong> — this project’s database is behind the app. '
       + 'Run <code>migrations/026_acquisition_term_decisions.sql</code> in Supabase to keep them.</div>'
     : '';
 
-  let totalVerified = 0, totalTerms = 0;
   const sections = families.map(fam => {
+    if (fam.id !== openId) return '';
     const resolved = _acqFamilyTerms(fam.id);
     if (!resolved) return '';
     const s = resolved.summary;
-    totalVerified += s.verified; totalTerms += s.total;
 
-    const rows = AT.FIELDS.map(field => {
+    // In the order a person reviews a lease (§4m), every term exactly once.
+    const rows = (LM ? LM.detailOrder(AT.FIELDS) : AT.FIELDS).map(field => {
       const term = resolved.terms[field];
       const st   = _ACQ_TERM_STATE[term.state] || _ACQ_TERM_STATE.missing;
       const shown = _acqTermValue(term);
 
+      // A CONTESTED term (§4m) shows no value of its own: no document's reading
+      // is presented as the answer. It says so first, then lists what each
+      // document says, in file-name order.
+      const contested = term.state === 'conflicting';
+
       // MISSING IS NOT NONE, on screen.
-      const valueHtml = shown === null
+      const valueHtml = contested
+        ? `<span class="acq-term-contested">Contested — the documents disagree. Nothing has been chosen.</span>`
+        : shown === null
         ? `<span class="acq-term-missing">${esc(term.state === 'missing'
              ? 'No document on file establishes this'
              : 'No value could be read')}</span>`
         : `<span class="acq-term-value">${esc(shown)}</span>`;
 
-      // Provenance: the document, and the clause it came from.
-      const src = term.governingDocumentName
+      // Provenance: the document, and the clause it came from. For a contested
+      // term every document's own reading is listed instead (below).
+      const src = !contested && term.governingDocumentName
         ? `<div class="acq-term-src">${esc(term.governingDocumentName)}`
           + (term.governingDocType ? ' · ' + esc(AD.docTypeLabel(term.governingDocType)) : '')
           + (term.page != null ? ' · p.' + esc(term.page) : '')
           + (term.confidence != null ? ` · <span class="acq-term-conf">confidence ${esc(term.confidence)}</span>` : '')
           + '</div>' : '';
-      const quote = term.quote
+      const quote = !contested && term.quote
         ? `<div class="acq-term-quote">&ldquo;${esc(term.quote)}&rdquo;</div>` : '';
 
       // A figure the clause does not literally state.
       const derived = term.derived
         ? `<div class="acq-term-derived">⚠ Calculated, not quoted: the clause gives a rate or a component, not this figure.</div>` : '';
 
-      // A contradiction shows BOTH values and the documents asserting them.
-      const conflict = (term.contradictions && term.contradictions.length)
-        ? `<div class="acq-term-conflict">Documents disagree: `
+      // A contradiction shows BOTH values and the documents asserting them:
+      // each document's reading, with its clause, page and confidence, then
+      // the line naming the disagreement.
+      const readings = (contested && LM) ? LM.contestedReadings(term) : [];
+      // Once a person has confirmed or corrected the term, the disagreement
+      // is history: the values and documents stay on the row, and the row
+      // says a person chose — never that nothing has been chosen. A rejection
+      // chooses nothing, and still says so.
+      const selected = !contested && !!term.decision
+        && (term.decision.action === 'confirm' || term.decision.action === 'correct');
+      const conflict = (readings.length
+        ? '<ul class="acq-term-readings">' + readings.map(r => '<li class="acq-term-reading">'
+            + '<span class="acq-term-reading-value">' + esc(_acqTermValue({ value: r.value, type: term.type }) || '—') + '</span>'
+            + '<span class="acq-term-src"> ' + esc(r.fileName || 'Unnamed document')
+            + (r.docType ? ' · ' + esc(AD.docTypeLabel(r.docType)) : '')
+            + (r.page != null ? ' · p.' + esc(r.page) : '')
+            + (r.confidence != null ? ' · confidence ' + esc(r.confidence) : '') + '</span>'
+            + (r.quote ? '<div class="acq-term-quote">&ldquo;' + esc(r.quote) + '&rdquo;</div>' : '')
+            + '</li>').join('') + '</ul>' : '')
+        + ((term.contradictions && term.contradictions.length)
+        ? (selected
+          ? `<div class="acq-term-conflict" data-resolved="person">Documents previously contained conflicting values: `
+          : `<div class="acq-term-conflict">Documents disagree: `)
           + term.contradictions.map(c =>
               esc((c.values || []).join(' vs ')) + ' (' + esc((c.documents || []).join(', ')) + ')').join('; ')
-          + `. Nothing has been chosen for you.</div>` : '';
+          + (selected ? `. This value was selected by a person.</div>` : `. Nothing has been chosen for you.</div>`) : '');
 
-      const superseded = (term.supersededValues && term.supersededValues.length)
+      const superseded = !contested && (term.supersededValues && term.supersededValues.length)
         ? `<div class="acq-term-superseded">Replaced ${esc(String(term.supersededValues[0].value))}`
           + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '') + '</div>' : '';
 
@@ -31339,7 +31376,9 @@ function _renderAcqTerms() {
       // and silently capped.
       const actionable = term.state !== 'missing';
       const gate = term.canConfirm ? '' : ' disabled';
-      const gateTitle = term.canConfirm ? '' : ` title="${esc(term.blockedReason || '')}"`;
+      const gateTitle = !term.canConfirm ? ` title="${esc(term.blockedReason || '')}"`
+        : contested ? ` title="${esc('Confirm records ' + (shown === null ? 'the reading' : shown) + ' from ' + (term.governingDocumentName || 'the governing document') + ' as the answer. Correct records a different value.')}"`
+        : '';
       const reopen = term.decision
         ? `<button class="acq-term-reopen" data-field="${esc(field)}" data-family="${esc(fam.id)}">Reopen</button>` : '';
       // A missing term has nothing to confirm, correct or reject. A person may
@@ -31374,7 +31413,7 @@ function _renderAcqTerms() {
     }).join('');
 
     const sub = [
-      s.verified + ' verified', s.ai_extracted + ' AI', s.conflicting + ' conflicting',
+      s.verified + ' verified', s.ai_extracted + ' AI', s.conflicting + ' contested',
       s.unclear + ' unclear', s.missing + ' missing',
     ].join(' · ');
 
@@ -31385,10 +31424,261 @@ function _renderAcqTerms() {
         </div>${rows}</div>`;
   }).filter(Boolean).join('');
 
-  if (countEl) countEl.textContent = totalTerms ? `${totalVerified} of ${totalTerms} verified` : '';
-  el.innerHTML = warn + (sections || '<div class="acq-terms-empty">No lease documents have been read for terms yet.</div>');
+  if (countEl) countEl.textContent = LM ? LM.summaryLine(_acqMatrixFor(_activeAcqId)) : '';
+  el.innerHTML = warn + (openId
+    ? _acqLeaseholdHeadHtml(openId) + (sections || '<div class="acq-terms-empty">No lease documents have been read for terms yet.</div>')
+    : _acqLeaseMatrixHtml(_activeAcqId));
   _acqBindTermControls(el);
+  _acqBindLeaseMatrixControls(el);
   _acqUpdateStaleNotice();
+}
+
+// ── Lease Matrix → Leasehold Detail (§4m) ────────────────────────────────────
+//
+// The review opens on the Lease Matrix: one row per leasehold, read from the
+// canonical projection (§4l) by acquisition-lease-matrix.js. A row opens that
+// leasehold's record — a header saying what needs attention, then the Lease
+// Terms evidence above, unchanged, for that leasehold alone. The whole panel
+// is redrawn from the family id on every open, so nothing from the last
+// leasehold survives into the next.
+function _LM() { return window.AcquisitionLeaseMatrix; }
+
+// Whose record is open: { reviewId, familyId }, or null for the matrix. It
+// belongs to one review; opening any other review lands on its matrix.
+let _acqOpenLeasehold = null;
+
+// The open leasehold's family id, if it still belongs to the review on screen
+// and still exists. Anything else is dropped rather than drawn.
+function _acqOpenLeaseholdId(families) {
+  const o = _acqOpenLeasehold;
+  if (!o) return null;
+  if (o.reviewId !== _activeAcqId || !(families || []).some(f => f && f.id === o.familyId)) {
+    _acqOpenLeasehold = null;
+    return null;
+  }
+  return o.familyId;
+}
+
+// The matrix's view of a review: the canonical rows, as the matrix reads them.
+function _acqMatrixFor(reviewId) {
+  const LM = _LM();
+  if (!LM || !reviewId) return null;
+  return LM.buildMatrix(_acqCanonicalRows(reviewId).rows, { terms: _AT() });
+}
+
+const _ACQ_LM_STATUS_CLS = { issues: 'issues', missing: 'missing', unclear: 'unclear', unverified: 'unverified', verified: 'verified' };
+
+// One cell: the value with its state, or the words for having none.
+function _acqLmCellHtml(cell) {
+  if (!cell) return '<span class="acq-lm-v missing">—</span>';
+  const title = cell.stateText ? ` title="${esc(cell.label + ': ' + cell.stateText)}"` : '';
+  if (cell.state === 'contested') return `<span class="acq-lm-v contested" data-state="contested"${title}>Contested</span>`;
+  if (cell.text === null) return `<span class="acq-lm-v missing" data-state="missing"${title} aria-label="${esc(cell.label)}: not established">—</span>`;
+  const mark = cell.state === 'verified' ? '<span class="acq-lm-mark" aria-hidden="true">✓</span>'
+             : cell.state === 'entered'  ? '<span class="acq-lm-mark entered" aria-hidden="true">✎</span>' : '';
+  return `<span class="acq-lm-v ${esc(cell.state)}" data-state="${esc(cell.state)}"${title}>${esc(cell.text)}${mark}</span>`;
+}
+
+function _acqUnfiledListHtml(reviewId) {
+  const m = _acqMatrixFor(reviewId);
+  if (!m || !m.unfiled.length) return '';
+  const n = m.unfiled.length;
+  return `<details class="acq-lm-unfiled">
+      <summary>${n} ${n === 1 ? 'file is' : 'files are'} not in a leasehold — as extracted from the file, not verified</summary>
+      <ul>${m.unfiled.map(u => `<li><span class="acq-lm-unfiled-name">${esc(u.tenant)}</span>`
+        + (u.sqftText ? ` · ${esc(u.sqftText)} SF` : '')
+        + (u.fileName ? ` <span class="acq-lm-unfiled-file">${esc(u.fileName)}</span>` : '') + '</li>').join('')}</ul>
+      <div class="acq-lm-unfiled-note">Classify the file in Documents to give it a leasehold and a record of its own.</div>
+    </details>`;
+}
+
+function _acqLeaseMatrixHtml(reviewId) {
+  const m = _acqMatrixFor(reviewId);
+  if (!m) return '';
+  const rows = m.leaseholds.map(e => `
+      <tr class="acq-lm-row" data-leasehold="${esc(e.leaseholdId)}" tabindex="0" role="button"
+          aria-label="${esc('Open ' + e.tenant + ' — ' + e.status.label)}">
+        <td class="acq-lm-tenant" data-label="Tenant"><span class="acq-lm-name">${esc(e.tenant)}</span></td>
+        <td data-label="Leased SF">${_acqLmCellHtml(e.cells.leased_sqft)}</td>
+        <td data-label="Base rent">${_acqLmCellHtml(e.cells.base_rent)}</td>
+        <td data-label="Expiration">${_acqLmCellHtml(e.cells.end_date)}</td>
+        <td data-label="Lease / CAM"><span class="acq-lm-struct">${e.structure.parts.length
+          ? e.structure.parts.map(p => `<span class="acq-lm-v ${esc(p.state)}" data-state="${esc(p.state)}">${esc(p.text)}</span>`).join('<span class="acq-lm-sep"> · </span>')
+          : '<span class="acq-lm-v missing" data-state="missing" aria-label="Lease type and cap not established">—</span>'}</span></td>
+        <td data-label="Status"><span class="acq-lm-status ${esc(_ACQ_LM_STATUS_CLS[e.status.kind] || '')}" data-status="${esc(e.status.kind)}"
+            title="${esc(e.attention.map(a => a.text).join('\n'))}">${esc(e.status.label)}</span></td>
+      </tr>`).join('');
+  const n = m.leaseholds.length;
+  return `<div class="acq-lm" data-leaseholds="${n}" data-unfiled="${m.unfiled.length}">
+      <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · open one for its terms, the documents behind them, and what needs attention.</div>
+      <table class="acq-lm-table">
+        <thead><tr><th>Tenant</th><th>Leased SF</th><th>Base rent</th><th>Expiration</th><th>Lease / CAM</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="acq-lm-legend">✓ verified · ✎ entered by a person, no document · plain: read by AI, not yet verified · — not established</div>
+    </div>${_acqUnfiledListHtml(reviewId)}`;
+}
+
+// The top of one leasehold's record, in layers (§4m): the lease overview, what
+// needs attention, the lease terms at a glance, the documents behind them —
+// and then the Evidence & decisions below (the Lease Terms rows, unchanged),
+// where every clause, page, confidence and control lives.
+const _ACQ_LH_OVERVIEW = ['suite', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'base_rent', 'cap', 'security_deposit'];
+
+function _acqLhValueHtml(cell) {
+  if (!cell) return '<span class="acq-lm-v missing">—</span>';
+  if (cell.state === 'contested') return '<span class="acq-lm-v contested" data-state="contested">Contested</span>';
+  if (cell.text === null) return `<span class="acq-lm-v missing" data-state="missing" title="${esc(cell.label)}: not established">—</span>`;
+  const mark = cell.state === 'verified' ? '<span class="acq-lm-mark" aria-hidden="true">✓</span>'
+             : cell.state === 'entered'  ? '<span class="acq-lm-mark entered" aria-hidden="true">✎</span>' : '';
+  return `<span class="acq-lm-v ${esc(cell.state)}" data-state="${esc(cell.state)}">${esc(cell.text)}${mark}</span>`;
+}
+
+function _acqLeaseholdHeadHtml(familyId) {
+  const LM = _LM(), AD = _AD();
+  const m = _acqMatrixFor(_activeAcqId);
+  const e = m && m.leaseholds.find(x => x.leaseholdId === familyId);
+  if (!LM || !e) return '';
+  const row = _acqCanonicalRows(_activeAcqId).rows.find(r => r && r._leaseholdId === familyId) || {};
+  const resolved = _acqFamilyTerms(familyId);
+
+  // 1 · Lease overview — the canonical values, as the matrix reads them.
+  const overview = `<section class="acq-lh-sec acq-lh-overview" data-section="overview">
+      <h5 class="acq-lh-sec-head">Lease overview</h5>
+      <dl class="acq-lh-facts">${_ACQ_LH_OVERVIEW.map(f => {
+        const c = LM.cellFor(row, f, { terms: _AT() });
+        return `<div class="acq-lh-fact" data-field="${esc(f)}"><dt>${esc(c.label)}</dt><dd>${_acqLhValueHtml(c)}</dd></div>`;
+      }).join('')}</dl>
+    </section>`;
+
+  // 2 · Needs attention — each item a link to its evidence below.
+  const heading = LM.attentionHeading(e);
+  const attn = `<section class="acq-lh-sec" data-section="attention">
+      <h5 class="acq-lh-sec-head">Needs attention</h5>${heading
+      ? `<div class="acq-lh-attn" role="region" aria-label="${esc(heading)}">
+          <div class="acq-lh-attn-head">${esc(heading)}</div>
+          <ul>${e.attention.map(a => `<li><button type="button" class="acq-lh-attn-item ${esc(a.kind)}" data-field="${esc(a.field)}">${esc(a.text)}</button></li>`).join('')}</ul>
+        </div>`
+      : '<div class="acq-lh-attn clear">Nothing needs attention: no term is contested, and every key term has a value.</div>'}
+    </section>`;
+
+  // 3 · Lease terms at a glance, in review order; a term opens its evidence.
+  // CORE lease terms first, always shown; the OTHER lease terms (CAM details,
+  // obligations and special terms) folded beneath, their counts on the fold
+  // so nothing in them is hidden from the reader — and opened on its own when
+  // one of them is contested.
+  const sections = resolved ? LM.termSections(resolved.terms, { terms: _AT() }) : [];
+  const groupHtml = g => `<div class="acq-lh-tgroup" data-group="${esc(g.key)}">
+          <div class="acq-lh-tgroup-head">${esc(g.title)}</div>
+          ${g.rows.map(r => `<button type="button" class="acq-lh-term" data-field="${esc(r.field)}" data-state="${esc(r.state)}">
+              <span class="acq-lh-term-label">${esc(r.label)}</span>
+              ${_acqLhValueHtml({ label: r.label, state: r.state, text: r.text })}
+            </button>`).join('')}
+        </div>`;
+  const tierHtml = t => t.key === 'core'
+    ? `<div class="acq-lh-tier" data-tier="core">
+        <div class="acq-lh-tier-head">${esc(t.title)} <span class="acq-lh-tier-sub">${esc(LM.sectionLine(t))}</span></div>
+        ${t.groups.map(groupHtml).join('')}
+      </div>`
+    : `<details class="acq-lh-tier acq-lh-other" data-tier="${esc(t.key)}"${(t.counts.contested || _acqLhOtherOpen[familyId]) ? ' open' : ''}>
+        <summary class="acq-lh-tier-head">${esc(t.title)} <span class="acq-lh-tier-sub">${esc(LM.sectionLine(t))}</span></summary>
+        ${t.groups.map(groupHtml).join('')}
+      </details>`;
+  const terms = `<section class="acq-lh-sec" data-section="terms">
+      <h5 class="acq-lh-sec-head">Lease terms</h5>
+      ${resolved ? `<div class="acq-lh-terms-sub">${esc(resolved.summary.verified + ' of ' + resolved.summary.total + ' terms verified · ' + resolved.summary.conflicting + ' contested · ' + resolved.summary.missing + ' not established')}</div>` : ''}
+      ${sections.map(tierHtml).join('')}
+    </section>`;
+
+  // 4 · The documents behind this leasehold.
+  const docs = _acqDocRows(_activeAcqId).filter(d => d && d.family_id === familyId);
+  const documents = `<section class="acq-lh-sec" data-section="documents">
+      <h5 class="acq-lh-sec-head">Documents</h5>
+      ${docs.length ? `<ul class="acq-lh-docs">${docs.map(d => {
+        const opener = d.storage_path && window.docLinkHtml
+          ? docLinkHtml(d.storage_path, '&#x1F4C4; Open original', { className: 'acq-doc-open', title: 'Open ' + (d.file_name || 'the original') })
+          : '<span class="acq-doc-nofile">Original not on file</span>';
+        return `<li class="acq-lh-doc" data-doc="${esc(d.id)}">
+            <span class="acq-lh-doc-name">${esc(d.file_name || 'Unnamed document')}</span>
+            <span class="acq-lh-doc-meta">${esc([d.doc_type ? AD.docTypeLabel(d.doc_type) : 'Unclassified',
+              d.doc_date || null, d.doc_type_status === 'proposed' ? 'type not yet confirmed' : null].filter(Boolean).join(' · '))}</span>
+            ${opener}
+          </li>`;
+      }).join('')}</ul>` : '<div class="acq-terms-empty">No document is filed into this leasehold.</div>'}
+    </section>`;
+
+  return `<div class="acq-lh" data-leasehold="${esc(familyId)}">
+      <button type="button" class="acq-lh-back">&#x2190; Back to Lease Matrix</button>
+      <h4 class="acq-lh-title">${esc(e.tenant)}</h4>
+      <div class="acq-lh-headline">${esc(LM.headline(e))}</div>
+      ${overview}${attn}${terms}${documents}
+      <h5 class="acq-lh-sec-head acq-lh-evidence-head" data-section="evidence">Evidence &amp; decisions</h5>
+      <div class="acq-lh-evidence-note">Every term with the document and clause behind it, its page and confidence, and what a person decided — Confirm, Correct, Reject, Reopen or Enter here.</div>
+    </div>`;
+}
+
+// Delegated, bound once — the panel is re-rendered wholesale.
+// Whether a person unfolded a leasehold's Other lease terms, so a re-render
+// (after a decision) leaves them as they were. Keyed by leasehold.
+let _acqLhOtherOpen = {};
+
+function _acqBindLeaseMatrixControls(el) {
+  if (!el || el._acqLmBound) return;
+  el._acqLmBound = true;
+  // 'toggle' does not bubble; it is caught on the way down.
+  el.addEventListener('toggle', (ev) => {
+    const d = ev.target;
+    if (!d || !d.classList || !d.classList.contains('acq-lh-other')) return;
+    const lh = d.closest('.acq-lh');
+    if (lh) _acqLhOtherOpen[lh.getAttribute('data-leasehold')] = d.open;
+  }, true);
+  el.addEventListener('click', (ev) => {
+    const t = ev.target;
+    const row = t.closest && t.closest('.acq-lm-row');
+    if (row) { ev.preventDefault(); acqOpenLeasehold(row.getAttribute('data-leasehold')); return; }
+    if (t.closest && t.closest('.acq-lh-back')) { ev.preventDefault(); acqBackToLeaseMatrix(); return; }
+    const item = t.closest && (t.closest('.acq-lh-attn-item') || t.closest('.acq-lh-term'));
+    if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); }
+  });
+  el.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const row = ev.target && ev.target.closest && ev.target.closest('.acq-lm-row');
+    if (!row) return;
+    ev.preventDefault();
+    acqOpenLeasehold(row.getAttribute('data-leasehold'));
+  });
+}
+
+function acqOpenLeasehold(familyId) {
+  if (!familyId || !_activeAcqId) return;
+  if (!_acqFamilyRows(_activeAcqId).some(f => f && f.id === familyId)) return;
+  _acqOpenLeasehold = { reviewId: _activeAcqId, familyId };
+  _renderAcqTerms();
+  const card = document.getElementById('acqTermsCard');
+  if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start' });
+  const back = document.querySelector('#acqTermsList .acq-lh-back');
+  if (back && back.focus) back.focus({ preventScroll: true });
+}
+
+function acqBackToLeaseMatrix() {
+  const from = _acqOpenLeasehold && _acqOpenLeasehold.familyId;
+  _acqOpenLeasehold = null;
+  _renderAcqTerms();
+  // Back where the person left: the row they opened, in view and focused.
+  const row = from ? document.querySelector(`#acqTermsList .acq-lm-row[data-leasehold="${CSS.escape(from)}"]`) : null;
+  if (row) {
+    if (row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+    if (row.focus) row.focus({ preventScroll: true });
+  }
+}
+
+// An attention item takes the person to its term, and marks it briefly.
+function _acqRevealTerm(field) {
+  const r = field ? document.querySelector(`#acqTermsList .acq-term-row[data-field="${CSS.escape(field)}"]`) : null;
+  if (!r) return;
+  if (r.scrollIntoView) r.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  r.classList.add('acq-term-flash');
+  setTimeout(() => r.classList.remove('acq-term-flash'), 1600);
 }
 
 // Delegated, bound once — the panel is re-rendered wholesale.
@@ -31995,6 +32285,7 @@ function selectAcquisitionReview(id) {
   const review = _acqReviews.find(r => r.id === id);
   if (!review) return;
   _activeAcqId        = id;
+  _acqOpenLeasehold   = null;   // a review always opens on its Lease Matrix (§4m)
   _acqActiveTab       = 'risk';
   _acqRentRollSort    = { col: 'tenant_name', dir: 'asc' };
   const d = review.data || {};
@@ -32048,6 +32339,7 @@ function selectAcquisitionReview(id) {
 
 function closeAcquisitionDetail() {
   _activeAcqId = null;
+  _acqOpenLeasehold = null;
   _acqTenants  = [];
   _acqInvoices = [];
   document.getElementById('acqDetailPanel').style.display     = 'none';

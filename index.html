@@ -6325,6 +6325,7 @@
       border-left: 2px solid #334155; padding-left: 8px; overflow-wrap: anywhere; }
     .acq-term-derived { font-size: 0.7rem; color: var(--c-fbbf24, #fbbf24); margin-top: 4px; overflow-wrap: anywhere; }
     .acq-term-conflict { font-size: 0.72rem; color: var(--c-f87171); margin-top: 4px; overflow-wrap: anywhere; }
+    .acq-term-conflict[data-resolved="person"] { color: var(--text-3); }   /* history, not an open issue */
     .acq-term-superseded { font-size: 0.68rem; color: var(--text-4); margin-top: 3px; overflow-wrap: anywhere; }
     .acq-term-decided { font-size: 0.7rem; color: var(--c-4ade80); margin-top: 3px; overflow-wrap: anywhere; }
     .acq-term-blocked { font-size: 0.7rem; color: var(--text-4); margin-top: 4px; overflow-wrap: anywhere; }
@@ -6341,6 +6342,115 @@
     .acq-term-reject:not([disabled])  { border-color: var(--c-f87171); color: var(--c-f87171); }
     .acq-term-actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
     .acq-term-actions button:not([disabled]):hover { border-color: var(--text-3); }
+
+    /* ── Lease Matrix → Leasehold Detail (§4m) ─────────────────────────────
+       One row per leasehold, easy to scan; a row opens the record. The value
+       never stands alone where it is not settled: a contested cell says so, a
+       missing one is a dash with the words behind it. */
+    .acq-lm-intro { font-size: 0.76rem; color: var(--text-4); margin: 6px 2px 8px; }
+    .acq-lm-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .acq-lm-table th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-4); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #1e293b; }
+    .acq-lm-table td { padding: 10px 8px; border-bottom: 1px solid rgba(30, 41, 59, 0.6); color: var(--text-2);
+      vertical-align: top; }
+    .acq-lm-row { cursor: pointer; }
+    .acq-lm-row:hover td, .acq-lm-row:focus td { background: rgba(148, 163, 184, 0.06); }
+    .acq-lm-row:focus { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: -2px; }
+    .acq-lm-name { font-weight: 700; color: var(--text-1, var(--text-2)); }
+    .acq-lm-v { white-space: nowrap; }
+    .acq-lm-v.read, .acq-lm-v.unclear { color: var(--text-3); }
+    .acq-lm-v.unclear { font-style: italic; }
+    .acq-lm-v.contested { color: var(--c-f87171); font-weight: 600; }
+    .acq-lm-v.missing { color: var(--text-4); }
+    .acq-lm-mark { margin-left: 4px; font-size: 0.7rem; color: var(--c-4ade80); }
+    .acq-lm-mark.entered { color: var(--c-fbbf24, #fbbf24); }
+    .acq-lm-sep { color: var(--text-4); }
+    .acq-lm-struct { white-space: nowrap; }
+    .acq-lm-status { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+      border: 1px solid currentColor; border-radius: 8px; padding: 1px 7px; }
+    .acq-lm-status.issues     { color: var(--c-f87171); }
+    .acq-lm-status.missing    { color: var(--text-4); }
+    .acq-lm-status.unclear    { color: #c084fc; }
+    .acq-lm-status.unverified { color: var(--c-fbbf24, #fbbf24); }
+    .acq-lm-status.verified   { color: var(--c-4ade80); }
+    .acq-lm-legend { font-size: 0.68rem; color: var(--text-4); margin: 8px 2px 0; }
+    .acq-lm-unfiled { margin-top: 12px; font-size: 0.74rem; color: var(--text-3);
+      border: 1px solid rgba(251, 191, 36, 0.22); background: rgba(251, 191, 36, 0.05); border-radius: 8px; padding: 8px 10px; }
+    .acq-lm-unfiled summary { cursor: pointer; color: var(--c-fbbf24, #fbbf24); }
+    .acq-lm-unfiled ul { margin: 6px 0 4px; padding-left: 18px; }
+    .acq-lm-unfiled-file { color: var(--text-4); font-size: 0.68rem; }
+    .acq-lm-unfiled-note { color: var(--text-4); font-size: 0.68rem; }
+
+    .acq-lh { padding: 4px 2px 6px; }
+    .acq-lh-back { background: none; border: 1px solid #334155; color: var(--text-3); padding: 4px 11px;
+      border-radius: 6px; font-size: 0.74rem; cursor: pointer; }
+    .acq-lh-back:hover { border-color: var(--text-3); }
+    .acq-lh-title { margin: 12px 0 2px; font-size: 1.05rem; color: var(--text-1, var(--text-2)); }
+    .acq-lh-headline { font-size: 0.85rem; color: var(--text-3); }
+    .acq-lh-attn { margin-top: 12px; padding: 9px 12px; border-radius: 8px;
+      border: 1px solid rgba(248, 113, 113, 0.35); background: rgba(248, 113, 113, 0.06); }
+    .acq-lh-attn.clear { border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.05);
+      color: var(--text-3); font-size: 0.78rem; }
+    .acq-lh-attn-head { font-weight: 700; font-size: 0.82rem; color: var(--c-f87171); }
+    .acq-lh-attn ul { margin: 6px 0 0; padding-left: 18px; }
+    .acq-lh-attn-item { background: none; border: none; padding: 1px 0; cursor: pointer; text-align: left;
+      font-size: 0.78rem; color: var(--text-2); text-decoration: underline; text-decoration-color: #334155; }
+    .acq-lh-attn-item.contested { color: var(--c-f87171); }
+    /* The record, in layers: overview, attention, terms, documents, then the
+       evidence. Each layer has the same small heading. */
+    .acq-lh-sec { margin-top: 16px; }
+    .acq-lh-sec-head { margin: 0 0 6px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-4); font-weight: 600; }
+    .acq-lh-evidence-head { margin-top: 20px; padding-top: 12px; border-top: 1px solid #1e293b; }
+    .acq-lh-evidence-note { font-size: 0.72rem; color: var(--text-4); margin-bottom: 4px; }
+    .acq-lh-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; margin: 0; }
+    .acq-lh-fact dt { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-4); }
+    .acq-lh-fact dd { margin: 2px 0 0; font-size: 0.85rem; color: var(--text-2); overflow-wrap: anywhere; }
+    .acq-lh-fact .acq-lm-v { white-space: normal; }
+    .acq-lh-terms-sub { font-size: 0.7rem; color: var(--text-4); margin-bottom: 6px; }
+    .acq-lh-tier { margin-top: 10px; }
+    .acq-lh-tier-head { font-size: 0.8rem; font-weight: 700; color: var(--text-2); margin: 4px 0 2px; }
+    .acq-lh-tier-sub { font-weight: 400; font-size: 0.7rem; color: var(--text-4); margin-left: 6px; }
+    details.acq-lh-other { border-top: 1px solid #1e293b; padding-top: 6px; }
+    details.acq-lh-other > summary { cursor: pointer; padding: 4px 2px; }
+    details.acq-lh-other > summary:hover { background: rgba(148, 163, 184, 0.06); }
+    .acq-lh-tgroup { margin-bottom: 8px; }
+    .acq-lh-tgroup-head { font-size: 0.72rem; font-weight: 700; color: var(--text-3); margin: 6px 0 2px; }
+    .acq-lh-term { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; width: 100%;
+      background: none; border: none; border-bottom: 1px solid rgba(30, 41, 59, 0.6); padding: 5px 2px;
+      cursor: pointer; text-align: left; font-size: 0.8rem; color: var(--text-2); }
+    .acq-lh-term:hover { background: rgba(148, 163, 184, 0.06); }
+    .acq-lh-term-label { color: var(--text-3); flex: 0 0 auto; }
+    .acq-lh-term .acq-lm-v { white-space: normal; text-align: right; overflow: hidden; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .acq-lh-docs { list-style: none; margin: 0; padding: 0; }
+    .acq-lh-doc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 2px;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.6); font-size: 0.8rem; }
+    .acq-lh-doc-name { color: var(--text-2); font-weight: 600; overflow-wrap: anywhere; }
+    .acq-lh-doc-meta { color: var(--text-4); font-size: 0.72rem; flex: 1 1 auto; }
+
+    /* A contested term leads with the word, and shows every document's own
+       reading beneath it — no value of its own, nothing that looks chosen. */
+    .acq-term-contested { display: block; margin-top: 3px; font-size: 0.8rem; font-weight: 700; color: var(--c-f87171); }
+    .acq-term-readings { list-style: none; margin: 6px 0 0; padding: 0; }
+    .acq-term-reading { border-left: 2px solid rgba(248, 113, 113, 0.45); padding: 3px 0 3px 8px; margin-bottom: 5px; }
+    .acq-term-reading-value { display: block; font-size: 0.8rem; color: var(--text-2); font-weight: 600; overflow-wrap: anywhere; }
+    .acq-term-reading .acq-term-src { display: block; margin-top: 1px; }
+    .acq-term-flash { background: rgba(96, 165, 250, 0.12); transition: background 0.4s; }
+
+    /* On a phone the matrix becomes one card per leasehold: the label rides
+       with each value instead of a header the eye has to track across. */
+    @media (max-width: 680px) {
+      .acq-lm-table thead { display: none; }
+      .acq-lm-table, .acq-lm-table tbody, .acq-lm-table tr, .acq-lm-table td { display: block; width: 100%; }
+      .acq-lm-row { border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 8px; padding: 4px 0; }
+      .acq-lm-table td { border-bottom: none; padding: 3px 10px; display: flex; gap: 8px; justify-content: space-between; }
+      .acq-lm-table td::before { content: attr(data-label); color: var(--text-4); font-size: 0.68rem;
+        text-transform: uppercase; letter-spacing: 0.05em; }
+      .acq-lm-table td.acq-lm-tenant::before { content: none; }
+      .acq-lm-v { white-space: normal; text-align: right; }
+      .acq-lm-struct { white-space: normal; text-align: right; }
+    }
 
     /* On a phone the controls take their own line under the term, the same way
        the Documents row does, so the value and its clause keep full width. */
@@ -7604,6 +7714,28 @@
     <div class="acq-stage-chips" id="acqStageChips"></div>
   </div>
 
+  <!-- Lease Matrix → Leasehold Detail (§4m). The review's primary working
+       area, so it sits above the uploads: one row per leasehold, read from the
+       canonical projection (§4l) by acquisition-lease-matrix.js; a row opens
+       that leasehold's record — what needs attention, then its Lease Terms
+       evidence (P1-4 / P4-3), unchanged. Both views are drawn into
+       #acqTermsList by _renderAcqTerms. A missing term is LISTED as missing
+       rather than hidden, and a contradiction shows both values. -->
+  <div class="acq-terms-card" id="acqTermsCard">
+    <div class="acq-docs-head">
+      <h3>&#x1F4CB; Lease Matrix</h3>
+      <span class="acq-docs-count" id="acqTermsCount"></span>
+      <!-- P1-7: Acquisition Report v2 — the buyer's questions. Here rather
+           than beside the Decision Report button because that one only exists
+           once the CAM analysis has run, which needs invoices — and §7 says a
+           buyer's report must not. -->
+      <button type="button" class="acq-export-btn acq-report-v2-btn" id="acqReportV2Btn"
+              onclick="generateAcquisitionReportV2()"
+              title="The buyer's report: what the documents establish, and what they do not">&#x1F4D8; Acquisition Report v2</button>
+    </div>
+    <div class="acq-terms-list" id="acqTermsList"></div>
+  </div>
+
   <!-- Conversion confirmation modal (hidden until triggered) -->
   <div id="acqConvertModal" class="acq-modal-backdrop" style="display:none" onclick="if(event.target===this)_hideAcqConvertModal()">
     <div class="acq-modal-box">
@@ -7663,25 +7795,6 @@
       <span class="acq-docs-count" id="acqDocsCount"></span>
     </div>
     <div class="acq-docs-list" id="acqDocsList"></div>
-  </div>
-
-  <!-- Lease Terms (P1-4 / P4-3). One section per leasehold: every term, how
-       settled it is, the document and clause behind it, and what a person may
-       do about it. Rendered by _renderAcqTerms. A missing term is LISTED as
-       missing rather than hidden, and a contradiction shows both values. -->
-  <div class="acq-terms-card" id="acqTermsCard">
-    <div class="acq-docs-head">
-      <h3>&#x1F4CB; Lease Terms</h3>
-      <span class="acq-docs-count" id="acqTermsCount"></span>
-      <!-- P1-7: Acquisition Report v2. Here rather than beside the Decision
-           Report button because that one only exists once the CAM analysis
-           has run, which needs invoices — and §7 says a buyer's report must
-           not. -->
-      <button type="button" class="acq-export-btn acq-report-v2-btn" id="acqReportV2Btn"
-              onclick="generateAcquisitionReportV2()"
-              title="The buyer's report: what the documents establish, and what they do not">&#x1F4D8; Acquisition Report v2</button>
-    </div>
-    <div class="acq-terms-list" id="acqTermsList"></div>
   </div>
 
   <!-- Total SqFt + Analyze -->
@@ -8738,6 +8851,8 @@
 <script src="acquisition-report-view.js"></script>
 <!-- Acquisition Review Phase 1 (§4l): one tenant row per leasehold, from the resolved terms — pure. The Rent Roll, its CSV, the analysis and conversion read this projection; review.data.tenants[] stays the raw upload record. -->
 <script src="acquisition-leasehold.js"></script>
+<!-- Acquisition Review (§4m): the Lease Matrix and the head of one leasehold's record, from the canonical projection — pure. -->
+<script src="acquisition-lease-matrix.js"></script>
 <script src="escrow-reserve-engine.js"></script>
 <script src="escrow-draw-packets.js"></script>
 <script src="command-center.js"></script>

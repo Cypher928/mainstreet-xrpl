@@ -598,7 +598,7 @@ const WRAP = `
   await waitFor(() => /Oak Tenant/.test((document.getElementById('acqTermsList') || {}).innerText || ''), 20000);
   const tLake = await terms();
   check('Lake View\'s Lease Terms show its own leasehold and count',
-        tLake.families === 1 && /Oak Tenant/.test(tLake.text) && !/ShopRite|Sunrise/.test(tLake.text) && /of 27 verified/.test(tLake.count),
+        tLake.families === 1 && /Oak Tenant/.test(tLake.text) && !/ShopRite|Sunrise/.test(tLake.text) && /^1 leasehold\b/.test(tLake.count),
         JSON.stringify({ count: tLake.count, text: tLake.text.slice(0, 60) }));
   await page.evaluate((id) => selectAcquisitionReview(id), MAPLE);
   await page.waitForTimeout(900);
@@ -606,12 +606,12 @@ const WRAP = `
   const mapleFamCount = await page.evaluate((m) => _acqFamilyRows(m).length, MAPLE);
   check('populated → populated: Maple\'s Lease Terms show Maple\'s leaseholds, not Lake View\'s',
         tMaple.families === mapleFamCount && mapleFamCount >= 2 && /ShopRite/.test(tMaple.text) && !/Oak Tenant/.test(tMaple.text)
-        && new RegExp('of ' + (27 * mapleFamCount) + ' verified').test(tMaple.count),
+        && new RegExp('^' + mapleFamCount + ' leaseholds\\b').test(tMaple.count),
         JSON.stringify({ count: tMaple.count, families: mapleFamCount }));
   await page.evaluate((id) => selectAcquisitionReview(id), LAKE);
   await page.waitForTimeout(900);
   const tLake2 = await terms();
-  check('populated → populated: back on Lake View, only its leasehold', /Oak Tenant/.test(tLake2.text) && !/ShopRite/.test(tLake2.text) && /of 27 verified/.test(tLake2.count),
+  check('populated → populated: back on Lake View, only its leasehold', /Oak Tenant/.test(tLake2.text) && !/ShopRite/.test(tLake2.text) && /^1 leasehold\b/.test(tLake2.count),
         JSON.stringify({ count: tLake2.count }));
   // An empty review opened with nothing in flight at all — the plain case.
   await page.evaluate(() => createAcquisitionReview());

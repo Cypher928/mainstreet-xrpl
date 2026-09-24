@@ -266,6 +266,14 @@ const DB = `
       selectAcquisitionReview(rid);
     }, { rid: REVIEW_ID, fam: FAM, ds: docs });
     await page.waitForTimeout(900);
+    await openLeasehold(page);
+  }
+
+  // §4m: the review opens on the Lease Matrix; the terms are in the leasehold's
+  // record, opened from its row — the way a person gets there.
+  async function openLeasehold(page) {
+    await page.click(`#acqTermsList .acq-lm-row[data-leasehold="${FAM}"]`);
+    await page.waitForSelector(`#acqTermsList .acq-term-group[data-family="${FAM}"]`, { timeout: 10000 });
   }
 
   const { ctx, page } = await open({ width: 1280, height: 1000 }, false);
@@ -314,7 +322,10 @@ const DB = `
         panel.groups.length === 1 && /ShopRite/.test(panel.groups[0]), panel.groups.join(' | '));
   check('every one of the 27 terms is listed', panel.rows === 27, String(panel.rows));
   check('each carries a state chip', panel.chips === 27, String(panel.chips));
-  check('the header counts what is verified', /0 of 27 verified/.test(panel.count), panel.count);
+  // §4m: the header says how ready each LEASEHOLD is, not how many of every
+  // possible term are verified.
+  check('the header states leasehold readiness, not a count of every term',
+        /^1 leasehold · 1 /.test(panel.count) && !/of \d+ verified/.test(panel.count), panel.count);
 
   // ── 2 · THE GATE ─────────────────────────────────────────────────────────
   const capBefore = await termRow('cap');
@@ -507,6 +518,7 @@ const DB = `
       selectAcquisitionReview(snap.acquisition_reviews[0].id);
     }, snapshot);
     await p2.waitForTimeout(1000);
+    await openLeasehold(p2);
     const reCap = await p2.evaluate(() => {
       const r = document.querySelector('.acq-term-row[data-field="cap"]');
       return r ? { state: r.getAttribute('data-state'), value: (r.querySelector('.acq-term-value') || {}).innerText } : null;
@@ -533,6 +545,7 @@ const DB = `
       selectAcquisitionReview(snap.acquisition_reviews[0].id);
     }, snapshot);
     await p3.waitForTimeout(1000);
+    await p3.evaluate((fam) => acqOpenLeasehold(fam), FAM);
     const m = await p3.evaluate(() => {
       const panel = document.getElementById('acqTermsList');
       for (let el = panel; el && el !== document.body; el = el.parentElement) {
@@ -555,6 +568,11 @@ const DB = `
             field: r.getAttribute('data-field'),
             mainWidth: Math.round(mb.width),
             labelWidth: lab ? Math.round(lab.getBoundingClientRect().width) : 0,
+            // Crushed = wrapped onto a second line, or clipped. (§4m moved short
+            // labels such as "Suite" into the first eight, so a fixed pixel
+            // floor no longer says anything about crushing.)
+            labelOneLine: lab ? lab.getClientRects().length === 1 : false,
+            labelClipped: lab ? lab.scrollWidth > Math.ceil(lab.getBoundingClientRect().width) + 1 : true,
             actionsBelow: acts ? Math.round(acts.getBoundingClientRect().top) >= Math.round(mb.bottom) - 2 : true,
             actionsRight: acts ? Math.round(acts.getBoundingClientRect().right) : 0,
             hasChip: !!r.querySelector('.acq-term-state'),
@@ -566,8 +584,8 @@ const DB = `
     check('375px: terms render', m.rows.length === 8, String(m.rows.length));
     check('375px: each term keeps usable width',
           m.rows.every(r => r.mainWidth >= 200), m.rows.map(r => r.mainWidth).join(','));
-    check('375px: the label is not crushed',
-          m.rows.every(r => r.labelWidth >= 40), m.rows.map(r => r.labelWidth).join(','));
+    check('375px: the label is not crushed — one line, not clipped',
+          m.rows.every(r => r.labelOneLine && !r.labelClipped), m.rows.map(r => r.field + ':' + r.labelWidth).join(','));
     check('375px: the controls take their own line under the term',
           m.rows.filter(r => !r.actionsBelow).length === 0,
           m.rows.filter(r => !r.actionsBelow).map(r => r.field).join(',') || 'all below');

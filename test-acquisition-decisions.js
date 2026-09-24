@@ -481,10 +481,16 @@ t('the list asks for every column the table stores', () => {
 // ── the panel ───────────────────────────────────────────────────────────────
 sec('the Lease Terms panel');
 
-t('index.html carries the panel, after Documents', () => {
-  const docsAt = HTML.indexOf('id="acqDocsList"');
+// §4m: the panel is now the Lease Matrix → Leasehold Detail — the review's
+// primary working area — so it sits ABOVE the uploads and Documents, under the
+// stage row. It was after Documents until the matrix became the entry point.
+t('index.html carries the panel, as the primary area above the uploads and Documents', () => {
+  const stageAt = HTML.indexOf('id="acqStageRow"');
   const termsAt = HTML.indexOf('id="acqTermsList"');
-  ok(docsAt > 0 && termsAt > docsAt, `documents@${docsAt} terms@${termsAt}`);
+  const uploadAt = HTML.indexOf('id="acqLeaseInput"');
+  const docsAt = HTML.indexOf('id="acqDocsList"');
+  ok(stageAt > 0 && termsAt > stageAt && uploadAt > termsAt && docsAt > termsAt,
+     `stage@${stageAt} terms@${termsAt} uploads@${uploadAt} documents@${docsAt}`);
   ok(/id="acqTermsCount"/.test(HTML));
 });
 

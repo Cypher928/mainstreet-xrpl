@@ -302,6 +302,10 @@ const DB = `
     selectAcquisitionReview(maple);
   }, { maple: MAPLE, lake: LAKE, fam: FAM, docs: MAPLE_DOCS, tenants: MAPLE_TENANTS, invoices: MAPLE_INVOICES, lakeTenants: LAKE_TENANTS });
   await page.waitForTimeout(1200);
+  // §4m: the review opens on the Lease Matrix; ShopRite's terms are in its
+  // record, opened from its row.
+  await page.click(`#acqTermsList .acq-lm-row[data-leasehold="${FAM}"]`);
+  await page.waitForSelector(`#acqTermsList .acq-term-group[data-family="${FAM}"]`, { timeout: 10000 });
 
   // ── readers ──────────────────────────────────────────────────────────────
   const txt = (s) => String(s || '').replace(/\s+/g, ' ').trim();

@@ -1483,6 +1483,77 @@ raw rows for one tenant in a review with no leasehold stay two unfiled rows.
   pre-existing ones (Live extraction walk, Billing readiness consistency,
   Ask AI intent coverage, Broken promises).
 
+## 4m. Lease Matrix → Leasehold Detail (prototype; uncommitted, awaiting review)
+
+**Status: uncommitted prototype. No migration, no new field, no new serverless
+function, no change to the canonical projection. Production untouched.**
+
+The review used to open on every leasehold's 27 terms at once. It now opens on
+a **Lease Matrix** — the review's primary working area, above the uploads and
+Documents — and a row opens that leasehold's **record**:
+
+    Acquisition Review → Lease Matrix → click a tenant → that leasehold's record → Back to Lease Matrix
+
+- **The matrix** is one row per canonical leasehold (§4l): Tenant · Leased SF ·
+  Base rent · Expiration · Lease / CAM (lease type, then cap) · Status. Values
+  are the resolved terms. A verified value carries ✓, an entered one ✎; a
+  contested term says *Contested* (nothing was chosen); a term no document
+  establishes is an em dash that says *Not established*. The raw rows nothing
+  represents are listed apart, as extracted and unverified, and open nothing.
+- **Status** comes from the key terms (leased SF, base rent, expiration, lease
+  type) and every contested term: *N issues* (contested) → *Missing terms* →
+  *Unclear terms* → *Not yet verified* → *Key terms verified*.
+- **The header** says how ready each leasehold is — e.g. *4 leaseholds · 1 with
+  issues · 2 with missing terms · 1 with unclear terms* — never a count of every
+  possible term ("4 of 108 verified" read as failure). The term counts live in
+  each record.
+- **The record is layered**, under ← Back to Lease Matrix, the tenant and a
+  headline (e.g. *67,000 SF · NNN · $1,251,250 base rent*):
+  1. **Lease overview** — suite, leased SF, commencement, expiration, lease
+     type, base rent, CAM cap, security deposit, from the canonical row.
+  2. **Needs attention** — every contested term, then any key term missing or
+     unclear; each item jumps to its evidence.
+  3. **Lease terms** — every term at a glance, in lease-review order, in two
+     tiers. **Core lease terms**, always shown: Premises & term (tenant, suite,
+     leased SF, commencement, expiration, lease type) → Rent & CAM cap (base
+     rent, CAM cap) → Security & renewal. **Other lease terms**, folded beneath
+     a line that counts them by state (e.g. *17 terms · 1 unclear · 8 not yet
+     verified · 8 not established*): CAM details → Obligations & special terms.
+     The fold opens by itself when one of its terms is contested, and stays as
+     the person left it across a re-render. All 27 terms are on the page; none
+     is dropped. There is no separate rent-increase field; escalations live in
+     the base-rent clause. Each term jumps to its evidence.
+  4. **Documents** — the files filed into this leasehold, with type, date and an
+     opener.
+  5. **Evidence & decisions** — the Lease Terms rows, in the same order, drawn by
+     the same code as before: states, entered tag, derived warning, source
+     document, page, confidence, clause, decisions, and Confirm / Correct /
+     Reject / Reopen / Enter.
+- **A contested term does not pick a side.** Its chip says *Contested*, then
+  *Contested — the documents disagree. Nothing has been chosen.*, then each
+  document's own reading (value, file, type, page, confidence, clause) in
+  file-name order — never the governing document's value on its own, and no lone
+  source line or "Replaced" line. Confirm keeps its behaviour and its tooltip
+  says whose reading it would record.
+- **Once a person chooses, the row says so.** A term a person confirmed or
+  corrected after the documents disagreed reads *Verified — Confirmed by a
+  person* and *Documents previously contained conflicting values: X vs Y
+  (documents). This value was selected by a person.* — never *Nothing has been
+  chosen*. The competing values, the documents, the replaced reading and the
+  decision stay on the row; Reopen returns it to Contested. A rejection
+  chooses nothing, and still says *Nothing has been chosen for you*.
+- **No stale record.** The panel is redrawn from the family id on every open;
+  an open record belongs to one review, and opening any review lands on its
+  matrix.
+- Acquisition Report v2 (the buyer's questions) stays in the card header; it is
+  still the broader acquisition record and PDF.
+
+`acquisition-lease-matrix.js` (pure) decides what the matrix and the record's
+head say. Maple Plaza, as the Pilot holds it, is in
+`fixtures/maple-plaza-acquisition.js`: ShopRite reads 67,000 ✓ · $1,251,250 ✓
+· 2039-02-28 · NNN · 3% cap · 2 issues (Commencement and Renewal options
+contested); Luxe Nails reads 3,000 · — · — · 5% cap · Missing terms.
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

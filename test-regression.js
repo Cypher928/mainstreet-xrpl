@@ -530,6 +530,11 @@ const SUITES = [
   // verified with origin `entered` and no document, said so everywhere.
   { label: 'Acquisition leasehold rows (§4l)',          cmd: 'node test-acquisition-leasehold.js' },
   { label: 'Acquisition canonical rows walk (e2e, §4l)', cmd: 'node test-e2e-acquisition-canonical.js' },
+  // §4m — the review opens on a Lease Matrix (one row per canonical leasehold)
+  // and a row opens that leasehold's record: what needs attention, then its
+  // Lease Terms evidence, unchanged. Walked with Maple Plaza as the Pilot holds it.
+  { label: 'Acquisition Lease Matrix (§4m)',            cmd: 'node test-acquisition-lease-matrix.js' },
+  { label: 'Acquisition Lease Matrix walk (e2e, §4m)',  cmd: 'node test-e2e-acquisition-lease-matrix.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
