@@ -3,12 +3,18 @@
 // Acquisition Review §4m — Lease Matrix → Leasehold Detail, walked in the page
 // with Maple Plaza as the Pilot holds it (fixtures/maple-plaza-acquisition.js).
 //
-//   1  the review opens on the Lease Matrix: one row per canonical leasehold,
-//      no evidence drawn, the unfiled files listed apart
+//   1  the review opens on MainStreet's Record (the Lease Matrix): one row per
+//      canonical leasehold, no evidence drawn, the unmatched entries apart
 //   2  ShopRite's row: 67,000 · $1,251,250 · 2039-02-28 · NNN · 3% cap ·
-//      2 issues — and Luxe Nails': 3,000 · — · — · 5% cap · Missing terms
+//      2 contested — and Luxe Nails': 3,000 · — · — · 5% cap · Terms not
+//      established; each row counts its values not yet verified
+//  2c  the record and its source material are labelled apart; the five
+//      states and their legend; the documents to review in the record's
+//      own status, one click from Documents › Needs review
 //   3  clicking ShopRite opens ShopRite's record: back, name, headline,
-//      "2 items need attention", then its Lease Terms evidence and no other
+//      Needs attention as the workload (2 contested · 9 not established ·
+//      1 unclear · 11 values read by AI · not yet verified), then its Lease
+//      Terms evidence and no other
 //   4  the 67,000 correction still reads Verified — 67,000, with the document
 //      that said 65,000 and the person's correction; source, confidence and
 //      Reopen intact
@@ -275,8 +281,11 @@ const DB = `
       back: !!el.querySelector('.acq-lh-back'),
       title: ((el.querySelector('.acq-lh-title') || {}).innerText || '').trim(),
       headline: ((el.querySelector('.acq-lh-headline') || {}).innerText || '').trim(),
-      attnHead: ((el.querySelector('.acq-lh-attn-head') || {}).innerText || '').trim(),
-      attn: [].map.call(el.querySelectorAll('.acq-lh-attn-item'), b => b.innerText.trim()),
+      // Needs attention: one line per state — its count, then its terms.
+      attnAggregate: /items? needs? attention/i.test(((el.querySelector('[data-section="attention"]') || {}).innerText || '')),
+      attnCats: [].map.call(el.querySelectorAll('.acq-lh-attn-cat'), c => c.querySelector('.acq-lh-attn-count').innerText.trim()),
+      attnTerms: [].reduce.call(el.querySelectorAll('.acq-lh-attn-cat'), (o, c) => {
+        o[c.getAttribute('data-kind')] = [].map.call(c.querySelectorAll('.acq-lh-attn-item'), b => b.innerText.trim()); return o; }, {}),
       groups: [].map.call(el.querySelectorAll('.acq-term-group'), g => g.getAttribute('data-family')),
       rows: el.querySelectorAll('.acq-term-row').length,
       matrixRows: el.querySelectorAll('.acq-lm-row').length,
@@ -299,29 +308,29 @@ const DB = `
   // ── 1 · the matrix is the entry point ────────────────────────────────────
   const m0 = await matrix();
   const canonCount = await page.evaluate((id) => _acqCanonicalRows(id).leaseholds, MAPLE);
-  check('the review opens on the Lease Matrix, with the summary and Report v2 above it',
-        /Lease Matrix/.test(m0.heading) && m0.v2 && m0.count === '4 leaseholds · 1 with issues · 2 with missing terms · 1 with unclear terms',
+  check('the review opens on MainStreet\'s Record, with its status line and Report v2 above it',
+        m0.heading === '📋 MainStreet’s Record' && m0.v2 && m0.count === '4 leaseholds · 1 with contested terms · 2 with terms not established · 1 with unclear terms · 3 documents not yet matched to a tenant',
         `${m0.heading} | ${m0.count}`);
   check('the header counts leaseholds, not every possible term — no "of 108 verified"', !/of \d+ verified/.test(m0.count), m0.count);
   check('one row per canonical leasehold — four, ShopRite\'s two files as one',
         m0.rows.length === 4 && canonCount === 4 && m0.rows.filter(r => /ShopRite/.test(r.cells[0])).length === 1,
         m0.rows.map(r => r.cells[0]).join(' | '));
   check('no evidence is drawn on the matrix, and there is no Back', m0.groups === 0 && !m0.back);
-  check('the six files not in a leasehold are listed apart, as unverified — with no row to open',
-        m0.unfiled === 6 && /not in a leasehold/.test(m0.unfiledText) && /not verified/.test(m0.unfiledText), m0.unfiledText);
+  check('the six extracted entries not matched to a tenant are listed apart, as not reviewed — with no row to open',
+        m0.unfiled === 6 && m0.unfiledText === '6 extracted entries are not matched to a tenant — as extracted from the file, not reviewed', m0.unfiledText);
 
   // ── 2 · the rows ─────────────────────────────────────────────────────────
   const shopRow = m0.rows.find(r => r.id === SHOP), luxeRow = m0.rows.find(r => r.id === LUXE);
-  check('ShopRite: 67,000 ✓ · $1,251,250 ✓ · 2039-02-28 · NNN · 3% cap · 2 issues',
+  check('ShopRite: 67,000 ✓ · $1,251,250 ✓ · 2039-02-28 · NNN · 3% cap · 2 contested',
         shopRow && shopRow.cells[0] === 'ShopRite Supermarkets, Inc.' && shopRow.cells[1] === '67,000✓'
         && shopRow.cells[2] === '$1,251,250✓' && shopRow.cells[3] === '2039-02-28'
-        && shopRow.cells[4] === 'NNN · 3% cap' && /^2 issues$/i.test(shopRow.status),   // the chip is upper-cased by CSS
+        && shopRow.cells[4] === 'NNN · 3% cap' && /^2 contested$/i.test(shopRow.status),   // the chip is upper-cased by CSS
         shopRow && shopRow.cells.join(' | '));
   check('ShopRite\'s 67,000 is the VERIFIED canonical value, not the file\'s 65,000',
         shopRow && shopRow.states[0] === 'verified' && !/65,000/.test(shopRow.cells.join(' ')));
-  check('Luxe Nails: 3,000 · — · — · 5% cap · Missing terms',
+  check('Luxe Nails: 3,000 · — · — · 5% cap · Terms not established',
         luxeRow && luxeRow.cells[1] === '3,000' && luxeRow.cells[2] === '—' && luxeRow.cells[3] === '—'
-        && luxeRow.cells[4] === '5% cap' && /missing terms/i.test(luxeRow.status), luxeRow && luxeRow.cells.join(' | '));
+        && luxeRow.cells[4] === '5% cap' && /^terms not established$/i.test(luxeRow.status), luxeRow && luxeRow.cells.join(' | '));
   check('Luxe Nails\' base rent is "not established", not blank or zero',
         luxeRow && luxeRow.states[1] === 'missing' && !/\$0\b/.test(luxeRow.cells[2]));
 
@@ -346,6 +355,53 @@ const DB = `
   check('hovering a row brightens the affordance and nudges the ›',
         Number(hoverOpen.before) < 1 && Number(hoverOpen.after.o) === 1 && /matrix/.test(hoverOpen.after.t), JSON.stringify(hoverOpen));
 
+  // ── 2c · what is the record, what is source material (clarity pass) ─────
+  const cl = await page.evaluate(() => {
+    const txt = (n) => ((n && n.innerText) || '').replace(/\s+/g, ' ').trim();
+    const card = document.getElementById('acqTermsList');
+    const lease = document.getElementById('acqLeaseList');
+    const leaseCard = lease && lease.closest('.acq-upload-card');
+    const legend = card.querySelector('.acq-lm-legend');
+    const unclearSample = legend && legend.querySelector('.acq-lm-v.unclear');
+    return {
+      intro: txt(card.querySelector('.acq-lm-intro')),
+      due: txt(card.querySelector('.acq-lm-docs-due')),
+      unverified: [].map.call(card.querySelectorAll('.acq-lm-row'), r => txt(r.querySelector('.acq-lm-unverified'))),
+      legend: legend ? [].map.call(legend.querySelectorAll('li'), li => txt(li)) : [],
+      unclearItalic: unclearSample ? getComputedStyle(unclearSample).fontStyle : null,
+      srcHead: txt(leaseCard && leaseCard.querySelector('h3')),
+      srcNote: txt(leaseCard && leaseCard.querySelector('.acq-src-note')),
+      srcItems: lease ? [].map.call(lease.querySelectorAll('li'), li => ({ file: txt(li.querySelector('.acq-src-file')), read: txt(li.querySelector('.acq-src-read')),
+        dot: !!li.querySelector('.acq-file-dot') })) : [],
+      docsSub: txt(document.querySelector('#acqDocsList .acq-doc-group.needs-review .acq-doc-group-sub')),
+      internal: /not in a leasehold|not yet placed/i.test(txt(card) + ' ' + txt(document.getElementById('acqDocsList')) + ' ' + txt(leaseCard)),
+    };
+  });
+  check('MainStreet\'s Record says what it is: 4 leaseholds · one record per tenant/leasehold, the reviewed record',
+        /^4 leaseholds · one record per tenant\/leasehold\. This is the reviewed record/.test(cl.intro), cl.intro);
+  check('the uploads are labelled source material — "Extracted Lease Files", as extracted from your files, not reviewed',
+        cl.srcHead === '📄 Extracted Lease Files' && /as extracted from your files — not reviewed/.test(cl.srcNote) && /MainStreet’s Record above is the reviewed record/.test(cl.srcNote),
+        `${cl.srcHead} | ${cl.srcNote}`);
+  check('…and list FILES, each with what the AI read from it, not a second tenant roster',
+        cl.srcItems.length === 13 && cl.srcItems.every(i => /\.pdf$/.test(i.file.replace(/^📄 /, '')) && /^read as “.+” · not reviewed$/.test(i.read) && !i.dot)
+        && cl.srcItems[0].file === '📄 Luxe_Nails_Lease.pdf', JSON.stringify(cl.srcItems.slice(0, 2)));
+  check('the legend names the five states — and says italic is Unclear',
+        JSON.stringify(cl.legend) === JSON.stringify(['value✓ Verified by a person', 'value✎ Verified by a person — entered, no document on file',
+          'value Read by AI · not yet verified', 'value italic = Unclear', 'Contested', '— Not established']) && cl.unclearItalic === 'italic',
+        JSON.stringify(cl.legend) + ' ' + cl.unclearItalic);
+  check('each row counts the values nobody has verified yet: 11 · 4 · 8 · 9',
+        cl.unverified.join(',') === '11 not yet verified,4 not yet verified,8 not yet verified,9 not yet verified', cl.unverified.join(','));
+  check('the documents to review are in the record\'s own status — the header, and a line one click from Documents',
+        /· 3 documents not yet matched to a tenant$/.test(m0.count) && cl.due === '3 documents not yet matched to a tenant — review in Documents ↓', cl.due);
+  check('Documents › Needs review says the same thing in the same words', cl.docsSub === '3 documents not yet matched to a tenant', cl.docsSub);
+  check('no internal words on screen: "not in a leasehold", "not yet placed"', !cl.internal);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.click('#acqTermsList .acq-lm-docs-due');
+  await page.waitForFunction(() => { const g = document.querySelector('#acqDocsList .acq-doc-group.needs-review');
+    if (!g) return false; const b = g.getBoundingClientRect(); return b.top >= -2 && b.top < window.innerHeight / 2; }, null, { timeout: 5000 }).then(() => true, () => false)
+    .then(ok => check('…and that line takes the reader to Documents › Needs review', ok));
+  await page.evaluate(() => document.getElementById('acqTermsCard').scrollIntoView({ block: 'start' }));
+
   // ── 3 · click ShopRite ───────────────────────────────────────────────────
   await page.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
   await page.waitForSelector(`#acqTermsList .acq-term-group[data-family="${SHOP}"]`, { timeout: 10000 });
@@ -353,9 +409,12 @@ const DB = `
   check('ShopRite opens ShopRite\'s record: Back, the name, and no matrix',
         r1.open && r1.leasehold === SHOP && r1.back && r1.title === 'ShopRite Supermarkets, Inc.' && r1.matrixRows === 0, r1.title);
   check('the headline: 67,000 SF · NNN · $1,251,250 base rent', r1.headline === '67,000 SF · NNN · $1,251,250 base rent', r1.headline);
-  check('"2 items need attention": Commencement contested, Renewal options contested',
-        r1.attnHead === '2 items need attention' && r1.attn.length === 2
-        && r1.attn.includes('Commencement — contested') && r1.attn.includes('Renewal options — contested'), r1.attn.join(' | '));
+  check('Needs attention is the workload, never "N items": 2 contested · 9 not established · 1 unclear · 11 values read by AI · not yet verified',
+        !r1.attnAggregate && r1.attnCats.join(' | ') === '2 contested | 9 not established | 1 unclear | 11 values read by AI · not yet verified',
+        r1.attnCats.join(' | '));
+  check('…and each line names every term it counts, as a link: 2, 9, 1 and 11 of them',
+        r1.attnTerms.contested.length === 2 && r1.attnTerms.missing.length === 9 && r1.attnTerms.unclear.join() === 'Audit rights'
+        && r1.attnTerms.unverified.length === 11 && r1.attnTerms.unverified[0] === 'Tenant', JSON.stringify(r1.attnTerms).slice(0, 200));
   check('then its Lease Terms evidence — ShopRite\'s group only, all 27 terms',
         r1.groups.length === 1 && r1.groups[0] === SHOP && r1.rows === 27, `${r1.groups.join(',')} / ${r1.rows}`);
   const focusBack = await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('acq-lh-back'));
@@ -385,15 +444,16 @@ const DB = `
   check('Lease overview carries the canonical values: 67,000 ✓, Commencement contested, $1,251,250 ✓, no deposit',
         lay.facts.includes('leased_sqft=67,000✓') && lay.facts.includes('start_date=Contested')
         && lay.facts.includes('base_rent=$1,251,250✓') && lay.facts.includes('security_deposit=—'), lay.facts.join(' | '));
-  check('Needs attention lists them in review order: Commencement, then Renewal options',
-        r1.attn.join(' | ') === 'Commencement — contested | Renewal options — contested', r1.attn.join(' | '));
+  check('Needs attention lists its terms in review order: contested Commencement, then Renewal options',
+        r1.attnTerms.contested.join(' | ') === 'Commencement | Renewal options', r1.attnTerms.contested.join(' | '));
   check('Lease terms, in review order: Tenant → Suite → Leased SF → Commencement → Expiration → Lease type → Base rent → CAM cap → Security deposit → Renewal → CAM details → obligations',
         lay.tgroups[0] === 'Premises & term:tenant_name,suite,leased_sqft,start_date,end_date,lease_type'
         && lay.tgroups[1] === 'Rent & CAM cap:base_rent,cap'
         && lay.tgroups[2] === 'Security & renewal:security_deposit,renewal_options'
         && /^CAM details:cap_base_amount,/.test(lay.tgroups[3]) && /^Obligations & special terms:/.test(lay.tgroups[4]),
         lay.tgroups.map(g => g.split(':')[0]).join(' → '));
-  check('the term counts live in the record, not the matrix header', /^4 of 27 terms verified · 2 contested/.test(lay.termsSub), lay.termsSub);
+  check('the term counts live in the record, in the five states\' words',
+        lay.termsSub === '27 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 9 not established', lay.termsSub);
   check('the evidence follows the same order, all 27 terms once',
         lay.evidence.slice(0, 8).join(',') === 'tenant_name,suite,leased_sqft,start_date,end_date,lease_type,base_rent,cap'
         && lay.evidence.length === 27 && new Set(lay.evidence).size === 27, lay.evidence.slice(0, 8).join(','));
@@ -422,10 +482,10 @@ const DB = `
   const tr0 = await tierState();
   check('Core lease terms come first and are shown: the 10 core terms, with their counts on the heading',
         tr0.coreBeforeOther && tr0.coreVisible.join(',') === 'tenant_name,suite,leased_sqft,start_date,end_date,lease_type,base_rent,cap,security_deposit,renewal_options'
-        && tr0.coreHead === 'Core lease terms 10 terms · 4 verified · 2 contested · 3 not yet verified · 1 not established', tr0.coreHead);
+        && tr0.coreHead === 'Core lease terms 10 terms · 4 verified by a person · 3 read by AI, not yet verified · 2 contested · 1 not established', tr0.coreHead);
   check('Other lease terms are folded — with what is in them on the fold — and nothing in them is contested',
         !tr0.otherOpen && tr0.otherVisible === 0 && tr0.otherFields.length === 17
-        && tr0.otherHead === 'Other lease terms 17 terms · 1 unclear · 8 not yet verified · 8 not established', JSON.stringify([tr0.otherOpen, tr0.otherVisible, tr0.otherFields.length, tr0.otherHead]));
+        && tr0.otherHead === 'Other lease terms 17 terms · 8 read by AI, not yet verified · 1 unclear · 8 not established', JSON.stringify([tr0.otherOpen, tr0.otherVisible, tr0.otherFields.length, tr0.otherHead]));
   check('all 27 terms are on the page, each once', tr0.allTerms === 27, String(tr0.allTerms));
   await page.click('#acqTermsList details.acq-lh-other > summary');
   const tr1 = await tierState();
@@ -460,6 +520,22 @@ const DB = `
   check('Confirm on a contested term says whose reading it would record — the choice is the person\'s',
         /^Confirm records 2027-01-01 from Maple_Plaza_Test_Lease_Amendment\.pdf as the answer/.test(ct.confirmTitle), ct.confirmTitle);
   check('the compact term reads Contested too', /Contested/.test(lay.compactStart) && !/2027|2024/.test(lay.compactStart), lay.compactStart);
+  const chips = await page.evaluate(() => {
+    const out = {};
+    document.querySelectorAll('#acqTermsList .acq-term-row').forEach(r => { out[r.getAttribute('data-field')] = r.querySelector('.acq-term-state').textContent.trim(); });
+    return { byField: out, groupSub: ((document.querySelector('#acqTermsList .acq-term-group-sub') || {}).textContent || '').trim(),
+             back: ((document.querySelector('#acqTermsList .acq-lh-back') || {}).textContent || '').trim() };
+  });
+  check('the evidence chips use exactly the five states: Read by AI · not yet verified, Verified by a person, Contested, Unclear, Not established',
+        chips.byField.tenant_name === 'Read by AI · not yet verified' && chips.byField.suite === 'Verified by a person'
+        && chips.byField.start_date === 'Contested' && chips.byField.audit_rights === 'Unclear' && chips.byField.security_deposit === 'Not established'
+        && Object.values(chips.byField).every(v => ['Verified by a person', 'Read by AI · not yet verified', 'Unclear', 'Contested', 'Not established'].includes(v)),
+        JSON.stringify(chips.byField).slice(0, 200));
+  check('the evidence counts read the same way', chips.groupSub === '27 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 9 not established', chips.groupSub);
+  check('Back names the record: "← Back to MainStreet\'s Record"', chips.back === '← Back to MainStreet’s Record', chips.back);
+  await page.click('#acqTermsList .acq-lh-attn-item.unverified');
+  check('the unverified item opens the first value nobody has verified — Tenant', await page.evaluate(() =>
+    document.querySelector('#acqTermsList .acq-term-row[data-field="tenant_name"]').classList.contains('acq-term-flash')));
   await page.click('#acqTermsList .acq-lh-term[data-field="base_rent"]');
   check('a compact term opens its evidence below', await page.evaluate(() =>
     document.querySelector('#acqTermsList .acq-term-row[data-field="base_rent"]').classList.contains('acq-term-flash')));
@@ -536,9 +612,11 @@ const DB = `
   const r3 = await record();
   check('Luxe Nails opens Luxe Nails\' record', r3.leasehold === LUXE && r3.title === 'Luxe Nails' && r3.groups.length === 1 && r3.groups[0] === LUXE, r3.title);
   check('its headline says what is not established', r3.headline === '3,000 SF · Lease type not established · Base rent not established', r3.headline);
-  check('"3 items need attention": base rent, expiration, lease type',
-        r3.attnHead === '3 items need attention' && r3.attn.join(' | ') === 'Base rent — not established | Expiration — not established | Lease type — not established',
-        r3.attn.join(' | '));
+  check('Luxe Nails\' workload: 23 not established · 4 values read by AI · not yet verified — its own terms, not ShopRite\'s',
+        !r3.attnAggregate && r3.attnCats.join(' | ') === '23 not established | 4 values read by AI · not yet verified'
+        && r3.attnTerms.missing.slice(0, 5).join(', ') === 'Suite, Commencement, Expiration, Lease type, Base rent'
+        && r3.attnTerms.unverified.join(', ') === 'Tenant, Leased sq ft, CAM cap, Excluded categories',
+        r3.attnCats.join(' | '));
   check('nothing of ShopRite\'s is anywhere in it — no name, no 67,000, no $1,251,250, no amendment',
         !/ShopRite|67,000|1,251,250|Maple_Plaza_Test_Lease_Amendment|Commencement — contested|Renewal options — contested/i.test(r3.text), r3.text.slice(0, 120));
   const lsq = await termRow('leased_sqft');

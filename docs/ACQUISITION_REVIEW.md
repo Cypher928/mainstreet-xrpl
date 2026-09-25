@@ -1501,13 +1501,58 @@ Documents — and a row opens that leasehold's **record**:
   establishes is an em dash that says *Not established*. The raw rows nothing
   represents are listed apart, as extracted and unverified, and open nothing.
 - **Status** comes from the key terms (leased SF, base rent, expiration, lease
-  type) and every contested term: *N issues* (contested) → *Missing terms* →
-  *Unclear terms* → *Not yet verified* → *Key terms verified*.
+  type) and every contested term: *N contested* → *Terms not established* →
+  *Unclear terms* → *Not yet verified* → *Key terms verified by a person*.
+  Under it, each row counts its values only read by AI (*11 not yet verified*).
 - **The header** says how ready each leasehold is — e.g. *4 leaseholds · 1 with
-  issues · 2 with missing terms · 1 with unclear terms* — never a count of every
-  possible term ("4 of 108 verified" read as failure). The term counts live in
-  each record.
-- **The record is layered**, under ← Back to Lease Matrix, the tenant and a
+  contested terms · 2 with terms not established · 1 with unclear terms · 3
+  documents not yet matched to a tenant* — never a count of every possible term
+  ("4 of 108 verified" read as failure). The term counts live in each record.
+
+**Clarity pass (presentation and wording only; no model, resolver, decision,
+Rent Roll, Report v2 or conversion change).** A property manager must be able
+to tell, without knowing how MainStreet works, what the record is, what is
+source material, what is verified and what still needs them:
+
+- **The record is labelled as the record.** The card is *MainStreet’s Record*:
+  *4 leaseholds · one record per tenant/leasehold. This is the reviewed record,
+  built from your documents.* Back reads *← Back to MainStreet’s Record*.
+- **The uploads are labelled as source material.** The card that used to be
+  *Leases* is *Extracted Lease Files*, marked *as extracted from your files —
+  not reviewed*, and lists FILES, each with what the AI read from it (*read as
+  “Luxe Nails” · not reviewed*) — not a second tenant roster.
+- **Five states, one set of words, everywhere in the workspace** (matrix,
+  record, evidence chips, legend, counts): *Verified by a person* · *Read by
+  AI · not yet verified* · *Unclear* · *Contested* · *Not established*.
+  Verified is only ever reached by a person confirming, correcting or entering
+  a value, so it says so; an entered value is verified by a person and keeps
+  its ✎ and *no document on file* tag. The legend shows each state on a sample
+  value and says *italic = Unclear*. Inside a count line the second state is
+  written *read by AI, not yet verified*, so " · " still separates the counts.
+- **Needs attention is the workload, never "N items".** A record's Needs
+  attention has one line per state that still needs a person, with its count
+  and every term it counts as a link to its evidence — ShopRite: *2 contested*
+  · *9 not established* · *1 unclear* · *11 values read by AI · not yet
+  verified*. The counts are the resolver's own for that leasehold (with the 4
+  verified, they add up to all 27 terms). The matrix row counts its unverified
+  values under its status (*11 not yet verified*). Unverified values are
+  counted, not ranked: they do not change a row's status.
+- **Words: exact inside the term system, readable in summaries.** Evidence
+  chips, the legend, term counts and Needs attention use the five states
+  exactly. Summary labels stay plain: a row's status reads *2 contested* (its
+  two contested terms), *Terms not established*, *Unclear terms*, *Not yet
+  verified* or *Key terms verified by a person*.
+- **No internal words.** *Not in a leasehold* is *not matched to a tenant*; *not
+  yet placed* is *not yet matched to a tenant*. The matrix's list of extracted
+  entries says why each has no record (*no document on file for it*, or *its
+  document is not yet matched to a tenant*).
+- **One queue.** The documents under Documents › Needs review are counted in
+  the record's own status line, in the same words, with a line one click from
+  them — not a second queue found only further down.
+- **Not changed here:** the Rent Roll's own *Not in a leasehold* line and
+  Report v2's legend (both out of scope), and the Documents panel's parsing
+  chips (*Read*, *Terms read*), which describe the file, not a term.
+- **The record is layered**, under ← Back to MainStreet’s Record, the tenant and a
   headline (e.g. *67,000 SF · NNN · $1,251,250 base rent*):
   1. **Lease overview** — suite, leased SF, commencement, expiration, lease
      type, base rent, CAM cap, security deposit, from the canonical row.

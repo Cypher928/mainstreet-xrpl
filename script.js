@@ -31198,9 +31198,11 @@ function _renderAcqDocuments() {
   const parts = [];
 
   // FIRST, not buried: what nobody has placed yet.
+  const due = _acqDocsToReview(_activeAcqId);
+  const LMd = _LM();
   parts.push(section(
     'Needs review',
-    groups.needsReview.length + ' document' + (groups.needsReview.length === 1 ? '' : 's') + ' not yet placed',
+    (LMd ? LMd.documentsLine(due) : [groups.needsReview.length + ' document' + (groups.needsReview.length === 1 ? '' : 's') + ' to review']).join(' · '),
     groups.needsReview.map(docHtml).join(''), 'needs-review'));
 
   groups.families.forEach(g => {
@@ -31234,12 +31236,15 @@ function _renderAcqDocuments() {
 // Confirm and Correct are disabled, with the reason, while the governing
 // document is still unclassified or a proposal.
 
+// The five states, in the words used everywhere in the workspace (§4m) —
+// the same as AcquisitionLeaseMatrix.TERM_STATE_LABEL. Verified is only ever
+// reached by a person confirming, correcting or entering a value.
 const _ACQ_TERM_STATE = {
-  verified:     { label: 'Verified',     cls: 'verified' },
-  ai_extracted: { label: 'AI extracted', cls: 'ai'       },
-  conflicting:  { label: 'Contested',    cls: 'conflict' },   // §4m: the documents disagree; nothing chosen
-  unclear:      { label: 'Unclear',      cls: 'unclear'  },
-  missing:      { label: 'Missing',      cls: 'missing'  },
+  verified:     { label: 'Verified by a person',          cls: 'verified' },
+  ai_extracted: { label: 'Read by AI · not yet verified', cls: 'ai'       },
+  conflicting:  { label: 'Contested',                     cls: 'conflict' },   // the documents disagree; nothing chosen
+  unclear:      { label: 'Unclear',                       cls: 'unclear'  },
+  missing:      { label: 'Not established',               cls: 'missing'  },
 };
 
 // A term's value as a person reads it. `null` is never rendered as 0 or blank:
@@ -31412,9 +31417,9 @@ function _renderAcqTerms() {
       </div>`;
     }).join('');
 
-    const sub = [
-      s.verified + ' verified', s.ai_extracted + ' AI', s.conflicting + ' contested',
-      s.unclear + ' unclear', s.missing + ' missing',
+    const sub = LM ? LM.countsLine(LM.summaryCounts(s)) : [
+      s.verified + ' verified by a person', s.ai_extracted + ' read by AI, not yet verified',
+      s.unclear + ' unclear', s.conflicting + ' contested', s.missing + ' not established',
     ].join(' · ');
 
     return `<div class="acq-term-group" data-family="${esc(fam.id)}">
@@ -31424,7 +31429,7 @@ function _renderAcqTerms() {
         </div>${rows}</div>`;
   }).filter(Boolean).join('');
 
-  if (countEl) countEl.textContent = LM ? LM.summaryLine(_acqMatrixFor(_activeAcqId)) : '';
+  if (countEl) countEl.textContent = LM ? LM.summaryLine(_acqMatrixFor(_activeAcqId), { documents: _acqDocsToReview(_activeAcqId) }) : '';
   el.innerHTML = warn + (openId
     ? _acqLeaseholdHeadHtml(openId) + (sections || '<div class="acq-terms-empty">No lease documents have been read for terms yet.</div>')
     : _acqLeaseMatrixHtml(_activeAcqId));
@@ -31466,6 +31471,20 @@ function _acqMatrixFor(reviewId) {
   return LM.buildMatrix(_acqCanonicalRows(reviewId).rows, { terms: _AT() });
 }
 
+// The documents under Documents › Needs review, split by what they still
+// need: matching to a tenant, or a type. Read here so MainStreet's Record can
+// count them in its own status line — one queue, not a second one lower down.
+function _acqDocsToReview(reviewId) {
+  const AD = _AD();
+  const rows = reviewId ? _acqDocRows(reviewId) : [];
+  if (!AD || !rows.length) return { unmatched: 0, untyped: 0 };
+  const fams = _acqFamilyRows(reviewId);
+  const ids  = new Set(fams.map(f => f && f.id));
+  const due  = AD.groupDocuments(rows, fams).needsReview;
+  const unmatched = due.filter(d => !d.family_id || !ids.has(d.family_id)).length;
+  return { unmatched, untyped: due.length - unmatched };
+}
+
 const _ACQ_LM_STATUS_CLS = { issues: 'issues', missing: 'missing', unclear: 'unclear', unverified: 'unverified', verified: 'verified' };
 
 // One cell: the value with its state, or the words for having none.
@@ -31479,16 +31498,24 @@ function _acqLmCellHtml(cell) {
   return `<span class="acq-lm-v ${esc(cell.state)}" data-state="${esc(cell.state)}"${title}>${esc(cell.text)}${mark}</span>`;
 }
 
+// Why an extracted entry has no record: its file was never kept as a document,
+// or its document is not yet matched to a tenant.
+const _ACQ_UNFILED_WHY = {
+  no_document:      'no document on file for it',
+  unfiled_document: 'its document is not yet matched to a tenant',
+};
+
 function _acqUnfiledListHtml(reviewId) {
   const m = _acqMatrixFor(reviewId);
   if (!m || !m.unfiled.length) return '';
   const n = m.unfiled.length;
   return `<details class="acq-lm-unfiled">
-      <summary>${n} ${n === 1 ? 'file is' : 'files are'} not in a leasehold — as extracted from the file, not verified</summary>
+      <summary>${n} extracted ${n === 1 ? 'entry is' : 'entries are'} not matched to a tenant — as extracted from the file, not reviewed</summary>
       <ul>${m.unfiled.map(u => `<li><span class="acq-lm-unfiled-name">${esc(u.tenant)}</span>`
         + (u.sqftText ? ` · ${esc(u.sqftText)} SF` : '')
-        + (u.fileName ? ` <span class="acq-lm-unfiled-file">${esc(u.fileName)}</span>` : '') + '</li>').join('')}</ul>
-      <div class="acq-lm-unfiled-note">Classify the file in Documents to give it a leasehold and a record of its own.</div>
+        + (u.fileName ? ` <span class="acq-lm-unfiled-file">${esc(u.fileName)}</span>` : '')
+        + (_ACQ_UNFILED_WHY[u.why] ? ` <span class="acq-lm-unfiled-why">· ${esc(_ACQ_UNFILED_WHY[u.why])}</span>` : '') + '</li>').join('')}</ul>
+      <div class="acq-lm-unfiled-note">None of these is in MainStreet’s Record. Match the file to a tenant in Documents to give it a record of its own.</div>
     </details>`;
 }
 
@@ -31506,17 +31533,31 @@ function _acqLeaseMatrixHtml(reviewId) {
         <td data-label="Lease / CAM"><span class="acq-lm-struct">${e.structure.parts.length
           ? e.structure.parts.map(p => `<span class="acq-lm-v ${esc(p.state)}" data-state="${esc(p.state)}">${esc(p.text)}</span>`).join('<span class="acq-lm-sep"> · </span>')
           : '<span class="acq-lm-v missing" data-state="missing" aria-label="Lease type and cap not established">—</span>'}</span></td>
-        <td data-label="Status"><span class="acq-lm-status ${esc(_ACQ_LM_STATUS_CLS[e.status.kind] || '')}" data-status="${esc(e.status.kind)}"
-            title="${esc(e.attention.map(a => a.text).join('\n'))}">${esc(e.status.label)}</span></td>
+        <td data-label="Status"><span class="acq-lm-status-wrap"><span class="acq-lm-status ${esc(_ACQ_LM_STATUS_CLS[e.status.kind] || '')}" data-status="${esc(e.status.kind)}"
+            title="${esc(e.attention.map(a => a.text).join('\n'))}">${esc(e.status.label)}</span>${e.unverified.length
+            ? `<span class="acq-lm-unverified" data-count="${esc(e.unverified.length)}">${esc(e.unverified.length + ' not yet verified')}</span>` : ''}</span></td>
       </tr>`).join('');
   const n = m.leaseholds.length;
+  // Documents › Needs review, counted here and one click away — so they are
+  // not a second queue found only further down the page.
+  const due = _acqDocsToReview(reviewId);
+  const dueLine = LMx => (LMx ? LMx.documentsLine(due) : []).join(' · ');
+  const dueText = dueLine(_LM());
   return `<div class="acq-lm" data-leaseholds="${n}" data-unfiled="${m.unfiled.length}">
-      <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · open one for its terms, the documents behind them, and what needs attention.</div>
+      <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · one record per tenant/leasehold. This is the reviewed record, built from your documents: open one for its terms, the evidence behind them, and what needs attention.</div>
+      ${dueText ? `<button type="button" class="acq-lm-docs-due">${esc(dueText)} — review in Documents ↓</button>` : ''}
       <table class="acq-lm-table">
         <thead><tr><th>Tenant</th><th>Leased SF</th><th>Base rent</th><th>Expiration</th><th>Lease / CAM</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div class="acq-lm-legend">✓ verified · ✎ entered by a person, no document · plain: read by AI, not yet verified · — not established</div>
+      <ul class="acq-lm-legend" aria-label="What the values mean">
+        <li><span class="acq-lm-v verified">value<span class="acq-lm-mark" aria-hidden="true">✓</span></span> Verified by a person</li>
+        <li><span class="acq-lm-v entered">value<span class="acq-lm-mark entered" aria-hidden="true">✎</span></span> Verified by a person — entered, no document on file</li>
+        <li><span class="acq-lm-v read">value</span> Read by AI · not yet verified</li>
+        <li><span class="acq-lm-v unclear">value</span> <em>italic</em> = Unclear</li>
+        <li><span class="acq-lm-v contested">Contested</span></li>
+        <li><span class="acq-lm-v missing">—</span> Not established</li>
+      </ul>
     </div>${_acqUnfiledListHtml(reviewId)}`;
 }
 
@@ -31552,15 +31593,18 @@ function _acqLeaseholdHeadHtml(familyId) {
       }).join('')}</dl>
     </section>`;
 
-  // 2 · Needs attention — each item a link to its evidence below.
-  const heading = LM.attentionHeading(e);
+  // 2 · Needs attention — the actual workload, one line per state with its
+  // count and its terms, each term a link to its evidence below. Never summed
+  // into "N items": eleven unread values are eleven, not one.
+  const due = e.attentionSummary;
   const attn = `<section class="acq-lh-sec" data-section="attention">
-      <h5 class="acq-lh-sec-head">Needs attention</h5>${heading
-      ? `<div class="acq-lh-attn" role="region" aria-label="${esc(heading)}">
-          <div class="acq-lh-attn-head">${esc(heading)}</div>
-          <ul>${e.attention.map(a => `<li><button type="button" class="acq-lh-attn-item ${esc(a.kind)}" data-field="${esc(a.field)}">${esc(a.text)}</button></li>`).join('')}</ul>
-        </div>`
-      : '<div class="acq-lh-attn clear">Nothing needs attention: no term is contested, and every key term has a value.</div>'}
+      <h5 class="acq-lh-sec-head">Needs attention</h5>${due.length
+      ? `<ul class="acq-lh-attn" aria-label="Needs attention">${due.map(g => `
+          <li class="acq-lh-attn-cat ${esc(g.kind)}" data-kind="${esc(g.kind)}" data-count="${esc(g.count)}">
+            <span class="acq-lh-attn-count">${esc(g.text)}</span>
+            <span class="acq-lh-attn-terms">${g.terms.map(t => `<button type="button" class="acq-lh-attn-item ${esc(g.kind)}" data-field="${esc(t.field)}">${esc(t.label)}</button>`).join('<span class="acq-lh-attn-sep"> · </span>')}</span>
+          </li>`).join('')}</ul>`
+      : '<div class="acq-lh-attn clear">Nothing needs attention: every term is verified by a person.</div>'}
     </section>`;
 
   // 3 · Lease terms at a glance, in review order; a term opens its evidence.
@@ -31587,7 +31631,7 @@ function _acqLeaseholdHeadHtml(familyId) {
       </details>`;
   const terms = `<section class="acq-lh-sec" data-section="terms">
       <h5 class="acq-lh-sec-head">Lease terms</h5>
-      ${resolved ? `<div class="acq-lh-terms-sub">${esc(resolved.summary.verified + ' of ' + resolved.summary.total + ' terms verified · ' + resolved.summary.conflicting + ' contested · ' + resolved.summary.missing + ' not established')}</div>` : ''}
+      ${resolved ? `<div class="acq-lh-terms-sub">${esc(LM.countsLine(LM.summaryCounts(resolved.summary)))}</div>` : ''}
       ${sections.map(tierHtml).join('')}
     </section>`;
 
@@ -31609,7 +31653,7 @@ function _acqLeaseholdHeadHtml(familyId) {
     </section>`;
 
   return `<div class="acq-lh" data-leasehold="${esc(familyId)}">
-      <button type="button" class="acq-lh-back">&#x2190; Back to Lease Matrix</button>
+      <button type="button" class="acq-lh-back">&#x2190; Back to MainStreet’s Record</button>
       <h4 class="acq-lh-title">${esc(e.tenant)}</h4>
       <div class="acq-lh-headline">${esc(LM.headline(e))}</div>
       ${overview}${attn}${terms}${documents}
@@ -31639,7 +31683,12 @@ function _acqBindLeaseMatrixControls(el) {
     if (row) { ev.preventDefault(); acqOpenLeasehold(row.getAttribute('data-leasehold')); return; }
     if (t.closest && t.closest('.acq-lh-back')) { ev.preventDefault(); acqBackToLeaseMatrix(); return; }
     const item = t.closest && (t.closest('.acq-lh-attn-item') || t.closest('.acq-lh-term'));
-    if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); }
+    if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); return; }
+    if (t.closest && t.closest('.acq-lm-docs-due')) {
+      ev.preventDefault();
+      const g = document.querySelector('#acqDocsList .acq-doc-group.needs-review') || document.getElementById('acqDocsList');
+      if (g && g.scrollIntoView) g.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
   });
   el.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
@@ -32601,10 +32650,17 @@ function _renderAcqLeaselist() {
     el.innerHTML = '<li style="color:var(--text-5);font-size:0.78rem;">No leases uploaded yet — use "Upload Leases" above to extract tenant terms.</li>';
     return;
   }
+  // Source material, not a roster (§4m): each entry is a FILE and what the AI
+  // read from it, unreviewed. MainStreet's Record above is the reviewed one.
   el.innerHTML = _acqTenants.map(t => {
-    const name = esc(t.tenant_name || t.tenantName || '(extracting…)');
-    const dot  = t._status === 'error' ? 'error' : 'ok';
-    return `<li class="acq-file-item"><span class="acq-file-dot ${dot}"></span>${name}</li>`;
+    const file = t._fileName || t.fileName || null;
+    const read = t.tenant_name || t.tenantName || null;
+    const failed = t._status === 'error';
+    return `<li class="acq-file-item acq-src-item${failed ? ' error' : ''}">
+        <span class="acq-src-file">&#x1F4C4; ${esc(file || 'File name not recorded')}</span>
+        <span class="acq-src-read">${failed ? 'could not be read'
+          : read ? 'read as “' + esc(read) + '” · not reviewed' : 'extracting…'}</span>
+      </li>`;
   }).join('');
 }
 

@@ -6379,7 +6379,22 @@
     .acq-lm-status.unclear    { color: #c084fc; }
     .acq-lm-status.unverified { color: var(--c-fbbf24, #fbbf24); }
     .acq-lm-status.verified   { color: var(--c-4ade80); }
-    .acq-lm-legend { font-size: 0.68rem; color: var(--text-4); margin: 8px 2px 0; }
+    .acq-lm-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 0;
+      font-size: 0.68rem; color: var(--text-4); margin: 8px 2px 0; }
+    .acq-lm-legend li { white-space: nowrap; }
+    .acq-lm-legend .acq-lm-v { margin-right: 4px; }
+    .acq-lm-status-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+    .acq-lm-unverified { font-size: 0.66rem; color: var(--c-fbbf24, #fbbf24); white-space: nowrap; }
+    .acq-lm-docs-due { display: block; margin: 0 2px 8px; padding: 6px 10px; width: 100%; text-align: left;
+      background: rgba(251, 191, 36, 0.06); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 6px;
+      color: var(--c-fbbf24, #fbbf24); font-size: 0.74rem; cursor: pointer; }
+    .acq-lm-docs-due:hover { background: rgba(251, 191, 36, 0.12); }
+    .acq-lm-unfiled-why { color: var(--text-4); font-size: 0.68rem; }
+    .acq-src-note { display: block; margin-top: 4px; color: var(--c-fbbf24, #fbbf24); font-size: 0.74rem; }
+    .acq-file-item.acq-src-item { flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; }
+    .acq-src-file { color: var(--text-2); font-size: 0.8rem; overflow-wrap: anywhere; }
+    .acq-src-read { color: var(--text-4); font-size: 0.7rem; }
+    .acq-src-item.error .acq-src-read { color: var(--c-f87171); }
     .acq-lm-unfiled { margin-top: 12px; font-size: 0.74rem; color: var(--text-3);
       border: 1px solid rgba(251, 191, 36, 0.22); background: rgba(251, 191, 36, 0.05); border-radius: 8px; padding: 8px 10px; }
     .acq-lm-unfiled summary { cursor: pointer; color: var(--c-fbbf24, #fbbf24); }
@@ -6393,15 +6408,23 @@
     .acq-lh-back:hover { border-color: var(--text-3); }
     .acq-lh-title { margin: 12px 0 2px; font-size: 1.05rem; color: var(--text-1, var(--text-2)); }
     .acq-lh-headline { font-size: 0.85rem; color: var(--text-3); }
-    .acq-lh-attn { margin-top: 12px; padding: 9px 12px; border-radius: 8px;
-      border: 1px solid rgba(248, 113, 113, 0.35); background: rgba(248, 113, 113, 0.06); }
+    /* Needs attention: one line per state, its count, then its terms. */
+    .acq-lh-attn { margin: 0; padding: 8px 12px; border-radius: 8px; list-style: none;
+      border: 1px solid #1e293b; background: rgba(148, 163, 184, 0.04); }
     .acq-lh-attn.clear { border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.05);
       color: var(--text-3); font-size: 0.78rem; }
-    .acq-lh-attn-head { font-weight: 700; font-size: 0.82rem; color: var(--c-f87171); }
-    .acq-lh-attn ul { margin: 6px 0 0; padding-left: 18px; }
+    .acq-lh-attn-cat { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; padding: 4px 0;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.6); }
+    .acq-lh-attn-cat:last-child { border-bottom: none; }
+    .acq-lh-attn-count { font-weight: 700; font-size: 0.8rem; min-width: 19em; }
+    .acq-lh-attn-cat.contested  .acq-lh-attn-count { color: var(--c-f87171); }
+    .acq-lh-attn-cat.missing    .acq-lh-attn-count { color: var(--text-3); }
+    .acq-lh-attn-cat.unclear    .acq-lh-attn-count { color: #c084fc; }
+    .acq-lh-attn-cat.unverified .acq-lh-attn-count { color: var(--c-fbbf24, #fbbf24); }
+    .acq-lh-attn-terms { flex: 1 1 20em; font-size: 0.76rem; color: var(--text-4); }
     .acq-lh-attn-item { background: none; border: none; padding: 1px 0; cursor: pointer; text-align: left;
-      font-size: 0.78rem; color: var(--text-2); text-decoration: underline; text-decoration-color: #334155; }
-    .acq-lh-attn-item.contested { color: var(--c-f87171); }
+      font-size: 0.76rem; color: var(--text-2); text-decoration: underline; text-decoration-color: #334155; }
+    .acq-lh-attn-sep { color: var(--text-4); }
     /* The record, in layers: overview, attention, terms, documents, then the
        evidence. Each layer has the same small heading. */
     .acq-lh-sec { margin-top: 16px; }
@@ -7732,7 +7755,7 @@
        rather than hidden, and a contradiction shows both values. -->
   <div class="acq-terms-card" id="acqTermsCard">
     <div class="acq-docs-head">
-      <h3>&#x1F4CB; Lease Matrix</h3>
+      <h3>&#x1F4CB; MainStreet’s Record</h3>
       <span class="acq-docs-count" id="acqTermsCount"></span>
       <!-- P1-7: Acquisition Report v2 — the buyer's questions. Here rather
            than beside the Decision Report button because that one only exists
@@ -7769,8 +7792,9 @@
   <div class="acq-upload-grid">
     <!-- Lease Upload -->
     <div class="acq-upload-card">
-      <h3>&#x1F4C4; Leases</h3>
-      <p>Upload PDFs — AI extracts tenant terms, CAM caps, exclusions, and audit rights.</p>
+      <h3>&#x1F4C4; Extracted Lease Files</h3>
+      <p>Upload lease PDFs — AI reads tenant terms, CAM caps, exclusions, and audit rights.
+        <span class="acq-src-note">Source material: each file below is <strong>as extracted from your files — not reviewed</strong>. MainStreet’s Record above is the reviewed record.</span></p>
       <label class="acq-upload-btn">
         Upload Leases
         <input type="file" id="acqLeaseInput" accept=".pdf,.txt" multiple style="display:none"
