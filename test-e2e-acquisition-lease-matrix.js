@@ -245,7 +245,14 @@ const DB = `
     const el = document.getElementById('acqTermsList');
     const rows = [].map.call(el.querySelectorAll('.acq-lm-row'), r => ({
       id: r.getAttribute('data-leasehold'),
-      cells: [].map.call(r.querySelectorAll('td'), td => td.innerText.replace(/\s+/g, ' ').trim()),
+      // The tenant cell carries the "open" affordance under the name; the
+      // first cell reads as the name alone.
+      cells: [].map.call(r.querySelectorAll('td'), (td, i) => (i === 0 ? td.querySelector('.acq-lm-name') : td).innerText.replace(/\s+/g, ' ').trim()),
+      open: (() => { const o = r.querySelector('td.acq-lm-tenant .acq-lm-open'); if (!o) return null;
+        const b = o.getBoundingClientRect();
+        return { text: o.innerText.replace(/\s+/g, ' ').trim(), hidden: o.getAttribute('aria-hidden'), visible: b.width > 0 && b.height > 0,
+                 chev: !!o.querySelector('.acq-lm-chev') }; })(),
+      cursor: getComputedStyle(r).cursor, label: r.getAttribute('aria-label'), role: r.getAttribute('role'), tab: r.getAttribute('tabindex'),
       states: [].map.call(r.querySelectorAll('td .acq-lm-v'), v => v.getAttribute('data-state')),
       status: (r.querySelector('.acq-lm-status') || {}).innerText || '',
     }));
@@ -253,6 +260,7 @@ const DB = `
       rows, groups: el.querySelectorAll('.acq-term-group').length,
       unfiled: el.querySelectorAll('.acq-lm-unfiled li').length,
       unfiledText: ((el.querySelector('.acq-lm-unfiled summary') || {}).innerText || ''),
+      unfiledOpen: el.querySelectorAll('.acq-lm-unfiled .acq-lm-open, .acq-lm-unfiled .acq-lm-chev').length,
       back: !!el.querySelector('.acq-lh-back'),
       count: (document.getElementById('acqTermsCount') || {}).innerText || '',
       heading: (document.querySelector('#acqTermsCard h3') || {}).innerText || '',
@@ -316,6 +324,27 @@ const DB = `
         && luxeRow.cells[4] === '5% cap' && /missing terms/i.test(luxeRow.status), luxeRow && luxeRow.cells.join(' | '));
   check('Luxe Nails\' base rent is "not established", not blank or zero',
         luxeRow && luxeRow.states[1] === 'missing' && !/\$0\b/.test(luxeRow.cells[2]));
+
+  // ── 2b · every row says it opens ─────────────────────────────────────────
+  check('every leasehold row says it opens: "View lease details & evidence ›" under the name, visible',
+        m0.rows.every(r => r.open && r.open.text === 'View lease details & evidence ›' && r.open.chev && r.open.visible),
+        JSON.stringify(m0.rows.map(r => r.open)));
+  check('the whole row is the control: pointer cursor, a button to assistive tech, reachable by Tab, named for what it opens',
+        m0.rows.every(r => r.cursor === 'pointer' && r.role === 'button' && r.tab === '0'
+          && /^View lease details & evidence: .+ — .+$/.test(r.label || '') && r.open.hidden === 'true'),
+        m0.rows.map(r => r.label).join(' | '));
+  check('the files not in a leasehold carry no "open" affordance — there is no record to open', m0.unfiledOpen === 0, String(m0.unfiledOpen));
+  const hoverOpen = await (async () => {
+    const sel = `#acqTermsList .acq-lm-row[data-leasehold="${LUXE}"]`;
+    const before = await page.evaluate(s => getComputedStyle(document.querySelector(s + ' .acq-lm-open')).opacity, sel);
+    await page.hover(sel);
+    const after = await page.evaluate(s => ({ o: getComputedStyle(document.querySelector(s + ' .acq-lm-open')).opacity,
+      t: getComputedStyle(document.querySelector(s + ' .acq-lm-chev')).transform }), sel);
+    await page.mouse.move(0, 0);
+    return { before, after };
+  })();
+  check('hovering a row brightens the affordance and nudges the ›',
+        Number(hoverOpen.before) < 1 && Number(hoverOpen.after.o) === 1 && /matrix/.test(hoverOpen.after.t), JSON.stringify(hoverOpen));
 
   // ── 3 · click ShopRite ───────────────────────────────────────────────────
   await page.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
@@ -546,16 +575,23 @@ const DB = `
       return { overflow: document.documentElement.scrollWidth - window.innerWidth,
                tableW: t ? Math.round(t.getBoundingClientRect().width) : null,
                rowDisplay: row ? getComputedStyle(row).display : null,
-               labels: row ? [].map.call(row.querySelectorAll('td'), td => getComputedStyle(td, '::before').content).slice(1, 3) : [] };
+               labels: row ? [].map.call(row.querySelectorAll('td'), td => getComputedStyle(td, '::before').content).slice(1, 3) : [],
+               cards: [].map.call(document.querySelectorAll('#acqTermsList .acq-lm-row'), r => {
+                 const o = r.querySelector('.acq-lm-open'), rb = r.getBoundingClientRect(), ob = o ? o.getBoundingClientRect() : null;
+                 const hb = r.querySelector('td.acq-lm-tenant').getBoundingClientRect();
+                 return { has: !!o, inHeader: !!ob && ob.top >= hb.top - 1 && ob.bottom <= hb.bottom + 1,
+                          inside: !!ob && ob.width > 0 && ob.left >= rb.left - 1 && ob.right <= rb.right + 1 }; }) };
     });
     check('on a phone the matrix is a card per leasehold, labelled, with no sideways scroll',
           ph.rowDisplay === 'block' && ph.overflow <= 1 && ph.tableW <= 375 && /Leased SF/.test(ph.labels[0] || ''),
           JSON.stringify(ph));
-    await p2.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
+    check('each card shows "View lease details & evidence ›" in its header, inside the card',
+          ph.cards.length === 4 && ph.cards.every(c => c.has && c.inHeader && c.inside), JSON.stringify(ph.cards));
+    await p2.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"] .acq-lm-open`);
     await p2.waitForSelector(`#acqTermsList .acq-term-group[data-family="${SHOP}"]`, { timeout: 10000 });
     const pr = await p2.evaluate(() => ({ title: document.querySelector('#acqTermsList .acq-lh-title').innerText,
       overflow: document.documentElement.scrollWidth - window.innerWidth }));
-    check('and a tap opens the record, still without sideways scroll', /ShopRite/.test(pr.title) && pr.overflow <= 1, JSON.stringify(pr));
+    check('and a tap — on the affordance itself — opens the record, still without sideways scroll', /ShopRite/.test(pr.title) && pr.overflow <= 1, JSON.stringify(pr));
     await c2.close();
   }
 

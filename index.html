@@ -6357,6 +6357,12 @@
     .acq-lm-row:hover td, .acq-lm-row:focus td { background: rgba(148, 163, 184, 0.06); }
     .acq-lm-row:focus { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: -2px; }
     .acq-lm-name { font-weight: 700; color: var(--text-1, var(--text-2)); }
+    /* The whole row opens the leasehold: say so, quietly, under the name. */
+    .acq-lm-open { display: block; margin-top: 2px; font-size: 0.68rem; font-weight: 500; color: var(--c-60a5fa, #60a5fa);
+      opacity: 0.75; white-space: nowrap; }
+    .acq-lm-chev { display: inline-block; margin-left: 2px; font-size: 0.85rem; line-height: 1; transition: transform 0.15s ease; }
+    .acq-lm-row:hover .acq-lm-open, .acq-lm-row:focus .acq-lm-open { opacity: 1; text-decoration: underline; }
+    .acq-lm-row:hover .acq-lm-chev, .acq-lm-row:focus .acq-lm-chev { transform: translateX(3px); }
     .acq-lm-v { white-space: nowrap; }
     .acq-lm-v.read, .acq-lm-v.unclear { color: var(--text-3); }
     .acq-lm-v.unclear { font-style: italic; }
@@ -6448,6 +6454,9 @@
       .acq-lm-table td::before { content: attr(data-label); color: var(--text-4); font-size: 0.68rem;
         text-transform: uppercase; letter-spacing: 0.05em; }
       .acq-lm-table td.acq-lm-tenant::before { content: none; }
+      .acq-lm-table td.acq-lm-tenant { align-items: baseline; flex-wrap: wrap; }
+      .acq-lm-open { margin-top: 0; margin-left: auto; }   /* right-aligned, even when a long name wraps it */
+      .acq-lm-row:active { background: rgba(148, 163, 184, 0.08); }
       .acq-lm-v { white-space: normal; text-align: right; }
       .acq-lm-struct { white-space: normal; text-align: right; }
     }

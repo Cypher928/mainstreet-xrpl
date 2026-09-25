@@ -31497,8 +31497,9 @@ function _acqLeaseMatrixHtml(reviewId) {
   if (!m) return '';
   const rows = m.leaseholds.map(e => `
       <tr class="acq-lm-row" data-leasehold="${esc(e.leaseholdId)}" tabindex="0" role="button"
-          aria-label="${esc('Open ' + e.tenant + ' — ' + e.status.label)}">
-        <td class="acq-lm-tenant" data-label="Tenant"><span class="acq-lm-name">${esc(e.tenant)}</span></td>
+          aria-label="${esc('View lease details & evidence: ' + e.tenant + ' — ' + e.status.label)}">
+        <td class="acq-lm-tenant" data-label="Tenant"><span class="acq-lm-name">${esc(e.tenant)}</span>
+          <span class="acq-lm-open" aria-hidden="true">View lease details &amp; evidence <span class="acq-lm-chev">›</span></span></td>
         <td data-label="Leased SF">${_acqLmCellHtml(e.cells.leased_sqft)}</td>
         <td data-label="Base rent">${_acqLmCellHtml(e.cells.base_rent)}</td>
         <td data-label="Expiration">${_acqLmCellHtml(e.cells.end_date)}</td>
