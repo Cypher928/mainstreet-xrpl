@@ -455,11 +455,12 @@
     return parts.join(' · ');
   }
 
-  /** The documents a person still has to match or type, in words; [] when none. */
+  /** The documents a person still has to match, type or confirm, in words; [] when none. */
   function documentsLine(docs) {
     var d = docs || {}, out = [];
     if (d.unmatched) out.push(d.unmatched + (d.unmatched === 1 ? ' document' : ' documents') + ' not yet matched to a tenant');
     if (d.untyped)   out.push(d.untyped + (d.untyped === 1 ? ' document' : ' documents') + ' of unknown type');
+    if (d.unconfirmed) out.push(d.unconfirmed + (d.unconfirmed === 1 ? ' document' : ' documents') + ' filed by AI, not yet confirmed');
     return out;
   }
 

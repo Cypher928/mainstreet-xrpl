@@ -24586,7 +24586,7 @@ function renderRenewalPipeline(props) {
 
 function exportPortfolioSummary() {
   const props   = Array.isArray(_props)      ? _props      : [];
-  const reviews = Array.isArray(_acqReviews) ? _acqReviews : [];
+  const reviews = _acqReviewsForConsumers();
   if (props.length === 0) {
     showToast('No portfolio data to export. Add properties first.', { color: '#92400e', textColor: '#fef3c7' });
     return;
@@ -25522,7 +25522,7 @@ function renderCommandCenter() {
   const _rawName = user?.name || (email ? email.split('@')[0] : null);
   // Greeting polish: a derived email prefix still reads better capitalized.
   const userName = _rawName ? _rawName.charAt(0).toUpperCase() + _rawName.slice(1) : null;
-  const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviews, userName });
+  const model = CommandCenter.buildModel({ props: _props, acqReviews: _acqReviewsForConsumers(), userName });
   root.innerHTML = CommandCenter.renderHtml(model);
 }
 
@@ -25798,7 +25798,7 @@ function aiwAsk(q) {
   const question = String(q != null ? q : (input ? input.value : '')).trim();
   if (!question) return;
   if (input && q == null) input.value = '';
-  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviews });
+  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviewsForConsumers() });
   _aiwWctx = ans.context || null;
   _aiwHistory.push({ role: 'user', text: question }, { role: 'ai', html: AIWorkspace.renderAnswerHtml(ans) });
   // Scale guard (Phase 27): the conversation re-renders in full each turn — cap
@@ -25816,7 +25816,7 @@ let _dftDoc = null;
 function openDraftingStudio(type, context) {
   if (!window.DocumentDrafting) return;
   const ctx = context || _aiwContext || (activePropId ? { propertyId: activePropId } : null);
-  const doc = DocumentDrafting.build(type, { props: _props, context: ctx, acqReviews: _acqReviews });
+  const doc = DocumentDrafting.build(type, { props: _props, context: ctx, acqReviews: _acqReviewsForConsumers() });
   if (!doc) {
     showToast('Not enough data on file to draft that yet — run the relevant analysis first.', { color: '#92400e', textColor: '#fef3c7' });
     return;
@@ -26088,7 +26088,7 @@ function renderPortfolio(props) {
   rar.medium.forEach(a   => _markProp(a, 'medium'));
 
   // Action Center (topmost — shows today's 5-10 priority items)
-  renderActionCenter(props, _acqReviews, rar);
+  renderActionCenter(props, _acqReviewsForConsumers(), rar);
 
   // Portfolio intelligence panel (above cards grid)
   renderPortfolioIntelligence(props, rar);
@@ -30879,6 +30879,17 @@ function _acqCanonicalRows(reviewId) {
   return AL.leaseholdRows(input, { terms: _AT() });
 }
 
+// OPTION B: the leaseholds, and nothing else, are the property's tenants.
+// The unmatched extractions the projection also returns stay on MainStreet's
+// Record, apart, until a person resolves them — they never reach the engine,
+// the Rent Roll, the Decision Report, the stored analysis (which Ask AI, the
+// Command Center and drafting read) or a conversion. Without the module
+// (never in the shipped page) nothing is a leasehold, so nothing reaches it.
+function _acqLeaseholdsOnly(canon) {
+  const AL = _AL();
+  return AL ? AL.analysisRows(canon) : [];
+}
+
 // The rows the engine is given: named, and not a failed extraction.
 function _acqAnalysisRows(rows) {
   return (Array.isArray(rows) ? rows : []).filter(t => t && (t.tenant_name || t.tenantName) && t._status !== 'error');
@@ -30903,13 +30914,17 @@ function _acqBuildAnalysis(review) {
   if (!AE || !review) return null;
   const d = review.data || {};
   const canon    = _acqCanonicalRows(review.id);
-  const tenants  = _acqAnalysisRows(canon.rows);
+  const tenants  = _acqAnalysisRows(_acqLeaseholdsOnly(canon));
   const invoices = (Array.isArray(d.invoices) ? d.invoices : []).filter(i => i && i.amount && i._status !== 'error');
   const sqft     = _acqIsActive(review) ? _acqSqFt : (d.totalSqFt || 0);
   const report   = AE.buildAcquisitionReport(tenants, invoices, sqft);
   if (AL) AL.attachStates(report.tenantSummary, tenants);
   report.canonical = {
+    // What the rows are: leaseholds only. An analysis without this basis
+    // counted unmatched extractions as tenants, and reads as out of date.
+    basis: 'leaseholds',
     leaseholds: canon.leaseholds, unfiled: canon.unfiled,
+    unmatched: _acqUnresolvedExtractions(review.id),
     dropped: canon.dropped.length, resolverAvailable: canon.resolverAvailable,
     fingerprint: _acqCanonicalFingerprint(tenants), at: new Date().toISOString(),
   };
@@ -30923,6 +30938,11 @@ function _acqBuildAnalysis(review) {
 async function _acqRefreshAnalysis(reviewId) {
   const review = _acqReviews.find(r => r && r.id === reviewId);
   if (!review || !review.data || !review.data.analysis) return false;
+  // An analysis of nothing would replace the stored one with an empty report.
+  if (!_acqLeaseholdsOnly(_acqCanonicalRows(reviewId)).length) {
+    showToast(_acqNoLeaseholdsMessage(reviewId), { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+    return false;
+  }
   const built = _acqBuildAnalysis(review);
   if (!built) return false;
   review.data.analysis = built.report;
@@ -30951,9 +30971,10 @@ function _acqAnalysisStale(review) {
   const id = review.id;
   if (!(_acqFamilies.has(id) && _acqDocs.has(id) && _acqDecisions.has(id) && _acqEvidenceLoaded.has(id))) return null;
   if (!a.canonical) return 'This analysis was run from the uploaded files, before the Rent Roll read the lease terms.';
+  if (a.canonical.basis !== 'leaseholds') return 'This analysis counted extracted entries not matched to a tenant as tenants.';
   const canon = _acqCanonicalRows(id);
   if (!canon.resolverAvailable) return null;
-  return _acqCanonicalFingerprint(canon.rows) === a.canonical.fingerprint
+  return _acqCanonicalFingerprint(_acqLeaseholdsOnly(canon)) === a.canonical.fingerprint
     ? '' : 'The lease terms have changed since this analysis was run.';
 }
 
@@ -30976,12 +30997,316 @@ function _acqUpdateStaleNotice() {
 const _ACQ_ROW_PRIVATE = new Set(['_states', '_resolved', '_familyLabel', '_tenantNameFrom', '_documentCount', '_legacyWhy']);
 function _acqConversionReview(review) {
   const canon = _acqCanonicalRows(review.id);
-  const rows  = _acqAnalysisRows(canon.rows).map(t => {
+  const rows  = _acqAnalysisRows(_acqLeaseholdsOnly(canon)).map(t => {
     const o = {};
     Object.keys(t).forEach(k => { if (!_ACQ_ROW_PRIVATE.has(k)) o[k] = t[k]; });
     return o;
   });
   return Object.assign({}, review, { data: Object.assign({}, review.data || {}, { tenants: rows }) });
+}
+
+// ── Unmatched extractions: a person resolves them (Option B) ─────────────────
+//
+// A raw extracted row the projection could not tie to a leasehold is not a
+// tenant. It stays on MainStreet's Record, apart, until a person matches it
+// to a leasehold, establishes a new leasehold from it, or says it is not a
+// tenant. The decision is kept in review.data.extractionResolutions, keyed by
+// the raw row's id; the raw row itself — review.data.tenants[] — is never
+// changed or removed. Nothing is matched automatically.
+//
+// A row whose DOCUMENT is on file is settled in Documents instead, where the
+// document is filed into a leasehold (and the projection then drops the row);
+// here it can only be dismissed.
+
+function _acqResolutions(reviewId) {
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const r = review && review.data && review.data.extractionResolutions;
+  return (r && typeof r === 'object') ? r : {};
+}
+
+// Every unmatched extraction on the review, with its resolution (or null).
+function _acqUnmatched(reviewId) {
+  const AL = _AL();
+  if (!AL || !reviewId) return [];
+  return AL.unmatchedEntries(_acqCanonicalRows(reviewId), _acqResolutions(reviewId), _acqFamilyRows(reviewId));
+}
+
+function _acqUnresolvedExtractions(reviewId) {
+  return _acqUnmatched(reviewId).filter(x => !x.resolution).length;
+}
+
+// Everything the record is read from has arrived for this review.
+function _acqRecordLoaded(reviewId) {
+  return _acqFamilies.has(reviewId) && _acqDocs.has(reviewId)
+      && _acqDecisions.has(reviewId) && _acqEvidenceLoaded.has(reviewId);
+}
+
+// Load whatever of the record has not arrived yet, so a gate never decides from
+// half of it (a person can click Run Analysis before the panel has loaded).
+async function _acqEnsureRecord(reviewId) {
+  if (!reviewId || _acqRecordLoaded(reviewId)) return;
+  if (!_acqFamilies.has(reviewId))      await _acqLoadFamilies(reviewId);
+  if (!_acqDocs.has(reviewId))          await _acqLoadDocuments(reviewId);
+  if (!_acqDecisions.has(reviewId))     await _acqLoadDecisions(reviewId);
+  if (!_acqEvidenceLoaded.has(reviewId)) await _acqLoadEvidence(reviewId);
+}
+
+function _acqNoLeaseholdsMessage(reviewId) {
+  const u = _acqUnresolvedExtractions(reviewId);
+  return 'MainStreet’s Record has no leaseholds yet, so there is nothing to analyze.'
+    + (u ? ' Resolve the ' + u + ' extracted ' + (u === 1 ? 'entry' : 'entries') + ' not matched to a tenant first.' : '');
+}
+
+// Why this review cannot be acquired yet — '' when it can. Conversion creates
+// one tenant per leasehold and nothing else, so it waits until every unmatched
+// extraction has been resolved by a person, and until the analysis it copies
+// onto the property describes the record as it now stands.
+function _acqConversionBlock(review) {
+  if (!review) return 'No review is open.';
+  const id = review.id;
+  if (!_acqRecordLoaded(id)) return 'Loading MainStreet’s Record…';
+  const u = _acqUnresolvedExtractions(id);
+  const docs = _acqPendingDocuments(id);
+  if (u || docs.length) {
+    const parts = [];
+    if (u) parts.push(u + ' extracted ' + (u === 1 ? 'entry' : 'entries') + ' not matched to a tenant (in MainStreet’s Record)');
+    if (docs.length) parts.push(docs.length + ' ' + (docs.length === 1 ? 'document' : 'documents') + ' in Documents — '
+      + docs.map(p => (p.doc.file_name || 'an unnamed document') + ' (' + p.reasons.join('; ') + ')').join(', '));
+    return (u && !docs.length ? u + ' extracted ' + (u === 1 ? 'entry needs' : 'entries need') + ' to be resolved before this property can be acquired. '
+                              : 'Before this property can be acquired, a person must resolve: ' + parts.join('; ') + '. ')
+      + 'MainStreet will not create tenants from unmatched document extractions — '
+      + 'match each item to a leasehold, establish a new leasehold, or mark it not a tenant or a duplicate.';
+  }
+  if (!_acqLeaseholdsOnly(_acqCanonicalRows(id)).length) {
+    return 'MainStreet’s Record has no leaseholds, so there is no tenant to create.';
+  }
+  const stale = _acqAnalysisStale(review);
+  if (stale) return stale + ' Refresh the analysis from MainStreet’s Record before acquiring.';
+  return '';
+}
+
+// ── What the rest of MainStreet may read from an acquisition review ─────────
+//
+// Ask AI, the Command Center, drafting and the portfolio actions are given
+// THIS view of each review, never the stored review. An analysis reaches them
+// only when it describes MainStreet's Record as it now stands: built from the
+// leaseholds (basis 'leaseholds') and matching the record's current state.
+// Otherwise it is withheld and the view says why — 'stale' (the record has
+// moved on, or it counted unmatched extractions as tenants) or 'unchecked'
+// (the record has not loaded, so currency cannot be told) — and every
+// consumer says so instead of answering from it.
+function _acqConsumerAnalysis(review) {
+  const a = review && review.data && review.data.analysis;
+  if (!a || !a.summary) return { state: 'none', reason: null, analysis: null };
+  if (!a.canonical) return { state: 'stale', reason: 'it was run from the uploaded files, before MainStreet’s Record read the lease terms', analysis: null };
+  if (a.canonical.basis !== 'leaseholds') return { state: 'stale', reason: 'it counted extracted entries not matched to a tenant as tenants', analysis: null };
+  if (!_acqRecordLoaded(review.id)) return { state: 'unchecked', reason: 'it has not yet been checked against MainStreet’s Record', analysis: null };
+  const why = _acqAnalysisStale(review);
+  if (why === null) return { state: 'unchecked', reason: 'it cannot be checked against MainStreet’s Record yet', analysis: null };
+  if (why) return { state: 'stale', reason: 'MainStreet’s Record has changed since it was run', analysis: null };
+  const s = a.summary;
+  return { state: 'current', reason: null, analysis: {
+    basis: 'leaseholds', at: a.canonical.at || null, tenantCount: s.tenantCount,
+    recoveryRate: s.recoveryRate, totalAtRisk: (s.annualMissedRecovery || 0) + (s.capLeakageAnnualized || 0),
+  } };
+}
+
+function _acqReviewsForConsumers() {
+  return (_acqReviews || []).filter(Boolean).map(r => {
+    const c = _acqConsumerAnalysis(r);
+    const unconverted = r.status === 'complete' && !(r.data && r.data.conversionRecord && r.data.conversionRecord.propertyId);
+    const block = unconverted
+      ? (_acqRecordLoaded(r.id) ? _acqConversionBlock(r) : 'Not yet checked — open the review to see what remains before it can be converted.')
+      : '';
+    return { id: r.id, name: r.name, status: r.status, created_at: r.created_at, updated_at: r.updated_at,
+             analysisState: c.state, analysisStaleReason: c.reason, analysis: c.analysis,
+             conversionBlocked: block || null };
+  });
+}
+
+// Load the record of every review whose analysis or conversion readiness the
+// consumers need to judge, then redraw what reads them. Nothing is written.
+async function _acqPreloadForConsumers() {
+  const want = (_acqReviews || []).filter(r => r && r.data && (
+    (r.data.analysis && r.data.analysis.canonical && r.data.analysis.canonical.basis === 'leaseholds')
+    || (r.status === 'complete' && !(r.data.conversionRecord && r.data.conversionRecord.propertyId))));
+  for (const r of want) { try { await _acqEnsureRecord(r.id); } catch (_) {} }
+  try { if (typeof renderCommandCenter === 'function') renderCommandCenter(); } catch (_) {}
+  try { if (Array.isArray(_props) && _props.length && typeof renderActionCenter === 'function') renderActionCenter(_props, _acqReviewsForConsumers()); } catch (_) {}
+}
+
+// A person resolves one unmatched extraction. `action` is one of
+// AL.RESOLUTION; `familyId` names the leasehold for a match.
+async function acqResolveExtraction(rowKey, action, familyId) {
+  const AL = _AL();
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  if (!AL || !review || !rowKey) return false;
+  const entry = _acqUnmatched(reviewId).find(x => x.key === rowKey);
+  if (!entry || entry.resolution) return false;
+  const R = AL.RESOLUTION;
+  if (![R.MATCHED, R.NEW_LEASEHOLD, R.DISMISSED].includes(action)) return false;
+  // A document on file is filed into a leasehold in Documents, not here.
+  if (action !== R.DISMISSED && entry.why !== 'no_document') return false;
+
+  const name = entry.row.tenant_name || entry.row.tenantName || null;
+  let fam = null;
+  if (action === R.MATCHED) {
+    fam = _acqFamilyRows(reviewId).find(f => f && f.id === familyId) || null;
+    if (!fam) return false;
+  }
+  if (action === R.NEW_LEASEHOLD) {
+    fam = await _acqSaveFamily(reviewId, { label: name || 'Unnamed leasehold', tenantHint: name, familyKind: 'lease' });
+    if (!fam) {
+      showToast('⚠️ The leasehold could not be created — try again.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      return false;
+    }
+  }
+  const { data: { user } } = await db.auth.getUser();
+  const res = Object.assign({}, _acqResolutions(reviewId));
+  res[rowKey] = {
+    action, familyId: fam ? fam.id : null,
+    tenantName: name, fileName: entry.row._fileName || entry.row.fileName || null,
+    by: (user && user.id) || null, at: new Date().toISOString(),
+  };
+  // Its document, when it has one on file, is the same source: saying the
+  // extraction is not a tenant says the document is not relevant, in one act.
+  let docs = null;
+  if (action === R.DISMISSED && entry.why === 'unfiled_document') {
+    const doc = _acqDocRows(reviewId).find(d => d && String(d.produced_id) === String(rowKey));
+    if (doc) {
+      docs = Object.assign({}, _acqDocDispositions(reviewId));
+      docs[doc.id] = { action: _AD().DISPOSITION.NOT_RELEVANT, fileName: doc.file_name || null, linkedRow: rowKey,
+                       by: (user && user.id) || null, at: res[rowKey].at };
+      res[rowKey].linkedDocument = doc.id;
+    }
+  }
+  review.data = Object.assign({}, review.data || {}, { extractionResolutions: res }, docs ? { documentDispositions: docs } : {});
+  const what = action === R.DISMISSED ? 'marked not a tenant'
+             : action === R.MATCHED   ? 'matched to ' + (fam.label || 'a leasehold')
+             : 'established as a new leasehold';
+  _acqRecord(review, { type: 'extraction_resolved', summary: 'Extracted entry “' + (name || 'Unnamed') + '” ' + what,
+    meta: { rowId: rowKey, action, familyId: fam ? fam.id : null } });
+  const ok = await _saveAcqReview(review);
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  _renderAcqSection(_acqReviews);
+  return ok;
+}
+
+// Undo a match or a dismissal: the entry is unresolved again. (A new leasehold
+// is not undone here — it is a leasehold now, in MainStreet's Record.)
+async function acqReopenExtraction(rowKey) {
+  const AL = _AL();
+  const reviewId = _activeAcqId;
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  if (!AL || !review || !rowKey) return false;
+  const res = Object.assign({}, _acqResolutions(reviewId));
+  const prior = res[rowKey];
+  if (!prior || prior.action === AL.RESOLUTION.NEW_LEASEHOLD) return false;
+  delete res[rowKey];
+  let docs = null;
+  if (prior.linkedDocument) {
+    docs = Object.assign({}, _acqDocDispositions(reviewId));
+    delete docs[prior.linkedDocument];
+  }
+  review.data = Object.assign({}, review.data || {}, { extractionResolutions: res }, docs ? { documentDispositions: docs } : {});
+  _acqRecord(review, { type: 'extraction_reopened', summary: 'Extracted entry “' + (prior.tenantName || 'Unnamed') + '” reopened',
+    meta: { rowId: rowKey, was: prior.action } });
+  const ok = await _saveAcqReview(review);
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  _renderAcqSection(_acqReviews);
+  return ok;
+}
+
+// ── Source documents: a person's disposition (Option B) ──────────────────────
+// A document is placed by a PERSON before an acquisition converts: its AI
+// filing confirmed, matched to a leasehold, begun as a new one (the existing
+// "This begins the leasehold"), or marked not relevant or a duplicate.
+
+// Confirm the leasehold the AI filed this document into.
+async function acqConfirmDocFamily(docId) {
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
+  if (!row || !row.family_id || row.family_status === 'confirmed') return false;
+  if (!_acqFamilyRows(reviewId).some(f => f && f.id === row.family_id)) return false;
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return false;
+  const saved = await _acqSaveDocument({
+    reviewId, intakeId: row.intake_id, fileName: row.file_name,
+    familyId: row.family_id, familyStatus: 'confirmed', familySource: 'human',
+    confirmedBy: user.id, confirmedAt: new Date().toISOString(),
+    classificationHistory: _AD().appendHistory(row.classification_history, {
+      action: 'confirmed', field: 'family', from: row.family_id, to: row.family_id, source: 'human', actor: _acqActor() }),
+  });
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  return !!saved;
+}
+
+// File this document into a leasehold a person picks. Nothing is guessed.
+async function acqMatchDocument(docId, familyId) {
+  const reviewId = _activeAcqId;
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
+  if (!row || row.superseded_by_document_id) return false;
+  if (!_acqFamilyRows(reviewId).some(f => f && f.id === familyId)) return false;
+  const { data: { user } } = await db.auth.getUser();
+  if (!user?.id) return false;
+  const saved = await _acqSaveDocument({
+    reviewId, intakeId: row.intake_id, fileName: row.file_name,
+    familyId, familyStatus: 'confirmed', familySource: 'human',
+    confirmedBy: user.id, confirmedAt: new Date().toISOString(),
+    classificationHistory: _AD().appendHistory(row.classification_history, {
+      action: row.family_id ? 'corrected' : 'confirmed', field: 'family', from: row.family_id || null, to: familyId,
+      source: 'human', actor: _acqActor() }),
+  });
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  return !!saved;
+}
+
+// Not relevant, or a duplicate: kept on record, placed nowhere. The extraction
+// it produced, if unmatched, is dismissed in the same act.
+async function acqSetDocDisposition(docId, action) {
+  const AD = _AD(), AL = _AL();
+  const reviewId = _activeAcqId;
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
+  if (!review || !row || ![AD.DISPOSITION.NOT_RELEVANT, AD.DISPOSITION.DUPLICATE].includes(action)) return false;
+  const { data: { user } } = await db.auth.getUser();
+  const at = new Date().toISOString();
+  const docs = Object.assign({}, _acqDocDispositions(reviewId));
+  docs[docId] = { action, fileName: row.file_name || null, by: (user && user.id) || null, at };
+  const res = Object.assign({}, _acqResolutions(reviewId));
+  const linked = AL ? _acqUnmatched(reviewId).find(x => !x.resolution && x.key && row.produced_id != null && x.key === String(row.produced_id)) : null;
+  if (linked) {
+    res[linked.key] = { action: AL.RESOLUTION.DISMISSED, familyId: null, tenantName: linked.row.tenant_name || null,
+                        fileName: row.file_name || null, linkedDocument: docId, by: (user && user.id) || null, at };
+    docs[docId].linkedRow = linked.key;
+  }
+  review.data = Object.assign({}, review.data || {}, { documentDispositions: docs, extractionResolutions: res });
+  _acqRecord(review, { type: 'document_disposed',
+    summary: '“' + (row.file_name || 'A document') + '” marked ' + (action === AD.DISPOSITION.DUPLICATE ? 'a duplicate' : 'not relevant'),
+    meta: { documentId: docId, action, linkedRow: linked ? linked.key : null } });
+  const ok = await _saveAcqReview(review);
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  _renderAcqSection(_acqReviews);
+  return ok;
+}
+
+async function acqClearDocDisposition(docId) {
+  const reviewId = _activeAcqId;
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const docs = Object.assign({}, _acqDocDispositions(reviewId));
+  const prior = docs[docId];
+  if (!review || !prior) return false;
+  delete docs[docId];
+  const res = Object.assign({}, _acqResolutions(reviewId));
+  if (prior.linkedRow && res[prior.linkedRow] && res[prior.linkedRow].linkedDocument === docId) delete res[prior.linkedRow];
+  review.data = Object.assign({}, review.data || {}, { documentDispositions: docs, extractionResolutions: res });
+  _acqRecord(review, { type: 'document_reopened', summary: '“' + (prior.fileName || 'A document') + '” reopened',
+    meta: { documentId: docId, was: prior.action } });
+  const ok = await _saveAcqReview(review);
+  if (_activeAcqId === reviewId) _renderAcqDocuments();
+  _renderAcqSection(_acqReviews);
+  return ok;
 }
 
 // A person asks for a document to be read (again). The text is already on the
@@ -31090,6 +31415,7 @@ function _renderAcqDocuments() {
   const AD     = _AD();
   const groups = AD.groupDocuments(rows, _acqFamilyRows(_activeAcqId));
   const byId   = new Map(rows.map(r => [r.id, r]));
+  const pendingById = new Map(_acqPendingDocuments(_activeAcqId).map(p => [p.doc.id, p]));
 
   // One document. The classification says what it is AND how settled that is,
   // every time it is shown — a proposal that renders like a fact is the thing
@@ -31172,6 +31498,30 @@ function _renderAcqDocuments() {
       }
     }
 
+    // OPTION B: what this document still needs from a person, and the controls
+    // to give it. A disposition already made says so, with Undo.
+    const disp = _acqDocDispositions(_activeAcqId)[r.id];
+    const pend = pendingById.get(r.id);
+    let place = '';
+    if (disp && current) {
+      place = `<div class="acq-doc-disposed" data-disposition="${esc(disp.action)}">`
+        + (disp.action === AD.DISPOSITION.DUPLICATE ? 'Marked a duplicate' : 'Marked not relevant') + ' by a person — kept on record, placed in no leasehold'
+        + ` <button type="button" class="acq-doc-undispose" data-doc-id="${esc(r.id)}">Undo</button></div>`;
+    } else if (pend) {
+      const fams = _acqFamilyRows(_activeAcqId);
+      const aiFiled = r.family_id && r.family_status !== 'confirmed' && fams.some(f => f && f.id === r.family_id);
+      place = `<div class="acq-doc-place" data-pending="${esc(pend.reasons.join('; '))}">`
+        + `<span class="acq-doc-place-why">Needs a person: ${esc(pend.reasons.join('; '))}</span>`
+        + (aiFiled ? ` <button type="button" class="acq-doc-confirm-family" data-doc-id="${esc(r.id)}">Confirm leasehold</button>` : '')
+        + ` <select class="acq-doc-match" data-doc-id="${esc(r.id)}" aria-label="Match to a leasehold">`
+        + `<option value="">${aiFiled ? 'Match to a different leasehold…' : 'Match to a leasehold…'}</option>`
+        + fams.filter(f => f && f.id !== r.family_id).map(f => `<option value="${esc(f.id)}">${esc(f.label || f.tenant_hint || 'Unnamed leasehold')}</option>`).join('')
+        + '</select>'
+        + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.NOT_RELEVANT)}">Not relevant</button>`
+        + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.DUPLICATE)}">Duplicate</button>`
+        + '</div>';
+    }
+
     return `
     <div class="acq-doc-row${current ? '' : ' superseded'}" data-doc-id="${esc(r.id)}" data-doc-type="${esc(r.doc_type || '')}" data-doc-status="${esc(cls.status)}" data-family="${esc(r.family_status || 'unfiled')}">
       <span class="acq-doc-kind ${esc(r.intake_kind || 'other')}">${esc(r.intake_kind || 'other')}</span>
@@ -31183,7 +31533,7 @@ function _renderAcqDocuments() {
           · <span class="acq-doc-status ${esc(st.cls)}">${esc(st.label)}</span>${termsChip}
           ${r.doc_date ? ' · ' + esc(r.doc_date) : ''}${produced ? ' · ' + esc(produced) : ''}${size ? ' · ' + esc(size) : ''}
         </div>
-        ${rel}${unfiled}${supersededNote}${err}${note}
+        ${rel}${unfiled}${supersededNote}${place}${err}${note}
       </div>
       <div class="acq-doc-actions">${typeControl}${confirmBtn}${readBtn}</div>
       ${opener}
@@ -31200,9 +31550,13 @@ function _renderAcqDocuments() {
   // FIRST, not buried: what nobody has placed yet.
   const due = _acqDocsToReview(_activeAcqId);
   const LMd = _LM();
+  const replaced = groups.needsReview.filter(r => r && r.superseded_by_document_id).length;
+  const disposedN = groups.needsReview.filter(r => r && !r.superseded_by_document_id && _acqDocDispositions(_activeAcqId)[r.id]).length;
   parts.push(section(
     'Needs review',
-    (LMd ? LMd.documentsLine(due) : [groups.needsReview.length + ' document' + (groups.needsReview.length === 1 ? '' : 's') + ' to review']).join(' · '),
+    (LMd ? LMd.documentsLine({ unmatched: due.unmatched, untyped: due.untyped }) : [groups.needsReview.length + ' document' + (groups.needsReview.length === 1 ? '' : 's') + ' to review'])
+      .concat(replaced ? [replaced + ' replaced by a newer upload'] : [])
+      .concat(disposedN ? [disposedN + ' placed in no leasehold by a person'] : []).join(' · '),
     groups.needsReview.map(docHtml).join(''), 'needs-review'));
 
   groups.families.forEach(g => {
@@ -31263,6 +31617,7 @@ function _acqTermValue(term) {
 }
 
 function _renderAcqTerms() {
+  _acqRefreshGates();
   const el = document.getElementById('acqTermsList');
   if (!el) return;
   const AT = _AT(), AD = _AD();
@@ -31438,6 +31793,15 @@ function _renderAcqTerms() {
   _acqUpdateStaleNotice();
 }
 
+// The record decides what may be analyzed and acquired; the controls say so
+// every time it is drawn — including the early returns, when there is no
+// leasehold at all.
+function _acqRefreshGates() {
+  _updateAcqAnalyzeBtn();
+  const openReview = _acqReviews.find(r => r && r.id === _activeAcqId);
+  if (openReview) _renderAcqConvertAction(openReview);
+}
+
 // ── Lease Matrix → Leasehold Detail (§4m) ────────────────────────────────────
 //
 // The review opens on the Lease Matrix: one row per leasehold, read from the
@@ -31471,18 +31835,26 @@ function _acqMatrixFor(reviewId) {
   return LM.buildMatrix(_acqCanonicalRows(reviewId).rows, { terms: _AT() });
 }
 
-// The documents under Documents › Needs review, split by what they still
-// need: matching to a tenant, or a type. Read here so MainStreet's Record can
-// count them in its own status line — one queue, not a second one lower down.
-function _acqDocsToReview(reviewId) {
+// The documents still waiting for a person's disposition (Option B), from the
+// one rule in acquisition-documents.js — so MainStreet's Record's status line,
+// Documents and the acquisition gate all count the same thing.
+function _acqDocDispositions(reviewId) {
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const d = review && review.data && review.data.documentDispositions;
+  return (d && typeof d === 'object') ? d : {};
+}
+function _acqPendingDocuments(reviewId) {
   const AD = _AD();
-  const rows = reviewId ? _acqDocRows(reviewId) : [];
-  if (!AD || !rows.length) return { unmatched: 0, untyped: 0 };
-  const fams = _acqFamilyRows(reviewId);
-  const ids  = new Set(fams.map(f => f && f.id));
-  const due  = AD.groupDocuments(rows, fams).needsReview;
-  const unmatched = due.filter(d => !d.family_id || !ids.has(d.family_id)).length;
-  return { unmatched, untyped: due.length - unmatched };
+  if (!AD || !reviewId || typeof AD.pendingDocuments !== 'function') return [];
+  return AD.pendingDocuments(_acqDocRows(reviewId), _acqFamilyRows(reviewId), _acqDocDispositions(reviewId));
+}
+function _acqDocsToReview(reviewId) {
+  const pend = reviewId ? _acqPendingDocuments(reviewId) : [];
+  const has = (p, re) => p.reasons.some(x => re.test(x));
+  const unmatched   = pend.filter(p => has(p, /^not matched to a tenant$|^its leasehold no longer exists$/)).length;
+  const unconfirmed = pend.filter(p => has(p, / by AI — /)).length;
+  const untyped     = pend.filter(p => !has(p, /^not matched to a tenant$|^its leasehold no longer exists$| by AI — /)).length;
+  return { unmatched, untyped, unconfirmed };
 }
 
 const _ACQ_LM_STATUS_CLS = { issues: 'issues', missing: 'missing', unclear: 'unclear', unverified: 'unverified', verified: 'verified' };
@@ -31506,16 +31878,55 @@ const _ACQ_UNFILED_WHY = {
 };
 
 function _acqUnfiledListHtml(reviewId) {
-  const m = _acqMatrixFor(reviewId);
-  if (!m || !m.unfiled.length) return '';
-  const n = m.unfiled.length;
-  return `<details class="acq-lm-unfiled">
-      <summary>${n} extracted ${n === 1 ? 'entry is' : 'entries are'} not matched to a tenant — as extracted from the file, not reviewed</summary>
-      <ul>${m.unfiled.map(u => `<li><span class="acq-lm-unfiled-name">${esc(u.tenant)}</span>`
-        + (u.sqftText ? ` · ${esc(u.sqftText)} SF` : '')
-        + (u.fileName ? ` <span class="acq-lm-unfiled-file">${esc(u.fileName)}</span>` : '')
-        + (_ACQ_UNFILED_WHY[u.why] ? ` <span class="acq-lm-unfiled-why">· ${esc(_ACQ_UNFILED_WHY[u.why])}</span>` : '') + '</li>').join('')}</ul>
-      <div class="acq-lm-unfiled-note">None of these is in MainStreet’s Record. Match the file to a tenant in Documents to give it a record of its own.</div>
+  const AL = _AL();
+  const all = _acqUnmatched(reviewId);
+  if (!AL || !all.length) return '';
+  const open = all.filter(x => !x.resolution), done = all.filter(x => x.resolution);
+  const n = open.length;
+  const fams = _acqFamilyRows(reviewId);
+  const R = AL.RESOLUTION;
+  const src = (x) => {
+    const sf = x.row.leased_sqft != null && x.row.leased_sqft !== '' && !isNaN(Number(x.row.leased_sqft))
+      ? Number(x.row.leased_sqft).toLocaleString('en-US') : null;
+    const file = x.row._fileName || x.row.fileName || null;
+    return (sf ? ` · ${esc(sf)} SF` : '')
+      + (file ? ` <span class="acq-lm-unfiled-file">Source: ${esc(file)}</span>` : '')
+      + (_ACQ_UNFILED_WHY[x.why] ? ` <span class="acq-lm-unfiled-why">· ${esc(_ACQ_UNFILED_WHY[x.why])}</span>` : '');
+  };
+  const controls = (x) => x.why === 'no_document'
+    ? `<span class="acq-um-actions">
+        <select class="acq-um-match" data-row="${esc(x.key || '')}" aria-label="Match to a leasehold"${x.key ? '' : ' disabled'}>
+          <option value="">Match to a leasehold…</option>
+          ${fams.map(f => `<option value="${esc(f.id)}">${esc(f.label || f.tenant_hint || 'Unnamed leasehold')}</option>`).join('')}
+        </select>
+        <button type="button" class="acq-um-new" data-row="${esc(x.key || '')}"${x.key ? '' : ' disabled'}>New leasehold</button>
+        <button type="button" class="acq-um-dismiss" data-row="${esc(x.key || '')}"${x.key ? '' : ' disabled'}>Not a tenant</button>
+      </span>`
+    : `<span class="acq-um-actions">
+        <button type="button" class="acq-um-docs">Resolve in Documents ↓</button>
+        <button type="button" class="acq-um-dismiss" data-row="${esc(x.key || '')}"${x.key ? '' : ' disabled'}>Not a tenant</button>
+      </span>`;
+  const resolvedLine = (x) => {
+    const e = x.resolution;
+    const fam = e.familyId ? fams.find(f => f && f.id === e.familyId) : null;
+    const what = e.action === R.DISMISSED ? 'Not a tenant'
+               : e.action === R.MATCHED   ? 'Matched to ' + ((fam && fam.label) || 'a leasehold')
+               : 'New leasehold: ' + ((fam && fam.label) || 'established');
+    return `<li class="acq-um-resolved" data-row="${esc(x.key || '')}" data-action="${esc(e.action)}"><span class="acq-lm-unfiled-name">${esc(x.row.tenant_name || x.row.tenantName || 'Unnamed')}</span>`
+      + ` — <span class="acq-um-what">${esc(what)}</span>`
+      + (e.action !== R.NEW_LEASEHOLD ? ` <button type="button" class="acq-um-reopen" data-row="${esc(x.key || '')}">Undo</button>` : '')
+      + '</li>';
+  };
+  return `<details class="acq-lm-unfiled" data-unresolved="${n}">
+      <summary>${n
+        ? `${n} extracted ${n === 1 ? 'entry is' : 'entries are'} not matched to a tenant — as extracted from the file, not reviewed`
+        : `Every extracted entry is resolved (${done.length})`}</summary>
+      ${n ? `<ul>${open.map(x => `<li class="acq-um-open" data-row="${esc(x.key || '')}"><span class="acq-lm-unfiled-name">${esc(x.row.tenant_name || x.row.tenantName || 'Unnamed')}</span>`
+        + src(x) + controls(x) + '</li>').join('')}</ul>` : ''}
+      <div class="acq-lm-unfiled-note">${n
+        ? 'None of these is in MainStreet’s Record, and none is counted as a tenant — not in the analysis, the Rent Roll or the Decision Report. The property cannot be acquired until each is resolved.'
+        : 'Each resolution is kept with who made it and when. The extracted entries themselves are unchanged, and none is counted as a tenant.'}</div>
+      ${done.length ? `<div class="acq-um-resolved-head">Resolved</div><ul>${done.map(resolvedLine).join('')}</ul>` : ''}
     </details>`;
 }
 
@@ -31684,11 +32095,30 @@ function _acqBindLeaseMatrixControls(el) {
     if (t.closest && t.closest('.acq-lh-back')) { ev.preventDefault(); acqBackToLeaseMatrix(); return; }
     const item = t.closest && (t.closest('.acq-lh-attn-item') || t.closest('.acq-lh-term'));
     if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); return; }
+    const um = t.closest && t.closest('.acq-um-new, .acq-um-dismiss, .acq-um-reopen, .acq-um-docs');
+    if (um) {
+      ev.preventDefault();
+      const key = um.getAttribute('data-row');
+      const AL = _AL();
+      if (um.classList.contains('acq-um-new'))     acqResolveExtraction(key, AL.RESOLUTION.NEW_LEASEHOLD);
+      if (um.classList.contains('acq-um-dismiss')) acqResolveExtraction(key, AL.RESOLUTION.DISMISSED);
+      if (um.classList.contains('acq-um-reopen'))  acqReopenExtraction(key);
+      if (um.classList.contains('acq-um-docs')) {
+        const g = document.querySelector('#acqDocsList .acq-doc-group.needs-review') || document.getElementById('acqDocsList');
+        if (g && g.scrollIntoView) g.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      return;
+    }
     if (t.closest && t.closest('.acq-lm-docs-due')) {
       ev.preventDefault();
       const g = document.querySelector('#acqDocsList .acq-doc-group.needs-review') || document.getElementById('acqDocsList');
       if (g && g.scrollIntoView) g.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
+  });
+  el.addEventListener('change', (ev) => {
+    const sel = ev.target;
+    if (!sel || !sel.classList || !sel.classList.contains('acq-um-match') || !sel.value) return;
+    acqResolveExtraction(sel.getAttribute('data-row'), _AL().RESOLUTION.MATCHED, sel.value);
   });
   el.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
@@ -31994,10 +32424,18 @@ function _acqBindDocControls(el) {
     if (rd) { ev.preventDefault(); acqReabstractDocument(rd.getAttribute('data-doc-id')); }
     const bl = ev.target.closest && ev.target.closest('.acq-doc-begin');
     if (bl) { ev.preventDefault(); acqBeginLeasehold(bl.getAttribute('data-doc-id')); }
+    const cf = ev.target.closest && ev.target.closest('.acq-doc-confirm-family');
+    if (cf) { ev.preventDefault(); acqConfirmDocFamily(cf.getAttribute('data-doc-id')); }
+    const dp = ev.target.closest && ev.target.closest('.acq-doc-dispose');
+    if (dp) { ev.preventDefault(); acqSetDocDisposition(dp.getAttribute('data-doc-id'), dp.getAttribute('data-action')); }
+    const ud = ev.target.closest && ev.target.closest('.acq-doc-undispose');
+    if (ud) { ev.preventDefault(); acqClearDocDisposition(ud.getAttribute('data-doc-id')); }
   });
   el.addEventListener('change', (ev) => {
     const sel = ev.target.closest && ev.target.closest('.acq-doc-type');
     if (sel) acqSetDocType(sel.getAttribute('data-doc-id'), sel.value);
+    const mt = ev.target.closest && ev.target.closest('.acq-doc-match');
+    if (mt && mt.value) acqMatchDocument(mt.getAttribute('data-doc-id'), mt.value);
   });
 }
 
@@ -32257,7 +32695,31 @@ function acqSetStage(stage) {
 async function _loadAcqReviewsAndRender() {
   const reviews = await _loadAcqReviews();
   _acqReviews = reviews;
+  await _acqLoadFamilyCounts();
   _renderAcqSection(reviews);
+  _acqPreloadForConsumers();
+}
+
+// How many leaseholds each review has, in one read, so the cards can say it
+// before a review is opened. A review whose families are loaded counts them.
+const _acqFamilyCounts = new Map();
+let _acqFamilyCountsLoaded = false;
+async function _acqLoadFamilyCounts() {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return;
+    const { data, error } = await db.from('acquisition_document_families').select('review_id').eq('user_id', user.id);
+    if (error || !Array.isArray(data)) return;
+    _acqFamilyCounts.clear();
+    data.forEach(f => { if (f && f.review_id) _acqFamilyCounts.set(f.review_id, (_acqFamilyCounts.get(f.review_id) || 0) + 1); });
+    _acqFamilyCountsLoaded = true;
+  } catch (_) { /* the cards fall back to what is loaded */ }
+}
+function _acqCardLeaseholds(review) {
+  if (!review) return null;
+  if (_acqFamilies.has(review.id)) return _acqFamilyRows(review.id).length;
+  if (_acqFamilyCounts.size || _acqFamilyCountsLoaded) return _acqFamilyCounts.get(review.id) || 0;
+  return null;
 }
 
 function _renderAcqSection(reviews) {
@@ -32269,7 +32731,10 @@ function _renderAcqSection(reviews) {
   }
   grid.innerHTML = reviews.map(r => {
     const d = r.data || {};
-    const tenantCount  = (d.tenants  || []).length;
+    // Leaseholds, not raw uploads (Option B): a raw extracted row is not a
+    // tenant. The unmatched count is shown once the review's record is loaded.
+    const lhCount  = _acqCardLeaseholds(r);
+    const unmatched = _acqRecordLoaded(r.id) ? _acqUnresolvedExtractions(r.id) : null;
     const invoiceCount = (d.invoices || []).length;
     const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
     const orphaned = _acqOrphaned(r);
@@ -32285,9 +32750,10 @@ function _renderAcqSection(reviews) {
       <span class="acq-card-status ${orphaned ? 'orphaned' : esc(r.status)}">${orphaned ? 'converted' : esc(r.status)}</span>
       ${convertedNote}
       <div class="acq-card-stats">
-        <div class="acq-card-stat"><strong>${tenantCount}</strong> Tenants</div>
+        <div class="acq-card-stat" data-stat="leaseholds"><strong>${lhCount == null ? '—' : esc(lhCount)}</strong> ${lhCount === 1 ? 'Leasehold' : 'Leaseholds'}</div>
         <div class="acq-card-stat"><strong>${invoiceCount}</strong> Invoices</div>
       </div>
+      ${unmatched ? `<div class="acq-card-unmatched" data-stat="unmatched">${esc(unmatched)} extracted ${unmatched === 1 ? 'entry' : 'entries'} not yet matched</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -32499,8 +32965,11 @@ function _renderAcqConvertAction(review) {
       <div class="acq-orphan-head">Converted — property no longer exists</div>
       <div class="acq-orphan-body">The property created from this review has been deleted.
         This review, its documents and its analysis are all still here.</div>
-      <button class="acq-convert-btn" onclick="_showAcqConvertModal()"
-        title="Rebuild the property from this review's analysis">&#x1F3E2; Convert Again</button>
+      ${(() => { const why = _acqConversionBlock(review); return why
+        ? `<button class="acq-convert-btn" disabled aria-describedby="acqConvertBlocked">&#x1F3E2; Convert Again</button>
+           <div class="acq-convert-blocked" id="acqConvertBlocked">${esc(why)}</div>`
+        : `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+        title="Rebuild the property from this review's analysis">&#x1F3E2; Convert Again</button>`; })()}
     </div>`;
   } else if (cr?.propertyId) {
     // Archived is still converted — the property exists, so the record is true.
@@ -32511,7 +32980,11 @@ function _renderAcqConvertAction(review) {
       onclick="event.preventDefault();closeAcquisitionDetail();selectProperty('${esc(cr.propertyId)}')">
       Converted ✓ — Open Property →</span>${archivedBadge}`;
   } else if (review.status === 'complete') {
-    el.innerHTML = `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
+    const why = _acqConversionBlock(review);
+    el.innerHTML = why
+      ? `<button class="acq-convert-btn" disabled aria-describedby="acqConvertBlocked">&#x1F3E2; Acquire Property</button>
+         <div class="acq-convert-blocked" id="acqConvertBlocked">${esc(why)}</div>`
+      : `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
       title="Create a managed property from this acquisition review">
       &#x1F3E2; Acquire Property</button>`;
   } else {
@@ -32522,6 +32995,8 @@ function _renderAcqConvertAction(review) {
 function _showAcqConvertModal() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  const blocked = _acqConversionBlock(review);
+  if (blocked) { showToast(blocked, { color: '#92400e', textColor: '#fef3c7', duration: 7000 }); return; }
   const nameEl = document.getElementById('acqConvertModalName');
   if (nameEl) nameEl.textContent = review.name;
   // A repair is not a first conversion and must not be described as one. The
@@ -32565,12 +33040,23 @@ async function convertAcquisitionToProperty() {
     return;
   }
 
+  // THE GATE (Option B), again here because this is where tenants are made:
+  // no conversion while an extraction is unmatched, and none from an analysis
+  // older than the record.
+  await _acqEnsureRecord(review.id);
+  const _blocked = _acqConversionBlock(review);
+  if (_blocked) {
+    _hideAcqConvertModal();
+    alert(_blocked);
+    return;
+  }
+
   const confirmBtn = document.getElementById('acqConvertConfirmBtn');
   if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Converting…'; }
 
   try {
     // Build the property object from the review (pure engine function) — from
-    // the canonical rows: one tenant per leasehold, resolved values (§4l).
+    // the canonical LEASEHOLDS only: one tenant per leasehold, resolved values.
     const prop = AcquisitionEngine.buildPropertyFromReview(_acqConversionReview(review));
 
     // Register in _props immediately so portfolio renders without a round-trip
@@ -32683,14 +33169,19 @@ function _updateAcqAnalyzeBtn() {
   const btn  = document.getElementById('acqAnalyzeBtn');
   const note = document.getElementById('acqAnalyzeNote');
   if (!btn) return;
-  // A leasehold is a tenant even when its raw upload rows were replaced (§4l).
-  const hasTenants  = _acqTenants.some(t => t.tenant_name || t.tenantName) || _acqFamilyRows(_activeAcqId).length > 0;
+  // Only a leasehold is a tenant (Option B). Until the record has loaded, an
+  // upload is taken as a sign one will be there; runAcquisitionAnalysis
+  // checks again before it runs.
+  const loaded      = _acqRecordLoaded(_activeAcqId);
+  const leaseholds  = loaded ? _acqLeaseholdsOnly(_acqCanonicalRows(_activeAcqId)).length : null;
+  const hasTenants  = loaded ? leaseholds > 0
+                             : (_acqTenants.some(t => t.tenant_name || t.tenantName) || _acqFamilyRows(_activeAcqId).length > 0);
   const hasInvoices = _acqInvoices.some(i => i.amount);
   const hasSqFt     = _acqSqFt > 0;
   const ready = hasTenants && hasInvoices && hasSqFt;
   btn.disabled = !ready;
   if (note) {
-    note.textContent = !hasTenants  ? 'Upload at least one lease to enable analysis.'
+    note.textContent = !hasTenants  ? (loaded && _acqUnresolvedExtractions(_activeAcqId) ? _acqNoLeaseholdsMessage(_activeAcqId) : 'Upload at least one lease to enable analysis.')
                      : !hasInvoices ? 'Upload at least one invoice to enable analysis.'
                      : !hasSqFt    ? 'Enter total property square footage above.'
                      : 'Ready — click to run risk analysis.';
@@ -32982,8 +33473,16 @@ async function runAcquisitionAnalysis() {
     const AE = window.AcquisitionEngine;
     if (!AE) throw new Error('AcquisitionEngine not loaded');
 
-    // One row per leasehold, from the resolved terms (§4l) — not one per file.
+    // One row per leasehold, from the resolved terms (§4l) — not one per file,
+    // and never an unmatched extraction (Option B).
     review.data = review.data || {};
+    await _acqEnsureRecord(review.id);
+    if (!_acqLeaseholdsOnly(_acqCanonicalRows(review.id)).length) {
+      showToast(_acqNoLeaseholdsMessage(review.id), { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }
+      _updateAcqAnalyzeBtn();
+      return;
+    }
     const built = _acqBuildAnalysis(review);
     const { report, tenants, invoices } = built;
 
@@ -33249,7 +33748,10 @@ function _acqCanonicalLine(report) {
   const c = report && report.canonical;
   if (!c) return '';
   const parts = [`${c.leaseholds} leasehold${c.leaseholds === 1 ? '' : 's'} from the lease terms`];
-  if (c.unfiled) parts.push(`${c.unfiled} row${c.unfiled === 1 ? '' : 's'} not in a leasehold (from file extraction, not verified)`);
+  if (c.basis === 'leaseholds') {
+    // Option B: the unmatched extractions are not rows here at all.
+    if (c.unmatched) parts.push(`${c.unmatched} extracted ${c.unmatched === 1 ? 'entry' : 'entries'} not matched to a tenant — not counted`);
+  } else if (c.unfiled) parts.push(`${c.unfiled} row${c.unfiled === 1 ? '' : 's'} not in a leasehold (from file extraction, not verified)`);
   if (c.dropped) parts.push(`${c.dropped} source file${c.dropped === 1 ? '' : 's'} represented by a leasehold`);
   return `<div class="acq-canonical-line" data-leaseholds="${c.leaseholds}" data-unfiled="${c.unfiled}">${esc(parts.join(' · '))}</div>`;
 }
@@ -33583,6 +34085,19 @@ function generateAcquisitionReport() {
     showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
     return;
   }
+  // ── Option B stale guard ──
+  // A report that leaves the building must not carry figures older than the
+  // record. Until the record has loaded, whether they are cannot be told.
+  if (!_acqRecordLoaded(review.id)) {
+    showToast('Still loading MainStreet’s Record — try again in a moment.', { color: '#92400e', textColor: '#fef3c7' });
+    return;
+  }
+  const _stale = _acqAnalysisStale(review);
+  if (_stale) {
+    showToast(_stale + ' Refresh the analysis before generating the Decision Report.', { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return;
+  }
+  // ── end Option B stale guard ──
   const a        = review.data.analysis;
   const s        = a.summary;
   const now      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });

@@ -309,7 +309,7 @@ const DB = `
   const m0 = await matrix();
   const canonCount = await page.evaluate((id) => _acqCanonicalRows(id).leaseholds, MAPLE);
   check('the review opens on MainStreet\'s Record, with its status line and Report v2 above it',
-        m0.heading === '📋 MainStreet’s Record' && m0.v2 && m0.count === '4 leaseholds · 1 with contested terms · 2 with terms not established · 1 with unclear terms · 3 documents not yet matched to a tenant',
+        m0.heading === '📋 MainStreet’s Record' && m0.v2 && m0.count === '4 leaseholds · 1 with contested terms · 2 with terms not established · 1 with unclear terms · 1 document not yet matched to a tenant · 3 documents filed by AI, not yet confirmed',
         `${m0.heading} | ${m0.count}`);
   check('the header counts leaseholds, not every possible term — no "of 108 verified"', !/of \d+ verified/.test(m0.count), m0.count);
   check('one row per canonical leasehold — four, ShopRite\'s two files as one',
@@ -392,8 +392,9 @@ const DB = `
   check('each row counts the values nobody has verified yet: 11 · 4 · 8 · 9',
         cl.unverified.join(',') === '11 not yet verified,4 not yet verified,8 not yet verified,9 not yet verified', cl.unverified.join(','));
   check('the documents to review are in the record\'s own status — the header, and a line one click from Documents',
-        /· 3 documents not yet matched to a tenant$/.test(m0.count) && cl.due === '3 documents not yet matched to a tenant — review in Documents ↓', cl.due);
-  check('Documents › Needs review says the same thing in the same words', cl.docsSub === '3 documents not yet matched to a tenant', cl.docsSub);
+        /· 1 document not yet matched to a tenant · 3 documents filed by AI, not yet confirmed$/.test(m0.count)
+        && cl.due === '1 document not yet matched to a tenant · 3 documents filed by AI, not yet confirmed — review in Documents ↓', cl.due);
+  check('Documents › Needs review says the same thing in the same words — and that its 2 copies were replaced', cl.docsSub === '1 document not yet matched to a tenant · 2 replaced by a newer upload', cl.docsSub);
   check('no internal words on screen: "not in a leasehold", "not yet placed"', !cl.internal);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.click('#acqTermsList .acq-lm-docs-due');

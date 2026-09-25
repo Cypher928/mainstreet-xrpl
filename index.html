@@ -6390,6 +6390,26 @@
       color: var(--c-fbbf24, #fbbf24); font-size: 0.74rem; cursor: pointer; }
     .acq-lm-docs-due:hover { background: rgba(251, 191, 36, 0.12); }
     .acq-lm-unfiled-why { color: var(--text-4); font-size: 0.68rem; }
+    /* Unmatched extractions: a person resolves each (Option B). */
+    .acq-lm-unfiled li.acq-um-open { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 4px 0; }
+    .acq-um-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+    .acq-um-actions select, .acq-um-actions button, .acq-um-reopen {
+      font-size: 0.7rem; padding: 2px 8px; border-radius: 5px; border: 1px solid #334155;
+      background: var(--theme-surface, #0f172a); color: var(--text-2); cursor: pointer; }
+    .acq-um-actions button:disabled, .acq-um-actions select:disabled { opacity: 0.5; cursor: not-allowed; }
+    .acq-um-resolved-head { margin-top: 8px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-4); }
+    .acq-um-resolved { color: var(--text-4); padding: 2px 0; }
+    .acq-um-what { color: var(--text-3); }
+    .acq-convert-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .acq-convert-blocked { margin-top: 6px; max-width: 34em; font-size: 0.74rem; color: var(--c-fbbf24, #fbbf24); }
+    .acq-card-unmatched { margin-top: 6px; font-size: 0.72rem; color: var(--c-fbbf24, #fbbf24); }
+    /* Source documents: what each still needs from a person (Option B). */
+    .acq-doc-place { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; }
+    .acq-doc-place-why { color: var(--c-fbbf24, #fbbf24); }
+    .acq-doc-place select, .acq-doc-place button, .acq-doc-undispose {
+      font-size: 0.7rem; padding: 2px 8px; border-radius: 5px; border: 1px solid #334155;
+      background: var(--theme-surface, #0f172a); color: var(--text-2); cursor: pointer; }
+    .acq-doc-disposed { margin-top: 4px; font-size: 0.72rem; color: var(--text-4); }
     .acq-src-note { display: block; margin-top: 4px; color: var(--c-fbbf24, #fbbf24); font-size: 0.74rem; }
     .acq-file-item.acq-src-item { flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; }
     .acq-src-file { color: var(--text-2); font-size: 0.8rem; overflow-wrap: anywhere; }

@@ -535,6 +535,11 @@ const SUITES = [
   // Lease Terms evidence, unchanged. Walked with Maple Plaza as the Pilot holds it.
   { label: 'Acquisition Lease Matrix (§4m)',            cmd: 'node test-acquisition-lease-matrix.js' },
   { label: 'Acquisition Lease Matrix walk (e2e, §4m)',  cmd: 'node test-e2e-acquisition-lease-matrix.js' },
+  // §4n (Option B) — only a canonical leasehold is a tenant: the analysis, the
+  // Rent Roll, the Decision Report and conversion read leaseholds only, and an
+  // unmatched extraction waits for a person. Walked with Maple Plaza.
+  { label: 'Acquisition leaseholds only (§4n)',           cmd: 'node test-acquisition-leaseholds-only.js' },
+  { label: 'Acquisition leaseholds only walk (e2e, §4n)', cmd: 'node test-e2e-acquisition-leaseholds-only.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.

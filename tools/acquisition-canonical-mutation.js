@@ -131,7 +131,7 @@ const MUTANTS = [
 
   // ── the glue ─────────────────────────────────────────────────────────────
   { id: 'S01', file: S, why: 'the analysis is built from the raw upload rows',
-    from: '  const tenants  = _acqAnalysisRows(canon.rows);', to: '  const tenants  = _acqAnalysisRows(d.tenants);' },
+    from: '  const tenants  = _acqAnalysisRows(_acqLeaseholdsOnly(canon));', to: '  const tenants  = _acqAnalysisRows(d.tenants);' },
   { id: 'S02', file: S, why: 'the states do not ride along to tenantSummary',
     from: '  if (AL) AL.attachStates(report.tenantSummary, tenants);\n', to: '' },
   { id: 'S03', file: S, why: 'an act does not refresh the analysis',
@@ -185,6 +185,9 @@ const SUITES = [
   'test-acquisition-report.js',
   'test-acquisition-report-view.js',
   'test-e2e-acquisition-canonical.js',
+  // §4n: an analysis stored before Option B still holds unfiled rows, and it
+  // is this walk that draws one — S07's marker is read there.
+  'test-e2e-acquisition-leaseholds-only.js',
 ];
 function runSuites(list) {
   for (const suite of list) {

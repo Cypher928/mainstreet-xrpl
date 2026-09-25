@@ -70,6 +70,10 @@
     'analysis_run',
     'converted',
     'conversion_reverted',
+    'extraction_resolved',   // a person matched, established or dismissed an unmatched extraction
+    'extraction_reopened',
+    'document_disposed',     // a person marked a source document not relevant, or a duplicate
+    'document_reopened',
   ];
   // History is kept, not trimmed, until it is genuinely large. When the cap is
   // hit the oldest entries go and `activityDropped` says how many, so the

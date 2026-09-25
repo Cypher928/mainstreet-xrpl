@@ -224,6 +224,70 @@
     return st === 'verified' ? 'verified' : 'read';
   }
 
+  // ── What may reach the analysis (Option B) ──────────────────────────────────
+  //
+  // THE RULE. Only a canonical LEASEHOLD is a tenant. The projection above
+  // still returns the unmatched raw rows — they are the review's record of
+  // what its files said, and MainStreet's Record lists them apart — but none
+  // of them may enter the analysis (occupancy, rent roll, recovery, rollover,
+  // risk), the Decision Report, anything that reads the stored analysis, or a
+  // conversion. An unmatched extraction is not a tenant.
+  //
+  // It stays visibly unresolved until a PERSON matches it to a leasehold,
+  // establishes a new leasehold from it, or dismisses it. There is no
+  // automatic matching, by name or by file name: that is the guess the
+  // canonical model exists to replace.
+
+  /** The rows the analysis and conversion may use: the leaseholds, and nothing else. */
+  function analysisRows(projection) {
+    var rows = projection && Array.isArray(projection.rows) ? projection.rows : [];
+    return rows.filter(function (r) { return r && r._source === SOURCE.LEASEHOLD; });
+  }
+
+  // What a person may decide about one unmatched extraction. A match or a new
+  // leasehold names the leasehold it now belongs to; a dismissal says it is not
+  // a tenant at all.
+  var RESOLUTION = { MATCHED: 'matched', NEW_LEASEHOLD: 'new_leasehold', DISMISSED: 'dismissed' };
+
+  /**
+   * The unmatched extractions, each with the person's resolution if it has
+   * one that still holds. `resolutions` is review.data.extractionResolutions,
+   * keyed by the raw row's id.
+   *
+   * A resolution holds only when it still makes sense:
+   *   · a match or new leasehold must name a leasehold that still exists —
+   *     if that leasehold is gone, the entry is unresolved again;
+   *   · a raw row whose DOCUMENT is on file is settled in Documents, where the
+   *     document itself is filed into a leasehold (the projection then drops
+   *     the row) — so for it only a dismissal counts here;
+   *   · a row with no id cannot be named by a resolution, and stays unresolved.
+   *
+   * Returns [{ row, key, why, resolution }] in the projection's order;
+   * `resolution` is null while unresolved.
+   */
+  function unmatchedEntries(projection, resolutions, families) {
+    var rows = projection && Array.isArray(projection.rows) ? projection.rows : [];
+    var res  = (resolutions && typeof resolutions === 'object') ? resolutions : {};
+    var famIds = {};
+    _arr(families).forEach(function (f) { if (f.id) famIds[f.id] = true; });
+    return rows.filter(function (r) { return r && r._source === SOURCE.UNFILED; }).map(function (r) {
+      var key = r.id != null && r.id !== '' ? String(r.id) : null;
+      var e = key ? res[key] : null;
+      var ok = false;
+      if (e && typeof e === 'object') {
+        if (e.action === RESOLUTION.DISMISSED) ok = true;
+        else if ((e.action === RESOLUTION.MATCHED || e.action === RESOLUTION.NEW_LEASEHOLD)
+                 && r._legacyWhy === 'no_document' && e.familyId && famIds[e.familyId]) ok = true;
+      }
+      return { row: r, key: key, why: r._legacyWhy || null, resolution: ok ? e : null };
+    });
+  }
+
+  /** How many unmatched extractions still need a person. Conversion waits for 0. */
+  function unresolvedCount(projection, resolutions, families) {
+    return unmatchedEntries(projection, resolutions, families).filter(function (x) { return !x.resolution; }).length;
+  }
+
   var api = {
     SOURCE: SOURCE,
     UNFILED_NOTE: UNFILED_NOTE,
@@ -234,6 +298,10 @@
     leaseholdRows: leaseholdRows,
     attachStates: attachStates,
     cellState: cellState,
+    RESOLUTION: RESOLUTION,
+    analysisRows: analysisRows,
+    unmatchedEntries: unmatchedEntries,
+    unresolvedCount: unresolvedCount,
   };
   if (root) root.AcquisitionLeasehold = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

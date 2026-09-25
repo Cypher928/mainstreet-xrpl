@@ -172,7 +172,11 @@ is converted. See `docs/ACQUISITION_REVIEW.md` §4b.
 **`data` shape and writes (Acquisition Review P1-1).** `acquisition-workspace.js`
 owns the layout (`schemaVersion: 2`, `stage`, `activity[]`, `documents[]`,
 `families[]`, `assumptions[]` alongside the existing `tenants`, `invoices`,
-`totalSqFt`, `analysis`, `conversionRecord`, `conversionHistory`). Rows are
+`totalSqFt`, `analysis`, `conversionRecord`, `conversionHistory`, and — §4n —
+`extractionResolutions`: a person's resolution of each unmatched extracted
+row, keyed by the raw row's id; the raw rows themselves are never changed;
+and `documentDispositions`: a person's *not relevant* / *duplicate* on a source
+document, keyed by document id). Rows are
 upgraded in memory on load and reach the database in the new shape with
 their next real change — no migration, no backfill. A save is a **conditional
 UPDATE** on `id`, `user_id` and the `updated_at` last read (the trigger

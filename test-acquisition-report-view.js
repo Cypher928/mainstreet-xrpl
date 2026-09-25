@@ -343,7 +343,10 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
     sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a',
     sha('acquisition-report.js').slice(0, 12));
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
-  const v1Now = (S.match(/^function generateAcquisitionReport\(\) \{[\s\S]*?^\}/m) || [''])[0];
+  // The one change v1 may carry: Option B's stale guard (docs §4n), between
+  // its markers. Everything else in the function is pinned to HEAD.
+  const unguard = (f) => f.replace(/\n  \/\/ ── Option B stale guard ──[\s\S]*?  \/\/ ── end Option B stale guard ──\n/, '\n');
+  const v1Now = unguard((S.match(/^function generateAcquisitionReport\(\) \{[\s\S]*?^\}/m) || [''])[0]);
   let v1Head = '';
   // The mutation harness runs this from a copy with no .git; it names the
   // real checkout here so the pin is still enforced there, not skipped.
@@ -351,9 +354,10 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
   try {
     v1Head = (execFileSync('git', ['show', 'HEAD:script.js'], { cwd: gitRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
       .match(/^function generateAcquisitionReport\(\) \{[\s\S]*?^\}/m) || [''])[0];
+    v1Head = unguard(v1Head);
   } catch (_) { v1Head = null; }
-  check('the v1 Decision Report function is unchanged from HEAD',
-    v1Head === null ? true : (v1Now.length > 1000 && v1Now === v1Head),
+  check('the v1 Decision Report function is unchanged from HEAD — but for the marked Option B stale guard',
+    v1Head === null ? true : (v1Now.length > 1000 && v1Now === v1Head && !/Option B stale guard/.test(v1Now)),
     v1Head === null ? 'no git available — skipped, not passed' : `${v1Now.length} chars, identical`);
   check('the v1 button still lives only after the CAM analysis',
     /onclick="generateAcquisitionReport\(\)">&#x1F4CB; Decision Report<\/button>/.test(S));

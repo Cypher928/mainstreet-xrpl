@@ -103,8 +103,8 @@ const MUTANTS = [
     from: '        <span class="acq-src-note">Source material: each file below is <strong>as extracted from your files — not reviewed</strong>. MainStreet’s Record above is the reviewed record.</span>',
     to:   '' },
   { id: 'C15', file: S, why: '"not in a leasehold" is back on the matrix',
-    from: "not matched to a tenant — as extracted from the file, not reviewed</summary>",
-    to:   "not in a leasehold — as extracted from the file, not verified</summary>" },
+    from: "not matched to a tenant — as extracted from the file, not reviewed`\n        : `Every extracted entry",
+    to:   "not in a leasehold — as extracted from the file, not verified`\n        : `Every extracted entry" },
   { id: 'C16', file: M, why: '"not yet placed" is back',
     from: "(d.unmatched === 1 ? ' document' : ' documents') + ' not yet matched to a tenant');",
     to:   "(d.unmatched === 1 ? ' document' : ' documents') + ' not yet placed');" },
@@ -118,8 +118,8 @@ const MUTANTS = [
     from: '      ${dueText ? `<button type="button" class="acq-lm-docs-due">',
     to:   '      ${false ? `<button type="button" class="acq-lm-docs-due">' },
   { id: 'C20', file: S, why: 'that line no longer takes the reader there',
-    from: "      if (g && g.scrollIntoView) g.scrollIntoView({ block: 'start', behavior: 'smooth' });",
-    to:   "      if (false) g.scrollIntoView({ block: 'start', behavior: 'smooth' });" },
+    from: "    if (t.closest && t.closest('.acq-lm-docs-due')) {\n      ev.preventDefault();",
+    to:   "    if (t.closest && t.closest('.acq-lm-docs-due')) {\n      ev.preventDefault(); return;" },
   { id: 'C22', file: M, why: 'a group of terms is summed into "1 item" again',
     from: "      return { kind: k.kind, count: terms.length, text: terms.length + ' ' + k.words(terms.length), terms: terms };",
     to:   "      return { kind: k.kind, count: terms.length, text: '1 item', terms: terms };" },
@@ -130,8 +130,8 @@ const MUTANTS = [
     from: "    { kind: 'missing',    state: 'missing',",
     to:   "    { kind: 'missing',    state: 'none'," },
   { id: 'C21', file: S, why: 'Documents › Needs review stops using the shared words',
-    from: '    (LMd ? LMd.documentsLine(due) :',
-    to:   '    (false ? LMd.documentsLine(due) :' },
+    from: '    (LMd ? LMd.documentsLine({ unmatched: due.unmatched, untyped: due.untyped }) :',
+    to:   '    (false ? LMd.documentsLine({ unmatched: due.unmatched, untyped: due.untyped }) :' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-clarity-mut-'));

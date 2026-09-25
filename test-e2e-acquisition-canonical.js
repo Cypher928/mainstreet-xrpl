@@ -23,10 +23,12 @@
 //   4  the CSV carries the resolved values, says what each row is, and lists
 //      the entered and contested fields
 //   5  the 4% vs 3% CAM cap stays contested everywhere
-//   6  conversion produces one tenant per leasehold with the resolved values,
-//      plus the unfiled row marked as such; the review keeps its raw rows
-//   7  Lake View — raw rows, no documents, no leasehold — never reads as
-//      verified
+//   6  conversion is refused while an extraction is unmatched (Option B);
+//      once a person resolves it, conversion produces exactly one tenant per
+//      leasehold with the resolved values; the review keeps its raw rows
+//   7  Lake View — raw rows, no documents, no leasehold — has no tenant: it
+//      cannot be analyzed, its extractions stay on MainStreet's Record apart,
+//      and none is ever counted
 //
 // Run: node test-e2e-acquisition-canonical.js
 // ============================================================================
@@ -357,18 +359,19 @@ const DB = `
   await page.waitForTimeout(900);
   const after = await rentRoll();
   check('the Rent Roll tab stayed open through the refresh', after.tab === 'rentroll', after.tab);
-  check('refreshed: two source files became ONE leasehold row, and the unfiled file its own row',
-        after.rows.length === 2 && shopRow(after).source === 'leasehold' && shopRow(after).leasehold === FAM
-        && mystRow(after).source === 'unfiled', JSON.stringify(after.rows.map(r => r.name + '|' + r.source)));
+  check('refreshed: two source files became ONE leasehold row — and the unmatched extraction is not a row at all',
+        after.rows.length === 1 && shopRow(after).source === 'leasehold' && shopRow(after).leasehold === FAM
+        && !mystRow(after).name, JSON.stringify(after.rows.map(r => r.name + '|' + r.source)));
   check('the notice is gone', after.stale.every(s => !s.shown));
   check('the line above the table says what the rows are',
         after.line && after.line.leaseholds === '1' && after.line.unfiled === '1'
-        && /1 leasehold from the lease terms/.test(after.line.text) && /1 row not in a leasehold/.test(after.line.text)
+        && /1 leasehold from the lease terms/.test(after.line.text)
+        && /1 extracted entry not matched to a tenant — not counted/.test(after.line.text)
         && /2 source files represented by a leasehold/.test(after.line.text), after.line && after.line.text);
-  check('the unfiled row says so on its face, and nothing on it is dressed as verified',
-        mystRow(after).unfiled && /Not in a leasehold · not verified/.test(mystRow(after).name)
-        && mystRow(after).entered.length === 0 && mystRow(after).contested.length === 0 && mystRow(after).missing.length === 0
-        && /1,200/.test(mystRow(after).sqft), JSON.stringify(mystRow(after)));
+  const um1 = await page.evaluate((m) => _acqUnfiledListHtml(m), MAPLE);
+  check('the unmatched extraction is still on MainStreet\'s Record, apart — with its source, and settled in Documents',
+        /Mystery Tenant LLC/.test(um1) && /Source: Mystery_Tenant_Lease\.pdf/.test(um1) && /acq-um-docs/.test(um1) && /acq-um-dismiss/.test(um1)
+        && !/acq-um-match/.test(um1), um1.replace(/\s+/g, ' ').slice(0, 160));
   check('the leasehold row shows the file\'s 65,000 for now — no correction has been made yet',
         /65,000/.test(shopRow(after).sqft), shopRow(after).sqft);
   check('the contested suite (A-1 vs A-3) reads Contested — neither figure is shown',
@@ -376,8 +379,10 @@ const DB = `
   check('a term no document establishes reads Not established, never a dash',
         shopRow(after).deposit === 'Not established' && shopRow(after).missing.includes(6), shopRow(after).deposit);
   const st1 = await stored(MAPLE);
-  check('the stored analysis carries the canonical block', st1.analysis.canonical && st1.analysis.canonical.leaseholds === 1
-        && st1.analysis.canonical.unfiled === 1 && st1.analysis.canonical.dropped === 2 && !!st1.analysis.canonical.fingerprint);
+  check('the stored analysis carries the canonical block — leaseholds only, and the unmatched count beside it',
+        st1.analysis.canonical && st1.analysis.canonical.basis === 'leaseholds' && st1.analysis.canonical.leaseholds === 1
+        && st1.analysis.canonical.unfiled === 1 && st1.analysis.canonical.unmatched === 1 && st1.analysis.canonical.dropped === 2
+        && !!st1.analysis.canonical.fingerprint && st1.analysis.tenantSummary.length === 1);
   check('the raw upload rows are untouched — three rows, still 65,000',
         st1.tenants.length === 3 && st1.tenants.filter(t => t.leased_sqft === 65000).length === 2, JSON.stringify(st1.tenants.map(t => t.leased_sqft)));
   check('no page error', errs.length === errsBefore, errs.slice(errsBefore).join(' | '));
@@ -501,13 +506,45 @@ const DB = `
   check('CSV: the row says it is a leasehold, names the entered field and the contested ones',
         tail[0] === 'Leasehold' && tail[1] === labels.dep
         && JSON.stringify(tail[2].split('; ').sort()) === JSON.stringify([labels.cap, labels.suite].sort()), shop);
-  const myst = csvLines.find(l => /^Mystery/.test(l)) || '';
-  check('CSV: the unfiled row says it is not in a leasehold and not verified, with no entered or contested fields',
-        /Not in a leasehold — not verified,,$/.test(myst) && /,1200,/.test(myst), myst);
+  check('CSV: the unmatched extraction is not a row — the header and ShopRite, nothing else',
+        !csvLines.some(l => /Mystery/.test(l)) && csvLines.filter(l => l.trim()).length === 2, csvLines.length + ' lines');
 
   // ── 6 · conversion ───────────────────────────────────────────────────────
   const rawBefore = JSON.stringify((await stored(MAPLE)).tenants);
-  await page.evaluate(() => { window.alert = () => {}; window.confirm = () => true; });
+  await page.evaluate(() => { window.__alerts = []; window.alert = (m) => window.__alerts.push(String(m)); window.confirm = () => true; });
+  // Option B: refused while the Mystery extraction is unmatched.
+  const gate0 = await page.evaluate((m) => ({ block: _acqConversionBlock(_acqReviews.find(r => r.id === m)),
+    btn: (() => { const b = document.querySelector('#acqConvertAction .acq-convert-btn'); return b ? { disabled: b.disabled } : null; })(),
+    note: ((document.getElementById('acqConvertBlocked') || {}).innerText || '').trim() }), MAPLE);
+  check('conversion is refused while an extraction and its document are unresolved — disabled, naming both',
+        /^Before this property can be acquired, a person must resolve: 1 extracted entry not matched to a tenant \(in MainStreet’s Record\); 1 document in Documents — Mystery_Tenant_Lease\.pdf \(not matched to a tenant\)\./.test(gate0.block)
+        && /will not create tenants from unmatched document extractions/.test(gate0.block)
+        && gate0.btn && gate0.btn.disabled && gate0.note === gate0.block, JSON.stringify(gate0));
+  await page.evaluate(() => convertAcquisitionToProperty());
+  await page.waitForTimeout(800);
+  const conv0 = await page.evaluate((m) => { const rv = __store.acquisition_reviews.find(x => x.id === m);
+    return { status: rv.status, record: !!rv.data.conversionRecord, props: (typeof _props !== 'undefined' ? _props : []).length, alerts: window.__alerts.slice() }; }, MAPLE);
+  check('…and calling the conversion directly is refused too: no property, the review not converted',
+        conv0.status !== 'converted' && !conv0.record && conv0.alerts.some(a => /1 extracted entry not matched to a tenant/.test(a) && /Mystery_Tenant_Lease\.pdf/.test(a)), JSON.stringify(conv0));
+  // A person dismisses it: not a tenant. Its document stays in Documents.
+  await page.evaluate(() => acqResolveExtraction('t-mystery', 'dismissed'));
+  await page.waitForTimeout(600);
+  const res1 = await page.evaluate((m) => {
+    const rv = __store.acquisition_reviews.find(x => x.id === m);
+    const e = (rv.data.extractionResolutions || {})['t-mystery'];
+    const a = rv.data.activity || [];
+    const dd = (rv.data.documentDispositions || {})['m-mystery'];
+    return { e: e ? { action: e.action, by: e.by, file: e.fileName, doc: e.linkedDocument } : null, last: a.length ? a[a.length - 1].type : null,
+             dd: dd ? { action: dd.action, row: dd.linkedRow, by: dd.by } : null,
+             block: _acqConversionBlock(_acqReviews.find(r => r.id === m)),
+             docStill: !!(__store.acquisition_documents || []).find(d => d.id === 'm-mystery' && !d.family_id) };
+  }, MAPLE);
+  check('dismissing it is kept on the review, by whom, with its file — and recorded in the activity',
+        res1.e && res1.e.action === 'dismissed' && res1.e.by === 'u1' && res1.e.file === 'Mystery_Tenant_Lease.pdf' && res1.last === 'extraction_resolved', JSON.stringify(res1));
+  check('its document is disposed of in the same act — not relevant, linked to the extraction, by the same person',
+        res1.dd && res1.dd.action === 'not_relevant' && res1.dd.row === 't-mystery' && res1.dd.by === 'u1' && res1.e.doc === 'm-mystery', JSON.stringify(res1.dd));
+  check('its document is still on file, unfiled — dismissing an extraction deletes nothing', res1.docStill);
+  check('with nothing unmatched, the gate opens', res1.block === '', res1.block);
   await page.evaluate(() => convertAcquisitionToProperty());
   await page.waitForTimeout(1500);
   const conv = await page.evaluate((m) => {
@@ -519,42 +556,38 @@ const DB = `
       rpcRows: rpc.length ? rpc[rpc.length - 1].args.p_rows : null }));
   }, MAPLE);
   check('the review converted', conv.status === 'converted' && !!conv.pid, JSON.stringify({ status: conv.status, pid: conv.pid }));
-  check('the property has ONE tenant per leasehold plus the unfiled row — two, not three',
-        Array.isArray(conv.tenants) && conv.tenants.length === 2, conv.tenants && conv.tenants.length);
+  check('the property has exactly ONE tenant per leasehold — one, not two or three',
+        Array.isArray(conv.tenants) && conv.tenants.length === 1, conv.tenants && conv.tenants.length);
   const shopT = conv.tenants && conv.tenants.find(t => /ShopRite/.test(t.tenant_name));
-  const mystT = conv.tenants && conv.tenants.find(t => /Mystery/.test(t.tenant_name));
   check('the ShopRite tenant carries the resolved values and is keyed on the leasehold',
         shopT && shopT.leased_sqft === 67000 && shopT.security_deposit === 25000 && shopT.id === FAM
         && shopT._source === 'leasehold' && shopT.start_date === '2024-03-01' && shopT.end_date === '2034-02-28', JSON.stringify(shopT));
   check('its entered origin travels with it, and the contested cap is null', shopT && shopT._origins && shopT._origins.security_deposit === 'entered' && shopT.cap === null);
-  check('the unfiled tenant is marked as not in a leasehold, not verified',
-        mystT && mystT._source === 'unfiled' && mystT._unverified === true && mystT.leased_sqft === 1200, JSON.stringify(mystT));
-  check('the tenants table was given the same two rows, with the resolved area',
-        Array.isArray(conv.rpcRows) && conv.rpcRows.length === 2 && conv.rpcRows.some(r => r.id === FAM && r.sqft === 67000),
+  check('no tenant was made from the unmatched extraction', !(conv.tenants || []).some(t => /Mystery/.test(t.tenant_name) || t._source === 'unfiled'));
+  check('the tenants table was given the same one row, with the resolved area',
+        Array.isArray(conv.rpcRows) && conv.rpcRows.length === 1 && conv.rpcRows[0].id === FAM && conv.rpcRows[0].sqft === 67000,
         JSON.stringify(conv.rpcRows));
   check('the review keeps its raw upload rows, byte for byte', JSON.stringify((await stored(MAPLE)).tenants) === rawBefore);
 
   // ── 7 · Lake View: raw rows, no documents, no leasehold ──────────────────
   await page.evaluate((id) => selectAcquisitionReview(id), LAKE);
   await page.waitForTimeout(1200);
-  check('Lake View: the Analyze control is enabled from its raw rows',
-        await page.evaluate(() => !document.getElementById('acqAnalyzeBtn').disabled));
-  await page.evaluate(() => runAcquisitionAnalysis());
-  await page.waitForTimeout(1200);
-  const lake = await rentRoll();
-  check('Lake View: both rows are drawn, each marked not in a leasehold · not verified',
-        lake.rows.length === 2 && lake.rows.every(r => r.source === 'unfiled' && r.unfiled && /not verified/.test(r.name)),
-        JSON.stringify(lake.rows.map(r => r.name)));
-  check('Lake View: no cell reads verified, entered, contested or established',
-        lake.rows.every(r => r.entered.length === 0 && r.contested.length === 0 && r.missing.length === 0));
-  check('Lake View: the values the files gave are still shown, as what the file said',
-        lake.rows.some(r => /Lake Pharmacy/.test(r.name) && /3,000/.test(r.sqft)) && lake.rows.some(r => /Lake Diner/.test(r.name) && /2,500/.test(r.sqft)));
-  check('Lake View: the line says 0 leaseholds, 2 rows not in a leasehold',
-        lake.line && lake.line.leaseholds === '0' && lake.line.unfiled === '2', lake.line && lake.line.text);
+  const lk0 = await page.evaluate(() => ({ disabled: document.getElementById('acqAnalyzeBtn').disabled,
+    note: (document.getElementById('acqAnalyzeNote') || {}).textContent || '' }));
+  check('Lake View: there is no leasehold, so the Analyze control is off — and says why',
+        lk0.disabled && /no leaseholds yet/.test(lk0.note) && /Resolve the 2 extracted entries not matched to a tenant first/.test(lk0.note), lk0.note);
+  const lakeBefore = JSON.stringify((await stored(LAKE)).analysis);
+  await page.evaluate(() => { window.__toasts = []; return runAcquisitionAnalysis(); });
+  await page.waitForTimeout(800);
   const stL = await stored(LAKE);
-  check('Lake View: the stored rows say unfiled, with no states',
-        stL.analysis.tenantSummary.every(t => t._source === 'unfiled' && t._unverified === true && Object.keys(t._states).length === 0));
-  check('Lake View: no stale notice — nothing about it has changed', lake.stale.every(s => !s.shown));
+  check('Lake View: running it anyway analyzes nothing — no report is stored or replaced',
+        JSON.stringify(stL.analysis) === lakeBefore && stL.status !== 'complete', JSON.stringify({ status: stL.status }));
+  const lakeUm = await page.evaluate((m) => _acqUnfiledListHtml(m), LAKE);
+  check('Lake View: both extractions stay on MainStreet\'s Record, apart, each with its source and the three resolutions',
+        /Lake Pharmacy/.test(lakeUm) && /Lake Diner/.test(lakeUm) && /2 extracted entries are not matched to a tenant/.test(lakeUm)
+        && (lakeUm.match(/acq-um-match/g) || []).length === 2 && (lakeUm.match(/acq-um-new/g) || []).length === 2
+        && (lakeUm.match(/acq-um-dismiss/g) || []).length === 2, lakeUm.replace(/\s+/g, ' ').slice(0, 200));
+  check('Lake View: the raw rows are untouched', stL.tenants.length === 2 && stL.tenants.some(t => /Lake Pharmacy/.test(t.tenant_name)));
   const noFam = await page.evaluate(() => document.getElementById('acqTermsList').innerText);
   check('Lake View: the Lease Terms panel still says no leasehold has been identified', /No leasehold has been identified yet/.test(noFam));
 

@@ -324,6 +324,7 @@ t('documents still to review are named in the same words as Documents › Needs 
   deq(LM.documentsLine({ unmatched: 3, untyped: 0 }), ['3 documents not yet matched to a tenant']);
   deq(LM.documentsLine({ unmatched: 1, untyped: 1 }), ['1 document not yet matched to a tenant', '1 document of unknown type']);
   deq(LM.documentsLine({}), []);
+  deq(LM.documentsLine({ unmatched: 1, unconfirmed: 3 }), ['1 document not yet matched to a tenant', '3 documents filed by AI, not yet confirmed']);
 });
 
 // ── 6 · the page wiring (static) ────────────────────────────────────────────
@@ -398,11 +399,12 @@ t('no internal words: "not in a leasehold" and "not yet placed" are gone from th
   ok(!/not in a leasehold — as extracted/.test(fnBody(S, '_acqUnfiledListHtml')));
   ok(/not matched to a tenant — as extracted from the file, not reviewed/.test(fnBody(S, '_acqUnfiledListHtml')));
   ok(!/not yet placed/.test(S), '"not yet placed" is still on screen');
-  ok(/LMd\.documentsLine\(due\)/.test(fnBody(S, '_renderAcqDocuments')), 'Documents › Needs review does not use the shared words');
+  ok(/LMd\.documentsLine\(\{ unmatched: due\.unmatched, untyped: due\.untyped \}\)/.test(fnBody(S, '_renderAcqDocuments')), 'Documents › Needs review does not use the shared words');
 });
 t('the documents to review are counted from the same grouping the Documents panel draws', () => {
-  const D = fnBody(S, '_acqDocsToReview');
-  ok(/AD\.groupDocuments\(rows, fams\)\.needsReview/.test(D) && /!d\.family_id \|\| !ids\.has\(d\.family_id\)/.test(D));
+  // §4n: counted from the one rule the acquisition gate uses.
+  ok(/_acqPendingDocuments\(reviewId\)/.test(fnBody(S, '_acqDocsToReview')));
+  ok(/AD\.pendingDocuments\(_acqDocRows\(reviewId\), _acqFamilyRows\(reviewId\), _acqDocDispositions\(reviewId\)\)/.test(fnBody(S, '_acqPendingDocuments')));
   ok(/\.acq-lm-docs-due/.test(fnBody(S, '_acqBindLeaseMatrixControls')) && /acq-doc-group\.needs-review/.test(fnBody(S, '_acqBindLeaseMatrixControls')));
 });
 t('Needs attention draws one line per state, with its count and its terms — no aggregate heading', () => {
@@ -424,7 +426,7 @@ t('every value the matrix and the header print into HTML is escaped', () => {
   for (const name of ['_acqLmCellHtml', '_acqLhValueHtml', '_acqLeaseMatrixHtml', '_acqLeaseholdHeadHtml', '_acqUnfiledListHtml']) {
     const B = fnBody(S, name);
     const raw = (B.match(/\$\{(?!esc\()[^}]*\}/g) || [])
-      .filter(s => !/^\$\{(title|mark|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
+      .filter(s => !/^\$\{(title|mark|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|x\.key \?|fams\.map|done\.length|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
     deq(raw, [], name + ' interpolates without esc()');
   }
 });

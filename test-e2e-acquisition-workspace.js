@@ -312,6 +312,16 @@ const CHIPS = () => [].slice.call(document.querySelectorAll('#acqStageChips .acq
               invoices: [{ id: 'i1', vendorName: 'Atlas Landscaping', amount: 18400, category: 'landscaping' }],
               totalSqFt: 12000, documents: [], analysis: null },
     });
+    // Option B: only a leasehold is a tenant. The lease that produced t1 is on
+    // file and filed into its leasehold, so t1 is represented, not unmatched.
+    (__store.acquisition_document_families = __store.acquisition_document_families || []).push({
+      id: 'fam-coastal', review_id: id, user_id: 'u1', label: 'Coastal Outfitters', tenant_hint: 'Coastal Outfitters',
+      family_kind: 'lease', created_at: '2026-03-01T10:00:00.000Z' });
+    (__store.acquisition_documents = __store.acquisition_documents || []).push({
+      id: 'doc-coastal', review_id: id, user_id: 'u1', intake_id: 'ik-coastal', file_name: 'Coastal_Outfitters_Lease.pdf',
+      intake_kind: 'lease', parsing_status: 'success', produced_kind: 'tenant', produced_id: 't1',
+      doc_type: 'original_lease', doc_type_status: 'confirmed', family_id: 'fam-coastal', family_status: 'confirmed',
+      created_at: '2026-03-01T10:00:00.000Z' });
     await _loadAcqReviewsAndRender();
     selectAcquisitionReview(id);
     const before = _acqReviews.find(x => x.id === id).data.stage;

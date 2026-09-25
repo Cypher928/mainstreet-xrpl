@@ -883,6 +883,52 @@
     return msg.indexOf('does not exist') >= 0 && (msg.indexOf('relation') >= 0 || msg.indexOf('table') >= 0);
   }
 
+  // ── Option B: every source document needs a person's disposition ─────────
+  //
+  // Before an acquisition is converted, each current document must be placed
+  // by a PERSON: filed into a leasehold (matched, or beginning a new one), or
+  // marked not relevant, or a duplicate. A filing the AI proposed is not a
+  // disposition — nothing is matched automatically. A document replaced by a
+  // newer upload of the same file name (D-14) already has one: it was
+  // replaced, and is kept on record.
+  var DISPOSITION = { NOT_RELEVANT: 'not_relevant', DUPLICATE: 'duplicate' };
+
+  /**
+   * The documents still waiting for a person, each with what is missing:
+   *   'type not set'                       — nobody has said what it is
+   *   'not matched to a tenant'            — a lease document in no leasehold
+   *   'its leasehold no longer exists'     — filed into a family since deleted
+   *   'filed into <leasehold> by AI …'     — a machine's proposal, unconfirmed
+   * `dispositions` is review.data.documentDispositions, keyed by document id.
+   * Returns [{ doc, reasons[] }] in document order; [] when nothing waits.
+   */
+  function pendingDocuments(rows, families, dispositions) {
+    var docs = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    var famById = {};
+    (Array.isArray(families) ? families : []).forEach(function (f) { if (f && f.id) famById[f.id] = f; });
+    var disp = (dispositions && typeof dispositions === 'object') ? dispositions : {};
+    var out = [];
+    docs.forEach(function (d) {
+      if (d.superseded_by_document_id) return;
+      var e = disp[d.id];
+      if (e && (e.action === DISPOSITION.NOT_RELEVANT || e.action === DISPOSITION.DUPLICATE)) return;
+      var type = d.doc_type || null;
+      var untyped = !type || type === 'unknown';
+      var reasons = [];
+      if (untyped) reasons.push('type not set');
+      if (untyped || isFamilyType(type)) {
+        if (!d.family_id) reasons.push('not matched to a tenant');
+        else if (!famById[d.family_id]) reasons.push('its leasehold no longer exists');
+        else if (d.family_status !== 'confirmed') {
+          reasons.push('filed into ' + (famById[d.family_id].label || famById[d.family_id].tenant_hint || 'a leasehold')
+                       + ' by AI — not confirmed by a person');
+        }
+      }
+      if (reasons.length) out.push({ doc: d, reasons: reasons });
+    });
+    return out;
+  }
+
   var api = {
     LIST_COLUMNS: LIST_COLUMNS,
     LIST_SELECT: LIST_SELECT,
@@ -931,6 +977,8 @@
     findSuperseded: findSuperseded,
     orderWithinFamily: orderWithinFamily,
     groupDocuments: groupDocuments,
+    DISPOSITION: DISPOSITION,
+    pendingDocuments: pendingDocuments,
     describeClassification: describeClassification,
   };
   if (root) root.AcquisitionDocuments = api;

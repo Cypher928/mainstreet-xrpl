@@ -216,6 +216,19 @@ window.DocumentDrafting = (() => {
     const revs = (acqReviews || []).filter(Boolean);
     const rev = (ctx && ctx.acqId ? revs.find(x => x.id === ctx.acqId) : null) || revs[0];
     if (!rev) return null;
+    // Option B: never draft from an analysis that no longer describes
+    // MainStreet's Record — the draft says so and what to do.
+    if (rev.analysisState === 'stale' || rev.analysisState === 'unchecked') {
+      return {
+        sections: [
+          { heading: `Acquisition review — ${rev.name || 'Target'}`, body: `Prepared ${_dateStr(d.now)} · DRAFT for ownership review` },
+          { heading: 'CAM recovery quality', body: `Not stated: the analysis on file is not used — ${rev.analysisStaleReason || 'it is out of date'}. Refresh it from MainStreet’s Record, then draft again.` },
+          { heading: 'Recommendation', body: '[State the recommendation after the analysis has been refreshed.]' },
+        ],
+        citations: [{ source: 'Acquisition Review', detail: rev.name || null }],
+        confidence: { pct: 0, basis: 'analysis out of date' },
+      };
+    }
     const a = rev.analysis || rev;
     const rate = _num(a.recoveryRate ?? a.revenueRecovery?.recoveryRate);
     const atRisk = _num(a.totalAtRisk ?? a.revenueRecovery?.totalAtRisk);

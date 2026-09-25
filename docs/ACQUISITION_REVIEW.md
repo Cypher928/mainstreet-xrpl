@@ -1599,6 +1599,121 @@ head say. Maple Plaza, as the Pilot holds it, is in
 · 2039-02-28 · NNN · 3% cap · 2 issues (Commencement and Renewal options
 contested); Luxe Nails reads 3,000 · — · — · 5% cap · Missing terms.
 
+## 4n. Option B — only a canonical leasehold is a tenant (uncommitted, awaiting review)
+
+**No migration, no new field, no new serverless function, no change to the
+canonical projection (`leaseholdRows`, `legacyRows`, `tenantRowFor` are
+pinned to HEAD by test). Production untouched.**
+
+**Found.** The §4l projection returns every leasehold AND every raw extracted
+row nothing represents (`_source: 'unfiled'`). MainStreet's Record shows the
+two apart; the analysis received both. On Maple Plaza that made 4 leaseholds
++ 6 unmatched rows = 10 "tenants" in Risk Analysis, the Rent Roll and CSV,
+the Decision Report, the stored analysis that Ask AI, the Command Center and
+drafting read — and in a conversion. Occupancy, rollover and recovery were
+computed over all 10 (on a 100,000 sf building: 101,300 sf occupied instead of
+77,500). The review card counted the 13 raw uploads as "Tenants".
+
+**The rule.** Only a canonical leasehold is a tenant. An unmatched extraction
+is not; it stays on MainStreet's Record, apart, with its source, until a
+PERSON resolves it — nothing is matched automatically, by name or by file:
+
+| The extraction… | A person may |
+|---|---|
+| has no document on file (5 of Maple Plaza's 6) | **Match to a leasehold** (picked from the review's leaseholds) · **New leasehold** (one is created, named from the extraction; its terms start Not established) · **Not a tenant** |
+| has a document on file, unmatched (SafeShield Insurance) | settle it in **Documents** (classify it, then file it into a leasehold or begin one — the projection then drops the row) · **Not a tenant** |
+
+A resolution is kept in `review.data.extractionResolutions`, keyed by the raw
+row's id — `{ action, familyId, tenantName, fileName, by, at }` — and recorded
+in the review's activity (`extraction_resolved`, `extraction_reopened`). A
+match or a dismissal can be undone; a new leasehold stays a leasehold. A match
+holds only while its leasehold exists. The raw rows (`review.data.tenants[]`)
+and every source file are never changed or removed.
+
+**What changed.**
+
+- `acquisition-leasehold.js` (additive): `analysisRows(projection)` (leaseholds
+  only), `unmatchedEntries(projection, resolutions, families)`,
+  `unresolvedCount(…)`, `RESOLUTION`.
+- **The analysis** (`_acqBuildAnalysis`) is built from `analysisRows` — so Risk
+  Analysis, the Rent Roll and its CSV, the Decision Report, and the stored
+  analysis (hence Ask AI, the Command Center and drafting) all read the
+  leaseholds only. The stored analysis records `canonical.basis: 'leaseholds'`
+  and `canonical.unmatched`; one without that basis reads as out of date
+  (*This analysis counted extracted entries not matched to a tenant as
+  tenants*). Analysis of a review with no leasehold is refused and nothing is
+  stored or replaced.
+- **Conversion** (`_acqConversionReview`) takes the leaseholds only, and is
+  gated (`_acqConversionBlock`) at the Acquire button (disabled, with the
+  reason), the confirmation, and `convertAcquisitionToProperty` itself: it
+  waits until the record has loaded, every unmatched extraction is resolved
+  (*6 extracted entries need to be resolved before this property can be
+  acquired. MainStreet will not create tenants from unmatched document
+  extractions…*), there is at least one leasehold, and the analysis is not
+  out of date.
+- **The Decision Report** refuses an out-of-date analysis, saying why, rather
+  than printing it (the guard is marked; the v1 function is otherwise pinned
+  to HEAD).
+- **The Rent Roll** line says *N extracted entries not matched to a tenant —
+  not counted*.
+- **The review card** says *N Leaseholds* (from one read of the families) and,
+  once the review is loaded, *N extracted entries not yet matched* — never the
+  raw upload count.
+- **Report v2** already read the leaseholds (families + resolver); unchanged.
+
+**Every source document needs a disposition too.** The gate counts, besides
+the unmatched extractions, every current document still waiting for a person
+(`AcquisitionDocuments.pendingDocuments`): no type set; a lease document in no
+leasehold; filed into a leasehold since deleted; or filed only by the AI's
+proposal (a machine's filing is not a disposition — nothing is matched
+automatically). Documents offers, on each: **Confirm leasehold** (the AI's
+filing), **Match to a leasehold** (one a person picks), **Not relevant**,
+**Duplicate**, with Undo — and the existing *This begins the leasehold* for a
+new one. A copy replaced by a newer upload of the same file name (D-14) has
+its disposition already and does not wait. Dispositions are kept in
+`review.data.documentDispositions` with who and when, and in the activity
+(`document_disposed`, `document_reopened`). Dismissing an extraction whose
+document is on file disposes of that document in the same act, and the other
+way round; Undo reverses both. The gate names each item and why — e.g. for
+Maple Plaza: *6 extracted entries …; 4 documents in Documents —
+SafeShield_Insurance_Lease.pdf (type not set; not matched to a tenant),
+ShopRite_Anchor_Tenant_Lease.pdf (filed into ShopRite Supermarkets, Inc. by
+AI — not confirmed by a person), …* MainStreet's Record's status line counts
+the same documents (*1 document not yet matched to a tenant · 3 documents
+filed by AI, not yet confirmed*), and the portfolio actions say *Not ready to
+convert*, with what remains, instead of *Ready to convert*.
+
+**No consumer reads a stale analysis.** Ask AI, the Command Center, drafting,
+the action center and the portfolio export are given
+`_acqReviewsForConsumers()` — each review's name, id and status, with its
+analysis ONLY when it is current (basis `leaseholds`, record loaded, and the
+record unchanged since it was run). Otherwise the analysis is withheld and the
+review is marked `stale` or `unchecked` with the reason, and each consumer
+says so: Ask AI *the analysis on file is not used — … Refresh it from
+MainStreet's Record*; the Command Center recommends a refresh; drafting states
+no figure. (Before this, those three read a path the stored review does not
+have, so they never used any analysis at all — they said *not computed*; now
+they use the current one.) The records the view needs are loaded in the
+background after the review list, without writing anything.
+
+**Maple Plaza, before → after:** MainStreet's Record 4 → 4 · Risk Analysis 10
+→ 4 · Rent Roll 10 → 4 · Decision Report roster 10 → 4 · review card "13
+Tenants" → "4 Leaseholds · 6 extracted entries not yet matched" · conversion
+10 tenants → refused until resolved, then one tenant per leasehold.
+
+**Consequence for reviews that predate documents.** A review whose leases were
+extracted before documents were kept (every raw row `no_document`) has no
+leasehold, so it cannot be analyzed or converted until its extractions are
+resolved. Its stored analysis is left as it was and reads as out of date.
+This includes **Convert Again** on an orphaned review (its property deleted):
+the repair rebuilds the property from the leaseholds, so a raw-only review
+waits for its extractions to be resolved too (`test-acq-orphan-repair.js`).
+On the Pilot, 9 of 11 reviews are raw-only (the seven Harborview Retail Center
+reviews, Miracle Mile, Lakeview). Four Harborview reviews carry a
+conversion; three of those properties exist, so nothing changes for them. The
+fourth (`aca00000-…-479b339e9193`) is orphaned — its property was deleted — and
+its Convert Again now waits until its 4 extractions are resolved.
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

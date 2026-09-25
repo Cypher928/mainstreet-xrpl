@@ -87,7 +87,7 @@ const CLICK_LABEL = function (rx) {
     onAuthStateChange:function(){return {data:{subscription:{unsubscribe:function(){}}}};},
     signOut:function(){return Promise.resolve({error:null});}},
     rpc:function(){return Promise.resolve({data:null,error:null});},
-    from:function(){var q={select:function(){return q;},eq:function(){return q;},neq:function(){return q;},
+    from:function(name){var q={select:function(){return q;},eq:function(){return q;},neq:function(){return q;},
       is:function(){return q;},order:function(){return q;},limit:function(){return q;},ilike:function(){return q;},
       in:function(){return Promise.resolve({data:[],error:null});},
       single:function(){return Promise.resolve({data:null,error:null});},
@@ -99,7 +99,7 @@ const CLICK_LABEL = function (rx) {
         p.select=function(){var q2=Promise.resolve({data:rows,error:null});q2.single=function(){return Promise.resolve({data:rows[0],error:null});};return q2;};return p;},
       update:function(){var p=Promise.resolve({data:[],error:null});p.eq=function(){return p;};p.select=function(){return p;};return p;},
       delete:function(){return {eq:function(){return Promise.resolve({error:null});}};},
-      then:function(f){return Promise.resolve({data:[],error:null}).then(f);}};return q;},
+      then:function(f){return Promise.resolve({data:((window.__tables||{})[name]||[]).slice(),error:null}).then(f);}};return q;},
     storage:{from:function(){return {upload:function(){return Promise.resolve({data:{path:'x'},error:null});},
       getPublicUrl:function(){return {data:{publicUrl:''}};}};}}};}};`);
 
@@ -135,8 +135,8 @@ const CLICK_LABEL = function (rx) {
       created_at: '2026-01-14T10:00:00.000Z',
       data: {
         totalSqFt: 32000,
-        tenants: [{ tenant_name: 'Coastal Outfitters', leased_sqft: 4200 },
-                  { tenant_name: 'Harbor Cafe',       leased_sqft: 1800 }],
+        tenants: [{ id: 't-coastal', tenant_name: 'Coastal Outfitters', leased_sqft: 4200 },
+                  { id: 't-harbor',  tenant_name: 'Harbor Cafe',       leased_sqft: 1800 }],
         invoices: [{ vendor: 'Atlas Landscaping', amount: 18400 }],
         analysis: { summary: { revenueAtRisk: 41200 }, topRisks: ['Cap ambiguity in Section 7.3'],
                     rentRoll: { occupancy: 0.81, walt: 3.4 } },
@@ -164,6 +164,34 @@ const CLICK_LABEL = function (rx) {
         !!card && /no longer exists/i.test(card.text), card ? card.text : 'no card');
   check('and the card does not present a healthy "Converted"',
         !!card && /orphaned/.test(card.chip), card ? card.chip : '');
+
+  // ── Option B: a raw-only orphan cannot be rebuilt from extractions ──────
+  // Harborview on the Pilot is exactly this: raw extracted rows, no leasehold.
+  // Its extractions are not tenants, so Convert Again waits until a person
+  // resolves them — it does not rebuild the property from them.
+  await page.evaluate((rid) => { window.__tables = {}; selectAcquisitionReview(rid); }, ORPHAN_ID);
+  await page.waitForTimeout(900);
+  const rawOnly = await page.evaluate(() => ({
+    action: ((document.getElementById('acqConvertAction') || {}).innerText || '').replace(/\s+/g, ' '),
+    disabled: !!(document.querySelector('#acqConvertAction .acq-convert-btn') || {}).disabled }));
+  check('Option B: a raw-only orphan offers Convert Again disabled — its 2 extractions must be resolved first',
+        rawOnly.disabled && /2 extracted entries need to be resolved before this property can be acquired/.test(rawOnly.action), rawOnly.action.slice(0, 140));
+
+  // The same review with its leases on file, each in its leasehold — the
+  // state a resolved review is in. The repair itself is what follows.
+  await page.evaluate(async (rid) => {
+    const fam = (id, label) => ({ id, review_id: rid, user_id: 'u1', label, tenant_hint: label, family_kind: 'lease', created_at: '2026-01-14T10:00:00.000Z' });
+    const doc = (id, fid, produced, file) => ({ id, review_id: rid, user_id: 'u1', intake_id: 'ik-' + id, file_name: file, intake_kind: 'lease',
+      parsing_status: 'success', produced_kind: 'tenant', produced_id: produced, doc_type: 'original_lease', doc_type_status: 'confirmed',
+      family_id: fid, family_status: 'confirmed', created_at: '2026-01-14T10:00:00.000Z' });
+    window.__tables = {
+      acquisition_document_families: [fam('fam-coastal', 'Coastal Outfitters'), fam('fam-harbor', 'Harbor Cafe')],
+      acquisition_documents: [doc('doc-coastal', 'fam-coastal', 't-coastal', 'Coastal_Outfitters_Lease.pdf'),
+                              doc('doc-harbor', 'fam-harbor', 't-harbor', 'Harbor_Cafe_Lease.pdf')],
+    };
+    _acqFamilies.delete(rid); _acqDocs.delete(rid); _acqDecisions.delete(rid); _acqEvidenceLoaded.delete(rid);
+    await _acqEnsureRecord(rid);
+  }, ORPHAN_ID);
 
   // ── open it and find the way out ─────────────────────────────────────────
   await page.evaluate((rid) => selectAcquisitionReview(rid), ORPHAN_ID);

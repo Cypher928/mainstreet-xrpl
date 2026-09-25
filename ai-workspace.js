@@ -1335,6 +1335,11 @@ window.AIWorkspace = (() => {
       const revs = (acqReviews || []).filter(Boolean);
       if (!revs.length) return { heading: 'Acquisitions', paragraphs: ['No acquisition reviews are on file. Start one to analyze a target\'s leases, CAM recovery, and capital risk before you buy.'], citations: [], actions: [_actAcquisitions()], confidence: { pct: 95, basis: 'workflow state' } };
       const paragraphs = revs.slice(0, 3).map(rev => {
+        // An analysis that no longer describes MainStreet's Record is not
+        // answered from (Option B): say so, and what to do.
+        if (rev.analysisState === 'stale' || rev.analysisState === 'unchecked') {
+          return `${rev.name || 'Target'}: the analysis on file is not used — ${rev.analysisStaleReason || 'it is out of date'}. Refresh it from MainStreet’s Record before relying on its figures.`;
+        }
         const a = rev.analysis || rev;
         const rate = _num(a.recoveryRate ?? a.revenueRecovery?.recoveryRate);
         const atRisk = _num(a.totalAtRisk ?? a.revenueRecovery?.totalAtRisk);

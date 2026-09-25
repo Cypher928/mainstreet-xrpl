@@ -1257,12 +1257,14 @@
     for (var ri = 0; ri < safeReviews.length; ri++) {
       var rev = safeReviews[ri];
       if (rev.status !== 'complete') continue;
+      // Option B: "Ready" only when nothing is left for a person to resolve.
+      var blocked = rev.conversionBlocked || null;
       infoActions.push({
         id:           'acq:' + (rev.id || ''),
         type:         'acquisition_pending',
         severity:     'info',
-        title:        (rev.name || 'Acquisition') + ' — Ready to convert',
-        detail:       'Analysis complete · not yet added to portfolio',
+        title:        (rev.name || 'Acquisition') + (blocked ? ' — Not ready to convert' : ' — Ready to convert'),
+        detail:       blocked || 'Analysis complete · not yet added to portfolio',
         propertyId:   null,
         propertyName: null,
         tenantName:   null,

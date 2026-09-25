@@ -357,6 +357,25 @@ window.CommandCenter = (() => {
   function _recsForAcquisitions(acqReviews) {
     const recs = [];
     for (const rev of (acqReviews || [])) {
+      // Option B: an analysis that no longer describes MainStreet's Record is
+      // not used — the recommendation is to refresh it, not to act on it.
+      if (rev && (rev.analysisState === 'stale' || rev.analysisState === 'unchecked')) {
+        recs.push({
+          id: `acq-stale:${rev.id}`, priority: 'medium',
+          propertyId: null, propertyName: rev.name || 'Acquisition review',
+          title: `Acquisition: ${rev.name || 'review'} — analysis out of date`,
+          reason: `Its figures are not used: ${rev.analysisStaleReason || 'it no longer describes MainStreet’s Record'}.`,
+          impact: null, impactNote: null,
+          confidence: 95, confidenceBasis: 'MainStreet’s Record',
+          evidence: [`Acquisition review — ${rev.name || ''}`],
+          connections: [],
+          nextStep: 'Refresh the analysis from MainStreet’s Record.',
+          action: rev.id != null
+            ? { label: 'Open this acquisition review', js: `ccOpenAcqReview(${_jsArg(rev.id)})` }
+            : { label: 'Open acquisition reviews',     js: 'ccOpenAcquisitions()' },
+        });
+        continue;
+      }
       const a = rev && (rev.analysis || rev);
       if (!a) continue;
       const rate   = _num(a.recoveryRate ?? a.revenueRecovery?.recoveryRate);
