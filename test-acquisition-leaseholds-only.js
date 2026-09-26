@@ -251,9 +251,15 @@ t('conversion takes the leaseholds only', () => {
   ok(/_acqAnalysisRows\(_acqLeaseholdsOnly\(canon\)\)/.test(fnBody(S, '_acqConversionReview')));
 });
 t('an analysis that counted unmatched rows, or is older than the record, reads as out of date', () => {
-  const B = fnBody(S, '_acqAnalysisStale');
+  ok(/_acqAnalysisStaleParts\(review\)/.test(fnBody(S, '_acqAnalysisStale')));
+  const B = fnBody(S, '_acqAnalysisStaleParts');
   ok(/a\.canonical\.basis !== 'leaseholds'/.test(B));
   ok(/_acqCanonicalFingerprint\(_acqLeaseholdsOnly\(canon\)\)/.test(B));
+  // §4o — the analysis's other inputs are part of what makes it current.
+  ok(/_acqAnalysisSqFt\(review\)/.test(B) && /AE\.invoiceInputsFingerprint\(_acqAnalysisInvoices\(review\)\)/.test(B), 'area or invoices unchecked');
+  const A = fnBody(S, '_acqBuildAnalysis');
+  ok(/const invoices = _acqAnalysisInvoices\(review\);/.test(A) && /const sqft     = _acqAnalysisSqFt\(review\);/.test(A)
+     && /sqft, invoices: AE\.invoiceInputsFingerprint\(invoices\)/.test(A), 'built from other inputs than it records');
 });
 t('the conversion gate is enforced at the button, the confirmation and the conversion itself', () => {
   ok(/_acqConversionBlock\(review\)/.test(fnBody(S, '_renderAcqConvertAction')));
@@ -304,7 +310,7 @@ t('the view carries an analysis only when it is current — never the stored rev
   const C = fnBody(S, '_acqConsumerAnalysis');
   ok(/a\.canonical\.basis !== 'leaseholds'\) return \{ state: 'stale'/.test(C));
   ok(/if \(!_acqRecordLoaded\(review\.id\)\) return \{ state: 'unchecked'/.test(C));
-  ok(/if \(why\) return \{ state: 'stale'/.test(C) && /return \{ state: 'current'/.test(C));
+  ok(/const why = _acqAnalysisStaleParts\(review\);/.test(C) && /if \(why\.length\) return \{ state: 'stale'/.test(C) && /return \{ state: 'current'/.test(C));
   const V = fnBody(S, '_acqReviewsForConsumers');
   ok(/analysis: c\.analysis/.test(V) && !/data:/.test(V), 'the view passes the review data (and its stored analysis) through');
 });

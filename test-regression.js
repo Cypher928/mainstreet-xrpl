@@ -540,6 +540,8 @@ const SUITES = [
   // unmatched extraction waits for a person. Walked with Maple Plaza.
   { label: 'Acquisition leaseholds only (§4n)',           cmd: 'node test-acquisition-leaseholds-only.js' },
   { label: 'Acquisition leaseholds only walk (e2e, §4n)', cmd: 'node test-e2e-acquisition-leaseholds-only.js' },
+  { label: 'Acquisition analysis freshness (§4o)',        cmd: 'node test-acquisition-analysis-freshness.js' },
+  { label: 'Acquisition analysis freshness walk (e2e, §4o)', cmd: 'node test-e2e-acquisition-analysis-freshness.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.

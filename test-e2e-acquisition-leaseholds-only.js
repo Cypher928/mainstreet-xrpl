@@ -295,7 +295,7 @@ const DB = `
   check('and it reads as out of date, saying why', old.stale.length > 0 && old.stale.every(t => /counted extracted entries not matched to a tenant as tenants/.test(t)), JSON.stringify(old.stale).slice(0, 160));
   await page.evaluate(() => { window.__toasts = []; generateAcquisitionReport(); });
   const rep0 = await page.evaluate(() => ({ opened: !!((document.getElementById('rptBody') || {}).innerText || '').trim()
-      && document.getElementById('rptOverlay') && getComputedStyle(document.getElementById('rptOverlay')).display !== 'none', toasts: window.__toasts.slice() }));
+      && getComputedStyle(document.getElementById('reportOverlay')).display !== 'none', toasts: window.__toasts.slice() }));
   check('the Decision Report refuses to print it — it says why, and prints nothing',
         !rep0.opened && rep0.toasts.some(t => /counted extracted entries not matched to a tenant as tenants\. Refresh the analysis before generating the Decision Report/.test(t)), JSON.stringify(rep0));
 

@@ -19298,6 +19298,12 @@ function _rptMakeTablesScrollable(root) {
 
 function closeReport() {
   document.getElementById('reportOverlay').style.display = 'none';
+  // A closed report keeps nothing. Left in place, its figures outlived the
+  // analysis they came from and a later browser print put them on paper.
+  const body = document.getElementById('rptBody');
+  if (body) body.innerHTML = '';
+  const title = document.getElementById('rptToolbarTitle');
+  if (title) title.textContent = 'Report';
 }
 
 // ─── Reconciliation Summary Report ───────────────────────────────────────────
@@ -30906,17 +30912,28 @@ function _acqCanonicalFingerprint(rows) {
   ]));
 }
 
+// The analysis's other inputs, read the same way when it is built and when it
+// is checked: the property's area (what is typed on the open review, what is
+// stored on any other) and the invoices that carry an amount.
+function _acqAnalysisSqFt(review) {
+  const d = (review && review.data) || {};
+  return parseFloat(_acqIsActive(review) ? _acqSqFt : d.totalSqFt) || 0;
+}
+function _acqAnalysisInvoices(review) {
+  const d = (review && review.data) || {};
+  return (Array.isArray(d.invoices) ? d.invoices : []).filter(i => i && i.amount && i._status !== 'error');
+}
+
 // The analysis for one review, from the canonical rows. Returns null when the
 // engine is not loaded. The states ride along on tenantSummary so the Rent
 // Roll can say Contested or Not established rather than drawing a dash.
 function _acqBuildAnalysis(review) {
   const AE = window.AcquisitionEngine, AL = _AL();
   if (!AE || !review) return null;
-  const d = review.data || {};
   const canon    = _acqCanonicalRows(review.id);
   const tenants  = _acqAnalysisRows(_acqLeaseholdsOnly(canon));
-  const invoices = (Array.isArray(d.invoices) ? d.invoices : []).filter(i => i && i.amount && i._status !== 'error');
-  const sqft     = _acqIsActive(review) ? _acqSqFt : (d.totalSqFt || 0);
+  const invoices = _acqAnalysisInvoices(review);
+  const sqft     = _acqAnalysisSqFt(review);
   const report   = AE.buildAcquisitionReport(tenants, invoices, sqft);
   if (AL) AL.attachStates(report.tenantSummary, tenants);
   report.canonical = {
@@ -30927,6 +30944,8 @@ function _acqBuildAnalysis(review) {
     unmatched: _acqUnresolvedExtractions(review.id),
     dropped: canon.dropped.length, resolverAvailable: canon.resolverAvailable,
     fingerprint: _acqCanonicalFingerprint(tenants), at: new Date().toISOString(),
+    // The other inputs, so a later change to either shows it out of date.
+    sqft, invoices: AE.invoiceInputsFingerprint(invoices),
   };
   return { report, tenants, invoices, sqft };
 }
@@ -30946,6 +30965,7 @@ async function _acqRefreshAnalysis(reviewId) {
   const built = _acqBuildAnalysis(review);
   if (!built) return false;
   review.data.analysis = built.report;
+  _acqInvalidateDecisionReport();
   review.updated_at = new Date().toISOString();
   await _saveAcqReview(review);
   _renderAcqSection(_acqReviews);
@@ -30954,6 +30974,14 @@ async function _acqRefreshAnalysis(reviewId) {
     _renderAcqConvertAction(review);
   }
   return true;
+}
+
+// A new analysis retires any Decision Report already drawn: it was printed
+// from the analysis this one replaces. Asking for the report again builds it
+// from the new one.
+function _acqInvalidateDecisionReport() {
+  const title = document.getElementById('rptToolbarTitle');
+  if (title && /^Acquisition Decision Report\b/.test(title.textContent || '')) closeReport();
 }
 
 async function acqRefreshAnalysisFromTerms() {
@@ -30966,16 +30994,55 @@ async function acqRefreshAnalysisFromTerms() {
 // are not fully loaded (nothing can be said yet), '' when current, and a
 // sentence when it is behind.
 function _acqAnalysisStale(review) {
+  const parts = _acqAnalysisStaleParts(review);
+  return parts === null ? null : parts.map(p => p.text).join(' ');
+}
+
+// What has moved on since the analysis was run, one entry per input: the
+// leaseholds ('terms'), the property's area ('sqft') and the invoices
+// ('invoices'). null while it cannot be told; [] when the analysis is current.
+// Each entry carries the sentence the workspace shows (`text`) and the clause
+// the consumers quote (`reason`).
+function _acqAnalysisStaleParts(review) {
   const a = review && review.data && review.data.analysis;
   if (!a || !Array.isArray(a.tenantSummary)) return null;
   const id = review.id;
   if (!(_acqFamilies.has(id) && _acqDocs.has(id) && _acqDecisions.has(id) && _acqEvidenceLoaded.has(id))) return null;
-  if (!a.canonical) return 'This analysis was run from the uploaded files, before the Rent Roll read the lease terms.';
-  if (a.canonical.basis !== 'leaseholds') return 'This analysis counted extracted entries not matched to a tenant as tenants.';
+  if (!a.canonical) return [{ key: 'basis', text: 'This analysis was run from the uploaded files, before the Rent Roll read the lease terms.',
+                              reason: 'it was run from the uploaded files, before MainStreet’s Record read the lease terms' }];
+  if (a.canonical.basis !== 'leaseholds') return [{ key: 'basis', text: 'This analysis counted extracted entries not matched to a tenant as tenants.',
+                                                    reason: 'it counted extracted entries not matched to a tenant as tenants' }];
+  const parts = [];
   const canon = _acqCanonicalRows(id);
-  if (!canon.resolverAvailable) return null;
-  return _acqCanonicalFingerprint(_acqLeaseholdsOnly(canon)) === a.canonical.fingerprint
-    ? '' : 'The lease terms have changed since this analysis was run.';
+  if (canon.resolverAvailable && _acqCanonicalFingerprint(_acqLeaseholdsOnly(canon)) !== a.canonical.fingerprint) {
+    parts.push({ key: 'terms', text: 'The lease terms have changed since this analysis was run.',
+                 reason: 'MainStreet’s Record has changed since it was run' });
+  }
+  // The property's area. An analysis from before it was recorded here still
+  // says which area it used: every rent roll carries it.
+  const sfWas = a.canonical.sqft !== undefined ? parseFloat(a.canonical.sqft) || 0
+              : parseFloat(((a.rentRoll || {}).occupancy || {}).buildingSqft) || 0;
+  const sfNow = _acqAnalysisSqFt(review);
+  if (sfWas !== sfNow) {
+    const sf = v => Number(v).toLocaleString('en-US') + ' sf';
+    parts.push({ key: 'sqft', text: 'Total Property SqFt has changed since this analysis was run (' + sf(sfWas) + ' → ' + sf(sfNow) + ').',
+                 reason: 'Total Property SqFt has changed since it was run (' + sf(sfWas) + ' → ' + sf(sfNow) + ')' });
+  }
+  // The invoices. An analysis that did not record them cannot show it used
+  // today's — it is not taken on trust.
+  const AE = window.AcquisitionEngine;
+  if (a.canonical.invoices === undefined) {
+    parts.push({ key: 'invoices', text: 'This analysis does not record which invoices it used.',
+                 reason: 'it does not record which invoices it used' });
+  } else if (AE && typeof AE.invoiceInputsFingerprint === 'function'
+             && AE.invoiceInputsFingerprint(_acqAnalysisInvoices(review)) !== a.canonical.invoices) {
+    parts.push({ key: 'invoices', text: 'The invoices have changed since this analysis was run.',
+                 reason: 'the invoices have changed since it was run' });
+  }
+  // The leaseholds cannot be compared without the resolver; the other inputs
+  // can, and a change to them is out of date whatever the leaseholds say.
+  if (!canon.resolverAvailable && !parts.length) return null;
+  return parts;
 }
 
 function _acqUpdateStaleNotice() {
@@ -30986,8 +31053,8 @@ function _acqUpdateStaleNotice() {
   els.forEach(el => {
     if (!why) { el.style.display = 'none'; el.innerHTML = ''; return; }
     el.style.display = '';
-    el.innerHTML = esc(why) + ' The figures below may not match the Lease Terms. '
-      + '<button class="acq-export-btn acq-stale-refresh" onclick="acqRefreshAnalysisFromTerms()">Refresh from lease terms</button>';
+    el.innerHTML = esc(why) + ' The figures below may not match what is on file now. '
+      + '<button class="acq-export-btn acq-stale-refresh" onclick="acqRefreshAnalysisFromTerms()">Refresh the analysis</button>';
   });
 }
 
@@ -31101,9 +31168,9 @@ function _acqConsumerAnalysis(review) {
   if (!a.canonical) return { state: 'stale', reason: 'it was run from the uploaded files, before MainStreet’s Record read the lease terms', analysis: null };
   if (a.canonical.basis !== 'leaseholds') return { state: 'stale', reason: 'it counted extracted entries not matched to a tenant as tenants', analysis: null };
   if (!_acqRecordLoaded(review.id)) return { state: 'unchecked', reason: 'it has not yet been checked against MainStreet’s Record', analysis: null };
-  const why = _acqAnalysisStale(review);
+  const why = _acqAnalysisStaleParts(review);
   if (why === null) return { state: 'unchecked', reason: 'it cannot be checked against MainStreet’s Record yet', analysis: null };
-  if (why) return { state: 'stale', reason: 'MainStreet’s Record has changed since it was run', analysis: null };
+  if (why.length) return { state: 'stale', reason: why.map(p => p.reason).join('; '), analysis: null };
   const s = a.summary;
   return { state: 'current', reason: null, analysis: {
     basis: 'leaseholds', at: a.canonical.at || null, tenantCount: s.tenantCount,
@@ -33193,6 +33260,12 @@ function acqSaveSqft(val) {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (review) { review.data = review.data || {}; review.data.totalSqFt = _acqSqFt; }
   _updateAcqAnalyzeBtn();
+  // The area is an input to the analysis: a different one puts it out of date
+  // at once, on the notice above the figures and on the conversion gate.
+  if (review && review.data.analysis) {
+    _acqUpdateStaleNotice();
+    _renderAcqConvertAction(review);
+  }
 }
 
 // ── Cross-review isolation ────────────────────────────────────────────────────
@@ -33460,6 +33533,11 @@ async function acqHandleInvoiceFiles(fileList) {
       meta: { kind: 'invoice', files: files.map(f => f.name), failed, documentIds } });
   }
   _saveAcqReview(review);
+  // The invoices are an input to the analysis: new ones put it out of date.
+  if (_acqIsActive(review) && review.data.analysis) {
+    _acqUpdateStaleNotice();
+    _renderAcqConvertAction(review);
+  }
   document.getElementById('acqInvoiceInput').value = '';
 }
 
@@ -33487,6 +33565,7 @@ async function runAcquisitionAnalysis() {
     const { report, tenants, invoices } = built;
 
     review.data.analysis = report;
+    _acqInvalidateDecisionReport();
     review.status    = 'complete';
     review.updated_at = new Date().toISOString();
     _acqRecord(review, { type: 'analysis_run', summary: 'Risk analysis run',
@@ -33696,7 +33775,7 @@ function _renderAcqReport(report, container) {
     <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
   </div>`;
 
-  const riskTabContent = `${execSummaryInline}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
+  const riskTabContent = `${execSummaryInline}${_acqOccupancyCheckHtml((report.rentRoll || {}).occupancy)}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
   _acqRentRollReport   = report;
   const rrTabContent   = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
   _acqRentRollReport   = null;
@@ -33822,6 +33901,19 @@ function _sortAcqRentRoll(col) {
   });
 }
 
+// More space leased than the property has: the rate is shown as computed,
+// never clamped, with the arithmetic and a request to check both areas.
+function _acqOccupancyCheck(occ) {
+  const AE = window.AcquisitionEngine;
+  return AE && typeof AE.occupancyCheck === 'function' ? AE.occupancyCheck(occ) : null;
+}
+function _acqOccupancyCheckHtml(occ, inline) {
+  const c = _acqOccupancyCheck(occ);
+  if (!c) return '';
+  return `<div class="acq-occ-check" role="note"${inline ? ' style="margin:0 0 16px;padding:8px 12px;border-left:3px solid #fbbf24;background:rgba(251,191,36,0.08);font-size:0.82rem;"' : ''}>`
+    + `&#x26A0;&#xFE0F; <strong>${esc(c.message)}</strong> <span class="acq-occ-check-math">${esc(c.detail)}</span></div>`;
+}
+
 // The report whose Rent Roll tab is being drawn, for the line above the
 // table. Set by _renderAcqReport around its one call; null otherwise.
 let _acqRentRollReport = null;
@@ -33837,10 +33929,11 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
   const fmtPct  = v => v != null ? v + '%' : '—';
   const fmtSqft = v => v != null ? Number(v).toLocaleString('en-US') + ' sf' : '—';
 
+  const occCheck = _acqOccupancyCheck(occ);
   const kpiCards = `
   <div class="acq-kpi-row">
     <div class="acq-kpi">
-      <div class="acq-kpi-val ${occ.occupancyRate >= 90 ? 'safe' : occ.occupancyRate >= 70 ? '' : 'danger'}">${fmtPct(occ.occupancyRate)}</div>
+      <div class="acq-kpi-val ${occCheck ? 'verify' : occ.occupancyRate >= 90 ? 'safe' : occ.occupancyRate >= 70 ? '' : 'danger'}">${fmtPct(occ.occupancyRate)}</div>
       <div class="acq-kpi-lbl">Occupancy</div>
     </div>
     <div class="acq-kpi">
@@ -33859,7 +33952,7 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
       <div class="acq-kpi-val ${rr.expiring24.count > 0 ? '' : 'safe'}">${rr.expiring24.count}</div>
       <div class="acq-kpi-lbl">Exp. ≤24 Mo</div>
     </div>
-  </div>`;
+  </div>${_acqOccupancyCheckHtml(occ)}`;
 
   const sortIcon = col => {
     if (_acqRentRollSort.col !== col) return '<span class="acq-sort-icon">&#x21C5;</span>';
@@ -34199,7 +34292,7 @@ function generateAcquisitionReport() {
     <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring12.count > 0 ? '#f87171' : '#4ade80'}">${roll.expiring12.count}</div><div class="kpi-lbl">Exp. ≤12 Mo</div></div>
     <div class="rpt-kpi"><div class="kpi-val" style="color:${roll.expiring24.count > 0 ? '#fbbf24' : '#4ade80'}">${roll.expiring24.count}</div><div class="kpi-lbl">Exp. ≤24 Mo</div></div>
     <div class="rpt-kpi"><div class="kpi-val" style="color:${s.criticalRenewalCount > 0 ? '#f87171' : '#4ade80'}">${s.criticalRenewalCount}</div><div class="kpi-lbl">Critical Renewals</div></div>
-  </div>
+  </div>${_acqOccupancyCheckHtml(occ, true)}
   ${renewalRiskRows ? `<table class="rpt-table">
     <thead><tr>
       <th>Tenant</th><th>Lease End</th><th>Time Remaining</th><th>Risk Level</th><th>Renewal Clause</th>

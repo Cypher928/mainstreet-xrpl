@@ -4822,9 +4822,16 @@
       .rpt-table--cards tbody td[data-label]::before { content: none !important; }
     }
 
+    /* Print puts the report on paper only while it is OPEN, and then nothing
+       else: every element that neither is the report, holds it (#appContent
+       does) nor sits inside it is hidden. The rule this replaces hid every
+       child of <body> but the overlay — #appContent with it, so an open report
+       printed blank — and forced the overlay visible whether open or not. A
+       closed overlay stays hidden; the page prints as it is. */
     @media print {
-      body > *:not(#reportOverlay) { display: none !important; }
-      #reportOverlay {
+      body:has(#reportOverlay[style*="display: block"]) *:not(#reportOverlay):not(:has(#reportOverlay)):not(#reportOverlay *),
+      body:has(#reportOverlay.open) *:not(#reportOverlay):not(:has(#reportOverlay)):not(#reportOverlay *) { display: none !important; }
+      #reportOverlay[style*="display: block"], #reportOverlay.open {
         display: block !important; position: static !important;
         overflow: visible !important; background: white !important;
       }
@@ -6632,6 +6639,10 @@
     .acq-kpi-val { font-size: 1.4rem; font-weight: 700; color: var(--c-c9973a); }
     .acq-kpi-val.danger { color: var(--c-f87171); }
     .acq-kpi-val.safe   { color: var(--c-4ade80); }
+    .acq-kpi-val.verify { color: var(--c-fbbf24, #fbbf24); }
+    .acq-occ-check { font-size: 0.8rem; color: var(--c-fbbf24, #fbbf24); background: rgba(251, 191, 36, 0.08);
+      border-left: 3px solid var(--c-fbbf24, #fbbf24); border-radius: 4px; padding: 8px 12px; margin: 0 0 14px; }
+    .acq-occ-check-math { color: var(--text-3); margin-left: 6px; }
     .acq-kpi-lbl { font-size: 0.72rem; color: var(--text-4); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
 
     .acq-risk-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }

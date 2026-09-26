@@ -351,7 +351,7 @@ const DB = `
   check('the stored (pre-§4l) analysis is drawn: one row per FILE, three rows, none marked',
         before.rows.length === 3 && before.rows.every(r => !r.source), JSON.stringify(before.rows.map(r => r.name + '|' + r.sqft)));
   check('and it is flagged as run before the Rent Roll read the lease terms, with the refresh control',
-        before.stale.length === 1 && before.stale.every(s => s.shown && /before the Rent Roll read the lease terms/.test(s.text) && /Refresh from lease terms/.test(s.text)),
+        before.stale.length === 1 && before.stale.every(s => s.shown && /before the Rent Roll read the lease terms/.test(s.text) && /Refresh the analysis/.test(s.text)),
         JSON.stringify(before.stale));
   const errsBefore = errs.length;
   await page.evaluate(() => switchAcqTab('rentroll'));

@@ -56,6 +56,7 @@ access at load time and are Node-testable via `vm`.
 
 ## acquisition-engine.js — Acquisition Intelligence
 - **API (consumed):** `computeRevenueAtRisk`, `computePortfolioIntelligence`, `computeRenewalPipeline`, `computeRevenueForecast`, `computePortfolioActions`.
+- **Analysis inputs (§4o):** `occupancyCheck(occupancy)` → `{ message, detail, … }` when leased area exceeds the property's (the rate is never clamped), else null; `invoiceInputsFingerprint(invoices)` over `INVOICE_INPUT_FIELDS` (`amount`, `category`, `vendorName`, `invoiceDate` — the fields the engine reads), order-insensitive — recorded on the stored analysis as `canonical.invoices`, beside `canonical.sqft`, and compared by `_acqAnalysisStaleParts` in `script.js`.
 - **UI:** acquisition review section (portfolio), Decision Report; feeds Command Center + Workspace.
 
 ## acquisition-workspace.js — Acquisition Review record (Phase 1, P1-1)

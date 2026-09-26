@@ -423,6 +423,32 @@
              occupancyRate: occRate, vacancyRate: vacRate };
   }
 
+  // More space leased than the property has is not an occupancy — one of the
+  // two areas is wrong. The rate is left exactly as computed (never clamped to
+  // 100%) and a person is asked to check both; null when nothing is off.
+  function occupancyCheck(occ) {
+    if (!occ) return null;
+    const building = parseFloat(occ.buildingSqft) || 0;
+    const occupied = parseFloat(occ.occupiedSqft) || 0;
+    if (!(building > 0) || !(occupied > building)) return null;
+    const sf = v => Number(v).toLocaleString('en-US') + ' sf';
+    return {
+      message: 'Occupancy exceeds 100% — verify property and lease SF.',
+      detail:  sf(occupied) + ' leased ÷ ' + sf(building) + ' property = ' + occ.occupancyRate + '%',
+      occupiedSqft: occupied, buildingSqft: building, occupancyRate: occ.occupancyRate,
+    };
+  }
+
+  // The invoice fields the analysis reads (amount, category, vendorName,
+  // invoiceDate) and nothing else. An analysis records this so a later change
+  // to the invoices shows it out of date. Order does not matter.
+  const INVOICE_INPUT_FIELDS = ['amount', 'category', 'vendorName', 'invoiceDate'];
+  function invoiceInputsFingerprint(invoices) {
+    return JSON.stringify((Array.isArray(invoices) ? invoices : []).filter(Boolean)
+      .map(i => JSON.stringify(INVOICE_INPUT_FIELDS.map(k => i[k] === undefined ? null : i[k])))
+      .sort());
+  }
+
   function leaseExpirationSchedule(tenantSummary) {
     const byYear = {};
     for (const t of tenantSummary) {
@@ -1314,6 +1340,9 @@
     buildAcquisitionReport,
     normalizeAcqTenant,
     occupancyAnalysis,
+    occupancyCheck,
+    INVOICE_INPUT_FIELDS,
+    invoiceInputsFingerprint,
     leaseExpirationSchedule,
     waltAnalysis,
     rolloverRiskAnalysis,

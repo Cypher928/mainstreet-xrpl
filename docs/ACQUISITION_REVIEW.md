@@ -1426,7 +1426,8 @@ Nowhere is an entered value presented as document-supported evidence.
   today) or one older than the terms is flagged above the table: "This
   analysis was run … before the Rent Roll read the lease terms" /
   "The lease terms have changed since this analysis was run", with one
-  control, **Refresh from lease terms**. Staleness is judged only once the
+  control, **Refresh from lease terms** (since §4o: **Refresh the analysis**,
+  and the area and invoices are checked too). Staleness is judged only once the
   review's families, documents, decisions and evidence have all loaded;
   until then nothing is said. Opening a review writes nothing.
 - **CSV**: the resolved values, a contested cell as the word Contested, a
@@ -1599,7 +1600,7 @@ head say. Maple Plaza, as the Pilot holds it, is in
 · 2039-02-28 · NNN · 3% cap · 2 issues (Commencement and Renewal options
 contested); Luxe Nails reads 3,000 · — · — · 5% cap · Missing terms.
 
-## 4n. Option B — only a canonical leasehold is a tenant (uncommitted, awaiting review)
+## 4n. Option B — only a canonical leasehold is a tenant (committed `016c0c8`)
 
 **No migration, no new field, no new serverless function, no change to the
 canonical projection (`leaseholdRows`, `legacyRows`, `tenantRowFor` are
@@ -1713,6 +1714,81 @@ reviews, Miracle Mile, Lakeview). Four Harborview reviews carry a
 conversion; three of those properties exist, so nothing changes for them. The
 fourth (`aca00000-…-479b339e9193`) is orphaned — its property was deleted — and
 its Convert Again now waits until its 4 extractions are resolved.
+
+## 4o. Analysis freshness, the report overlay, occupancy over 100% (uncommitted, awaiting review)
+
+**No migration, no new field outside the stored analysis, no new serverless
+function. Production untouched.**
+
+**Found (Pilot, Maple Plaza, read-only).** The Decision Report showed 251.7%
+occupancy after Risk Analysis had been rerun. 251.7% is 75,500 sf leased ÷
+30,000 sf property; every run until 2026-09-26 00:07 used 30,000 sf, the
+runs from 00:10 used 75,500 sf, and the analysis stored now says 100%. The
+Decision Report does not compute occupancy — it prints
+`analysis.rentRoll.occupancy`, fixed when the analysis ran. Three gaps:
+
+1. **Freshness covered the leaseholds only.** §4n's fingerprint is the
+   leasehold rows; Total Property SqFt and the invoices were not in it, so an
+   analysis run against 30,000 sf read as current after the area became
+   75,500 sf, and the Decision Report printed it.
+2. **The report overlay.** A closed report kept its contents. And the print
+   stylesheet hid every child of `<body>` except `#reportOverlay` — but the
+   overlay lives inside `#appContent`, so it hid the report too: an OPEN
+   report printed blank (verified at HEAD `016c0c8` in a browser under print
+   media). The earlier read-only note that a closed overlay could be printed
+   was wrong on that point: at HEAD nothing printed at all.
+3. **Occupancy over 100%** passed without a word (and painted green).
+
+**Freshness.** `_acqBuildAnalysis` records, beside the leasehold
+fingerprint, `canonical.sqft` (the area it used) and `canonical.invoices`
+(`AcquisitionEngine.invoiceInputsFingerprint` — `amount`, `category`,
+`vendorName`, `invoiceDate`, the fields the engine reads and nothing else;
+order-insensitive). Both are read by the same helpers when built and when
+checked (`_acqAnalysisSqFt`, `_acqAnalysisInvoices`).
+`_acqAnalysisStaleParts(review)` names each input that moved:
+
+| Input | Workspace | Consumers (Ask AI, Command Center, drafting, portfolio) |
+|---|---|---|
+| leaseholds | The lease terms have changed since this analysis was run. | MainStreet’s Record has changed since it was run |
+| area | Total Property SqFt has changed since this analysis was run (30,000 sf → 75,500 sf). | Total Property SqFt has changed since it was run (30,000 sf → 75,500 sf) |
+| invoices | The invoices have changed since this analysis was run. | the invoices have changed since it was run |
+| invoices not recorded | This analysis does not record which invoices it used. | it does not record which invoices it used |
+
+`_acqAnalysisStale` joins them; the conversion gate, the Decision Report
+guard, the stale notice and `_acqConsumerAnalysis` all read it, so every
+consumer that §4n routed through the check follows. An analysis saved before
+§4o is read for its area from its own rent roll (`buildingSqft`), but it
+records no invoices, so **it reads as out of date until refreshed** — Maple
+Plaza's stored analysis included. The area and invoices are checked without
+the resolver; only the leaseholds need it. Typing a new area and adding
+invoices update the notice and the gate at once. The notice's control is now
+**Refresh the analysis** (it was *Refresh from lease terms*).
+
+**The overlay.** `closeReport()` empties the report. A new analysis — Run
+Analysis or a refresh — calls `_acqInvalidateDecisionReport()`, which closes
+and empties a Decision Report still standing, so asking again builds it from
+the new analysis. Print shows the report only while it is open, and then
+nothing else: every element that is not the overlay, does not contain it and
+is not inside it is hidden; a closed overlay stays hidden and the page prints
+as it is.
+
+**Occupancy over 100%.** `AcquisitionEngine.occupancyCheck(occ)` returns
+`{ message: 'Occupancy exceeds 100% — verify property and lease SF.', detail:
+'75,500 sf leased ÷ 30,000 sf property = 251.7%' }` when leased area exceeds
+the property's (compared in square feet, so 75,501 of 75,500 — 100.0% rounded
+— is still flagged); null otherwise. The rate is never clamped. Risk
+Analysis, the Rent Roll (whose KPI is painted "verify", not green) and the
+Decision Report's Lease Stability show it. Recovery at 30,000 sf was 251.7%
+too — the pro-rata shares exceed 100% for the same reason; it is not flagged
+separately.
+
+**Tests.** `test-acquisition-analysis-freshness.js` (pure rules and wiring),
+`test-e2e-acquisition-analysis-freshness.js` (Maple Plaza with ShopRite
+corrected to 65,000 sf by a person, as on the Pilot: A–G, print emulated
+and checked for what actually renders), `tools/acquisition-freshness-
+mutation.js` (22 mutants). The Decision Report's v1 pin
+(`test-acquisition-report-view.js`) allows the one marked call under Lease
+Stability.
 
 ## 5. Verification
 
