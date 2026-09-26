@@ -60,12 +60,21 @@
     passed:        'Passed',
   });
 
+  // The LOCKED lifecycle (Canonical Property Lifecycle Contract, D1): a
+  // property is prospect, acquired or passed. under_review and due_diligence
+  // are acquisition-EPISODE progress; they remain recognised so a legacy row
+  // holding one still classifies as a deal, but they are never a destination
+  // and the only move out of them is back to prospect. Migration 033 enforces
+  // the same table in the database.
+  var LIFECYCLE_STAGES = Object.freeze(['prospect', 'acquired', 'passed']);
+  var LEGACY_STAGES    = Object.freeze(['under_review', 'due_diligence']);
+
   // From each stage, where a transition may go. Read at transition time; there
   // is no other path to a stage change.
   var TRANSITIONS = Object.freeze({
-    prospect:      Object.freeze(['under_review', 'due_diligence', 'acquired', 'passed']),
-    under_review:  Object.freeze(['prospect', 'due_diligence', 'acquired', 'passed']),
-    due_diligence: Object.freeze(['prospect', 'under_review', 'acquired', 'passed']),
+    prospect:      Object.freeze(['acquired', 'passed']),
+    under_review:  Object.freeze(['prospect']),
+    due_diligence: Object.freeze(['prospect']),
     acquired:      Object.freeze([]),
     passed:        Object.freeze(['prospect']),
   });
@@ -226,6 +235,7 @@
 
   return {
     STAGES: STAGES, PRE_ACQUISITION: PRE_ACQUISITION, MANAGED: MANAGED, DEFAULT_STAGE: DEFAULT_STAGE,
+    LIFECYCLE_STAGES: LIFECYCLE_STAGES, LEGACY_STAGES: LEGACY_STAGES,
     LABELS: LABELS, TRANSITIONS: TRANSITIONS, STAGE_COLUMNS: STAGE_COLUMNS,
     SELECT_COLUMNS: SELECT_COLUMNS, SELECT_COLUMNS_PRE_023: SELECT_COLUMNS_PRE_023, MANAGED_FILTER: MANAGED_FILTER,
     isKnownStage: isKnownStage, stageOf: stageOf, label: label,

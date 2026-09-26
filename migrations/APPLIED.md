@@ -2,13 +2,13 @@
 
 **Project:** Pilot Supabase project `bhmktujbxdbvdmpybmad` (www.mainstreet-review.com).
 **Read on:** 2026-09-26 from `supabase_migrations.schema_migrations` (33 rows, read-only;
-the 34th row, 032, was applied later the same day by the work that wrote this file).
+the 34th and 35th rows, 032 and 033, were applied later the same day by the work that wrote this file).
 **Production** (`zhsuhehgehbzkmzurzyf`) is not described here and was not touched.
 
 This file is a record, not a tool. Nothing reads it. It answers one question for
 every migration Pilot has ever recorded: *which committed text produced it, and
 how does the recorded SQL differ from that text?* The next migration a person
-writes for Pilot takes number **033**; every number up to 032 is spoken for by
+writes for Pilot takes number **034**; every number up to 033 is spoken for by
 one of the two lineages below.
 
 ## Method
@@ -25,7 +25,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (34 rows, in applied order)
+## Recorded history (35 rows, in applied order)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -63,8 +63,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260924003313` | `026c_acquisition_term_decisions_privileges` | `migrations/026c_acquisition_term_decisions_privileges.sql` @ `5762974b` | identical |
 | `20260924004505` | `031_pilot_requests` | `migrations/031_pilot_requests.sql` @ `9f859dfc` | identical |
 | `20260926202507` | `032_resync_property_tenants_property_bound` | `migrations/032_resync_property_tenants_property_bound.sql` @ `2473da81` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim, header comments included | identical |
+| `20260926223919` | `033_property_lifecycle_integrity` | `migrations/033_property_lifecycle_integrity.sql` @ `516ef3a2` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim | identical |
 
-Tally: 24 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally: 25 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -133,23 +134,27 @@ These files were applied through the SQL editor or the bundle
    copied from `claude/validation-runs-analysis-ji1zb3` (tip `5fdc98e`; blob
    ids listed above), and that branch was **not merged**. No applied
    file has been renamed or renumbered; Supabase keys history by version, so the
-   database never saw a collision. **The next free number is 033.**
+   database never saw a collision. **The next free number is 034.**
 2. **Phase 0 was applied out of filename order:** 024 before 023, and 029
    before 028. A replay by filename has not been exercised.
-3. **`resync_property_tenants` on Pilot is 022's version, not 021's.** 021
+3. **Since 033, `tenants.property_id` is immutable by trigger, a family is bound to one episode by
+   `(family_id, review_id)` foreign keys, and `properties.lifecycle_stage` moves only along the locked
+   model (prospect → acquired inside `acquire_property` only, prospect ↔ passed, legacy → prospect).**
+   The Phase 0 five-value CHECK is unchanged; `under_review` and `due_diligence` are refused as targets.
+4. **`resync_property_tenants` on Pilot is 022's version, not 021's.** 021
    created it; 022 replaced it with the same body plus `payments` in the
    retention check and the delete guard. A migration that changes this
    function must start from the live definition (`pg_get_functiondef`), not
    from `021_safe_tenant_resync.sql`. 032 did exactly that; its rollback file is
    the pre-032 live definition. Since 032, the live body is the 032 file's.
-4. **Four applied migrations have no source on `pilot`:** 016, 017, 018 and
+5. **Four applied migrations have no source on `pilot`:** 016, 017, 018 and
    018b exist only on `claude/b2-tenant-portal` (tip `c237080`). `022_payment_management.sql`
    on `pilot` has a foreign key to `tenant_statements`, which only 017 creates,
    so `pilot`'s own migration set cannot build Pilot's schema without them.
-5. **Six migrations are Pilot-only by construction.** 012, 014, 015, 016, 017
+6. **Six migrations are Pilot-only by construction.** 012, 014, 015, 016, 017
    and 018 raise unless the Pilot marker property exists. They cannot run on
    Production as written.
-6. **`006_acquisition_reviews.sql` has a second, divergent version** on
+7. **`006_acquisition_reviews.sql` has a second, divergent version** on
    `feature/acquisition-review` (blob `a2c087a5`); Pilot has the `pilot`/`main`
    version.
 

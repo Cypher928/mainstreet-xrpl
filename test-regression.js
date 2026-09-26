@@ -553,6 +553,7 @@ const SUITES = [
   { label: 'Migration 015b tenant access privileges',    cmd: 'node tools/verify-migration-015b.js' },
   { label: 'Migration 031 adopts pilot_requests',        cmd: 'node tools/verify-migration-031.js' },
   { label: 'Migration 032 binds a tenant to its property', cmd: 'node tools/verify-migration-032.js' },
+  { label: 'Migration 033 lifecycle integrity (P2)',       cmd: 'node tools/verify-migration-033.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },

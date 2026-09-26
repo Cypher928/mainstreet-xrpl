@@ -141,15 +141,20 @@ sec('C. transition(): the moves, the refusals, and the no-copy invariant');
 
   const pass_ = PL.transition(row, 'passed', { actorUid: U, now: NOW });
   eq(pass_.patch, { lifecycle_stage: 'passed', stage_changed_by: U, stage_changed_at: NOW, passed_at: NOW }, 'C6 → passed stamps passed_at');
-  eq(PL.transition(row, 'under_review', { actorUid: U, now: NOW }).patch,
-     { lifecycle_stage: 'under_review', stage_changed_by: U, stage_changed_at: NOW }, 'C7 a move within the deal path stamps neither');
+  // LOCKED LIFECYCLE (contract D1, migration 033): under_review and
+  // due_diligence are episode progress, never a property destination.
+  eq(PL.transition(row, 'under_review', { actorUid: U, now: NOW }).error, 'not_allowed', 'C7 prospect → under_review refused: not a property stage');
+  eq(PL.transition(row, 'due_diligence', { actorUid: U, now: NOW }).error, 'not_allowed', 'C7b prospect → due_diligence refused likewise');
+  eq(PL.LIFECYCLE_STAGES, ['prospect', 'acquired', 'passed'], 'C7c the property lifecycle is three stages');
+  eq(PL.LEGACY_STAGES, ['under_review', 'due_diligence'], 'C7d the two legacy values are named as legacy');
 
   // The full allowed matrix, from the table.
   const M = {};
   for (const from of PL.STAGES) { M[from] = PL.STAGES.filter(to => PL.canTransition(from, to)); }
-  eq(M.prospect,      ['under_review', 'due_diligence', 'acquired', 'passed'], 'C8 from prospect');
-  eq(M.under_review,  ['prospect', 'due_diligence', 'acquired', 'passed'],     'C9 from under_review');
-  eq(M.due_diligence, ['prospect', 'under_review', 'acquired', 'passed'],      'C10 from due_diligence');
+  eq(M.prospect,      ['acquired', 'passed'], 'C8 from prospect: acquire or pass, nothing else');
+  eq(M.under_review,  ['prospect'],           'C9 a legacy under_review row can only be normalised to prospect');
+  eq(M.due_diligence, ['prospect'],           'C10 a legacy due_diligence row can only be normalised to prospect');
+  eq(PL.transition({ ...row, lifecycle_stage: 'under_review' }, 'acquired').error, 'not_allowed', 'C10b legacy → acquired refused: normalise to prospect first');
   eq(M.acquired,      [],                                                       'C11 ACQUIRED IS TERMINAL — a managed property leaves by archive, never by stage');
   eq(M.passed,        ['prospect'],                                             'C12 a passed deal can only be reopened');
 

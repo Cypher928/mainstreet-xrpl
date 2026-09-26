@@ -341,11 +341,17 @@
    */
   function savePayload(row) {
     var r = row || {};
-    return {
+    var p = {
       name:   r.name,
       status: r.status,
       data:   _isObj(r.data) ? r.data : {},
     };
+    // P2 (migration 033): the episode's link to the property it produced,
+    // carried ONLY when the conversion path has set them. A row that never
+    // converted sends neither key, so a save changes neither column.
+    if (r.property_id   !== undefined) p.property_id   = r.property_id;
+    if (r.converted_at  !== undefined) p.converted_at  = r.converted_at;
+    return p;
   }
 
   /**

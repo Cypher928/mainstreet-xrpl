@@ -370,12 +370,25 @@ t('an acquired review: every earlier stage done, acquired current, nothing selec
 // ═════════════════════════════════════════════════════════════════════════════
 sec('persistence contract — what a save writes and what its answer means');
 
-t('savePayload carries name, status, data — and nothing else', () => {
+t('savePayload carries name, status, data — and nothing else for an unconverted row', () => {
   const row = legacyRow(); row._rev = 'x';
   const p = AW.savePayload(row);
   deq(Object.keys(p).sort(), ['data', 'name', 'status']);
   ok(p.data === row.data, 'data must be the same object (identity is what keeps the in-memory trick honest)');
   ok(!('id' in p) && !('user_id' in p) && !('updated_at' in p) && !('_rev' in p));
+  ok(!('property_id' in p) && !('converted_at' in p), 'an unconverted row does not touch the episode link columns');
+});
+
+t('savePayload carries property_id and converted_at ONLY once the conversion path has set them (P2 / migration 033)', () => {
+  const row = legacyRow();
+  row.property_id  = 'prop-1';
+  row.converted_at = '2026-09-26T00:00:00.000Z';
+  const p = AW.savePayload(row);
+  deq(Object.keys(p).sort(), ['converted_at', 'data', 'name', 'property_id', 'status']);
+  ok(p.property_id === 'prop-1' && p.converted_at === '2026-09-26T00:00:00.000Z');
+  const cleared = legacyRow(); cleared.property_id = null; cleared.converted_at = null;
+  const q = AW.savePayload(cleared);
+  ok(q.property_id === null && q.converted_at === null, 'an explicit null is carried — it is a value, not an absence');
 });
 
 t('one row back ⇒ ok, with the new revision', () => {

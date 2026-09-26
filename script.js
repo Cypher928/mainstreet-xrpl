@@ -33186,6 +33186,12 @@ async function convertAcquisitionToProperty() {
     }
     review.status = 'converted';
     review.data   = Object.assign({}, review.data, { conversionRecord, conversionHistory });
+    // P2 (migration 033): the episode is linked to the property it produced in
+    // the database itself, not only inside conversionRecord. Same values, one
+    // more place they can be joined from. The stage transition is still
+    // property-side; this writes nothing to properties.
+    review.property_id  = prop.id;
+    review.converted_at = conversionRecord.convertedAt;
     // The stage follows the facts just written: converted ⇒ acquired, and the
     // act goes on the review's own activity record.
     review.data   = _AW().markAcquired(review, { actor: _acqActor(), repair: _isRepair }).data;
