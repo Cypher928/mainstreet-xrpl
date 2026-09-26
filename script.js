@@ -995,7 +995,8 @@ class ReconciliationResult {
 // ─── Portfolio State ──────────────────────────────────────────────────────────
 const portfolio = [];
 let activePropId = null; // null = portfolio view
-let _props = []; // canonical merged array from loadProperties()
+let _props = []; // canonical merged array from loadProperties() — ACQUIRED and active only (PropertyLifecycle)
+let _prospectProps = []; // P0.2 — pre-acquisition and passed properties; never in _props, never in an aggregate
 // Has a properties load actually SUCCEEDED this session? Consulted by
 // _acqOrphaned(): "this property is gone" is only sayable once we know what
 // exists. An empty _props after a failed load must never be read as deletion.
@@ -26021,7 +26022,9 @@ function renderPortfolio(props) {
   _tglEmpty('#ptfSearchInput', _hasAny);
   _tglEmpty('.ptf-global-search-wrap', _hasAny);
   _tglEmpty('#ptfSortRow', _hasAny);
-  _tglEmpty('#acqSection', _hasAny);
+  // The acquisitions a person has are their work too: shown whenever any exist,
+  // not only once a managed property does (a prospect is not in `props`).
+  _tglEmpty('#acqSection', _hasAny || (Array.isArray(_acqReviews) && _acqReviews.length > 0));
 
   // KPI tiles
   const k = portfolioKPIs(props);
@@ -27237,12 +27240,19 @@ async function loadProperties(opts) {
   const archived = !!(opts && opts.archived);
 
   // Select only the columns needed for the property list — skip the large data blob.
-  let q = db
-    .from('properties')
-    .select('id, name, sqft, user_id, archived_at')
-    .eq('user_id', user.id);
-  q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
-  let { data, error } = await q;
+  // P0.2 — lifecycle_stage travels with the row; PropertyLifecycle decides
+  // what it means, and this is the ONE place the portfolio is read.
+  const _q = (cols) => { const q = db.from('properties').select(cols).eq('user_id', user.id);
+    return archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null); };
+  let { data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS);
+
+  // Without migration 023 the stage column rejects the whole query (42703) —
+  // which would empty the portfolio rather than degrade. Every row then reads
+  // as acquired, which is what the column's default says.
+  if (PropertyLifecycle.isStageColumnMissing(error)) {
+    console.warn('[loadProperties] lifecycle_stage missing — apply migrations/phase0/023_property_lifecycle.sql. Treating every property as acquired.');
+    ({ data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS_PRE_023));
+  }
 
   // Pre-migration fallback. Until migrations/010_property_archive.sql is
   // applied the column does not exist and PostgREST rejects the whole query
@@ -27257,12 +27267,13 @@ async function loadProperties(opts) {
 
   if (error) throw error;
 
-  const properties = (data || []).map(p => ({
-    id:         p.id,
-    name:       p.name,
-    totalSqft:  p.sqft || 0,
-    archivedAt: p.archived_at || null,
-  }));
+  // THE split. Only acquired, active rows are the portfolio (or, on the
+  // archived read, acquired archived rows). Everything else — a prospect, a
+  // deal in diligence, a passed deal — is held apart in the deal list, which
+  // no aggregate reads. An archived read leaves the deal list alone.
+  const split = PropertyLifecycle.classify(data || []);
+  _prospectProps = archived ? _prospectProps : split.prospects;
+  const properties = archived ? split.archived : split.active;
 
   if (properties.length === 0) return properties;
 
