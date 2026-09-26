@@ -324,8 +324,11 @@ const DB = `
                missing: [].map.call(tr.querySelectorAll('.acq-rr-missing'), e => e.closest('td').cellIndex),
                unfiled: !!tr.querySelector('.acq-rr-unfiled') };
     });
-    const stale = [].map.call(document.querySelectorAll('#acqReportContainer .acq-analysis-stale'), el =>
-      ({ shown: el.style.display !== 'none', text: el.innerText.replace(/\s+/g, ' ').trim() }));
+    // The out-of-date notice sits under Run Analysis, above the tabs (§4o);
+    // shown means rendered — boxes on the page — not an inline style.
+    const stale = [].map.call(document.querySelectorAll('#acqStaleNotice'), el =>
+      ({ shown: el.getClientRects().length > 0, text: el.innerText.replace(/\s+/g, ' ').trim(),
+         button: document.getElementById('acqAnalyzeBtn').textContent.trim() }));
     const line = document.querySelector('#acqTabRentRoll .acq-canonical-line');
     // The v1 Decision Report reads the same stored tenantSummary; its rows
     // are what Ask AI and drafting read too.
@@ -351,11 +354,11 @@ const DB = `
   check('the stored (pre-§4l) analysis is drawn: one row per FILE, three rows, none marked',
         before.rows.length === 3 && before.rows.every(r => !r.source), JSON.stringify(before.rows.map(r => r.name + '|' + r.sqft)));
   check('and it is flagged as run before the Rent Roll read the lease terms, with the refresh control',
-        before.stale.length === 1 && before.stale.every(s => s.shown && /before the Rent Roll read the lease terms/.test(s.text) && /Refresh the analysis/.test(s.text)),
+        before.stale.length === 1 && before.stale.every(s => s.shown && /before the Rent Roll read the lease terms/.test(s.text) && s.button === '↻ Refresh Analysis'),
         JSON.stringify(before.stale));
   const errsBefore = errs.length;
   await page.evaluate(() => switchAcqTab('rentroll'));
-  await page.click('#acqTabRentRoll .acq-stale-refresh');
+  await page.click('#acqAnalyzeBtn');
   await page.waitForTimeout(900);
   const after = await rentRoll();
   check('the Rent Roll tab stayed open through the refresh', after.tab === 'rentroll', after.tab);

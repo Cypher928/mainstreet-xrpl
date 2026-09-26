@@ -1426,8 +1426,9 @@ Nowhere is an entered value presented as document-supported evidence.
   today) or one older than the terms is flagged above the table: "This
   analysis was run … before the Rent Roll read the lease terms" /
   "The lease terms have changed since this analysis was run", with one
-  control, **Refresh from lease terms** (since §4o: **Refresh the analysis**,
-  and the area and invoices are checked too). Staleness is judged only once the
+  control, **Refresh from lease terms** (since §4o: the notice sits under Run
+  Analysis, above the tabs, and that button reads **Refresh Analysis**; the
+  area and invoices are checked too). Staleness is judged only once the
   review's families, documents, decisions and evidence have all loaded;
   until then nothing is said. Opening a review writes nothing.
 - **CSV**: the resolved values, a contested cell as the word Contested, a
@@ -1761,8 +1762,30 @@ consumer that §4n routed through the check follows. An analysis saved before
 records no invoices, so **it reads as out of date until refreshed** — Maple
 Plaza's stored analysis included. The area and invoices are checked without
 the resolver; only the leaseholds need it. Typing a new area and adding
-invoices update the notice and the gate at once. The notice's control is now
-**Refresh the analysis** (it was *Refresh from lease terms*).
+invoices update the notice and the gate at once.
+
+**Seeing it (Pilot validation, 2026-09-26).** As first shipped (`3f3bb40`)
+the notice was drawn only inside the Rent Roll tab, and Run Analysis still
+said "Ready — click to run risk analysis." — so on the default Risk Analysis
+tab an out-of-date analysis looked current. The browser walk had checked the
+notice's inline style, not whether it rendered, and passed while it sat in the
+hidden tab. Now the notice (`#acqStaleNotice`) is one element under Run
+Analysis, above the Risk Analysis / Rent Roll tabs, reading "This analysis is
+out of date." followed by the reasons exactly as the check gives them. The
+button beside it says what to do:
+
+| Analysis | Button | Note |
+|---|---|---|
+| none yet | ⚡ Run Analysis | Ready — click to run risk analysis. |
+| out of date | ↻ Refresh Analysis | Out of date — refresh the analysis to use what is on file now. |
+| current | ↻ Re-run Analysis | Analysis is current — up to date with MainStreet’s Record, the property area and the invoices. Re-run it only if you want a fresh run. |
+| not yet checkable | ⚡ Run Analysis | Checking the analysis against MainStreet’s Record… |
+
+Every state runs the same full analysis — stored, and logged as an analysis run;
+a current one stays clickable so it can be run again on purpose. Missing
+inputs (no leasehold, no invoice, no area) still say so first. The
+freshness check (`_acqAnalysisStaleParts`) is unchanged — pinned to the
+commit by test. The walk now reads only what is rendered.
 
 **The overlay.** `closeReport()` empties the report. A new analysis — Run
 Analysis or a refresh — calls `_acqInvalidateDecisionReport()`, which closes

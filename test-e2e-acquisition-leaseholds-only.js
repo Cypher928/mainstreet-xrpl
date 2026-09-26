@@ -286,7 +286,7 @@ const DB = `
   await page.waitForTimeout(500);
   const old = await page.evaluate(() => ({
     rows: document.querySelectorAll('#acqTabRisk .acq-risk-table tbody tr').length,
-    stale: [].map.call(document.querySelectorAll('#acqReportContainer .acq-analysis-stale'), e => e.style.display !== 'none' ? e.innerText.replace(/\s+/g, ' ') : '').filter(Boolean) }));
+    stale: [].map.call(document.querySelectorAll('#acqStaleNotice'), e => e.getClientRects().length ? e.innerText.replace(/\s+/g, ' ') : '').filter(Boolean) }));
   check('before: the stored analysis is the old one — 10 tenant rows (4 leaseholds + 6 unmatched)', old.rows === 10, String(old.rows));
   const oldRR = await page.evaluate(() => { switchAcqTab('rentroll');
     const marked = [].filter.call(document.querySelectorAll('#acqRentRollTbody tr .acq-ts-name'), td => /Not in a leasehold · not verified/.test(td.innerText)).length;
@@ -332,7 +332,7 @@ const DB = `
     switchAcqTab('rentroll');
     const rr = [].map.call(document.querySelectorAll('#acqRentRollTbody tr .acq-ts-name'), td => td.innerText.trim());
     const line = ((document.querySelector('#acqTabRentRoll .acq-canonical-line') || {}).innerText || '').replace(/\s+/g, ' ').trim();
-    const stale = [].some.call(document.querySelectorAll('#acqReportContainer .acq-analysis-stale'), e => e.style.display !== 'none');
+    const stale = [].some.call(document.querySelectorAll('#acqStaleNotice'), e => e.getClientRects().length > 0);
     switchAcqTab('risk');
     return { risk, rr, line, stale };
   });

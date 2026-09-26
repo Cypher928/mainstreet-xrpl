@@ -168,6 +168,34 @@ t('Risk Analysis, the Rent Roll and the Decision Report all carry it', () => {
   ok(/occCheck \? 'verify'/.test(fnBody(S, '_renderRentRollTab')), 'the Rent Roll paints 251.7% as safe');
 });
 
+sec('6 · an out-of-date analysis is seen, whichever tab is open');
+t('the notice is one element under Run Analysis, above the report and its tabs — not inside a tab', () => {
+  const bar = H.indexOf('<div class="acq-analyze-bar">'), note = H.indexOf('id="acqStaleNotice"'), rpt = H.indexOf('<div id="acqReportContainer">');
+  ok(bar > 0 && note > bar && rpt > note, 'the notice is not between Run Analysis and the report');
+  ok(!/class="acq-analysis-stale"/.test(fnBody(S, '_renderRentRollTab')), 'the notice is back inside the Rent Roll tab');
+  const U = fnBody(S, '_acqUpdateStaleNotice');
+  ok(/document\.getElementById\('acqStaleNotice'\)/.test(U) && /_updateAcqAnalyzeBtn\(\);/.test(U));
+  ok(/This analysis is out of date\./.test(U) && /esc\(why\)/.test(U), 'the reasons are not shown as the check gives them');
+});
+t('the action says what to do: Run Analysis, Refresh Analysis, or — the analysis being current — Re-run on purpose', () => {
+  const B = fnBody(S, '_updateAcqAnalyzeBtn');
+  ok(/const why         = hasAnalysis \? _acqAnalysisStale\(review\) : null;/.test(B), 'the button judges currency another way');
+  ok(/btn\.disabled = !ready;/.test(B) && !/btn\.disabled = [^;]*current/.test(B), 'a current analysis cannot be re-run on purpose');
+  ok(/!hasAnalysis \? '⚡ Run Analysis'/.test(B) && /current      \? '↻ Re-run Analysis'/.test(B) && /why          \? '↻ Refresh Analysis'/.test(B));
+  ok(/why         \? 'Out of date — refresh the analysis to use what is on file now\.'/.test(B), 'an out-of-date analysis is still announced as Ready');
+  ok(/current     \? 'Analysis is current — up to date with MainStreet’s Record, the property area and the invoices\. Re-run it only if you want a fresh run\.'/.test(B), 'a current analysis is not said to be current');
+  ok(B.indexOf("'Out of date") < B.indexOf("'Ready — click to run risk analysis.'"), '"Ready" is said before the out-of-date check');
+  ok(/btn\.textContent = '⚡ Run Analysis'; \}\n  _updateAcqAnalyzeBtn\(\);\n\}$/.test(fnBody(S, 'runAcquisitionAnalysis')), 'Run Analysis leaves its button saying Run after a run');
+});
+t('the freshness check itself is unchanged by the notice move — byte for byte as committed', () => {
+  let head = null;
+  try {
+    head = require('child_process').execFileSync('git', ['show', 'HEAD:script.js'], { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  } catch (_) { console.log('    (no git here — pin skipped, not passed)'); return; }
+  eq(fnBody(S, '_acqAnalysisStaleParts'), fnBody(head, '_acqAnalysisStaleParts'), '_acqAnalysisStaleParts changed');
+  eq(fnBody(S, '_acqAnalysisStale'), fnBody(head, '_acqAnalysisStale'), '_acqAnalysisStale changed');
+});
+
 console.log('\n' + '─'.repeat(64));
 console.log(`RESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('\nFAILED:'); failures.forEach(f => console.log('  ✗ ' + f)); }

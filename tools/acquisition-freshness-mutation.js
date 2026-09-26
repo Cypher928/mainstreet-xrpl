@@ -38,6 +38,16 @@
  *     F20  the Rent Roll drops it
  *     F21  the Decision Report drops it
  *     F22  the Rent Roll paints 251.7% green
+ *   Seeing it — script.js, index.html (the Pilot, 2026-09-26: the notice lived
+ *   only in the Rent Roll tab and Run Analysis still said "Ready")
+ *     F23  the notice is looked for inside the Rent Roll tab again
+ *     F24  the notice is in the page but hidden by its stylesheet
+ *     F25  an out-of-date analysis still offers "Run Analysis", not Refresh
+ *     F26  an out-of-date analysis is still announced "Ready — click to run"
+ *     F27  a current analysis is not labelled Re-run
+ *     F28  a current analysis cannot be re-run on purpose
+ *     F30  the note stops saying a current analysis is current
+ *     F29  a run leaves the button saying "Run Analysis" whatever the state
  *
  * Not mutated, and why: _acqBuildAnalysis recording `sqft` — an analysis that
  * records none is read from its rent roll's buildingSqft, which the engine
@@ -121,6 +131,30 @@ const MUTANTS = [
   { id: 'F22', file: S, why: 'the Rent Roll paints 251.7% green',
     from: "${occCheck ? 'verify' : occ.occupancyRate >= 90",
     to:   "${false ? 'verify' : occ.occupancyRate >= 90" },
+  { id: 'F23', file: S, why: 'the notice is looked for inside the Rent Roll tab again',
+    from: "  const el = document.getElementById('acqStaleNotice');",
+    to:   "  const el = document.querySelector('#acqTabRentRoll .acq-analysis-stale');" },
+  { id: 'F24', file: H, why: 'the notice is in the page but hidden by its stylesheet',
+    from: "    #acqStaleNotice { font-size: 0.82rem; margin: -8px 0 16px; }",
+    to:   "    #acqStaleNotice { font-size: 0.82rem; margin: -8px 0 16px; display: none !important; }" },
+  { id: 'F25', file: S, why: 'an out-of-date analysis still offers "Run Analysis", not Refresh',
+    from: "                  : why          ? '↻ Refresh Analysis'",
+    to:   "                  : why          ? '⚡ Run Analysis'" },
+  { id: 'F26', file: S, why: 'an out-of-date analysis is still announced "Ready — click to run"',
+    from: "                     : why         ? 'Out of date — refresh the analysis to use what is on file now.'",
+    to:   "                     : why         ? 'Ready — click to run risk analysis.'" },
+  { id: 'F27', file: S, why: 'a current analysis is not labelled Re-run',
+    from: "                  : current      ? '↻ Re-run Analysis'",
+    to:   "                  : current      ? '⚡ Run Analysis'" },
+  { id: 'F28', file: S, why: 'a current analysis cannot be re-run on purpose',
+    from: "  btn.disabled = !ready;\n  btn.textContent",
+    to:   "  btn.disabled = !ready || current;\n  btn.textContent" },
+  { id: 'F30', file: S, why: 'the note stops saying a current analysis is current',
+    from: "                     : current     ? 'Analysis is current — up to date",
+    to:   "                     : current     ? 'Ready — up to date" },
+  { id: 'F29', file: S, why: 'a run leaves the button saying "Run Analysis" whatever the state',
+    from: "  if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }\n  _updateAcqAnalyzeBtn();",
+    to:   "  if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-freshness-mut-'));

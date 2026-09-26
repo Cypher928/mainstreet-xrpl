@@ -261,11 +261,23 @@ const DB = `
     const a = rv.data.analysis || {};
     const v = _acqReviewsForConsumers().find(r => r.id === m);
     const ai = AIWorkspace.answer({ question: 'how is the acquisition recovery looking', context: null, wctx: null, props: _props, acqReviews: _acqReviewsForConsumers() });
-    const vis = (sel) => [].map.call(document.querySelectorAll(sel), e => (e.offsetParent !== null || getComputedStyle(e).display !== 'none') ? e.textContent.replace(/\s+/g, ' ').trim() : '').filter(Boolean);
+    // What a person SEES: an element with boxes on the page (one inside a
+    // hidden tab has none), never merely an element whose own style is not
+    // display:none — that is how the first version of this walk passed while
+    // the notice sat in the hidden Rent Roll tab.
+    const shown = (e) => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+    const vis = (sel) => [].filter.call(document.querySelectorAll(sel), shown).map(e => e.textContent.replace(/\s+/g, ' ').trim());
+    const nEl = document.getElementById('acqStaleNotice'), tabs = document.querySelector('#acqReportContainer .acq-report-tabs');
+    const btn = document.getElementById('acqAnalyzeBtn');
     return { occ: (a.rentRoll || {}).occupancy || null, tenants: (a.tenantSummary || []).map(t => t.tenant_name),
              basis: a.canonical && a.canonical.basis, stale: _acqAnalysisStale(rv), consumer: v.analysisState, reason: v.analysisStaleReason,
              ai: (ai.paragraphs || []).find(p => /Maple Plaza/.test(p)) || '',
-             notice: [].map.call(document.querySelectorAll('#acqReportContainer .acq-analysis-stale'), e => e.style.display !== 'none' ? e.textContent.replace(/\s+/g, ' ').trim() : '').filter(Boolean),
+             notice: shown(nEl) ? [nEl.textContent.replace(/\s+/g, ' ').trim()] : [],
+             noticeAboveTabs: !!(nEl && tabs && (nEl.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING)),
+             noticeInViewAtControls: (() => { if (!shown(nEl)) return false; const r = nEl.getBoundingClientRect(), b = btn.getBoundingClientRect(); return r.top >= b.bottom && r.top - b.bottom < 120; })(),
+             staleInsideTabs: document.querySelectorAll('#acqReportContainer .acq-analysis-stale').length,
+             btn: { text: btn.textContent.trim(), disabled: btn.disabled, shown: shown(btn) },
+             note: document.getElementById('acqAnalyzeNote').textContent.trim(), tab: _acqActiveTab,
              riskFlag: vis('#acqTabRisk .acq-occ-check'), rrFlag: [].map.call(document.querySelectorAll('#acqReportContainer .acq-occ-check'), e => e.textContent.replace(/\s+/g, ' ').trim()),
              rrKpi: ((document.querySelector('#acqReportContainer .acq-kpi-row .acq-kpi-val.verify') || {}).textContent || '').trim() };
   }, MAPLE);
@@ -298,6 +310,8 @@ const DB = `
   check('A · 30,000 sf property, 75,500 sf leased: occupancy is 251.7% — as computed, not clamped',
         a.occ && a.occ.occupancyRate === 251.7 && a.occ.buildingSqft === 30000 && a.occ.occupiedSqft === 75500, JSON.stringify(a.occ));
   check('A · the analysis is current for those inputs', a.stale === '' && a.consumer === 'current', JSON.stringify([a.stale, a.consumer]));
+  check('A · and the page says so: the note says the analysis is current, the button offers a deliberate Re-run, no out-of-date notice',
+        a.btn.text === '↻ Re-run Analysis' && !a.btn.disabled && a.btn.shown && a.notice.length === 0 && a.note === 'Analysis is current — up to date with MainStreet’s Record, the property area and the invoices. Re-run it only if you want a fresh run.', JSON.stringify([a.btn, a.note]));
   check('A · Risk Analysis flags it for verification, with the arithmetic',
         a.riskFlag.length === 1 && a.riskFlag[0] === '⚠️ Occupancy exceeds 100% — verify property and lease SF. 75,500 sf leased ÷ 30,000 sf property = 251.7%', JSON.stringify(a.riskFlag));
   await page.evaluate(() => switchAcqTab('rentroll'));
@@ -320,7 +334,11 @@ const DB = `
   const b = await state();
   check('B · Total Property SqFt 30,000 → 75,500 makes the stored analysis stale, saying which input moved',
         b.stale === 'Total Property SqFt has changed since this analysis was run (30,000 sf → 75,500 sf).', b.stale);
-  check('B · the workspace says so above the figures, at once', b.notice.length > 0 && b.notice.every(t => /Total Property SqFt has changed since this analysis was run \(30,000 sf → 75,500 sf\)/.test(t)), JSON.stringify(b.notice));
+  check('B · the out-of-date notice is SEEN on the Risk Analysis tab, under Run Analysis and above the tabs — at once',
+        b.tab === 'risk' && b.notice.length === 1 && /^This analysis is out of date\. Total Property SqFt has changed since this analysis was run \(30,000 sf → 75,500 sf\)\./.test(b.notice[0])
+        && b.noticeAboveTabs && b.noticeInViewAtControls && b.staleInsideTabs === 0, JSON.stringify([b.tab, b.notice, b.noticeAboveTabs, b.noticeInViewAtControls]));
+  check('B · the action is Refresh Analysis, and the note no longer says "Ready — click to run risk analysis."',
+        b.btn.text === '↻ Refresh Analysis' && !b.btn.disabled && b.btn.shown && b.note === 'Out of date — refresh the analysis to use what is on file now.', JSON.stringify([b.btn, b.note]));
   check('B · every consumer is told it is stale, and why — Ask AI uses no figure from it',
         b.consumer === 'stale' && b.reason === 'Total Property SqFt has changed since it was run (30,000 sf → 75,500 sf)'
         && /the analysis on file is not used — Total Property SqFt has changed since it was run/.test(b.ai) && !/251\.7/.test(b.ai), b.ai);
@@ -349,6 +367,78 @@ const DB = `
   check('E · closing a report empties it', !e2.open && e2.text.trim() === '');
   const p4 = await printed();
   check('E · a closed report is never printed — the page prints instead', !p4.overlayShown && p4.pageShown > 0, JSON.stringify(p4).slice(0, 100));
+
+  // ── H · what a person sees when the area changes (the Pilot, 2026-09-26) ─
+  // Maple Plaza's analysis at 75,500 sf; the area typed as 30,000; nothing run.
+  // Everything here is read from what is RENDERED on the default tab.
+  await page.evaluate(() => switchAcqTab('risk'));
+  const h0 = await state();
+  check('H1 · start: the analysis at 75,500 sf is current — 100%, "Analysis is current", Re-run offered, no notice',
+        h0.occ.occupancyRate === 100 && h0.occ.buildingSqft === 75500 && h0.stale === '' && h0.btn.text === '↻ Re-run Analysis' && !h0.btn.disabled && /^Analysis is current/.test(h0.note) && h0.notice.length === 0, JSON.stringify([h0.occ.occupancyRate, h0.btn]));
+  await setSqFt(30000);
+  const h1 = await state();
+  check('H2 · Total Property SqFt changed to 30,000: the analysis is stale', h1.stale === 'Total Property SqFt has changed since this analysis was run (75,500 sf → 30,000 sf).' && h1.consumer === 'stale', h1.stale);
+  check('H3 · the warning is SEEN on the default Risk Analysis tab, right under the controls, naming 75,500 → 30,000',
+        h1.tab === 'risk' && h1.notice.length === 1 && h1.notice[0].includes('(75,500 sf → 30,000 sf)') && h1.noticeInViewAtControls && h1.noticeAboveTabs, JSON.stringify(h1.notice));
+  check('H4 · the action is Refresh Analysis; the note says the analysis is out of date, not "Ready"',
+        h1.btn.text === '↻ Refresh Analysis' && !h1.btn.disabled && !/Ready — click to run risk analysis/.test(h1.note) && /Out of date/.test(h1.note), JSON.stringify([h1.btn, h1.note]));
+  check('H4 · the old figures stay until a refresh — still 100% (from 75,500 sf)', h1.occ.occupancyRate === 100 && h1.occ.buildingSqft === 75500);
+  await page.evaluate(() => switchAcqTab('rentroll'));
+  const h1r = await state();
+  check('H4 · the same notice is seen on the Rent Roll tab — it does not depend on the tab', h1r.notice.length === 1 && h1r.notice[0] === h1.notice[0]);
+  await page.evaluate(() => switchAcqTab('risk'));
+  await setSqFt(75500);
+  const h2 = await state();
+  check('H · typing 75,500 back makes it current again, with no refresh — nothing it was run with has changed',
+        h2.stale === '' && h2.btn.text === '↻ Re-run Analysis' && /^Analysis is current/.test(h2.note) && h2.notice.length === 0);
+
+  // The same on the analysis the Pilot holds: saved before §4o, it records
+  // neither its area nor its invoices.
+  await page.evaluate(async (m) => { const rv = _acqReviews.find(r => r.id === m);
+    delete rv.data.analysis.canonical.sqft; delete rv.data.analysis.canonical.invoices; await _saveAcqReview(rv); selectAcquisitionReview(m); }, MAPLE);
+  await page.waitForFunction((m) => _acqRecordLoaded(m), MAPLE, { timeout: 15000 });
+  await page.waitForTimeout(600);
+  const hp0 = await state();
+  check('H · the Pilot\'s analysis (saved before §4o) is out of date on opening — seen on the Risk Analysis tab: it does not record which invoices it used',
+        hp0.tab === 'risk' && hp0.notice.length === 1 && /This analysis does not record which invoices it used\./.test(hp0.notice[0]) && hp0.btn.text === '↻ Refresh Analysis', JSON.stringify([hp0.notice, hp0.btn]));
+  await setSqFt(30000);
+  const hp1 = await state();
+  check('H · …and with the area typed as 30,000 it names both: 75,500 → 30,000, and the invoices',
+        hp1.notice.length === 1 && hp1.notice[0].includes('Total Property SqFt has changed since this analysis was run (75,500 sf → 30,000 sf).')
+        && hp1.notice[0].includes('This analysis does not record which invoices it used.') && hp1.btn.text === '↻ Refresh Analysis', hp1.notice[0]);
+  await setSqFt(75500);
+  const hp2 = await state();
+  check('H · back at 75,500 it is still out of date — its invoices are not on record', hp2.stale === 'This analysis does not record which invoices it used.' && hp2.btn.text === '↻ Refresh Analysis');
+  // H7 — a person refreshes it with the button.
+  await page.click('#acqAnalyzeBtn');
+  await page.waitForTimeout(900);
+  const hp3 = await state();
+  const rec = await page.evaluate((m) => { const c = _acqReviews.find(r => r.id === m).data.analysis.canonical; return { sqft: c.sqft, invoices: typeof c.invoices }; }, MAPLE);
+  check('H8 · refreshed: the warning is gone and the analysis is current — "Analysis is current", Re-run offered',
+        hp3.notice.length === 0 && hp3.stale === '' && hp3.consumer === 'current' && hp3.btn.text === '↻ Re-run Analysis' && !hp3.btn.disabled && /^Analysis is current/.test(hp3.note)
+        && rec.sqft === 75500 && rec.invoices === 'string', JSON.stringify([hp3.notice, hp3.btn, rec]));
+  await page.evaluate(() => switchAcqTab('rentroll'));
+  const rrKpi = await page.evaluate(() => { const k = document.querySelector('#acqTabRentRoll .acq-kpi-row .acq-kpi-val'); return k && k.getClientRects().length ? k.textContent.trim() : null; });
+  check('H9 · the Rent Roll shows the refreshed 100%', rrKpi === '100%' && hp3.occ.occupancyRate === 100, String(rrKpi));
+  await page.evaluate(() => switchAcqTab('risk'));
+  await page.evaluate(() => generateAcquisitionReport());
+  const hr = await report();
+  check('H9 · the Decision Report shows the refreshed 100% — not 251.7%', hr.open && /100%Occupancy/.test(hr.text) && !/251\.7/.test(hr.text), hr.text.slice(0, 100));
+  await page.click('#reportOverlay .rpt-close-btn');
+
+  // H10 — a current analysis can still be run again on purpose: a full run,
+  // stored and logged like any other.
+  const runs = () => page.evaluate((m) => { const rv = _acqReviews.find(r => r.id === m);
+    return { n: (rv.data.activity || []).filter(a => a.type === 'analysis_run').length, at: rv.data.analysis.generatedAt,
+             stored: (__store.acquisition_reviews.find(r => r.id === m).data.analysis || {}).generatedAt }; }, MAPLE);
+  const run0 = await runs();
+  await page.waitForTimeout(20);
+  await page.click('#acqAnalyzeBtn');
+  await page.waitForTimeout(900);
+  const run1 = await runs(), h10 = await state();
+  check('H10 · clicking Re-run on a current analysis runs it again in full — a new stored analysis and one more "analysis run" in the activity log',
+        run1.n === run0.n + 1 && run1.at !== run0.at && run1.stored === run1.at, JSON.stringify([run0, run1]));
+  check('H10 · …and it is still current, 100%, with Re-run offered again', h10.stale === '' && h10.occ.occupancyRate === 100 && h10.btn.text === '↻ Re-run Analysis' && !h10.btn.disabled && h10.notice.length === 0);
 
   // ── F · the invoices change ─────────────────────────────────────────────
   const inv = (fn) => page.evaluate(({ m, fn }) => { const rv = _acqReviews.find(r => r.id === m); rv.data.invoices = (new Function('x', 'return ' + fn))(rv.data.invoices); _acqUpdateStaleNotice(); }, { m: MAPLE, fn });

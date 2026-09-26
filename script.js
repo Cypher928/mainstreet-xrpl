@@ -31045,17 +31045,22 @@ function _acqAnalysisStaleParts(review) {
   return parts;
 }
 
+// The notice sits under Run Analysis, above the Risk Analysis and Rent Roll
+// tabs, so an out-of-date analysis is seen whichever tab is open; the button
+// beside it says what to do (_updateAcqAnalyzeBtn).
 function _acqUpdateStaleNotice() {
   const review = _acqReviews.find(r => r && r.id === _activeAcqId);
-  const els = document.querySelectorAll('#acqReportContainer .acq-analysis-stale');
-  if (!els.length) return;
+  const el = document.getElementById('acqStaleNotice');
   const why = review ? _acqAnalysisStale(review) : null;
-  els.forEach(el => {
-    if (!why) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    el.style.display = '';
-    el.innerHTML = esc(why) + ' The figures below may not match what is on file now. '
-      + '<button class="acq-export-btn acq-stale-refresh" onclick="acqRefreshAnalysisFromTerms()">Refresh the analysis</button>';
-  });
+  if (el) {
+    if (!why) { el.style.display = 'none'; el.innerHTML = ''; }
+    else {
+      el.style.display = '';
+      el.innerHTML = '<strong>This analysis is out of date.</strong> ' + esc(why)
+        + ' The figures below are from the earlier inputs — refresh the analysis to update them.';
+    }
+  }
+  _updateAcqAnalyzeBtn();
 }
 
 // The review as conversion reads it: the canonical rows in place of the raw
@@ -33246,11 +33251,26 @@ function _updateAcqAnalyzeBtn() {
   const hasInvoices = _acqInvoices.some(i => i.amount);
   const hasSqFt     = _acqSqFt > 0;
   const ready = hasTenants && hasInvoices && hasSqFt;
+  // What the button does now (§4o): run a first analysis, refresh one that is
+  // out of date, or run a current one again on purpose — every one a full
+  // run, stored and logged. Whether it is current is _acqAnalysisStale's
+  // answer ('' current, a sentence when not, null while it cannot yet be told).
+  const review      = _acqReviews.find(r => r && r.id === _activeAcqId);
+  const hasAnalysis = !!(review && review.data && review.data.analysis);
+  const why         = hasAnalysis ? _acqAnalysisStale(review) : null;
+  const current     = hasAnalysis && why === '';
   btn.disabled = !ready;
+  btn.textContent = !hasAnalysis ? '⚡ Run Analysis'
+                  : current      ? '↻ Re-run Analysis'
+                  : why          ? '↻ Refresh Analysis'
+                  : '⚡ Run Analysis';
   if (note) {
     note.textContent = !hasTenants  ? (loaded && _acqUnresolvedExtractions(_activeAcqId) ? _acqNoLeaseholdsMessage(_activeAcqId) : 'Upload at least one lease to enable analysis.')
                      : !hasInvoices ? 'Upload at least one invoice to enable analysis.'
                      : !hasSqFt    ? 'Enter total property square footage above.'
+                     : current     ? 'Analysis is current — up to date with MainStreet’s Record, the property area and the invoices. Re-run it only if you want a fresh run.'
+                     : why         ? 'Out of date — refresh the analysis to use what is on file now.'
+                     : hasAnalysis ? 'Checking the analysis against MainStreet’s Record…'
                      : 'Ready — click to run risk analysis.';
   }
 }
@@ -33588,7 +33608,9 @@ async function runAcquisitionAnalysis() {
     if (cont) cont.innerHTML = `<div style="color:var(--c-f87171);padding:16px;">Analysis failed: ${esc(e.message)}</div>`;
   }
 
+  // Run, Refresh or current — from the analysis now on file (§4o).
   if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Analysis'; }
+  _updateAcqAnalyzeBtn();
 }
 
 function _renderAcqReport(report, container) {
@@ -34007,7 +34029,6 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
   ${kpiCards}
   <div class="acq-section-sub">Rent Roll</div>
   ${_acqCanonicalLine(_acqRentRollReport)}
-  <div class="acq-analysis-stale" style="display:none"></div>
   <div class="acq-ts-scroll">
     <table class="acq-ts-table">
       <thead><tr>${thead}</tr></thead>

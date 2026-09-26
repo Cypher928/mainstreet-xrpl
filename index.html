@@ -6718,6 +6718,7 @@
     .acq-canonical-line { font-size: 0.72rem; color: var(--text-4); margin: -6px 0 8px; }
     .acq-analysis-stale { font-size: 0.76rem; color: var(--c-fbbf24, #fbbf24); background: rgba(251, 191, 36, 0.08);
       border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 7px; padding: 8px 12px; margin-bottom: 10px; }
+    #acqStaleNotice { font-size: 0.82rem; margin: -8px 0 16px; }
     .acq-analysis-stale .acq-stale-refresh { margin-left: 8px; }
 
     /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
@@ -7873,6 +7874,9 @@
     </button>
     <span class="acq-analyze-note" id="acqAnalyzeNote">Upload leases and invoices to enable analysis.</span>
   </div>
+  <!-- Whether the analysis below is current (§4o), above its tabs so it is
+       seen whichever tab is open. Filled by _acqUpdateStaleNotice. -->
+  <div class="acq-analysis-stale" id="acqStaleNotice" role="status" style="display:none"></div>
 
   <!-- Report output -->
   <div id="acqReportContainer"></div>
