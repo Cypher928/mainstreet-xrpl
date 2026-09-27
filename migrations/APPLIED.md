@@ -2,13 +2,14 @@
 
 **Project:** Pilot Supabase project `bhmktujbxdbvdmpybmad` (www.mainstreet-review.com).
 **Read on:** 2026-09-26 from `supabase_migrations.schema_migrations` (33 rows, read-only;
-the 34th and 35th rows, 032 and 033, were applied later the same day by the work that wrote this file).
+the 34th and 35th rows, 032 and 033, were applied later the same day by the work that wrote this file;
+the 36th row, 034, was applied on 2026-09-27).
 **Production** (`zhsuhehgehbzkmzurzyf`) is not described here and was not touched.
 
 This file is a record, not a tool. Nothing reads it. It answers one question for
 every migration Pilot has ever recorded: *which committed text produced it, and
 how does the recorded SQL differ from that text?* The next migration a person
-writes for Pilot takes number **034**; every number up to 033 is spoken for by
+writes for Pilot takes number **035**; every number up to 034 is spoken for by
 one of the two lineages below.
 
 ## Method
@@ -64,8 +65,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260924004505` | `031_pilot_requests` | `migrations/031_pilot_requests.sql` @ `9f859dfc` | identical |
 | `20260926202507` | `032_resync_property_tenants_property_bound` | `migrations/032_resync_property_tenants_property_bound.sql` @ `2473da81` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim, header comments included | identical |
 | `20260926223919` | `033_property_lifecycle_integrity` | `migrations/033_property_lifecycle_integrity.sql` @ `516ef3a2` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim | identical |
+| `20260927032753` | `034_property_at_new_acquisition` | `migrations/034_property_at_new_acquisition.sql` @ `6c3eca61` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `bc755162…` on both sides) | identical |
 
-Tally: 25 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally: 26 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -134,7 +136,7 @@ These files were applied through the SQL editor or the bundle
    copied from `claude/validation-runs-analysis-ji1zb3` (tip `5fdc98e`; blob
    ids listed above), and that branch was **not merged**. No applied
    file has been renamed or renumbered; Supabase keys history by version, so the
-   database never saw a collision. **The next free number is 034.**
+   database never saw a collision. **The next free number is 035.**
 2. **Phase 0 was applied out of filename order:** 024 before 023, and 029
    before 028. A replay by filename has not been exercised.
 3. **Since 033, `tenants.property_id` is immutable by trigger, a family is bound to one episode by
@@ -157,6 +159,33 @@ These files were applied through the SQL editor or the bundle
 7. **`006_acquisition_reviews.sql` has a second, divergent version** on
    `feature/acquisition-review` (blob `a2c087a5`); Pilot has the `pilot`/`main`
    version.
+8. **Since 034 (P3), a deal is a property from its first minute.** A prospect
+   property and its acquisition episode are created only by
+   `begin_acquisition(name, data, organization?, review_id?)`; a direct INSERT of
+   a `prospect` row or of an `acquisition_reviews` row is refused by trigger.
+   `acquisition_documents`, `acquisition_document_families` and
+   `acquisition_term_decisions` carry `property_id NOT NULL → properties ON DELETE
+   RESTRICT`, filled from the review by trigger; an open episode always has a
+   property (CHECK) and a property has at most one open episode. The four
+   owner-only acquisition policies were replaced by property-membership policies
+   (`member_property_ids()`). `delete_prospect_acquisition(review_id)` is the
+   only path that removes a deal and its prospect (admin only; refused when the
+   episode holds a confirmed document, a confirmed family or any decision).
+   Backfill on 2026-09-27: 7 open reviews received a new prospect each
+   (`data._p3Backfill`), 3 converted reviews were linked to their existing
+   property — including `aca00000-0000-4000-b000-011df998bad2`, whose status was
+   corrected from `complete` to `converted` on the evidence of its own
+   `conversionRecord` (left intact) — and the one converted review whose
+   property no longer exists keeps `property_id` null. The backfill UPDATE
+   stamped `updated_at` on those 10 reviews (the `acq_reviews_updated_at`
+   trigger). **Acquisition membership access is read-capable in P3. Child-record
+   authorship remains review-owner-bound by existing composite user FKs
+   (`acquisition_documents_review_fk`, `acq_doc_families_review_fk`,
+   `acq_term_decisions_review_fk` are `(review_id, user_id)` keys); a member's
+   insert under their own `user_id` is refused by those keys. General member
+   write attribution is deferred to a separately reviewed identity/authorship
+   migration.** 034 changed none of those keys, no child `user_id` semantics and
+   no actor trigger.
 
 ## Decisions this manifest does not make
 

@@ -221,7 +221,18 @@ const DB = `
         return { data: { subscription: { unsubscribe: function () {} } } }; },
       signOut: function () { return P({ error: null }); },
     },
-    rpc: function () { return P({ data: null, error: null }); },
+    // P3 — begin_acquisition (migration 034) creates the prospect property and
+    // its episode together; the mock writes both rows and returns both ids.
+    rpc: function (fn, args) {
+      if (fn === 'begin_acquisition') {
+        var a = args || {}, now = new Date().toISOString();
+        var pid = 'prop-' + (++_seq), rid = a.p_review_id || ('rev-' + (++_seq));
+        tbl('properties').push({ id: pid, user_id: U.id, name: a.p_name, sqft: 0, data: {}, lifecycle_stage: 'prospect', archived_at: null });
+        tbl('acquisition_reviews').push({ id: rid, user_id: U.id, name: a.p_name, status: 'draft', data: clone(a.p_data || {}), property_id: pid, converted_at: null, created_at: now, updated_at: now });
+        return P({ data: { property_id: pid, review_id: rid, name: a.p_name, status: 'draft', lifecycle_stage: 'prospect', created_at: now, updated_at: now }, error: null });
+      }
+      return P({ data: null, error: null });
+    },
     from: q,
     storage: { from: function () { return { upload: function () { return P({ data: { path: 'x' }, error: null }); },
                                            getPublicUrl: function () { return { data: { publicUrl: '' } }; } }; } },

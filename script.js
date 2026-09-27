@@ -22827,7 +22827,7 @@ async function ensureDemoAcqReview() {
     // Check DB for existing complete review
     const { data: existing, error: chkErr } = await db
       .from('acquisition_reviews')
-      .select('id, name, status, data, created_at, updated_at')
+      .select('id, name, status, data, property_id, converted_at, created_at, updated_at')
       .eq('id', DEMO_ACQ_REVIEW_ID)
       .eq('user_id', user.id)
       .single();
@@ -22944,11 +22944,38 @@ async function ensureDemoAcqReview() {
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await db
-      .from('acquisition_reviews')
-      .upsert({ ...review }, { onConflict: 'id' });
-    if (upsertErr) {
-      console.warn('[ensureDemoAcqReview] upsert failed:', upsertErr.message);
+    // P3 — no upsert. An INSERT ... ON CONFLICT still runs the BEFORE INSERT
+    // guards migration 034 added (an episode is born only inside
+    // begin_acquisition, on a prospect property), so the seed is now two
+    // honest steps: a row that already exists is UPDATED in place (the same
+    // thing the upsert did for it), and a row that does not exist is created
+    // through begin_acquisition with the demo id, which gives the demo review
+    // its own prospect property, then brought to 'complete' with its analysis.
+    if (!chkErr && existing && existing.id === DEMO_ACQ_REVIEW_ID) {
+      const { error: updErr } = await db
+        .from('acquisition_reviews')
+        .update({ name: review.name, status: review.status, data: review.data })
+        .eq('id', DEMO_ACQ_REVIEW_ID)
+        .eq('user_id', user.id);
+      if (updErr) console.warn('[ensureDemoAcqReview] update failed:', updErr.message);
+      review.property_id = existing.property_id || null;
+    } else {
+      const { data: created, error: rpcErr } = await db.rpc('begin_acquisition', {
+        p_name: review.name, p_data: review.data, p_organization_id: null, p_review_id: DEMO_ACQ_REVIEW_ID,
+      });
+      if (rpcErr) {
+        console.warn('[ensureDemoAcqReview] begin_acquisition failed:', rpcErr.message);
+      } else if (created && created.review_id === DEMO_ACQ_REVIEW_ID) {
+        review.property_id = created.property_id;
+        const { error: updErr } = await db
+          .from('acquisition_reviews')
+          .update({ status: review.status })
+          .eq('id', DEMO_ACQ_REVIEW_ID)
+          .eq('user_id', user.id);
+        if (updErr) console.warn('[ensureDemoAcqReview] status update failed:', updErr.message);
+      } else {
+        console.warn('[ensureDemoAcqReview] begin_acquisition returned no record');
+      }
     }
 
     _acqReviews = _acqReviews.filter(r => r.id !== DEMO_ACQ_REVIEW_ID);
@@ -32640,9 +32667,12 @@ async function _loadAcqReviews() {
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return [];
+    // P3 — property_id and converted_at travel with the row: a deal IS a
+    // property (prospect) from its first minute, and a converted episode names
+    // the property it became.
     const { data, error } = await db
       .from('acquisition_reviews')
-      .select('id, name, status, data, created_at, updated_at')
+      .select('id, name, status, data, property_id, converted_at, created_at, updated_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     if (error) { console.warn('[acq] load error:', error.message); return []; }
@@ -32690,15 +32720,17 @@ async function _saveAcqReview(review) {
       return false;
     }
     if (verdict.kind === 'missing') {
-      const { error: upErr } = await db
-        .from('acquisition_reviews')
-        .upsert({ id: review.id, user_id: user.id, ...payload }, { onConflict: 'id' });
-      if (upErr) {
-        console.error('[acq] save error:', upErr.message, '| code:', upErr.code);
-        showToast('⚠️ Review save failed — ' + upErr.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
-        return false;
-      }
-      return true;
+      // P3 — a review that is not in the database is not re-created from the
+      // browser. An episode is born only inside begin_acquisition, together
+      // with its prospect property (migration 034 refuses any other insert),
+      // so the old fallback upsert would now fail — and before 034 it quietly
+      // resurrected a row someone else had deleted. The in-memory work is
+      // kept on screen (nothing is destroyed here either), the save is
+      // reported as not landed, and the person is told why.
+      console.error('[acq] save error: no stored row for review', review.id, '— an episode is created only by begin_acquisition; not re-created here');
+      showToast('⚠️ Review save failed — this review has no stored record. Reload to see the saved reviews.',
+        { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+      return false;
     }
     console.error('[acq] save error:', verdict.message, '| code:', verdict.code);
     showToast('⚠️ Review save failed — ' + verdict.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
@@ -32718,7 +32750,7 @@ async function _acqHandleSaveConflict(review, userId) {
   const wasActive = _activeAcqId === review.id;
   const { data: rows } = await db
     .from('acquisition_reviews')
-    .select('id, name, status, data, created_at, updated_at')
+    .select('id, name, status, data, property_id, converted_at, created_at, updated_at')
     .eq('id', review.id)
     .eq('user_id', userId);
   const fresh = Array.isArray(rows) && rows[0] ? _acqAdopt(rows[0]) : null;
@@ -32826,11 +32858,18 @@ function _renderAcqSection(reviews) {
       : (r.status === 'converted' && d.conversionRecord?.convertedAt
         ? `<div class="acq-card-converted-note">Acquired ${new Date(d.conversionRecord.convertedAt).toLocaleDateString()}</div>`
         : '');
+    // P3 — an open episode sits on a prospect PROPERTY (migration 034); the
+    // card says so. A legacy episode without one (pre-034 rows that were not
+    // backfilled: only an orphaned converted review) shows nothing extra.
+    const prospectBadge = (r.property_id && r.status !== 'converted')
+      ? '<span class="acq-card-prospect" title="This deal is a prospect property — the same record becomes the property workspace when acquired">Prospect property</span>'
+      : '';
     return `
     <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
       <div class="acq-card-name">${esc(r.name)}</div>
       <div class="acq-card-meta">${esc(date)}</div>
       <span class="acq-card-status ${orphaned ? 'orphaned' : esc(r.status)}">${orphaned ? 'converted' : esc(r.status)}</span>
+      ${prospectBadge}
       ${convertedNote}
       <div class="acq-card-stats">
         <div class="acq-card-stat" data-stat="leaseholds"><strong>${lhCount == null ? '—' : esc(lhCount)}</strong> ${lhCount === 1 ? 'Leasehold' : 'Leaseholds'}</div>
@@ -32847,29 +32886,50 @@ async function createAcquisitionReview() {
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) { alert('Please sign in first.'); return; }
-    const id = crypto.randomUUID ? crypto.randomUUID() : _genUUID();
+    // P3 — a deal is a property from its first minute. begin_acquisition
+    // (migration 034) creates the PROSPECT property and its acquisition
+    // episode in ONE transaction and returns both ids; no half-created deal is
+    // possible, and a direct insert of either row is refused by the database.
+    // The activity entry is recorded into the data the function stores, so
+    // "Review created" is in the row from the start, as before.
     const review = {
-      id,
+      id:         null,
       user_id:    user.id,
       name:       name.trim(),
       status:     'draft',
       data:       _AW().newReviewData(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: null,
+      updated_at: null,
     };
     _acqRecord(review, { type: 'review_created', summary: 'Review created — ' + review.name });
-    const { error } = await db.from('acquisition_reviews').insert(review);
+    const { data: created, error } = await db.rpc('begin_acquisition', { p_name: review.name, p_data: review.data });
     if (error) {
       const code = error.code || '';
       let hint = '';
       if (code === '42P01') hint = '\n\nFix: run migrations/006_acquisition_reviews.sql in Supabase.';
-      else if (code === '42501' || code === 'PGRST301') hint = '\n\nFix: RLS policy blocked the insert — check acq_reviews_owner_all policy.';
+      else if (code === 'PGRST202' || code === '42883') hint = '\n\nFix: begin_acquisition is missing — apply migrations/034_property_at_new_acquisition.sql.';
+      else if (code === '42501' || code === 'PGRST301') hint = '\n\nFix: the database refused the call — check the acquisition policies and grants.';
       console.error('[acq] create error:', error.code, error.message);
       alert('Could not create review.\n\n' + error.message + hint);
       return;
     }
-    // An INSERT stores the updated_at we sent (the trigger fires on UPDATE
-    // only), so this is a revision the database now holds.
+    if (!created || !created.review_id || !created.property_id) {
+      // The database answered without a record. Nothing was created that this
+      // client can point at, so nothing is added here — a card with no row
+      // behind it would be a review that can never save.
+      console.error('[acq] create error: begin_acquisition returned no record', created);
+      alert('Could not create review.\n\nThe database did not return the new record.');
+      return;
+    }
+    const id = created.review_id;
+    review.id           = id;
+    review.property_id  = created.property_id;
+    review.converted_at = null;
+    review.status       = created.status || 'draft';
+    review.created_at   = created.created_at || new Date().toISOString();
+    review.updated_at   = created.updated_at || review.created_at;
+    // The function returns the updated_at the INSERT stored, so this is a
+    // revision the database now holds.
     _acqRevs.set(id, review.updated_at);
     _acqReviews.unshift(review);
     _renderAcqSection(_acqReviews);
@@ -32952,21 +33012,36 @@ async function deleteActiveAcquisitionReview() {
   const review = _acqReviews.find(r => r.id === id);
   if (!id || !review) return;
 
-  if (!confirm(`Permanently delete the review "${review.name}"?\n\nThis cannot be undone.`)) return;
+  // P3 — an episode on a prospect property is removed together with that
+  // property, through delete_prospect_acquisition (migration 034): admin only,
+  // refused when the episode holds a confirmed document, a confirmed family or
+  // any term decision, so evidence is never destroyed by a delete. A legacy
+  // episode with no property (an orphaned converted review) keeps the direct
+  // delete it always had.
+  const onProspect = !!review.property_id && review.status !== 'converted';
+  const warning = onProspect
+    ? `Permanently delete the review "${review.name}" and its prospect property?\n\nThis cannot be undone. It is refused if the review holds confirmed documents or decisions.`
+    : `Permanently delete the review "${review.name}"?\n\nThis cannot be undone.`;
+  if (!confirm(warning)) return;
 
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) { showToast('⚠️ Not signed in', { color: '#92400e', textColor: '#fef3c7' }); return; }
 
-    const { error } = await db
-      .from('acquisition_reviews')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id);
+    let error = null;
+    if (onProspect) {
+      ({ error } = await db.rpc('delete_prospect_acquisition', { p_review_id: id }));
+    } else {
+      ({ error } = await db
+        .from('acquisition_reviews')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id));
+    }
 
     if (error) {
       console.error('[deleteAcqReview] error:', error.message, '| code:', error.code);
-      showToast('⚠️ Delete failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+      showToast('⚠️ Delete failed — ' + error.message, { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
       return;
     }
 
@@ -33010,7 +33085,10 @@ async function deleteActiveAcquisitionReview() {
 // Archiving Lakeview used to report its acquisition as "property no longer
 // exists"; the property was fine, it was just not in the list being searched.
 function _acqPropertyState(review) {
-  const pid = review?.data?.conversionRecord?.propertyId;
+  // P3 — the row's own property_id (written by conversion since P2, and by
+  // the 034 backfill) is the canonical link; conversionRecord.propertyId is
+  // the legacy copy and still answers for rows that predate it.
+  const pid = review?.property_id || review?.data?.conversionRecord?.propertyId;
   if (!pid || review.status !== 'converted') return 'none';
   if (!_propsLoadedOk) return 'unknown';
   if ((_props || []).some(p => p && p.id === pid)) return 'active';

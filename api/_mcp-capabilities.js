@@ -57,6 +57,11 @@ const _t   = require('./_pilot-target');
 const HYD  = require('./_property-record-hydrator.js');
 // Literal, like every require in _server-deps.js, so a bundler can see it.
 const DEPS = require('./_server-deps.js');
+// P3 — the one place that decides what "managed" means (property-lifecycle.js,
+// pure, shared with the browser). list_properties lists managed properties
+// only; a prospect or passed deal is a property row but not part of the
+// portfolio this capability describes.
+const PropertyLifecycle = require('../property-lifecycle.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -72,6 +77,10 @@ const REFUSAL = {
   AUTH_UNAVAILABLE:'auth_service_unavailable',
   NOT_AUTHORIZED:  'not_authorized',
   NOT_FOUND:       'property_not_found',
+  // P3 — the row exists and is the caller's, but it is a prospect or a passed
+  // deal, not a managed property. Distinct from NOT_FOUND on purpose: a caller
+  // must not be told a building it is evaluating does not exist.
+  NOT_MANAGED:     'property_not_managed',
   TENANT_NOT_FOUND:'tenant_not_found',
   SPACE_NOT_FOUND: 'space_not_found',
   FIELD_NOT_FOUND: 'field_not_found',
@@ -577,9 +586,11 @@ async function listProperties(args, ctx) {
   const reads = [];
   const sb = _readOnly(async (p, o) => { reads.push(p); return (c.sbFetch || _defaultFetch)(p, o); });
 
+  // P3 — lifecycle_stage is read so the split below is made from the row, by
+  // the same rule the browser's loadProperties applies (PropertyLifecycle).
   const r = await sb(
     `/properties?user_id=eq.${encodeURIComponent(id.userId)}` +
-    `&select=id,name,sqft,created_at,updated_at,archived_at&order=name.asc`,
+    `&select=id,name,sqft,created_at,updated_at,archived_at,lifecycle_stage&order=name.asc`,
     { method: 'GET' });
 
   if (r.status >= 300) {
@@ -588,7 +599,13 @@ async function listProperties(args, ctx) {
       { provenance: { reads }, asOf: c.now });
   }
 
-  const rows = Array.isArray(r.json) ? r.json : [];
+  const allRows = Array.isArray(r.json) ? r.json : [];
+  // THE split (P3). Only managed (acquired) rows are the portfolio this
+  // listing describes. A prospect or passed deal is the same kind of row but
+  // is NOT listed here — and its absence is stated below, never left for the
+  // caller to read as "no such property".
+  const rows      = allRows.filter(row => PropertyLifecycle.isManaged(row));
+  const leftOut   = allRows.length - rows.length;
   const properties = rows.map(row => ({
     propertyId: row.id,
     name:       row.name,
@@ -611,6 +628,15 @@ async function listProperties(args, ctx) {
              'CAM status and readiness are NOT included and must not be inferred ' +
              'as zero — call get_property for those.',
   }];
+  if (leftOut > 0) {
+    caveats.push({
+      code: 'prospects_not_listed', severity: SEVERITY.INFO, scope: 'properties',
+      message: `This user also owns ${leftOut} property record${leftOut === 1 ? '' : 's'} at a ` +
+               'pre-acquisition or passed lifecycle stage (a deal under review). ' +
+               'Those are not managed properties and are not listed here; they are ' +
+               'not missing.',
+    });
+  }
   if (!properties.length) {
     caveats.push({
       code: 'no_properties_owned', severity: SEVERITY.INFO, scope: 'properties',
@@ -648,6 +674,9 @@ function _refusalFor(reason, reads, now) {
     [HYD.REFUSAL.NO_USER]:   [REFUSAL.NO_TOKEN,       'The caller could not be authenticated.'],
     [HYD.REFUSAL.NOT_OWNED]: [REFUSAL.NOT_AUTHORIZED, 'This property is not owned by the authenticated user.'],
     [HYD.REFUSAL.NOT_FOUND]: [REFUSAL.NOT_FOUND,      'No such property for this user.'],
+    [HYD.REFUSAL.NOT_MANAGED]: [REFUSAL.NOT_MANAGED,
+      'This property exists but is not a managed property: it is a prospect or a passed deal ' +
+      '(pre-acquisition lifecycle stage). get_property reads the managed portfolio only.'],
     [HYD.REFUSAL.READ_FAILED]: [REFUSAL.READ_FAILED,
       'The property could not be read. This is not a statement that it is empty.'],
   };

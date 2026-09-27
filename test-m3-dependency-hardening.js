@@ -398,8 +398,12 @@ sec('I. The bundle-trace proof from M2 is intact');
   eq(RUN.bundle.computed, [], 'I1 no computed require anywhere in the graph');
   eq(RUN.bundle.external, [], 'I2 no npm package');
   eq(RUN.bundle.unresolved, [], 'I3 nothing unresolved');
-  is(RUN.bundle.files.length === 17, 'I4 seventeen files in the bundle',
+  // P3 added property-lifecycle.js (pure; the hydrator refuses a prospect and
+  // list_properties lists managed rows only). Seventeen became eighteen.
+  is(RUN.bundle.files.length === 18, 'I4 eighteen files in the bundle',
      String(RUN.bundle.files.length));
+  is(RUN.bundle.files.indexOf('property-lifecycle.js') !== -1,
+     'I4b the eighteenth is property-lifecycle.js, reached by a literal require');
   eq(INVENTORY.files, RUN.bundle.files,
      'I5 and the inventory covers exactly the files the bundle contains');
 }

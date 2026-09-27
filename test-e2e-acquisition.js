@@ -147,6 +147,22 @@ const SUPABASE_MOCK = `
           if (!_store[table]) _store[table] = [];
           return makeQ(table);
         },
+        // P3 — begin_acquisition (migration 034) creates the prospect property
+        // and its episode together and returns both ids; the mock does the
+        // same, into the store, so the row the app later saves against exists.
+        rpc: function(fn, args) {
+          if (fn === 'begin_acquisition') {
+            var a = args || {};
+            var now = new Date().toISOString();
+            var pid = 'prop-' + Math.random().toString(36).slice(2);
+            var rid = a.p_review_id || ('rev-' + Math.random().toString(36).slice(2));
+            if (!_store.properties) _store.properties = [];
+            _store.properties.push({ id: pid, user_id: _user.id, name: a.p_name, sqft: 0, data: {}, lifecycle_stage: 'prospect', archived_at: null });
+            _store.acquisition_reviews.push({ id: rid, user_id: _user.id, name: a.p_name, status: 'draft', data: a.p_data || {}, property_id: pid, converted_at: null, created_at: now, updated_at: now });
+            return noopPromise({ data: { property_id: pid, review_id: rid, name: a.p_name, status: 'draft', lifecycle_stage: 'prospect', created_at: now, updated_at: now }, error: null });
+          }
+          return noopPromise({ data: null, error: null });
+        },
         _store: _store
       };
     }
@@ -304,6 +320,11 @@ const MOCK_INVOICES = [
         documents: [],
         analysis:  null,
       };
+      // P3: the review is created through begin_acquisition and rebuilt from
+      // the returned ids, so the in-memory copy is no longer the store's
+      // object. Give it the same data (script-level `let`s are reachable here).
+      var memReview = (typeof _acqReviews !== 'undefined') ? _acqReviews.find(function (r) { return r.id === reviewId; }) : null;
+      if (memReview) memReview.data = storeReview.data;
       // Re-select → sets _acqTenants, _acqInvoices, _acqSqFt, calls _updateAcqAnalyzeBtn
       window.selectAcquisitionReview(reviewId);
     }, { tenants: MOCK_TENANTS, invoices: MOCK_INVOICES });

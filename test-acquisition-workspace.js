@@ -449,7 +449,7 @@ t('_saveAcqReview updates with a payload from the module and conditions on the r
 
 t('a conflict reloads the stored row, replaces the in-memory copy and says so', () => {
   const b = fnBody(S, '_acqHandleSaveConflict');
-  ok(b.includes("select('id, name, status, data, created_at, updated_at')"), 'refetch');
+  ok(b.includes("select('id, name, status, data, property_id, converted_at, created_at, updated_at')"), 'refetch (P3: property_id and converted_at travel with the row)');
   ok(b.includes('_acqAdopt(rows[0])'), 'adopted through the module');
   ok(b.includes('_acqReviews[idx] = fresh'), 'replaced in memory');
   ok(/changed elsewhere/.test(b), 'told the user');

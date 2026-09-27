@@ -74,6 +74,7 @@ const SUPABASE_MOCK = `
 
   function makeQ(tableName) {
     var _filters = {};
+    var _pending = null;
     var q = {
       select:   function() { return q; },
       insert:   function(rows) {
@@ -92,12 +93,11 @@ const SUPABASE_MOCK = `
         result.select = function() { return noopPromise({ data: [row], error: null }); };
         return result;
       },
-      update:   function() {
-        var result = noopPromise({ data: null, error: null });
-        result.select = function() { return noopPromise({ data: null, error: null }); };
-        result.eq = function() { return noopPromise({ data: null, error: null }); };
-        return result;
-      },
+      // A conditional UPDATE, chainable like the client (.update().eq().eq()
+      // .select()), applied to the rows matching every filter when awaited —
+      // the same shape test-e2e-acquisition.js models. P3's demo seed updates
+      // the row begin_acquisition created instead of upserting it.
+      update:   function(patch) { _pending = patch; return q; },
       delete:   function() {
         return { eq: function() { return noopPromise({ error: null }); } };
       },
@@ -116,6 +116,7 @@ const SUPABASE_MOCK = `
         var rows = (_store[tableName] || []).filter(function(r) {
           return Object.keys(_filters).every(function(k) { return r[k] === _filters[k]; });
         });
+        if (_pending) rows.forEach(function(r) { Object.assign(r, _pending); r.updated_at = 'rev-' + Date.now() + '-' + Math.random().toString(36).slice(2); });
         return noopPromise({ data: rows, error: null }).then(fn);
       }
     };
@@ -137,6 +138,20 @@ const SUPABASE_MOCK = `
         from: function(table) {
           if (!_store[table]) _store[table] = [];
           return makeQ(table);
+        },
+        // P3 — begin_acquisition (migration 034): prospect property + episode
+        // in one call, both ids returned. The mock writes both into the store.
+        rpc: function(fn, args) {
+          if (fn === 'begin_acquisition') {
+            var a = args || {};
+            var now = new Date().toISOString();
+            var pid = 'prop-' + Math.random().toString(36).slice(2);
+            var rid = a.p_review_id || ('rev-' + Math.random().toString(36).slice(2));
+            _store.properties.push({ id: pid, user_id: _user.id, name: a.p_name, sqft: 0, data: {}, lifecycle_stage: 'prospect', archived_at: null });
+            _store.acquisition_reviews.push({ id: rid, user_id: _user.id, name: a.p_name, status: 'draft', data: a.p_data || {}, property_id: pid, converted_at: null, created_at: now, updated_at: now });
+            return noopPromise({ data: { property_id: pid, review_id: rid, name: a.p_name, status: 'draft', lifecycle_stage: 'prospect', created_at: now, updated_at: now }, error: null });
+          }
+          return noopPromise({ data: null, error: null });
         },
         _store: _store
       };

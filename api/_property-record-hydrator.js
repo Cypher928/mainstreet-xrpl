@@ -64,6 +64,10 @@ const _t   = require('./_pilot-target');
 const DEPS = require('./_server-deps');
 const TN   = require('../tenant-normalize.js');
 const PropertyRecord = require('../property-record.js');
+// P3 — the shared, pure lifecycle rule. A PropertyRecord is a MANAGED
+// property's record; a prospect or passed deal is refused by name, not
+// hydrated as if it were part of the portfolio.
+const PropertyLifecycle = require('../property-lifecycle.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -179,6 +183,8 @@ const REFUSAL = {
   NO_USER:      'authentication_required',
   NOT_OWNED:    'not_authorized',
   NOT_FOUND:    'property_not_found',
+  // P3 — owned, present, but at a pre-acquisition or passed lifecycle stage.
+  NOT_MANAGED:  'property_not_managed',
   READ_FAILED:  'read_failed',
 };
 
@@ -220,13 +226,22 @@ async function hydrate(opts) {
   //      read. ──────────────────────────────────────────────────────────────
   const propRes = await sb(
     `/properties?id=eq.${encodeURIComponent(propertyId)}` +
-    `&user_id=eq.${encodeURIComponent(userId)}&select=id,name,sqft,data`,
+    `&user_id=eq.${encodeURIComponent(userId)}&select=id,name,sqft,data,lifecycle_stage`,
     { method: 'GET' });
   if (propRes.status >= 300) return { ok: false, reason: REFUSAL.READ_FAILED, reads, degraded: [] };
   const rows = Array.isArray(propRes.json) ? propRes.json : [];
   if (!rows.length) return { ok: false, reason: REFUSAL.NOT_FOUND, reads, degraded: [] };
 
   const row  = rows[0];
+
+  // ── 1b. Lifecycle (P3). A prospect or passed deal is a property row, but it
+  //      is not a managed property, and this record describes managed
+  //      properties. Refused by its own reason so the caller is not told the
+  //      building does not exist. A row with no stage predates migration 023
+  //      and is managed, which is what PropertyLifecycle's default says. ────
+  if (!PropertyLifecycle.isManaged(row)) {
+    return { ok: false, reason: REFUSAL.NOT_MANAGED, reads, degraded: [] };
+  }
   const d    = row.data || {};
   const degraded = [];
 

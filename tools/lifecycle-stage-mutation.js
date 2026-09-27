@@ -7,9 +7,10 @@
  * The invariant is "a prospect never enters the portfolio, and joins it only by
  * a stage transition". Each mutant below is a one-token edit that would let a
  * prospect leak into an aggregate, or let a transition copy or skip. The suites
- * must object to every one. (Pilot Phase 1 ports the client stage filter only;
- * the server capabilities keep their own harness when they learn the stage.) Negative controls close the portfolio on the people it
- * must admit.
+ * must object to every one. P3 added the server side (the hydrator refuses a
+ * prospect; list_properties lists managed rows only) and the client's one way
+ * to start a deal (begin_acquisition). Negative controls close the portfolio
+ * on the people it must admit.
  *
  * A FAILING BASELINE IS NOT A PASS.
  */
@@ -21,6 +22,10 @@ const { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const PL  = 'property-lifecycle.js';
 const APP = 'script.js';
+// P3 — the server learned the stage: the hydrator refuses a prospect, and
+// list_properties lists managed rows only. Both are mutated here too.
+const HYD = 'api/_property-record-hydrator.js';
+const CAP = 'api/_mcp-capabilities.js';
 
 const MUTANTS = [
   // ── the module ────────────────────────────────────────────────────────────
@@ -89,6 +94,40 @@ const MUTANTS = [
   { id: 'S04', file: APP, why: 'the stage column is never selected, so every row reads as acquired',
     from: "  let { data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS);",
     to:   "  let { data, error } = await _q(PropertyLifecycle.SELECT_COLUMNS_PRE_023);" },
+
+  // ── P3: the server learns the stage ───────────────────────────────────────
+  { id: 'H01', file: HYD, why: 'the hydrator hydrates a prospect as if it were a managed property',
+    from: "  if (!PropertyLifecycle.isManaged(row)) {\n    return { ok: false, reason: REFUSAL.NOT_MANAGED, reads, degraded: [] };\n  }",
+    to:   "" },
+  { id: 'H02', file: HYD, why: 'the hydrator stops selecting the stage, so every row reads as acquired and the refusal never fires',
+    from: "&select=id,name,sqft,data,lifecycle_stage`,",
+    to:   "&select=id,name,sqft,data`," },
+  { id: 'H03', file: HYD, why: 'a prospect is refused as NOT FOUND — the caller is told a building it is evaluating does not exist',
+    from: "    return { ok: false, reason: REFUSAL.NOT_MANAGED, reads, degraded: [] };",
+    to:   "    return { ok: false, reason: REFUSAL.NOT_FOUND, reads, degraded: [] };" },
+  { id: 'C01', file: CAP, why: 'list_properties lists every row — prospects and passed deals enter the portfolio listing',
+    from: "  const rows      = allRows.filter(row => PropertyLifecycle.isManaged(row));",
+    to:   "  const rows      = allRows;" },
+  { id: 'C02', file: CAP, why: 'the rows left out are dropped silently — no prospects_not_listed caveat',
+    from: "  if (leftOut > 0) {",
+    to:   "  if (false) {" },
+  { id: 'C03', file: CAP, why: 'the list read stops selecting the stage, so every row reads as acquired',
+    from: "&select=id,name,sqft,created_at,updated_at,archived_at,lifecycle_stage&order=name.asc`,",
+    to:   "&select=id,name,sqft,created_at,updated_at,archived_at&order=name.asc`," },
+
+  // ── P3: the client starts a deal only through begin_acquisition ───────────
+  { id: 'S05', file: APP, why: 'deleting a deal on a prospect property bypasses delete_prospect_acquisition (the prospect property is left behind)',
+    from: "    if (onProspect) {\n      ({ error } = await db.rpc('delete_prospect_acquisition', { p_review_id: id }));",
+    to:   "    if (false) {\n      ({ error } = await db.rpc('delete_prospect_acquisition', { p_review_id: id }));" },
+  { id: 'S06', file: APP, why: 'a begin_acquisition call that returns no record still puts a card on screen — a review that can never save',
+    from: "    if (!created || !created.review_id || !created.property_id) {",
+    to:   "    if (false) {" },
+  { id: 'S07', file: APP, why: 'the conversion state ignores the row\'s own property_id and reads only the legacy record',
+    from: "  const pid = review?.property_id || review?.data?.conversionRecord?.propertyId;",
+    to:   "  const pid = review?.data?.conversionRecord?.propertyId;" },
+  { id: 'S08', file: APP, why: 'a save that finds no stored row re-creates it from the browser (the pre-034 upsert), bypassing begin_acquisition',
+    from: "      showToast('⚠️ Review save failed — this review has no stored record. Reload to see the saved reviews.',\n        { color: '#92400e', textColor: '#fef3c7', duration: 7000 });\n      return false;",
+    to:   "      const { error: upErr } = await db.from('acquisition_reviews').upsert({ id: review.id, user_id: user.id, ...payload }, { onConflict: 'id' });\n      return !upErr;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lcmut-'));
@@ -101,7 +140,7 @@ fs.cpSync(ROOT, tmp, {
   },
 });
 const ORIGINAL = {};
-for (const f of [PL, APP]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
+for (const f of [PL, APP, HYD, CAP]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const SUITES = ['test-lifecycle-stage.js', 'test-property-lifecycle.js'];
 function runSuites() {

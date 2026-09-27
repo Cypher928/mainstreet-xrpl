@@ -16,8 +16,11 @@
  *   D  loadProperties (script.js, extracted by name and run against a fake
  *      Supabase builder): returns acquired+active rows only, hands the rest to
  *      _prospectProps, and degrades correctly when 023 or 010 is not applied
- *   E  (server refusals — not in this port; the hydrator and list_properties
- *      gain lifecycle awareness with the access phase)
+ *   E  server refusals (P3): the hydrator refuses a prospect or passed deal as
+ *      property_not_managed (owned, present, not managed — never "not found");
+ *      list_properties lists managed rows only and STATES what it left out;
+ *      and the client starts a deal only through begin_acquisition, which
+ *      creates the prospect property and the episode together (migration 034)
  *   F  LEAKAGE, negatively: the real aggregate engines fed the classified
  *      `active` list produce the managed numbers, and fed the unclassified
  *      rows they produce DIFFERENT numbers — so the assertion has teeth
@@ -262,6 +265,104 @@ sec('D. loadProperties: what the portfolio is made of');
   eq(d.out.length, ROWS.length, 'D20 without 010 either, every row is active (the pre-existing degrade rule)');
   const e = await runLoad(ROWS, TENANTS, ['lifecycle_stage', 'archived_at'], { archived: true });
   eq(e.out, [], 'D21 and the archived view is empty rather than wrong');
+}
+
+sec('E. Server refusals (P3): the hydrator and list_properties know the stage; the client starts a deal only through begin_acquisition');
+{
+  const HYD  = require('./api/_property-record-hydrator.js');
+  const MCP  = require('./api/_mcp-capabilities.js');
+  const DEPS = require('./api/_server-deps.js');
+  const OWNER  = U;
+  const P_MGD  = '11111111-1111-4111-8111-111111111111';
+  const P_DEAL = '33333333-3333-4333-8333-333333333333';
+  const P_PASS = '44444444-4444-4444-8444-444444444444';
+  const P_OLD  = '55555555-5555-4555-8555-555555555555';
+  const blob = { tenants: [], invoices: [], disputes: [], timeline: [] };
+  const SRV = [
+    { id: P_MGD,  user_id: OWNER, name: 'Managed Plaza',  sqft: 1000,  data: blob, created_at: '2025-01-01T00:00:00Z', updated_at: '2025-02-01T00:00:00Z', archived_at: null, lifecycle_stage: 'acquired' },
+    { id: P_DEAL, user_id: OWNER, name: 'Prospect Tower', sqft: 90000, data: blob, created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-02T00:00:00Z', archived_at: null, lifecycle_stage: 'prospect' },
+    { id: P_PASS, user_id: OWNER, name: 'Passed Centre',  sqft: 80000, data: blob, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z', archived_at: null, lifecycle_stage: 'passed' },
+    { id: P_OLD,  user_id: OWNER, name: 'Legacy Row',     sqft: 5000,  data: blob, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-02-01T00:00:00Z', archived_at: null }, // predates 023
+  ];
+  // The transport honours the SELECT projection, so a server that stops
+  // selecting the stage is caught here rather than passing on a row the mock
+  // was too generous with.
+  const project = (row, p) => {
+    const m = p.match(/select=([^&]+)/); if (!m) return row;
+    const o = {}; m[1].split(',').forEach(c => { if (c in row) o[c] = row[c]; }); return o;
+  };
+  function sb(rows) {
+    const calls = [];
+    const fn = async (p, options) => {
+      calls.push({ path: p, method: (options && options.method) || 'GET' });
+      if (/^\/properties\?/.test(p)) {
+        const idm = p.match(/(?:^|[?&])id=eq\.([^&]+)/), uidm = p.match(/user_id=eq\.([^&]+)/);
+        const out = (rows || SRV).filter(r => (!uidm || r.user_id === decodeURIComponent(uidm[1])) && (!idm || r.id === decodeURIComponent(idm[1])));
+        return { status: 200, json: out.map(r => project(r, p)) };
+      }
+      if (/^\/tenants\?|^\/tenant_field_evidence\?/.test(p)) return { status: 200, json: [] };
+      return { status: 404, json: [] };
+    };
+    fn.calls = calls; return fn;
+  }
+  const auth = async (tok) => tok === 'owner' ? { status: 200, json: { id: OWNER, role: 'authenticated' } } : { status: 401, json: {} };
+  const ctx  = (over) => Object.assign({ token: 'owner', authFetch: auth, sbFetch: sb(), now: '2026-09-27T00:00:00Z' }, over || {});
+  const codes = (env) => (env.caveats || []).map(c => c.code);
+
+  // the hydrator
+  eq(HYD.REFUSAL.NOT_MANAGED, 'property_not_managed', 'E1 the hydrator names the refusal: property_not_managed');
+  const hMgd = await HYD.hydrate({ propertyId: P_MGD, userId: OWNER, sbFetch: sb(), deps: DEPS });
+  t('E2 a managed property hydrates', hMgd.ok === true, hMgd.reason);
+  const t3 = sb();
+  const hDeal = await HYD.hydrate({ propertyId: P_DEAL, userId: OWNER, sbFetch: t3, deps: DEPS });
+  eq([hDeal.ok, hDeal.reason], [false, 'property_not_managed'], 'E3 a PROSPECT is refused as not managed — not as not found, not as not authorised');
+  t('E4 and refused after the ownership probe and the property read, before any tenant or evidence read',
+    t3.calls.length === 2 && !t3.calls.some(c => /^\/tenants|^\/tenant_field_evidence/.test(c.path)), JSON.stringify(t3.calls.map(c => c.path)));
+  const hPass = await HYD.hydrate({ propertyId: P_PASS, userId: OWNER, sbFetch: sb(), deps: DEPS });
+  eq([hPass.ok, hPass.reason], [false, 'property_not_managed'], 'E5 a PASSED deal is refused the same way');
+  const hOld = await HYD.hydrate({ propertyId: P_OLD, userId: OWNER, sbFetch: sb(), deps: DEPS });
+  t('E6 a row with no stage (pre-023) is managed and hydrates — the default rule holds on the server too', hOld.ok === true, hOld.reason);
+  t('E7 the property read selects lifecycle_stage', t3.calls.some(c => /select=id,name,sqft,data,lifecycle_stage/.test(c.path)), JSON.stringify(t3.calls.map(c => c.path)));
+
+  // list_properties
+  const d1 = sb();
+  const list = await MCP.call('list_properties', {}, ctx({ sbFetch: d1 }));
+  eq(list.data.properties.map(p => p.propertyId).sort(), [P_MGD, P_OLD].sort(), 'E8 list_properties lists the managed properties only — the prospect and the passed deal are not in it');
+  eq(list.data.count, 2, 'E9 and the count is of what is listed');
+  t('E10 the list read selects lifecycle_stage', /lifecycle_stage/.test(d1.calls[0].path), d1.calls[0].path);
+  t('E11 the two left out are STATED, not silently dropped: prospects_not_listed', codes(list).indexOf('prospects_not_listed') !== -1, JSON.stringify(codes(list)));
+  const cav = (list.caveats || []).find(c => c.code === 'prospects_not_listed') || { message: '' };
+  t('E12 and the caveat counts them and says they are not missing', /\b2 property records\b/.test(cav.message) && /not missing/.test(cav.message), cav.message);
+  const listMgd = await MCP.call('list_properties', {}, ctx({ sbFetch: sb(SRV.filter(r => r.id === P_MGD || r.id === P_OLD)) }));
+  t('E13 with no deal among the rows there is no such caveat', codes(listMgd).indexOf('prospects_not_listed') === -1, JSON.stringify(codes(listMgd)));
+
+  // get_property through the capability
+  const gDeal = await MCP.call('get_property', { propertyId: P_DEAL }, ctx());
+  eq([gDeal.data, codes(gDeal)], [null, ['property_not_managed']], 'E14 get_property on a prospect returns no data and the property_not_managed refusal');
+  t('E15 whose message says it is a prospect or passed deal, not that it does not exist', /prospect or a passed deal/.test(gDeal.caveats[0].message) && !/no such property/i.test(gDeal.caveats[0].message), gDeal.caveats[0].message);
+  const gMgd = await MCP.call('get_property', { propertyId: P_MGD }, ctx());
+  t('E16 get_property on a managed property still answers', gMgd.data && gMgd.data.propertyId === P_MGD, JSON.stringify(codes(gMgd)));
+
+  // the client: a deal is born only through begin_acquisition (migration 034)
+  const create = fnSource(SCRIPT, 'createAcquisitionReview');
+  t('E17 createAcquisitionReview calls begin_acquisition with the name and the new review data', create.includes("db.rpc('begin_acquisition', { p_name: review.name, p_data: review.data })"));
+  t('E18 and no longer inserts the review row itself', !/\.from\('acquisition_reviews'\)\s*\.insert\(/.test(create));
+  t('E19 a call that returns no record adds nothing on screen', create.includes('if (!created || !created.review_id || !created.property_id) {') && /return;/.test(create.slice(create.indexOf('!created.property_id'))));
+  t('E20 the returned ids and revision are adopted', create.includes('review.property_id  = created.property_id') && create.includes('_acqRevs.set(id, review.updated_at)'));
+  t('E21 nowhere in script.js is a row inserted or upserted into acquisition_reviews any more', !/\.from\('acquisition_reviews'\)\s*\.(insert|upsert)\(/.test(SCRIPT));
+  const save = fnSource(SCRIPT, '_saveAcqReview');
+  t('E22 a save that finds no stored row does not re-create it, and says so', !/upsert\(/.test(save) && /no stored record/.test(save));
+  const demo = fnSource(SCRIPT, 'ensureDemoAcqReview');
+  t('E23 the demo seed creates its review through begin_acquisition under the demo id, and updates an existing row in place', demo.includes('p_review_id: DEMO_ACQ_REVIEW_ID') && !/upsert\(/.test(demo) && /\.update\(\{ name: review\.name, status: review\.status, data: review\.data \}\)/.test(demo));
+  const del = fnSource(SCRIPT, 'deleteActiveAcquisitionReview');
+  t('E24 deleting a deal on a prospect property goes through delete_prospect_acquisition', del.includes("if (onProspect) {\n      ({ error } = await db.rpc('delete_prospect_acquisition', { p_review_id: id }));"));
+  t('E25 and a legacy episode without a property keeps the direct delete', /\.from\('acquisition_reviews'\)\s*\.delete\(\)/.test(del) && del.includes("const onProspect = !!review.property_id && review.status !== 'converted';"));
+  const load = fnSource(SCRIPT, '_loadAcqReviews');
+  t('E26 the review list carries property_id and converted_at', load.includes("select('id, name, status, data, property_id, converted_at, created_at, updated_at')"));
+  const state = fnSource(SCRIPT, '_acqPropertyState');
+  t('E27 the conversion state reads the row\'s own property_id first, the legacy record second', state.includes('const pid = review?.property_id || review?.data?.conversionRecord?.propertyId;'));
+  const card = fnSource(SCRIPT, '_renderAcqSection');
+  t('E28 an open episode\'s card says it sits on a prospect property', card.includes("(r.property_id && r.status !== 'converted')") && /acq-card-prospect/.test(card));
 }
 
 sec('F. LEAKAGE, negatively: the real engines fed the right list, and the wrong one');
