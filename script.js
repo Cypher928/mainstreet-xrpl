@@ -31167,12 +31167,36 @@ function _acqNoLeaseholdsMessage(reviewId) {
     + (u ? ' Resolve the ' + u + ' extracted ' + (u === 1 ? 'entry' : 'entries') + ' not matched to a tenant first.' : '');
 }
 
+// ── TEMPORARY SAFETY GUARD (between P3 and P4) ───────────────────────────────
+//
+// Since migration 034 an acquisition review sits on a PROSPECT property from
+// its first minute (review.property_id). The legacy Acquire path below still
+// builds a NEW property, inserts it, and then re-points the review at it: the
+// insert would leave a second property beside the prospect, and the re-point
+// is refused by the database (acq_reviews_property_immutable). Until
+// acquire_property (P4) replaces this path with a lifecycle transition on the
+// SAME property, a review that already has its property cannot be acquired
+// here. An open review's property is a prospect by construction (034 admits an
+// episode only on a prospect), so the guard does not wait for any property
+// list to load — it fails closed on the review row alone. A legacy review with
+// no property (the one orphaned converted review) is not affected.
+//
+// To be removed with P4.
+const _ACQ_LEGACY_ACQUIRE_UNAVAILABLE = 'Acquisition is temporarily unavailable while the new property lifecycle transition is being deployed. '
+  + 'This review already has its property; it will be acquired in place, and nothing is created twice.';
+function _acqLegacyAcquireGuard(review) {
+  if (!review || !review.property_id || review.status === 'converted') return '';
+  return _ACQ_LEGACY_ACQUIRE_UNAVAILABLE;
+}
+
 // Why this review cannot be acquired yet — '' when it can. Conversion creates
 // one tenant per leasehold and nothing else, so it waits until every unmatched
 // extraction has been resolved by a person, and until the analysis it copies
 // onto the property describes the record as it now stands.
 function _acqConversionBlock(review) {
   if (!review) return 'No review is open.';
+  const legacyGuard = _acqLegacyAcquireGuard(review);
+  if (legacyGuard) return legacyGuard;
   const id = review.id;
   if (!_acqRecordLoaded(id)) return 'Loading MainStreet’s Record…';
   const u = _acqUnresolvedExtractions(id);

@@ -21,6 +21,10 @@
  *      list_properties lists managed rows only and STATES what it left out;
  *      and the client starts a deal only through begin_acquisition, which
  *      creates the prospect property and the episode together (migration 034)
+ *   H  TEMPORARY SAFETY GUARD (P3 → P4): a review that already has its
+ *      property cannot be acquired by the legacy copy-based path, which would
+ *      insert a second property; proved by running the real functions against
+ *      recording fakes, with a negative control. Removed with P4.
  *   F  LEAKAGE, negatively: the real aggregate engines fed the classified
  *      `active` list produce the managed numbers, and fed the unclassified
  *      rows they produce DIFFERENT numbers — so the assertion has teeth
@@ -363,6 +367,80 @@ sec('E. Server refusals (P3): the hydrator and list_properties know the stage; t
   t('E27 the conversion state reads the row\'s own property_id first, the legacy record second', state.includes('const pid = review?.property_id || review?.data?.conversionRecord?.propertyId;'));
   const card = fnSource(SCRIPT, '_renderAcqSection');
   t('E28 an open episode\'s card says it sits on a prospect property', card.includes("(r.property_id && r.status !== 'converted')") && /acq-card-prospect/.test(card));
+}
+
+sec('H. TEMPORARY SAFETY GUARD (P3 → P4): the legacy Acquire path cannot create a second property for a review that already has one');
+{
+  // The real functions, run against fakes that RECORD every write the legacy
+  // path would make. The proof is behavioural: on a P3 review (property_id set,
+  // open) convertAcquisitionToProperty must reach none of buildPropertyFromReview,
+  // saveProperty, the properties insert, the tenant resync or the review save.
+  const constSrc = (SCRIPT.match(/const _ACQ_LEGACY_ACQUIRE_UNAVAILABLE = [\s\S]*?';\n/) || [''])[0];
+  t('H0 the guard message constant exists', !!constSrc);
+  const src = constSrc + '\n'
+    + fnSource(SCRIPT, '_acqLegacyAcquireGuard') + '\n'
+    + fnSource(SCRIPT, '_acqConversionBlock') + '\n'
+    + fnSource(SCRIPT, 'convertAcquisitionToProperty') + '\n';
+  function world(review, opts) {
+    const o = opts || {};
+    const calls = { build: 0, save: 0, insert: 0, resync: 0, reviewSave: 0, alerts: [], hide: 0 };
+    const sandbox = {
+      _acqReviews: [review], _activeAcqId: review.id, _props: [], _archivedProps: [], _propsLoadedOk: true,
+      _acqOrphaned: () => false,
+      _acqEnsureRecord: async () => {},
+      _acqRecordLoaded: () => o.loaded !== false,
+      _acqUnresolvedExtractions: () => 0, _acqPendingDocuments: () => [],
+      _acqLeaseholdsOnly: () => [{ tenant_name: 'A' }], _acqCanonicalRows: () => ({ rows: [], leaseholds: 1, unfiled: 0, dropped: [], resolverAvailable: true }),
+      _acqAnalysisStale: () => '',
+      _acqConversionReview: (r) => r,
+      AcquisitionEngine: { buildPropertyFromReview: () => { calls.build++; return { name: review.name, tenants: [], _conversionSource: { convertedAt: 'now' } }; } },
+      saveProperty: async (p) => { calls.save++; p.id = 'NEW-PROPERTY-Q'; throw new Error('harness stop after saveProperty'); },
+      resyncTenantsToTable: async () => { calls.resync++; },
+      _saveAcqReview: async () => { calls.reviewSave++; return true; },
+      _AW: () => ({ markAcquired: (r) => r }), _acqActor: () => 'test',
+      _renderAcqConvertAction: () => {}, _renderAcqStageChips: () => {}, _renderAcqSection: () => {}, renderPortfolio: () => {},
+      _hideAcqConvertModal: () => { calls.hide++; },
+      alert: (m) => { calls.alerts.push(String(m)); },
+      document: { getElementById: () => null },
+      db: { from: () => ({ insert: () => { calls.insert++; return Promise.resolve({ data: null, error: null }); } }) },
+      console: { log: () => {}, warn: () => {}, error: () => {} },
+      Promise, Error, Array, Object, String, Number, JSON, RegExp, Date,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(src + '\nthis._acqLegacyAcquireGuard = _acqLegacyAcquireGuard; this._acqConversionBlock = _acqConversionBlock; this.convertAcquisitionToProperty = convertAcquisitionToProperty;', sandbox);
+    return { sandbox, calls };
+  }
+  const P = 'a9903ebf-9f30-4f9d-b002-c34cfac89e27';
+  const p3 = { id: 'r-p3', name: 'Lakeview', status: 'complete', property_id: P, data: { analysis: { summary: {} }, tenants: [], invoices: [] } };
+  const legacy = { id: 'r-old', name: 'Old deal', status: 'complete', property_id: null, data: { analysis: { summary: {} }, tenants: [], invoices: [] } };
+  const converted = { id: 'r-conv', name: 'Done', status: 'converted', property_id: P, data: { conversionRecord: { propertyId: P } } };
+
+  const w1 = world(p3);
+  const msg = w1.sandbox._acqLegacyAcquireGuard(p3);
+  t('H1 an open review that already has its property is guarded, with the temporary-unavailable message', /temporarily unavailable/.test(msg) && /lifecycle transition/.test(msg), msg);
+  eq(w1.sandbox._acqLegacyAcquireGuard(legacy), '', 'H2 a legacy review with no property is not guarded (its path is unchanged)');
+  eq(w1.sandbox._acqLegacyAcquireGuard(converted), '', 'H3 a converted review is not guarded (nothing to acquire)');
+  eq(world(p3, { loaded: false }).sandbox._acqConversionBlock(p3), msg, 'H4 the gate returns the guard FIRST — before the record has loaded, before any other condition');
+  eq(w1.sandbox._acqConversionBlock(legacy), '', 'H5 and, with the record clean, lets a legacy review through as before');
+
+  const r1 = await w1.sandbox.convertAcquisitionToProperty();
+  t('H6 convertAcquisitionToProperty on a P3 review builds NO property', w1.calls.build === 0, String(w1.calls.build));
+  t('H7 and calls saveProperty / the properties insert / the tenant resync ZERO times', w1.calls.save === 0 && w1.calls.insert === 0 && w1.calls.resync === 0, JSON.stringify(w1.calls));
+  t('H8 and never saves the review, whose status and property_id are unchanged', w1.calls.reviewSave === 0 && p3.status === 'complete' && p3.property_id === P);
+  t('H9 _props gained nothing — no second property, in memory or on disk', w1.sandbox._props.length === 0);
+  t('H10 the person is told why, and the modal is closed', w1.calls.alerts.length === 1 && /temporarily unavailable/.test(w1.calls.alerts[0]) && w1.calls.hide === 1, JSON.stringify(w1.calls.alerts));
+
+  // Negative control: the same harness reaches the legacy write for a review
+  // with no property, so the zeros above are the guard's doing, not the fakes'.
+  const w2 = world(legacy);
+  await w2.sandbox.convertAcquisitionToProperty();
+  t('H11 CONTROL — a legacy review without a property still reaches buildPropertyFromReview and saveProperty in this harness', w2.calls.build === 1 && w2.calls.save === 1, JSON.stringify(w2.calls));
+
+  // Structural: the guard is the gate's first decision, and the gate is what
+  // the button, the modal and the conversion all consult.
+  const gateBody = fnSource(SCRIPT, '_acqConversionBlock');
+  t('H12 the guard is consulted at the top of _acqConversionBlock', gateBody.indexOf('_acqLegacyAcquireGuard(review)') !== -1 && gateBody.indexOf('_acqLegacyAcquireGuard(review)') < gateBody.indexOf('_acqRecordLoaded(id)'));
+  t('H13 the button, the modal and the conversion each consult the gate', /_acqConversionBlock\(review\)/.test(fnSource(SCRIPT, '_renderAcqConvertAction')) && /_acqConversionBlock\(review\)/.test(fnSource(SCRIPT, '_showAcqConvertModal')) && /_acqConversionBlock\(review\)/.test(fnSource(SCRIPT, 'convertAcquisitionToProperty')));
 }
 
 sec('F. LEAKAGE, negatively: the real engines fed the right list, and the wrong one');
