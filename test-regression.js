@@ -669,6 +669,8 @@ const SUITES = [
   { label: 'Property workspace',                        cmd: 'node test-property-workspace.js' },
   { label: 'Property lifecycle',                        cmd: 'node test-property-lifecycle.js' },
   { label: 'Lifecycle stage — the portfolio is acquired only (P0.2)', cmd: 'node test-lifecycle-stage.js' },
+  { label: 'properties.data — server-owned keys survive a save (P4 preservation)', cmd: 'node test-property-data-preservation.js' },
+  { label: 'Acquire → open → save keeps acquisition provenance (e2e)', cmd: 'node test-e2e-acquire-preservation.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },
   { label: 'Dispute lifecycle',                         cmd: 'node test-dispute-lifecycle.js' },

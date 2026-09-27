@@ -26460,6 +26460,10 @@ async function selectProperty(id) {
     // applied here, so Property Information was demo-only by omission. Same
     // four-site shape as camRefusal above (Property Workspace V2, decision 5).
     property.info              = (data.info && typeof data.info === 'object') ? data.info : (property.info ?? null);
+    // The keys the server owns in properties.data (acquiredFrom, _p3Backfill,
+    // …). Carried onto the live record so every save writes them back; a load
+    // that did not report them (an older local copy) leaves what was there.
+    if (data._serverOwned && typeof data._serverOwned === 'object') property._serverOwned = data._serverOwned;
     // The demo's seed version, so a save from this session keeps the row at
     // its version and the next open does not re-seed it (demoPropFull).
     if (data._demoV != null)       property._demoV       = data._demoV;
@@ -26941,6 +26945,12 @@ function _stripBlobs(property) {
       invoiceDate: inv.invoiceDate,
       fileUrl:     inv.fileUrl,
       fileName:    inv.fileName,
+      // ACQUISITION PROVENANCE. acquire_property (migration 035) carries the
+      // episode's invoices onto the property stamped with the review they came
+      // from and when. This allow-list dropped both on the first save after the
+      // acquisition (Maple plaza, 2026-09-27). Carried, never interpreted.
+      sourceEpisodeId: inv.sourceEpisodeId,
+      acquiredAt:      inv.acquiredAt,
       // A BILLING BLOCK MUST NOT EVAPORATE ACROSS A RELOAD.
       //
       // matchInvoiceToTenant is the authority on whether an invoice names two
@@ -28474,6 +28484,10 @@ async function saveProperty(property) {
     const { id, name, totalSqft } = stripped;
 
     const data = {
+      // SERVER-OWNED KEYS FIRST, so the client-owned keys below still win and
+      // a key this client never writes (acquiredFrom, _p3Backfill) is carried
+      // back exactly as loadPropertyData read it. See PROPERTY_DATA_CLIENT_KEYS.
+      ..._serverOwnedDataKeys(stripped._serverOwned),
       invoices:          stripped.invoices          || [],
       disputes:          stripped.disputes          || [],
       camYear:           stripped.camYear           ?? null,
@@ -28601,6 +28615,39 @@ async function saveProperty(property) {
 // Schema version — increment when persisted shape changes in a breaking way.
 // Stored alongside saved data so loadPropertyData can run targeted migrations.
 const STATE_SCHEMA_VERSION = 1;
+
+// THE KEYS THE BROWSER OWNS IN properties.data — exactly the ones saveProperty
+// writes. Everything else in that column is SERVER-OWNED: written by a
+// migration or a database function (034's `_p3Backfill`, 035's `acquiredFrom`)
+// and never by this client.
+//
+// saveProperty used to rebuild the column from this list alone, so the first
+// ordinary save after an acquisition erased the provenance the database had
+// just written. Measured on Maple plaza, 2026-09-27: acquire_property wrote
+// data.acquiredFrom and stamped five invoices at 13:40:41Z; ensureInvoiceIds
+// minted ids on first open and the debounced save at 13:40:58Z rewrote the
+// blob without them. Since then loadPropertyData keeps the keys it does not
+// own under `_serverOwned`, and saveProperty writes them back FIRST, so the
+// client's keys still win and the server's keys still survive.
+//
+// properties.data stays what it has always been — the snapshot the browser
+// last saved — and does not become a second source of truth: the server-owned
+// keys are carried, never interpreted, and nothing here reads them.
+const PROPERTY_DATA_CLIENT_KEYS = Object.freeze([
+  'invoices', 'disputes', 'camYear', 'results', 'camReconciliation', 'camRefusal',
+  'settlement', 'aiDrafts', '_demoVersion', '_demoV', 'activityLog', 'timeline',
+  'tenants', 'escrowReserves', 'drawRequests', 'info',
+]);
+
+/** The server-owned part of a properties.data blob: every top-level key the client does not write. */
+function _serverOwnedDataKeys(blob) {
+  const out = {};
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return out;
+  Object.keys(blob).forEach(k => {
+    if (PROPERTY_DATA_CLIENT_KEYS.indexOf(k) === -1) out[k] = blob[k];
+  });
+  return out;
+}
 
 // Generation counter — only the most recent in-flight saveProperty may update
 // sync status. Stale completions (from rapidly-fired saves) silently discard.
@@ -28937,6 +28984,9 @@ async function loadPropertyData(id) {
         // The demo's seed version — see demoPropFull in ensureDemoProperty.
         _demoV:            d._demoV        ?? null,
         _demoVersion:      d._demoVersion  ?? null,
+        // Every key this client does not own (see PROPERTY_DATA_CLIENT_KEYS),
+        // kept whole so saveProperty can write it back untouched.
+        _serverOwned:      _serverOwnedDataKeys(d),
       };
       console.groupCollapsed('[PIPELINE:4] Supabase read');
       console.log('invoices[0]:', JSON.parse(JSON.stringify(dbData.invoices[0] || {})));
@@ -29104,6 +29154,9 @@ async function loadPropertyData(id) {
     info:              (dbData.info && typeof dbData.info === 'object') ? dbData.info : (base.info ?? null),
     _demoV:            dbData._demoV       ?? base._demoV       ?? null,
     _demoVersion:      dbData._demoVersion ?? base._demoVersion ?? null,
+    // Server-owned keys come from the database only: a local copy cannot know
+    // what a migration or database function wrote since it was taken.
+    _serverOwned:      _serverOwnedDataKeys(dbData._serverOwned),
   };
 
   // Run hydration guards — normalizes arrays, enforces canonical shapes, detects
