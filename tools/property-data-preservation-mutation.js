@@ -19,6 +19,7 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const APP  = 'script.js';
+const POS  = 'property-os.js';
 
 const MUTANTS = [
   { id: 'P01', file: APP, why: 'saveProperty forgets the server-owned keys (the Maple bug, verbatim)',
@@ -59,11 +60,47 @@ const MUTANTS = [
   { id: 'P12', file: APP, why: 'NEGATIVE CONTROL — the helper returns the whole blob for an array input',
     from: "  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return out;",
     to:   "  if (!blob || typeof blob !== 'object') return out;" },
+  // ── P5-0: the database is the base ───────────────────────────────────────
+  { id: 'M01', file: APP, why: 'P5-0: the old rule is back — a local copy with more tenants replaces the database roster',
+    from: "    tenants:           [...(dbData.tenants || []), ..._lsOnlyTenants],",
+    to:   "    tenants:           ((lsData.tenants || []).length > (dbData.tenants || []).length) ? lsData.tenants : [...(dbData.tenants || []), ..._lsOnlyTenants]," },
+  { id: 'M02', file: APP, why: 'P5-0: every local copy is treated as unsynced, so a stale copy adds its ghost rows',
+    from: "  const _lsUnsynced = lsData._unsynced === true;",
+    to:   "  const _lsUnsynced = true;" },
+  { id: 'M03', file: APP, why: 'P5-0: a flagged local copy re-adds tenants the database already has (no id dedupe)',
+    from: "    ? (lsData.tenants || []).filter(t => t && t.id && !_dbTenantIds.has(t.id))",
+    to:   "    ? (lsData.tenants || []).filter(t => t && t.id)" },
+  { id: 'M04', file: APP, why: 'P5-0: a flagged local copy re-adds invoices the database already has (no key dedupe)',
+    from: "    ? (lsData.invoices || []).filter(i => { const k = _invKey(i); return k && !_dbInvKeys.has(k); })",
+    to:   "    ? (lsData.invoices || []).filter(i => !!_invKey(i))" },
+  { id: 'M05', file: APP, why: 'P5-0: a failed write no longer flags the local copy, so the edit it holds is never recovered',
+    from: "    _lsMarkUnsynced(property?.id, true);",
+    to:   "    _lsMarkUnsynced(property?.id, false);" },
+  // ── P5-1: save only when dirty ───────────────────────────────────────────
+  { id: 'M06', file: APP, why: 'P5-1: the leaving flush is unconditional again — every navigation rewrites the previous property',
+    from: "    if (leavingProp && (_saveDebounceTimer || leavingProp._dirty === true)) {",
+    to:   "    if (leavingProp) {" },
+  { id: 'M07', file: APP, why: 'P5-1: backToPortfolio saves unconditionally again',
+    from: "      if (_saveDebounceTimer || prop._dirty === true) {",
+    to:   "      if (true) {" },
+  { id: 'M08', file: POS, why: 'P5-1: PropertyOS saves on open again whenever it minted an invoice id (the Maple write)',
+    from: "    try { ensureInvoiceIds(property); } catch (_) {}",
+    to:   "    try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}" },
+  { id: 'M09', file: APP, why: 'P5-1: edits no longer mark the record dirty, so a failed debounced save is never retried on leave',
+    from: "    prop._dirty = true;\n\n    // Debounce: collapse rapid successive saves",
+    to:   "\n    // Debounce: collapse rapid successive saves" },
+  { id: 'M10', file: APP, why: 'P5-1: a successful save no longer marks the record clean, so leaving writes a second identical copy',
+    from: "      property._dirty = false;\n      _lsMarkUnsynced(id, false);",
+    to:   "      _lsMarkUnsynced(id, false);" },
+  { id: 'M11', file: APP, why: 'P5-1: hydration marks the record dirty, so merely opening a property saves it on the way out',
+    from: "    if (data._serverOwned && typeof data._serverOwned === 'object') property._serverOwned = data._serverOwned;",
+    to:   "    if (data._serverOwned && typeof data._serverOwned === 'object') property._serverOwned = data._serverOwned;\n    property._dirty = true;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pdpmut-'));
 fs.cpSync(ROOT, tmp, { recursive: true, filter: (src) => { const rel = path.relative(ROOT, src); return !(rel === '.git' || rel.startsWith('.git' + path.sep) || rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)); } });
-const ORIGINAL = fs.readFileSync(path.join(ROOT, APP), 'utf8');
+const ORIGINAL = {};
+for (const f of [APP, POS]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const SUITES = ['test-property-data-preservation.js'];
 function runSuites() {
@@ -86,7 +123,7 @@ if (baseline.length) {
 let killed = 0, survived = 0;
 const survivors = [];
 for (const m of MUTANTS) {
-  let src = ORIGINAL;
+  let src = ORIGINAL[m.file];
   const anchors = [m].concat(m.also ? [m.also] : []);
   if (anchors.some(a => src.indexOf(a.from) === -1)) {
     console.log(`  ?  ${m.id} anchor not found in ${m.file} — the harness is stale, not the product`);
@@ -96,7 +133,7 @@ for (const m of MUTANTS) {
   anchors.forEach(a => { src = src.replace(a.from, a.to); });
   fs.writeFileSync(path.join(tmp, m.file), src);
   const failed = runSuites();
-  fs.writeFileSync(path.join(tmp, m.file), ORIGINAL);
+  fs.writeFileSync(path.join(tmp, m.file), ORIGINAL[m.file]);
   if (failed.length) { killed++; console.log(`  \x1b[32m☠\x1b[0m  ${m.id} killed by ${failed.join(', ')} — ${m.why}`); }
   else { survived++; survivors.push(m.id); console.log(`  \x1b[31m✗\x1b[0m  ${m.id} SURVIVED — ${m.why}`); }
 }

@@ -26357,9 +26357,15 @@ async function selectProperty(id) {
   // Save the property we're leaving — flush DOM values immediately (not debounced)
   // so edits made between the last keypress and navigation are not discarded when
   // resetWorkflow() cancels the pending debounce timer.
+  //
+  // P5-1 — ONLY IF THERE IS SOMETHING TO SAVE. Viewing a property must not
+  // rewrite its record: this flush ran unconditionally, so every navigation
+  // re-persisted whatever loading had normalised. It now runs when an edit
+  // marked the record dirty (savePropertyData) or a debounced write is still
+  // pending; a property that was only looked at is left exactly as it was read.
   if (activePropId && activePropId !== id) {
     const leavingProp = _props.find(p => p.id === activePropId);
-    if (leavingProp) {
+    if (leavingProp && (_saveDebounceTimer || leavingProp._dirty === true)) {
       await savePropertyData();      // syncs DOM → leavingProp in _props
       clearTimeout(_saveDebounceTimer);
       _saveDebounceTimer = null;
@@ -26568,12 +26574,19 @@ async function backToPortfolio() {
                         : lastResults.length ? 'reconciled'
                         : 'in-progress';
       rebuildDerivedState(prop);
-      // Cancel any pending debounce timer — we're saving now
-      clearTimeout(_saveDebounceTimer);
-      // Always flush to localStorage synchronously before navigating away
-      _lsSave(prop);
-      // Fire-and-forget the DB write
-      saveProperty(prop);
+      // P5-1 — write only a record that changed. The stats above are derived
+      // for the portfolio card and live in memory; the durable record is
+      // touched only when an edit marked it dirty or a debounced write is
+      // pending. Looking at a property and leaving writes nothing.
+      if (_saveDebounceTimer || prop._dirty === true) {
+        // Cancel any pending debounce timer — we're saving now
+        clearTimeout(_saveDebounceTimer);
+        _saveDebounceTimer = null;
+        // Always flush to localStorage synchronously before navigating away
+        _lsSave(prop);
+        // Fire-and-forget the DB write
+        saveProperty(prop);
+      }
     }
   }
 
@@ -27057,6 +27070,26 @@ function _lsSave(property) {
       setTimeout(() => _t.remove(), 8000);
     }
   }
+}
+
+/**
+ * P5-0 — is the local copy AHEAD of the database?
+ *
+ * saveProperty writes the local copy first and Supabase second. When the
+ * second write fails the local copy holds an edit the database never saw, and
+ * that is the one case loadPropertyData lets the local copy add rows to the
+ * database's tenants and invoices. The flag says so; a successful write clears
+ * it. It lives on the stored record, not on the live property, so a later
+ * _lsSave (which rewrites the record) starts every save with the flag absent.
+ */
+function _lsMarkUnsynced(propertyId, unsynced) {
+  if (!propertyId) return;
+  try {
+    const stored = JSON.parse(_lsGet(_lsUserKey()) || '{}');
+    if (!stored[propertyId]) return;
+    if (unsynced) stored[propertyId]._unsynced = true; else delete stored[propertyId]._unsynced;
+    _lsSet(_lsUserKey(), JSON.stringify(stored));
+  } catch (_) { /* the flag is advisory; a storage failure must not fail the save */ }
 }
 
 function _lsLoadAll() {
@@ -28543,6 +28576,10 @@ async function saveProperty(property) {
         .upsert({ id, ...payload, user_id: _u.id })
         .select('id');
       if (error) throw error;
+      // P5-1 / P5-0 — the record is on the server: nothing is pending, and the
+      // local copy is no longer ahead of the database.
+      property._dirty = false;
+      _lsMarkUnsynced(id, false);
     } else {
       const { data: { user } } = await db.auth.getUser();
       if (!user?.id) throw new Error('Not authenticated');
@@ -28552,6 +28589,7 @@ async function saveProperty(property) {
         .single();
       if (error) throw error;
       property.id = inserted.id;
+      property._dirty = false;
       _lsSave(property);
     }
 
@@ -28565,6 +28603,10 @@ async function saveProperty(property) {
   } catch (e) {
     const msg = e?.message || String(e);
     const isNetErr  = /load failed|failed to fetch|networkerror|offline/i.test(msg);
+
+    // P5-0 — the local copy written above is now AHEAD of the database. Say so,
+    // so the next load may add its rows; a later successful save clears it.
+    _lsMarkUnsynced(property?.id, true);
 
     // SEC-3 — the direct Supabase write does not go through _fetchWithTimeout,
     // so an expired JWT surfaces here as a PostgREST error rather than a 401.
@@ -28786,11 +28828,21 @@ async function savePropertyData() {
       camRuns:      camRuns.map(r => ({ ...r, timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp })),
     } : (prop.results ?? null);
 
+    // P5-1 — THIS IS WHERE A PROPERTY BECOMES DIRTY. Every edit path reaches
+    // this function (or calls saveProperty directly, which writes at once).
+    // Loading, normalising, minting invoice ids and appending status markers do
+    // not come through here, so viewing a property never marks it dirty — and
+    // the navigation flushes (selectProperty, backToPortfolio) write only a
+    // dirty record or a pending debounce. Cleared by saveProperty on success.
+    prop._dirty = true;
+
     // Debounce: collapse rapid successive saves (e.g. per-keystroke field edits)
     // into a single DB write 800 ms after the last call.
     _setSyncStatus('pending');
     clearTimeout(_saveDebounceTimer);
-    _saveDebounceTimer = setTimeout(() => saveProperty(prop), 800);
+    // The handle is cleared as the timer fires: a fired timer is not a pending
+    // one, and the navigation flushes read this handle as "a write is pending".
+    _saveDebounceTimer = setTimeout(() => { _saveDebounceTimer = null; saveProperty(prop); }, 800);
 
     // The advisor surface is DERIVED state — recompute it whenever the record
     // it describes changes.
@@ -29096,11 +29148,31 @@ async function loadPropertyData(id) {
     return dbData;
   }
 
-  // Tenant/invoice data: prefer whichever source has more (prevents stale DB
-  // from erasing a fresh upload that hasn't synced yet).
-  const dbCount = (dbData.tenants || []).length;
-  const lsCount = (lsData.tenants || []).length;
-  const base = lsCount > dbCount ? lsData : dbData;
+  // P5-0 — THE DATABASE IS THE RECORD. THE LOCAL COPY IS NOT A SECOND ONE.
+  //
+  // This used to take WHICHEVER side had more tenants as the base for tenants
+  // AND invoices, so a browser holding an older copy of the roster could
+  // promote it over the database and the next save wrote it back. The intent
+  // was narrower: keep an upload whose write to Supabase failed. That intent
+  // is kept exactly, and only that: saveProperty flags the local copy
+  // `_unsynced` when its write failed and clears the flag when one succeeds
+  // (_lsMarkUnsynced). A flagged copy contributes the rows the database does
+  // not have — by id for tenants, by id or (vendor, amount, date, file) for
+  // invoices — and nothing else. An unflagged copy, however rich, contributes
+  // nothing to tenants or invoices. Disputes and the timeline keep the union
+  // rule they already had.
+  const base = dbData;
+  const _lsUnsynced = lsData._unsynced === true;
+  const _dbTenantIds = new Set((dbData.tenants || []).map(t => t && t.id).filter(Boolean));
+  const _lsOnlyTenants = _lsUnsynced
+    ? (lsData.tenants || []).filter(t => t && t.id && !_dbTenantIds.has(t.id))
+    : [];
+  const _invKey = (i) => i ? (i.id != null ? 'id:' + i.id
+    : 'k:' + [i.vendorName, i.amount, i.invoiceDate, i.fileName].map(v => v == null ? '' : String(v)).join('|')) : null;
+  const _dbInvKeys = new Set((dbData.invoices || []).map(_invKey).filter(Boolean));
+  const _lsOnlyInvoices = _lsUnsynced
+    ? (lsData.invoices || []).filter(i => { const k = _invKey(i); return k && !_dbInvKeys.has(k); })
+    : [];
 
   // Disputes: DB is authoritative (tenant may have submitted from another device/session
   // since the landlord's last visit). Also include any LS-only entries that haven't
@@ -29123,7 +29195,7 @@ async function loadPropertyData(id) {
     : [..._dbTl, ..._lsTl.filter(e => !_dbTl.some(d => d && e && d.id === e.id))];
 
   console.groupCollapsed('[PIPELINE:4b] MERGE decision');
-  console.log('winner:', lsCount > dbCount ? 'localStorage' : 'supabase', { dbTenants: dbCount, lsTenants: lsCount, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
+  console.log('base: supabase', { dbTenants: (dbData.tenants || []).length, lsTenants: (lsData.tenants || []).length, lsUnsynced: _lsUnsynced, lsOnlyTenants: _lsOnlyTenants.length, lsOnlyInvoices: _lsOnlyInvoices.length, dbInvoices: (dbData.invoices||[]).length, lsInvoices: (lsData.invoices||[]).length });
   console.log('base.invoices[0]:', JSON.parse(JSON.stringify(base.invoices?.[0] || {})));
   console.log('[LANDLORD disputes]', { source: 'merge', dbDisputesLen: _dbDisps.length, lsDisputesLen: _lsDisps.length, lsOnlyLen: _lsOnlyDisps.length, mergedLen: _mergedDisps.length, dbDisputes: _dbDisps, lsDisputes: _lsDisps });
   console.log('[TIMELINE merge]', { source: 'db+ls', dbLen: _dbTl.length, lsLen: _lsTl.length, mergedLen: _mergedTl.length });
@@ -29134,6 +29206,8 @@ async function loadPropertyData(id) {
   // localStorage may lag behind or belong to a different session entirely.
   const merged = {
     ...base,
+    tenants:           [...(dbData.tenants || []), ..._lsOnlyTenants],
+    invoices:          [...(dbData.invoices || []), ..._lsOnlyInvoices],
     disputes:          _mergedDisps,
     timeline:          _mergedTl,
     results:           dbData.results           ?? base.results           ?? null,

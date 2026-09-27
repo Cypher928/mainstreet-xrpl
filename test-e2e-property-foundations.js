@@ -210,14 +210,17 @@ const INFO = {
   is(none.shown, 'null', 'a real property with no facts shows null — not the demo\'s Austin address');
   is(none.rowInfo, null, 'and its persisted row carries info: null, not a demo object');
 
-  // ══ 4 · the merge, with localStorage as the base ══════════════════════════
-  // loadPropertyData picks whichever side has MORE tenants as the merge base.
-  // Sections 1–3 only ever exercise the branch where Supabase is that base, on
-  // which `...base` already carries info and the explicit merge rule is never
-  // consulted. Here a local snapshot wins the tenant count (an unsynced upload)
-  // so the rule itself decides: Supabase's facts beat a stale local copy, and a
-  // local-only copy survives when the server has none.
-  sec('4 · the merge rule decides when localStorage is the base');
+  // ══ 4 · the merge: the database is the base (P5-0) ═════════════════════════
+  // loadPropertyData used to pick whichever side had MORE tenants as the merge
+  // base, so any richer local copy — stale or not — replaced the database's
+  // record. P5-0: the database row is the base. A local copy contributes only
+  // the tenants and invoices the database lacks, and only when it is flagged
+  // `_unsynced` (saveProperty sets the flag when a write fails and clears it
+  // when one succeeds). An unflagged copy, however rich, contributes nothing.
+  // The facts (info) are the database's in every case: recovering other
+  // client-owned keys from a flagged copy is outside P5-0's scope and is an
+  // open decision, pinned here as it stands so a change to it is visible.
+  sec('4 · the merge rule: the database is the base; a flagged local copy adds only what is missing');
   const snapshotFor = (id, info, extraTenant) => ({
     id, name: 'Elm Street Center', totalSqft: 12000, status: 'in-progress',
     tenantCount: 0, invoiceCount: 0, totalCAM: 0, openDisputes: 0,
@@ -247,26 +250,45 @@ const INFO = {
     return { tenants: (prop.tenants || []).map(t => t.suite), address: prop.info ? prop.info.address : null };
   }, id);
 
-  // 4a · the server has facts; the local snapshot has stale ones and one more tenant.
+  // A local copy flagged the way saveProperty flags one whose write failed.
+  const flagUnsynced = (id) => {
+    const key = _lsUserKey();
+    const stored = JSON.parse(localStorage.getItem(key) || '{}');
+    if (stored[id]) { stored[id]._unsynced = true; localStorage.setItem(key, JSON.stringify(stored)); }
+  };
+
+  // 4a · an UNFLAGGED local copy is richer (one more tenant, different facts): a stale cache, ignored.
   await p.evaluate((snapshot) => { _lsSave(snapshot); }, snapshotFor(PROP_ID, { address: 'STALE — 1 Old Road' }, UNSYNCED));
   await reloadApp();
   const stale = await openAndRead(PROP_ID);
-  is(stale.tenants, ['100', '110', '120'], 'localStorage was the merge base — its unsynced tenant is present');
-  is(stale.address, INFO.address, 'and Supabase’s facts still won: the stale local copy did not overwrite an edit made elsewhere');
+  is(stale.tenants, ['100', '110'], 'an unflagged local copy contributes nothing — the database roster stands, no ghost tenant');
+  is(stale.address, INFO.address, 'and Supabase’s facts won: the stale local copy did not overwrite an edit made elsewhere');
 
-  // 4b · the server has NO facts; the local snapshot is the only copy.
-  await p.evaluate((snapshot) => {
+  // 4b · a FLAGGED local copy (its write failed) holds a tenant the server never received.
+  await p.evaluate(({ snapshot, flag }) => {
+    _lsSave(snapshot);
+    eval(flag)(snapshot.id);
+  }, { snapshot: snapshotFor(PROP_ID, { address: 'STALE — 1 Old Road' }, UNSYNCED), flag: '(' + flagUnsynced.toString() + ')' });
+  await reloadApp();
+  const flagged = await openAndRead(PROP_ID);
+  is(flagged.tenants, ['100', '110', '120'], 'a flagged local copy adds the tenant the database lacks — and only that');
+  is(flagged.address, INFO.address, 'the facts are still the database’s: a flagged copy recovers tenants and invoices, not the other keys (P5-0 scope)');
+
+  // 4c · the server has NO facts and a flagged local copy has some: under P5-0 the
+  // database is still the base for info. Pinned as it stands — an open decision.
+  await p.evaluate(({ snapshot, flag }) => {
     const s = JSON.parse(localStorage.getItem('__mockdb') || '{}');
     const row = (s.properties || []).find(r => r.id === snapshot.id);
     row.data.info = null;                               // the server never received the facts
     row.data.tenants = (row.data.tenants || []).filter(t => t.suite !== '120');
     localStorage.setItem('__mockdb', JSON.stringify(s));
     _lsSave(snapshot);
-  }, snapshotFor(PROP_ID, { address: 'LOCAL ONLY — 9 New Way' }, UNSYNCED));
+    eval(flag)(snapshot.id);
+  }, { snapshot: snapshotFor(PROP_ID, { address: 'LOCAL ONLY — 9 New Way' }, UNSYNCED), flag: '(' + flagUnsynced.toString() + ')' });
   await reloadApp();
   const local = await openAndRead(PROP_ID);
-  is(local.tenants, ['100', '110', '120'], 'localStorage was the merge base again');
-  is(local.address, 'LOCAL ONLY — 9 New Way', 'and the local-only facts survived — the server having none is not a reason to lose them');
+  is(local.tenants, ['100', '110', '120'], 'the flagged copy’s tenant is recovered again');
+  is(local.address, null, 'and the facts are the database’s (none) — local-only facts are not recovered under P5-0 as scoped');
 
   sec('page errors');
   const real = errs.filter(e => !/cdnjs|jsdelivr|fonts|Failed to fetch|supabase|ResizeObserver/i.test(e));

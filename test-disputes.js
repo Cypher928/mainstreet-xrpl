@@ -142,10 +142,14 @@ function simulateMerge(dbData, lsData) {
   if (!dbData) return lsData;
   if (!lsData) return dbData;
 
-  // — verbatim from loadPropertyData merge —
-  const dbCount = (dbData.tenants || []).length;
-  const lsCount = (lsData.tenants || []).length;
-  const base = lsCount > dbCount ? lsData : dbData;
+  // — verbatim from loadPropertyData merge (P5-0: the database is the base;
+  //   the local copy adds tenants/invoices only when flagged _unsynced) —
+  const base = dbData;
+  const _lsUnsynced = lsData._unsynced === true;
+  const _dbTenantIds = new Set((dbData.tenants || []).map(t => t && t.id).filter(Boolean));
+  const _lsOnlyTenants = _lsUnsynced
+    ? (lsData.tenants || []).filter(t => t && t.id && !_dbTenantIds.has(t.id))
+    : [];
 
   const _dbDisps     = dbData.disputes || [];
   const _lsDisps     = lsData.disputes || [];
@@ -154,6 +158,7 @@ function simulateMerge(dbData, lsData) {
 
   const merged = {
     ...base,
+    tenants:           [...(dbData.tenants || []), ..._lsOnlyTenants],
     disputes:          _mergedDisps,
     results:           dbData.results           ?? base.results           ?? null,
     camReconciliation: dbData.camReconciliation ?? base.camReconciliation ?? null,
@@ -262,7 +267,8 @@ suite('TEST 3 — Merge preservation', ({ assert, assertEq }) => {
   const mergedDup = simulateMerge(dbAndLs, lsAlso);
   assertEq(mergedDup.disputes.length, 1, 'duplicate dispute not doubled in merge');
 
-  // When LS has MORE tenants, LS wins as base — but disputes still come from DB
+  // P5-0 — the database is the base however many tenants the local copy holds;
+  // disputes still come from DB ∪ LS-only.
   const dbFewer = makeProperty({ tenants: [{ id: TENANT_ID, tenant_name: 'T1', leased_sqft: 1000 }], disputes: [D1] });
   const lsMore  = makeProperty({
     tenants: [
@@ -272,8 +278,12 @@ suite('TEST 3 — Merge preservation', ({ assert, assertEq }) => {
     disputes: [], // LS is stale on disputes
   });
   const mergedBase = simulateMerge(dbFewer, lsMore);
-  assert(mergedBase.disputes.some(d => d.id === D1.id), 'DB dispute preserved even when LS wins as base by tenant count');
-  assertEq(mergedBase.tenants.length, 2, 'LS tenant list used as base (more tenants)');
+  assert(mergedBase.disputes.some(d => d.id === D1.id), 'DB dispute preserved when the local copy has more tenants');
+  assertEq(mergedBase.tenants.length, 1, 'an UNFLAGGED local copy adds no tenant, however many it holds (P5-0: database wins)');
+  // Only a local copy whose write to Supabase FAILED (flagged _unsynced) adds the rows the database lacks.
+  const lsUnsynced = Object.assign(makeProperty({ tenants: lsMore.tenants, disputes: [] }), { _unsynced: true });
+  const mergedUnsynced = simulateMerge(dbFewer, lsUnsynced);
+  assertEq(mergedUnsynced.tenants.map(t => t.id), [TENANT_ID, 't-extra'], 'a flagged local copy adds only the tenant the database does not have');
 });
 
 // ── TEST 4 — No invoice/results/activityLog wipe ─────────────────────────────

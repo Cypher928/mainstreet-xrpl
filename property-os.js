@@ -1242,7 +1242,14 @@ window.PropertyOS = (function () {
     if (!body || !property) return;
     injectStyles();
     // PW-1 — stamp ids and migrate positional links BEFORE anything reads them.
-    try { if (ensureInvoiceIds(property) && window.savePropertyData) window.savePropertyData(); } catch (_) {}
+    //
+    // P5-1 — IN MEMORY ONLY. This used to call savePropertyData when it had
+    // minted an id, so the first open of a property whose invoices arrived
+    // without ids (every invoice acquire_property carries) wrote the whole
+    // record back. Viewing a property must not rewrite it. The ids live on the
+    // in-memory invoices and persist with the next real edit — every action
+    // that references one (linking a record, a CAM run) is itself a save.
+    try { ensureInvoiceIds(property); } catch (_) {}
     // Collapse the first-run setup card once the building is configured.
     try { renderSetupSummary(property, opts); } catch (_) {}
     // And the lease intake block, once every lease in it has been reviewed.

@@ -23,7 +23,8 @@
  *
  *   PR-E2E-1  the deal is created through begin_acquisition (a prospect + episode)
  *   PR-E2E-2  Acquire runs ONE acquire_property call; the review is converted on the SAME property
- *   PR-E2E-3  opening the acquired property triggers the ordinary save (ensureInvoiceIds minted ids)
+ *   PR-E2E-3  opening the acquired property writes NOTHING (P5-1); ids are minted in memory; the
+ *             first edit through savePropertyData writes exactly one upsert
  *   PR-E2E-4  that save carried acquiredFrom and every invoice's sourceEpisodeId / acquiredAt
  *   PR-E2E-5  the client-owned keys are the client's (timeline has sync_restored; tenants normalised)
  *   PR-E2E-6  the row's own columns are untouched by the save (stage, acquired_at)
@@ -227,20 +228,29 @@ const F1 = 'ffffffff-0000-4000-8000-0000000000f1', F2 = 'ffffffff-0000-4000-8000
     assert(Array.isArray(after.inPortfolio) && after.inPortfolio.includes(deal.pid), 'PR-E2E-2: the portfolio was reloaded and holds the same property', JSON.stringify(after.inPortfolio));
     const provenance = { acquiredFrom: after.acquiredFrom, stamps: after.invoices.map(i => [i.sourceEpisodeId, i.acquiredAt]) };
 
-    // ── PR-E2E-3/4/5/6: open it, let the ordinary save run ─────────────────
-    section('PR-E2E-3..6: open the acquired property; the ordinary save runs; the provenance survives');
+    // ── PR-E2E-3/4/5/6: open it (nothing is written), then the first edit ──
+    section('PR-E2E-3..6: open the acquired property (no write); the first edit carries the provenance');
     await page.evaluate(async (pid) => { await selectProperty(pid); }, deal.pid);
+    await page.waitForTimeout(2200);     // well past the 800 ms debounce
+    const opened = await page.evaluate((pid) => {
+      const s = window.__e2eStore;
+      return { n: s.__upserts.filter(u => u.id === pid).length, minted: (invoiceData || []).length === 2 && invoiceData.every(i => /^inv-/.test(String(i.id))) };
+    }, deal.pid);
+    assert(opened.n === 0, 'PR-E2E-3 (P5-1): opening the property wrote NOTHING — ' + opened.n + ' upsert(s)', String(opened.n));
+    assert(opened.minted, 'PR-E2E-3: the invoice ids were minted in memory only', JSON.stringify(opened));
+    // the ordinary edit path: a field change goes through savePropertyData
+    await page.evaluate(() => { savePropertyData(); });
     await page.waitForFunction(() => window.__e2eStore.__upserts.length > 0, null, { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1200);     // past the 800 ms debounce, and any second save behind it
+    await page.waitForTimeout(600);
     const saved = await page.evaluate((pid) => {
       const s = window.__e2eStore; const prop = s.properties.find(p => p.id === pid);
       const ups = s.__upserts.filter(u => u.id === pid);
       return { n: ups.length, last: ups[ups.length - 1], row: { stage: prop.lifecycle_stage, acquired_at: prop.acquired_at, keys: Object.keys(prop.data).sort() },
                workflowVisible: (document.getElementById('mainWorkflow') || {}).style && document.getElementById('mainWorkflow').style.display !== 'none' };
     }, deal.pid);
-    assert(saved.n >= 1 && saved.last && saved.last.data, 'PR-E2E-3: opening the property triggered the ordinary save (' + saved.n + ' upsert(s))', JSON.stringify(saved.n));
+    assert(saved.n === 1 && saved.last && saved.last.data, 'PR-E2E-3: the first edit wrote exactly one upsert (' + saved.n + ')', JSON.stringify(saved.n));
     const d = (saved.last && saved.last.data) || {};
-    assert(Array.isArray(d.invoices) && d.invoices.length === 2 && d.invoices.every(i => /^inv-/.test(String(i.id))), 'PR-E2E-3: it was the ensureInvoiceIds save — every invoice now has a minted id', JSON.stringify(d.invoices));
+    assert(Array.isArray(d.invoices) && d.invoices.length === 2 && d.invoices.every(i => /^inv-/.test(String(i.id))), 'PR-E2E-3: the minted ids travelled with that save', JSON.stringify(d.invoices));
     assert(JSON.stringify(d.acquiredFrom) === JSON.stringify(provenance.acquiredFrom), 'PR-E2E-4: the upsert payload carries data.acquiredFrom exactly as the server wrote it', JSON.stringify(d.acquiredFrom));
     assert(d.invoices.every((i, k) => i.sourceEpisodeId === provenance.stamps[k][0] && i.acquiredAt === provenance.stamps[k][1]), 'PR-E2E-4: every invoice keeps sourceEpisodeId and acquiredAt', JSON.stringify(d.invoices.map(i => [i.sourceEpisodeId, i.acquiredAt])));
     assert(Array.isArray(d.timeline) && d.timeline.some(e => e.type === 'sync_restored') && Array.isArray(d.tenants) && d.tenants.length === 2 && d.tenants.every(x => 'reviewOverrides' in x) && d.tenants.map(x => x.id).sort().join() === [F1, F2].sort().join(),
