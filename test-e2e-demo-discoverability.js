@@ -31,6 +31,12 @@ const ROOT = __dirname, PORT = 8970;
 const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml', '.pdf':'application/pdf', '.png':'image/png' };
 const showroom = fs.readFileSync(path.join(ROOT, 'test-e2e-demo-showroom.js'), 'utf8');
 const DB = showroom.slice(showroom.indexOf('const DB = `') + 12, showroom.indexOf('`;', showroom.indexOf('const DB = `')));
+// Northgate's seed version, read from the seed itself (demo-northgate.js) so a
+// bump there is not also a literal to remember here — the same reason the
+// showroom suite reads Cascade's DEMO_VERSION out of script.js.
+const NG_SEED_V = Number((/const DEMO_VERSION = (\d+);/.exec(
+  fs.readFileSync(path.join(ROOT, 'demo-northgate.js'), 'utf8')) || [])[1]);
+if (!Number.isFinite(NG_SEED_V)) { console.error('could not read DEMO_VERSION from demo-northgate.js'); process.exit(2); }
 
 let pass = 0, fail = 0;
 const yes = (c, m, d) => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${m}`); } else { fail++; console.log(`  \x1b[31m✗\x1b[0m ${m}${d ? `\n      → ${d}` : ''}`); } };
@@ -397,7 +403,7 @@ const READ = `(() => {
              opened: currentProperty().name, live: lastResults.length };
   });
   is(STALE.before, { ngV: 0, results: 0 }, 'fixture: the stored row was aged and emptied');
-  is(STALE.afterNgV, 1, 'opening its card re-seeded it to the current version');
+  is(STALE.afterNgV, NG_SEED_V, `opening its card re-seeded it to the current version (v${NG_SEED_V})`);
   is(STALE.afterResults, 5, 'and restored the reconciliation the seed defines');
   is([STALE.opened, STALE.live], ['Northgate Exchange', 5], 'the property opened, with its five allocations');
 

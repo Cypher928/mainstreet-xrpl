@@ -42,7 +42,9 @@
   const CAM_YEAR     = 2025;
   // Bumping this re-seeds the property once for every user holding an older
   // copy, the same contract Cascade's _demoV carries.
-  const DEMO_VERSION = 1;
+  // v2: the stored row carries the six-space roster (data.tenants), so a
+  // database-first load shows the recorded vacancy.
+  const DEMO_VERSION = 2;
 
   const PROPERTY = {
     name:      'Northgate Exchange',

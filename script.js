@@ -22770,6 +22770,14 @@ async function ensureNorthgateDemo() {
     camYear:   CAM_YEAR,
     results:   null,
     camReconciliation: { ...camReconciliation, invoicesFull: undefined },
+    // THE ROSTER IS PART OF THE ROW. The six spaces — five leases and the
+    // recorded vacancy — used to exist only on the live object and its
+    // localStorage copy; the row carried none, so a load from the database
+    // fell back to the tenants table, which by design holds the five leases
+    // and never the vacant space. That only looked right while a richer
+    // localStorage copy could replace the database on load. The database is
+    // the base (P5-0), so the row must say what the building is.
+    tenants:   ngSpaces,
   };
 
   const { error: propErr } = await db.from('properties')
