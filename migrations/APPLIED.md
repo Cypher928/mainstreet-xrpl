@@ -3,13 +3,13 @@
 **Project:** Pilot Supabase project `bhmktujbxdbvdmpybmad` (www.mainstreet-review.com).
 **Read on:** 2026-09-26 from `supabase_migrations.schema_migrations` (33 rows, read-only;
 the 34th and 35th rows, 032 and 033, were applied later the same day by the work that wrote this file;
-the 36th row, 034, was applied on 2026-09-27).
+the 36th and 37th rows, 034 and 035, were applied on 2026-09-27).
 **Production** (`zhsuhehgehbzkmzurzyf`) is not described here and was not touched.
 
 This file is a record, not a tool. Nothing reads it. It answers one question for
 every migration Pilot has ever recorded: *which committed text produced it, and
 how does the recorded SQL differ from that text?* The next migration a person
-writes for Pilot takes number **035**; every number up to 034 is spoken for by
+writes for Pilot takes number **036**; every number up to 035 is spoken for by
 one of the two lineages below.
 
 ## Method
@@ -66,8 +66,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260926202507` | `032_resync_property_tenants_property_bound` | `migrations/032_resync_property_tenants_property_bound.sql` @ `2473da81` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim, header comments included | identical |
 | `20260926223919` | `033_property_lifecycle_integrity` | `migrations/033_property_lifecycle_integrity.sql` @ `516ef3a2` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim | identical |
 | `20260927032753` | `034_property_at_new_acquisition` | `migrations/034_property_at_new_acquisition.sql` @ `6c3eca61` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `bc755162…` on both sides) | identical |
+| `20260927132042` | `035_acquire_property` | `migrations/035_acquire_property.sql` @ `818c1804` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `69bde81d…` on both sides) | identical |
 
-Tally: 26 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally: 27 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -136,7 +137,7 @@ These files were applied through the SQL editor or the bundle
    copied from `claude/validation-runs-analysis-ji1zb3` (tip `5fdc98e`; blob
    ids listed above), and that branch was **not merged**. No applied
    file has been renamed or renumbered; Supabase keys history by version, so the
-   database never saw a collision. **The next free number is 035.**
+   database never saw a collision. **The next free number is 036.**
 2. **Phase 0 was applied out of filename order:** 024 before 023, and 029
    before 028. A replay by filename has not been exercised.
 3. **Since 033, `tenants.property_id` is immutable by trigger, a family is bound to one episode by
@@ -186,6 +187,29 @@ These files were applied through the SQL editor or the bundle
    write attribution is deferred to a separately reviewed identity/authorship
    migration.** 034 changed none of those keys, no child `user_id` semantics and
    no actor trigger.
+9. **Since 035 (P4), Acquire is a transition on the same property, never a
+   copy.** `acquire_property(property_id, review_id, snapshot)` is one SECURITY
+   DEFINER transaction: admin-only (`is_property_admin`), prospect and open
+   episode required, at least one leasehold, the client's integrity gate ported
+   structurally (no pending document, no unresolved extraction), the supplied
+   roster validated structurally (one row per leasehold of this review on this
+   property; no duplicate, missing, extra, cross-review or cross-property row;
+   a tenant row already under another property is never re-pointed). It then
+   moves the SAME `properties` row prospect → acquired through 033's setting,
+   upserts one `tenants` row per leasehold with `tenants.id = leasehold id`,
+   preserves `properties.data` while carrying the episode's invoices once
+   (`sourceEpisodeId`, `acquiredAt`) and storing the roster under
+   `data.tenants`, marks the review `converted` (status, `converted_at`,
+   `conversionRecord` naming the same property, one `converted` activity
+   entry), and writes exactly one `property_events` row. Lease terms are not
+   interpreted in SQL; the JavaScript resolver remains the only one. No
+   `properties` INSERT, no `tenants.leasehold_id`, no change to 032's resync,
+   to any composite key, to RLS, memberships, payments, settlement, XRPL or
+   auth. Applied 2026-09-27 with no data change (every table hash identical
+   before and after); the live rolled-back matrix passed 28/28 including two
+   injected mid-transaction failures that left nothing behind. The temporary
+   client guard on the legacy Acquire path stays in place until the in-place
+   path is proven in the browser.
 
 ## Decisions this manifest does not make
 

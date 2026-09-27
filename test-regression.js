@@ -555,6 +555,7 @@ const SUITES = [
   { label: 'Migration 032 binds a tenant to its property', cmd: 'node tools/verify-migration-032.js' },
   { label: 'Migration 033 lifecycle integrity (P2)',       cmd: 'node tools/verify-migration-033.js' },
   { label: 'Migration 034 property at new acquisition (P3)', cmd: 'node tools/verify-migration-034.js' },
+  { label: 'Migration 035 acquire_property (P4)',            cmd: 'node tools/verify-migration-035.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },
   { label: 'Demo invoice document contract',            cmd: 'node test-demo-invoices.js' },

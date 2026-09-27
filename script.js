@@ -31181,7 +31181,12 @@ function _acqNoLeaseholdsMessage(reviewId) {
 // list to load — it fails closed on the review row alone. A legacy review with
 // no property (the one orphaned converted review) is not affected.
 //
-// To be removed with P4.
+// P4: the guard now protects the LEGACY BRANCH of convertAcquisitionToProperty
+// only. A review that has its property is acquired in place through
+// acquire_property (migration 035), which inserts no property; the legacy
+// branch remains for the one kind of review that has none (an orphaned
+// converted review), and this guard is its assertion that no review with a
+// property can ever reach it.
 const _ACQ_LEGACY_ACQUIRE_UNAVAILABLE = 'Acquisition is temporarily unavailable while the new property lifecycle transition is being deployed. '
   + 'This review already has its property; it will be acquired in place, and nothing is created twice.';
 function _acqLegacyAcquireGuard(review) {
@@ -31189,14 +31194,13 @@ function _acqLegacyAcquireGuard(review) {
   return _ACQ_LEGACY_ACQUIRE_UNAVAILABLE;
 }
 
-// Why this review cannot be acquired yet — '' when it can. Conversion creates
+// Why this review cannot be acquired yet — '' when it can. Acquisition creates
 // one tenant per leasehold and nothing else, so it waits until every unmatched
 // extraction has been resolved by a person, and until the analysis it copies
-// onto the property describes the record as it now stands.
+// onto the property describes the record as it now stands. The same conditions
+// are enforced again inside acquire_property, structurally, on the server.
 function _acqConversionBlock(review) {
   if (!review) return 'No review is open.';
-  const legacyGuard = _acqLegacyAcquireGuard(review);
-  if (legacyGuard) return legacyGuard;
   const id = review.id;
   if (!_acqRecordLoaded(id)) return 'Loading MainStreet’s Record…';
   const u = _acqUnresolvedExtractions(id);
@@ -33207,9 +33211,120 @@ function _hideAcqConvertModal() {
   document.getElementById('acqConvertModal').style.display = 'none';
 }
 
+// ── P4 · Acquire in place ────────────────────────────────────────────────────
+//
+// A review that has its property (every review since migration 034) is
+// acquired by ONE database transaction, acquire_property (migration 035), on
+// the SAME property: prospect → acquired, tenants from the canonical
+// leaseholds, invoices carried once, the episode converted, one property
+// event. No property is built or inserted here, and after the call this
+// client writes nothing about the conversion — it adopts the row the server
+// returns. Lease terms are resolved HERE, by the one resolver
+// (AcquisitionTerms through AcquisitionLeasehold.tenantRowFor, via
+// _acqConversionReview); the server validates the roster's identity and shape
+// against the database and never interprets a term.
+//
+// The snapshot the server receives: the canonical roster, one row per
+// leasehold, each naming its leasehold, this property and this review; and
+// the analysis figures the conversion record keeps.
+function _acqAcquireSnapshot(review) {
+  const rows = (_acqConversionReview(review).data || {}).tenants || [];
+  const roster = rows.map(t => {
+    const fid = t._leaseholdId || t.id || null;
+    const o = {};
+    Object.keys(t).forEach(k => { if (k.charAt(0) !== '_') o[k] = t[k]; });
+    o.id          = fid;
+    o.family_id   = fid;
+    o.property_id = review.property_id;
+    o.review_id   = review.id;
+    return o;
+  });
+  const rentRoll = (review.data && review.data.analysis && review.data.analysis.rentRoll) || {};
+  return {
+    roster,
+    propertyName:           review.name || null,
+    occupancyAtAcquisition: rentRoll.occupancy != null ? rentRoll.occupancy : null,
+    waltAtAcquisition:      rentRoll.walt      != null ? rentRoll.walt      : null,
+  };
+}
+
+async function _acqAcquireInPlace(review) {
+  // THE GATE, with the record loaded: no unmatched extraction, no pending
+  // document, at least one leasehold, an analysis that describes the record
+  // as it stands. The server checks the structural half of this again.
+  await _acqEnsureRecord(review.id);
+  const _blocked = _acqConversionBlock(review);
+  if (_blocked) {
+    _hideAcqConvertModal();
+    alert(_blocked);
+    return;
+  }
+  const confirmBtn = document.getElementById('acqConvertConfirmBtn');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Acquiring…'; }
+  try {
+    const snapshot = _acqAcquireSnapshot(review);
+    const { data: result, error } = await db.rpc('acquire_property', {
+      p_property_id: review.property_id, p_review_id: review.id, p_snapshot: snapshot,
+    });
+    if (error) {
+      console.error('[acq] acquire_property refused:', error.code, error.message);
+      _hideAcqConvertModal();
+      alert('Acquisition failed.\n\n' + error.message);
+      return;
+    }
+    if (!result || result.ok !== true || result.property_id !== review.property_id) {
+      // The database answered without the acquired property. Nothing is
+      // assumed: the review stays as it is on screen until it is reloaded.
+      console.error('[acq] acquire_property returned no acquired property', result);
+      _hideAcqConvertModal();
+      alert('Acquisition failed.\n\nThe database did not confirm the acquired property.');
+      return;
+    }
+    // Adopt the server's row. No further conversion write from this client.
+    const srv = result.review || {};
+    review.status       = srv.status       || 'converted';
+    review.property_id  = srv.property_id  || review.property_id;
+    review.converted_at = srv.converted_at || result.converted_at || review.converted_at;
+    if (srv.data && typeof srv.data === 'object') review.data = srv.data;
+    if (srv.updated_at) { review.updated_at = srv.updated_at; _acqRevs.set(review.id, String(srv.updated_at)); }
+
+    const badge = document.getElementById('acqDetailBadge');
+    if (badge) { badge.textContent = 'converted'; badge.className = 'acq-detail-badge converted'; }
+    _renderAcqConvertAction(review);
+    _renderAcqStageChips(review);
+    _renderAcqSection(_acqReviews);
+    // The SAME property is now part of the portfolio: reload it from the
+    // database rather than pushing an object built here.
+    await _reloadPortfolioAfterLifecycleChange();
+    _hideAcqConvertModal();
+    console.log('[acq] acquired in place: review', review.id, '→ property', result.property_id,
+      '| tenants', result.tenants_written, '| invoices', result.invoices_carried, '| event', result.event_id);
+  } catch (e) {
+    console.error('[acq] _acqAcquireInPlace:', e.message);
+    alert('Acquisition failed.\n\n' + e.message);
+  } finally {
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Acquire Property'; }
+  }
+}
+
 async function convertAcquisitionToProperty() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+
+  // P4: a review that has its property is acquired IN PLACE — the same
+  // property becomes acquired. Everything below this line is the legacy
+  // copy-based path, reachable only for a review with no property.
+  if (review.property_id && review.status !== 'converted') {
+    return _acqAcquireInPlace(review);
+  }
+  // The temporary guard stays as the legacy branch's assertion: a review with a
+  // property must never be given a second one here.
+  const _legacyGuard = _acqLegacyAcquireGuard(review);
+  if (_legacyGuard) {
+    _hideAcqConvertModal();
+    alert(_legacyGuard);
+    return;
+  }
 
   // Duplicate prevention — but NOT when the duplicate no longer exists.
   //
