@@ -8918,6 +8918,9 @@
 <!-- Acquisition Review Phase 1 (P1-2): what may be written about a document and which columns a list asks for — pure; script.js writes it through the authenticated Supabase client, and migration 023's RLS and composite foreign key are what actually enforce ownership. -->
 <script src="acquisition-documents.js"></script>
 <!-- Acquisition Review Phase 1 (P1-4, P4-1): the 27 lease terms and the shape of what one document says about each — pure; script.js asks the server-owned acquisition_abstraction task and stores the result on the document row. -->
+<!-- P5-3: the "which decision stands" rule, shared by the acquisition resolver
+     and the Property Workspace. Pure; must load before acquisition-terms.js. -->
+<script src="decision-standing.js"></script>
 <script src="acquisition-terms.js"></script>
 <!-- Acquisition Review Phase 1 (P1-7, R-1/R-2): the buyer's five questions as a model, and that model drawn — both pure. The model is built from the P1-4 resolver and decides every state; the view renders it and decides nothing. Needs no CAM analysis and no invoices. -->
 <script src="acquisition-report.js"></script>

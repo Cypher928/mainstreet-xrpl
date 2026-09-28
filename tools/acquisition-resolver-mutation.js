@@ -73,6 +73,8 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const A = 'acquisition-terms.js';
+// P5-3: the standing-decision rule moved, verbatim, into decision-standing.js.
+const DS = 'decision-standing.js';
 const L = 'lease-intelligence.js';
 
 const MUTANTS = [
@@ -181,10 +183,10 @@ const MUTANTS = [
   { id: 'D01', file: A, why: 'a confirmation outranks the classification ceiling',
     from: "    if (term.ceiling === 'verified') {\n      term.state = 'verified';\n    } else {",
     to:   "    if (true) {\n      term.state = 'verified';\n    } else {" },
-  { id: 'D02', file: A, why: 'the earliest decision wins instead of the latest',
+  { id: 'D02', file: DS, why: 'the earliest decision wins instead of the latest',
     from: '    var last = rows[rows.length - 1];',
     to:   '    var last = rows[0];' },
-  { id: 'D03', file: A, why: 'reopening is ignored and the old decision stands',
+  { id: 'D03', file: DS, why: 'reopening is ignored and the old decision stands',
     from: "    return last.action === 'reopen' ? null : last;",
     to:   "    return last;" },
   { id: 'D04', file: A, why: 'a correction leaves a derived figure flagged derived',
@@ -193,7 +195,7 @@ const MUTANTS = [
   { id: 'D05', file: A, why: 'a rejection deletes what the document said',
     from: "      term.state = 'unclear';\n      term.note = 'A person rejected this reading.",
     to:   "      term.state = 'unclear';\n      term.value = null;\n      term.note = 'A person rejected this reading." },
-  { id: 'D06', file: A, why: 'a decision on one field settles every field',
+  { id: 'D06', file: DS, why: 'a decision on one field settles every field',
     from: '      return r && r.field_key === field && DECISION_ACTIONS.indexOf(r.action) >= 0;',
     to:   '      return r && DECISION_ACTIONS.indexOf(r.action) >= 0;' },
   { id: 'D07', file: A, why: 'a decision erases the contradiction it was made against',

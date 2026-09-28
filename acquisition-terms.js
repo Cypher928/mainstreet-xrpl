@@ -351,7 +351,14 @@
   // the documents, not weaker readings of one, and a ceiling never turns a
   // contradiction into agreement.
   var STATE_STRENGTH = { verified: 3, ai_extracted: 2, unclear: 1 };
-  var DECISION_ACTIONS = ['confirm', 'correct', 'reject', 'reopen'];
+  // THE ACTION VOCABULARY AND THE "WHICH DECISION STANDS" RULE live in
+  // decision-standing.js (P5-3), so the Property Workspace applies the same
+  // rule without loading this module or its reasoner. Dual-resolved like the
+  // reasoner below; the page loads decision-standing.js before this file.
+  var _DS = (root && root.DecisionStanding)
+         || (typeof require === 'function' ? require('./decision-standing.js') : null);
+  if (!_DS) throw new Error('acquisition-terms.js needs decision-standing.js loaded first');
+  var DECISION_ACTIONS = _DS.DECISION_ACTIONS;
   // What an entered term says about itself, everywhere it is shown (§4l).
   var ENTERED_NOTE = 'Entered by a person. No document on file supports it.';
 
@@ -478,17 +485,10 @@
 
   // ── The human decisions overlay ───────────────────────────────────────────
   /** The decision in force for a field: the latest one, unless it reopened. */
+  // The rule itself is DecisionStanding.standing (decision-standing.js); this
+  // name stays as the public API every caller and test already uses.
   function latestDecision(decisions, field) {
-    var rows = (Array.isArray(decisions) ? decisions : []).filter(function (r) {
-      return r && r.field_key === field && DECISION_ACTIONS.indexOf(r.action) >= 0;
-    });
-    if (!rows.length) return null;
-    rows.sort(function (a, b) {
-      var x = String(a.decided_at || ''), y = String(b.decided_at || '');
-      return x < y ? -1 : x > y ? 1 : 0;
-    });
-    var last = rows[rows.length - 1];
-    return last.action === 'reopen' ? null : last;
+    return _DS.standing(decisions, field);
   }
 
   // ── The ceiling: a term is never more settled than its document ───────────

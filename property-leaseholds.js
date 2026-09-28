@@ -41,9 +41,19 @@
  *
  * DECISIONS. Grouped per leasehold, oldest first, with a summary (count, last
  * decided_at, per-field latest) so a surface can say "N term decisions by a
- * person" and locate the one behind a value. The term VALUES the workspace
+ * person" and locate the one behind a value.
+ *
+ * WHAT STANDS (P5-3). acquisition_term_decisions is an append-only history —
+ * confirm, correct, reject, reopen — not a fact table. Per leasehold, `verified`
+ * is the projection of the decision that currently STANDS for each field, by
+ * the one rule the Acquisition Review itself applies (DecisionStanding.standing:
+ * known actions, decided_at ascending, the last row; a last reopen ⇒ none).
+ * A standing confirm or correct is a verified term; a correct with no source
+ * document is an entered one; a standing reject says the reading was rejected;
+ * a field whose last row is a reopen is open. The term VALUES the workspace
  * shows still come from the tenant row 035 wrote; this module does not
- * re-resolve terms (that is P5-3).
+ * re-resolve terms and never changes a shown value — matchesShown() only lets a
+ * surface SAY whether the shown value is the one that was decided.
  *
  * window.PropertyLeaseholds in the browser; module.exports for Node.
  */
@@ -53,6 +63,14 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : null, function () {
   'use strict';
+
+  // The standing rule, shared with acquisition-terms.js. Pure and dependency-
+  // free, so neither the Acquisition resolver nor its reasoner comes along.
+  // Dual-resolved like the Space file's read of this module: the browser has
+  // it on window; the server (the MCP hydrator) requires it.
+  var _DS = (typeof window !== 'undefined' && window.DecisionStanding)
+         || (typeof require === 'function' ? require('./decision-standing.js') : null);
+  if (!_DS) throw new Error('property-leaseholds.js needs decision-standing.js loaded first');
 
   // ── The columns the loader asks for. Never the document text or the
   //    abstracted evidence: those are read by the code that reasons from them,
@@ -161,6 +179,128 @@
     return { count: decisions.length, lastAt: lastAt, byField: byField, latestByField: latestByField };
   }
 
+  // ── P5-3: what a person decided, as the Space file may say it ──────────────
+
+  // The 27 term labels, as AcquisitionTerms.FIELD_META names them. A copy, not
+  // a require: the Property Workspace must not load the acquisition resolver.
+  // test-decision-standing.js holds the two side by side so they cannot drift.
+  var FIELD_LABELS = {
+    cap: 'CAM cap', cap_base_amount: 'Cap base amount', admin_fee_pct: 'Admin fee %',
+    gross_up_pct: 'Gross-up %', expense_stop: 'Expense stop', audit_rights: 'Audit rights',
+    pro_rata_method: 'Pro rata method', renewal_options: 'Renewal options', tenant_name: 'Tenant',
+    leased_sqft: 'Leased sq ft', start_date: 'Commencement', end_date: 'Expiration',
+    lease_type: 'Lease type', base_rent: 'Base rent', security_deposit: 'Security deposit',
+    suite: 'Suite', excluded_categories: 'Excluded categories', admin_fee_basis: 'Admin fee basis',
+    tenant_improvement_allowance: 'TI allowance', landlord_work: "Landlord's work",
+    guarantor_name: 'Guarantor', guaranty_limit: 'Guaranty limit', termination_rights: 'Termination rights',
+    expansion_rights: 'Expansion / ROFR', assignment_consent: 'Assignment consent',
+    exclusive_use: 'Exclusive use', co_tenancy: 'Co-tenancy',
+  };
+  // The fields FIELD_META types as number, money or percent: compared as
+  // quantities ('67,000' is 67000); every other field as trimmed text.
+  var NUMERIC_FIELDS = {
+    cap: 1, cap_base_amount: 1, admin_fee_pct: 1, gross_up_pct: 1, expense_stop: 1,
+    leased_sqft: 1, base_rent: 1, security_deposit: 1, tenant_improvement_allowance: 1, guaranty_limit: 1,
+  };
+  var ACTION_LABELS = { confirm: 'Confirmed', correct: 'Corrected', reject: 'Rejected', reopen: 'Reopened' };
+
+  function fieldLabel(field) { return FIELD_LABELS[field] || String(field || ''); }
+  function actionLabel(action) { return ACTION_LABELS[action] || String(action || ''); }
+
+  function _num(v) {
+    if (v == null || v === '') return NaN;
+    var s = String(v).replace(/[^0-9.\-]/g, '');
+    return s === '' || s === '-' || s === '.' ? NaN : Number(s);
+  }
+  /**
+   * Is the value a surface shows the one the standing decision fixed? Used to
+   * LABEL a row, never to change it. Quantities compare as numbers ('67,000' =
+   * 67000 = '67000.0'); anything else as trimmed, case-insensitive text. Two
+   * absent values do not match: a term nobody shows was not "verified as shown".
+   */
+  function matchesShown(field, decided, shown) {
+    if (decided == null || decided === '' || shown == null || shown === '') return false;
+    if (NUMERIC_FIELDS[field]) {
+      var a = _num(decided), b = _num(shown);
+      return !isNaN(a) && !isNaN(b) && a === b;
+    }
+    return String(decided).trim().toLowerCase() === String(shown).trim().toLowerCase();
+  }
+
+  /** The value a decision fixed: a correction's new value; a confirmation confirms the reading it was made on. */
+  function _decidedValue(d) {
+    if (!d) return null;
+    if (d.action === 'correct') return d.new_value == null ? null : d.new_value;
+    return d.previous_value == null ? (d.new_value == null ? null : d.new_value) : d.previous_value;
+  }
+
+  /**
+   * The document a decision cites, found BY ID among all of the property's
+   * document rows (a source may be superseded by now — it is still what was
+   * cited). It links only when it is live for this leasehold AND this user is
+   * its uploader (the P5-2 rule); otherwise the name is shown, unlinked.
+   */
+  function resolveSource(sourceDocumentId, docs, familyId, currentUid) {
+    if (!sourceDocumentId) return null;
+    var d = null;
+    for (var i = 0; i < docs.length; i++) { if (docs[i] && docs[i].id === sourceDocumentId) { d = docs[i]; break; } }
+    if (!d) return { id: sourceDocumentId, name: 'Document no longer on file', docType: null, live: false, url: null, uploadedByOther: false, missing: true };
+    var owner = pathOwner(d.storage_path);
+    var mine  = !!(owner && currentUid && owner === currentUid);
+    var live  = _isLiveFor(d, familyId);
+    return {
+      id: d.id, name: d.file_name || 'Document', docType: d.doc_type || null,
+      live: live, url: (live && mine) ? d.storage_path : null, uploadedByOther: !mine, missing: false,
+    };
+  }
+
+  /** One standing decision as a surface reads it. */
+  function _standingEntry(field, d, docs, familyId, currentUid) {
+    var verified = d.action === 'confirm' || d.action === 'correct';
+    return {
+      field: field, label: fieldLabel(field),
+      decisionId: d.id || null, action: d.action, actionLabel: actionLabel(d.action),
+      verified: verified,
+      rejected: d.action === 'reject',
+      entered: d.action === 'correct' && !d.source_document_id,
+      value: _decidedValue(d),
+      decidedBy: d.decided_by || null,
+      decidedAt: d.decided_at || d.created_at || null,
+      source: resolveSource(d.source_document_id, docs, familyId, currentUid),
+      sourcePage: d.source_page == null ? null : d.source_page,
+      sourceQuote: d.source_quote || null,
+      note: d.note || null,
+    };
+  }
+
+  /**
+   * The standing decisions of ONE leasehold, from its raw decision rows (already
+   * grouped by family_id and scoped to the property by build()).
+   * @returns {{ fields: object[], byField: object, openFields: string[], counts: object, lastAt: string|null }}
+   */
+  function standingDecisions(rawRows, docs, familyId, currentUid) {
+    var by = _DS.standingByField(rawRows);
+    var fields = [], byField = {}, open = [], lastAt = null;
+    var c = { decisions: 0, fieldsDecided: 0, fieldsVerified: 0, fieldsEntered: 0, fieldsRejected: 0, fieldsOpen: 0 };
+    (Array.isArray(rawRows) ? rawRows : []).forEach(function (r) {
+      if (!r || _DS.DECISION_ACTIONS.indexOf(r.action) < 0) return;
+      c.decisions++;
+      var at = r.decided_at || r.created_at || null;
+      if (at && (!lastAt || String(at) > String(lastAt))) lastAt = at;
+    });
+    Object.keys(by).forEach(function (field) {
+      c.fieldsDecided++;
+      var d = by[field];
+      if (!d) { open.push(field); c.fieldsOpen++; return; }
+      var e = _standingEntry(field, d, docs, familyId, currentUid);
+      fields.push(e); byField[field] = e;
+      if (e.verified) c.fieldsVerified++;
+      if (e.entered) c.fieldsEntered++;
+      if (e.rejected) c.fieldsRejected++;
+    });
+    return { fields: fields, byField: byField, openFields: open, counts: c, lastAt: lastAt };
+  }
+
   /**
    * The projection for ONE property.
    *
@@ -187,8 +327,17 @@
         .sort(function (a, b) { return _time(a.doc_date || a.created_at) - _time(b.doc_date || b.created_at); })
         .map(function (d) { return _documentEntry(d, uid); });
       var theirs = decs.filter(function (d) { return d.family_id === f.id; })
-        .sort(function (a, b) { return _time(a.decided_at || a.created_at) - _time(b.decided_at || b.created_at); })
-        .map(_decisionEntry);
+        .sort(function (a, b) { return _time(a.decided_at || a.created_at) - _time(b.decided_at || b.created_at); });
+      var history = theirs.map(function (d) {
+        // P5-3: every row, with its label, its action as a word, the value it
+        // fixed and the document it cited — the history a surface lists.
+        var e = _decisionEntry(d);
+        e.label = fieldLabel(e.fieldKey);
+        e.actionLabel = actionLabel(e.action);
+        e.value = _decidedValue(d);
+        e.source = resolveSource(d.source_document_id, docs, f.id, uid);
+        return e;
+      });
       byId[f.id] = {
         leaseholdId: f.id,
         propertyId:  propertyId,
@@ -196,12 +345,14 @@
                   tenantHint: f.tenant_hint || null, suiteHint: f.suite_hint || null,
                   reviewId: f.review_id || null, createdAt: f.created_at || null },
         documents: mine,
-        decisions: theirs,
-        decisionSummary: _decisionSummary(theirs),
+        decisions: history,
+        decisionSummary: _decisionSummary(history),
+        // P5-3: what currently STANDS per field, by the shared rule.
+        verified: standingDecisions(theirs, docs, f.id, uid),
       };
       ids.push(f.id);
       docCount += mine.length;
-      decCount += theirs.length;
+      decCount += history.length;
     });
 
     // Documents on the property that no leasehold shows: unfiled, or filed into
@@ -262,6 +413,10 @@
     SELECT: SELECT,
     FAMILY_COLUMNS: FAMILY_COLUMNS, DOCUMENT_COLUMNS: DOCUMENT_COLUMNS, DECISION_COLUMNS: DECISION_COLUMNS,
     pathOwner: pathOwner,
+    // P5-3
+    FIELD_LABELS: FIELD_LABELS, NUMERIC_FIELDS: NUMERIC_FIELDS,
+    fieldLabel: fieldLabel, actionLabel: actionLabel,
+    matchesShown: matchesShown, resolveSource: resolveSource, standingDecisions: standingDecisions,
     build: build,
     set: set, clear: clear, get: get, has: has, forTenant: forTenant,
     _reset: _reset,

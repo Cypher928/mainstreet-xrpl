@@ -12,7 +12,7 @@
  * every write.
  *
  *   LH-1  the workspace opens; Spaces shows the same five tenants, ShopRite 67,000, 77,500 leased
- *   LH-2  the ShopRite file: two acquisition documents on file, "Verified at acquisition — 3 term decisions"
+ *   LH-2  the ShopRite file: two acquisition documents on file, "Verified by you — 5 terms verified · 24 decisions"
  *   LH-3  a document another member uploaded is on file, without a link
  *   LH-4  Sunrise (an entered leasehold, no document) reads exactly as before
  *   LH-5  superseded and unfiled documents appear on no tenant
@@ -20,7 +20,16 @@
  *   LH-7  a property switch: the legacy property shows only its own lease document; nothing of Maple's leaks; its projection is empty
  *   LH-8  a prospect: nothing is read from the acquisition tables for it
  *   LH-9  another user's property: the membership scope returns nothing; no leasehold, no error
+ *   LH-11 P5-3 ShopRite: the Leased area row still reads 67,000; beneath it "Verified by you · Sep 26, 2026 · <amendment chip>";
+ *         the CAM cap line cites p. 1; the collapsed history lists 24 entries incl. a Rejected and a Reopened
+ *   LH-12 P5-3 Luxe: the Term row's Expiration line reads "Verified by you · Entered — no document on file"; 3 history entries
+ *   LH-13 P5-3 Sunrise and Coffee: no line, no history; Prime: one line decided by ANOTHER member reads "by a person"
+ *   LH-14 P5-3 a shown value edited after acquisition: the row shows the edited value; the line says "Verified at
+ *         acquisition as 67,000 … the value shown has changed since"; nothing is written
  *   LH-10 no page errors
+ *
+ * The decision fixtures are Maple's 27 live rows (test-decision-standing.js), decided by this user, plus one
+ * decision on Prime Wellness by another member.
  *
  *   node test-e2e-property-leaseholds.js
  */
@@ -55,9 +64,10 @@ const UID = 'e2e-test-user-id', OTHER_UID = 'someone-else-uid';
 const MAPLE = '3dc8a7b8-170c-4a51-b90d-dde831c56ca9', RV = '59af3e99-82dc-4a97-813b-21e4f956aca8';
 const LEGACY = 'aaaaaaaa-1111-4111-8111-00000000le9a', PROSPECT = 'bbbbbbbb-2222-4222-8222-0000000pr05p', FOREIGN = 'cccccccc-3333-4333-8333-00000000f0re';
 const F = { luxe: 'd1fb1d5a-aea0-4305-ad8e-82b14e9fee17', coffee: 'ae6f43fd-eb1e-469f-928e-0caa706914a7', prime: 'a4ded336-7195-42d1-9f90-d9f67c6d62d6', shoprite: '8b175124-98c2-46be-a44c-34d622378e44', sunrise: 'c99dda4d-b477-4098-a9e3-2af250a6b8af' };
+const { MAPLE_DECISIONS } = require('./test-decision-standing.js');
 const T = (id, name, sqft, extra) => Object.assign({ id, tenant_name: name, leased_sqft: sqft, lease_type: 'NNN', start_date: '2024-03-01', end_date: '2029-02-28', cap: null, flags: [], confidence: {}, review: {}, reviewOverrides: {} }, extra || {});
-const MAPLE_TENANTS = [T(F.luxe, 'Luxe Nails', '3000', { suite: 'A-1' }), T(F.coffee, 'Maple Coffee Co.', '3000', { suite: 'B-2' }), T(F.prime, 'Prime Wellness Spa', '4500', { suite: 'C-1' }), T(F.shoprite, 'ShopRite Supermarkets, Inc.', '67000', { suite: '100' }), T(F.sunrise, 'Sunrise Cafe & Bakery LLC', null, { suite: 'D-4' })];
-const tblRow = (t, pid) => ({ id: t.id, property_id: pid, name: t.tenant_name, sqft: t.leased_sqft == null ? null : Number(t.leased_sqft), cap: null, start_date: t.start_date || null, end_date: t.end_date || null, lease_url: t.leaseUrl || null, lease_type: t.lease_type || null });
+const MAPLE_TENANTS = [T(F.luxe, 'Luxe Nails', '3000', { suite: 'A-1', end_date: '2031-07-07' }), T(F.coffee, 'Maple Coffee Co.', '3000', { suite: 'B-2' }), T(F.prime, 'Prime Wellness Spa', '4500', { suite: 'C-1' }), T(F.shoprite, 'ShopRite Supermarkets, Inc.', '67000', { suite: '100', cap: '3' }), T(F.sunrise, 'Sunrise Cafe & Bakery LLC', null, { suite: 'D-4' })];
+const tblRow = (t, pid) => ({ id: t.id, property_id: pid, name: t.tenant_name, sqft: t.leased_sqft == null ? null : Number(t.leased_sqft), cap: t.cap == null ? null : Number(t.cap), start_date: t.start_date || null, end_date: t.end_date || null, lease_url: t.leaseUrl || null, lease_type: t.lease_type || null });
 const fam = (id, label, pid, rid) => ({ id, review_id: rid || RV, property_id: pid || MAPLE, user_id: UID, label, family_kind: 'lease', tenant_hint: label, suite_hint: null, created_at: '2026-09-22T15:13:23Z', updated_at: '2026-09-27T03:27:53Z' });
 const sp = (name, uid) => `leases/${uid || UID}/acq_${RV}_1789993792724-${name}`;
 const doc = (o) => Object.assign({ review_id: RV, property_id: MAPLE, user_id: UID, content_type: 'application/pdf', byte_size: 1000, doc_type_status: 'confirmed', confirmed_by: UID, superseded_by_document_id: null, doc_date: null, intake_kind: 'lease', parsing_status: 'success' }, o);
@@ -95,13 +105,11 @@ const FIX = {
     doc({ id: 'doc-prospect', review_id: 'rev-prospect', property_id: PROSPECT, file_name: 'Prospect_Lease.pdf', storage_path: sp('Prospect_Lease.pdf'), family_id: 'pppppppp-0000-4000-8000-000000000001', family_status: 'confirmed', doc_type: 'original_lease', confirmed_at: '2026-09-01T00:00:00Z', created_at: '2026-09-01T00:00:00Z' }),
     doc({ id: 'doc-foreign', review_id: 'rev-foreign', property_id: FOREIGN, user_id: OTHER_UID, file_name: 'Foreign_Lease.pdf', storage_path: sp('Foreign_Lease.pdf', OTHER_UID), family_id: 'for-t1', family_status: 'confirmed', doc_type: 'original_lease', confirmed_at: '2026-02-01T00:00:00Z', created_at: '2026-02-01T00:00:00Z' }),
   ],
-  acquisition_term_decisions: [
-    { id: 'dec-shop-1', review_id: RV, property_id: MAPLE, user_id: UID, family_id: F.shoprite, field_key: 'leased_sqft', action: 'confirm', previous_value: null, new_value: '65000', source_document_id: '3fc9463f-230e-424c-8bba-7dfacafd6a98', source_quote: null, source_page: null, decided_by: UID, decided_at: '2026-09-25T10:00:00Z', note: null, created_at: '2026-09-25T10:00:00Z' },
-    { id: 'dec-shop-2', review_id: RV, property_id: MAPLE, user_id: UID, family_id: F.shoprite, field_key: 'cap', action: 'confirm', previous_value: null, new_value: '4', source_document_id: null, source_quote: null, source_page: null, decided_by: UID, decided_at: '2026-09-25T10:01:00Z', note: null, created_at: '2026-09-25T10:01:00Z' },
-    { id: 'ac6c910d-0cd8-40b4-9587-955cb4f215ec', review_id: RV, property_id: MAPLE, user_id: UID, family_id: F.shoprite, field_key: 'leased_sqft', action: 'correct', previous_value: '65000', new_value: '67000', source_document_id: 'e6a60a25-0c1f-4759-b135-7ed0bcfd67bf', source_quote: null, source_page: null, decided_by: UID, decided_at: '2026-09-26T16:51:27Z', note: null, created_at: '2026-09-26T16:51:29Z' },
-    { id: 'd045e5e7-58a2-4561-9bce-26aaa6fd54ed', review_id: RV, property_id: MAPLE, user_id: UID, family_id: F.luxe, field_key: 'end_date', action: 'correct', previous_value: null, new_value: '2031-07-07', source_document_id: null, source_quote: null, source_page: null, decided_by: UID, decided_at: '2026-09-25T23:29:00Z', note: 'Entered by a person. No document on file supports it.', created_at: '2026-09-25T23:29:00Z' },
+  acquisition_term_decisions: MAPLE_DECISIONS.map(r => Object.assign({}, r, { user_id: UID, decided_by: UID })).concat([
+    // One decision by ANOTHER member, on Prime Wellness: the line must say "a person", never "you".
+    { id: 'dec-prime-other', review_id: RV, property_id: MAPLE, user_id: OTHER_UID, family_id: F.prime, field_key: 'lease_type', action: 'confirm', previous_value: 'NNN', new_value: null, source_document_id: 'ebc3f7b1-69cc-431a-8beb-9c123b07265d', source_quote: null, source_page: 2, decided_by: OTHER_UID, decided_at: '2026-09-26T00:07:00Z', note: null, created_at: '2026-09-26T00:07:00Z' },
     { id: 'dec-foreign', review_id: 'rev-foreign', property_id: FOREIGN, user_id: OTHER_UID, family_id: 'for-t1', field_key: 'cap', action: 'confirm', new_value: '5', decided_by: OTHER_UID, decided_at: '2026-02-01T00:00:00Z', created_at: '2026-02-01T00:00:00Z' },
-  ],
+  ]),
 };
 
 // The stand-in. Rows cross as JSON; membership RLS is emulated (this user is a
@@ -165,7 +173,7 @@ const SUPABASE_MOCK = `
 (async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: HEADLESS, executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-  const page = await (await browser.newContext()).newPage();
+  const page = await (await browser.newContext({ timezoneId: 'UTC' })).newPage();
   const pageErrors = [];
   page.on('pageerror', e => pageErrors.push(e.message));
   await page.route('**/supabase-js**', r => r.fulfill({ status: 200, contentType: 'application/javascript', body: '/* cdn suppressed */' }));
@@ -183,11 +191,16 @@ const SUPABASE_MOCK = `
     return page.evaluate(() => {
       const o = document.getElementById('tsOverlay');
       const lease = o.querySelector('.ts-lease') || o;
-      const chips = Array.from(o.querySelectorAll('.ts-lease .ts-doc, .ts-lease [data-doc-url]'));
+      const chips = Array.from(o.querySelectorAll('.ts-lease .ts-doc, .ts-lease [data-doc-url]:not(.ts-acq-src)'));
       const uniq = []; chips.forEach(c => { if (!uniq.includes(c)) uniq.push(c); });
       return {
         chips: uniq.map(c => ({ name: (c.querySelector('.ts-doc-name') || {}).textContent || c.textContent.trim(), linked: c.hasAttribute('data-doc-url') || c.tagName === 'A', other: /uploaded by another member/.test(c.textContent) })),
         verified: (o.querySelector('.ts-acq-verified') || {}).textContent || null,
+        // P5-3: the line beneath each term, and the collapsed history.
+        lines: Array.from(o.querySelectorAll('.ts-acq-line')).map(l => ({ field: l.getAttribute('data-field'), text: l.textContent.replace(/\s+/g, ' ').trim(), linked: !!l.querySelector('[data-doc-url]'), plainSrc: !!l.querySelector('.ts-acq-src--plain') })),
+        historySummary: (o.querySelector('.ts-acq-history > summary') || {}).textContent || null,
+        history: Array.from(o.querySelectorAll('.ts-acq-h')).map(h => Array.from(h.children).map(c => c.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ')),
+        rows: Array.from(o.querySelectorAll('.ts-lease-row')).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
         noDocMsg: /Lease terms are on file but the document is not/.test(o.textContent),
         text: o.textContent,
       };
@@ -219,25 +232,25 @@ const SUPABASE_MOCK = `
     // normalizeTenant's cleanTenantName trims a trailing period (pre-existing, P5 trace §9) — the name is matched without it.
     assert(L1.shop && /^ShopRite Supermarkets, Inc\.?$/.test(L1.shop.tenant) && L1.shop.sqft === 67000, 'LH-1: ShopRite is 67,000 sq ft', JSON.stringify(L1.shop));
     assert(/77,500 sq ft leased/.test(L1.summary), 'LH-1: the Spaces summary says 77,500 sq ft leased', L1.summary.slice(0, 120));
-    is([L1.fams, L1.docs, L1.decs], [5, 5, 4], 'LH-1: the projection for Maple: 5 leaseholds, 5 documents on file, 4 decisions');
+    is([L1.fams, L1.docs, L1.decs], [5, 5, 28], 'LH-1: the projection for Maple: 5 leaseholds, 5 documents on file, 28 decisions (the 27 live rows + one by another member)');
 
     section('LH-2: the ShopRite file remembers its documents and its verification');
     const S = await openFile(F.shoprite);
     is(S.chips.map(c => c.name), ['ShopRite_Anchor_Tenant_Lease.pdf', 'Maple_Plaza_Test_Lease_Amendment.pdf'], 'LH-2: two acquisition documents on file — the renewal lease and the amendment; the replaced old scan is not among them');
     assert(S.chips.every(c => c.linked && !c.other), 'LH-2: both link (this user uploaded them)', JSON.stringify(S.chips));
-    assert(/Verified at acquisition — 3 term decisions by a person/.test(S.verified || ''), 'LH-2: "Verified at acquisition — 3 term decisions by a person"', S.verified);
+    assert(/^Verified by you — 5 terms verified · 24 decisions, last Sep 26, 2026$/.test(S.verified || ''), 'LH-2: "Verified by you — 5 terms verified · 24 decisions, last Sep 26, 2026" — 24 events, FIVE standing verified terms (not 24)', S.verified);
     assert(!S.noDocMsg, 'LH-2: the "document is not on file" message is gone');
     assert(/67,000 sqft|67000 sqft/.test(S.text), 'LH-2: the leased area row still reads 67,000');
 
     section('LH-3: a document another member uploaded is on file, without a link');
     const LX = await openFile(F.luxe);
     is(LX.chips.map(c => [c.name, c.linked, c.other]), [['Luxe_Nails_Lease.pdf', false, true]], 'LH-3: Luxe\'s lease is listed, unlinked, labelled as another member\'s upload');
-    assert(/1 term decision by a person/.test(LX.verified || ''), 'LH-3: Luxe: 1 term decision by a person', LX.verified);
+    assert(/^Verified by you — 1 term verified · 3 decisions, last Sep 25, 2026$/.test(LX.verified || ''), 'LH-3: Luxe: "1 term verified · 3 decisions" (correct → reopen → correct is one standing term)', LX.verified);
 
     section('LH-4: an entered leasehold with no document reads exactly as before');
     const SR = await openFile(F.sunrise);
     is(SR.chips.length, 0, 'LH-4: Sunrise: no document chip');
-    assert(SR.verified === null, 'LH-4: no verification line (no decision was recorded)');
+    assert(SR.verified === null && SR.lines.length === 0 && SR.historySummary === null, 'LH-4: no verification line, no term line, no history (no decision was recorded)');
     assert(SR.noDocMsg, 'LH-4: the "terms on file but the document is not" message is still there');
 
     section('LH-5: superseded and unfiled documents appear on no tenant');
@@ -245,6 +258,35 @@ const SUPABASE_MOCK = `
     is(PR.chips.map(c => c.name), ['Prime_Wellness_Spa_Lease.pdf'], 'LH-5: Prime Wellness shows ONE live lease, not the two superseded copies');
     const anySafe = await page.evaluate((ids) => ids.some(id => { TenantSpace.closeSpace(); TenantSpace.openSpace(id); const o = document.getElementById('tsOverlay'); const hit = /SafeShield/.test(o.textContent); return hit; }), Object.values(F));
     assert(!anySafe, 'LH-5: the unfiled SafeShield file is on no tenant\'s file');
+
+    section('LH-11: P5-3 — the ShopRite file says what a person verified, beneath the value it did not change');
+    const S11 = await openFile(F.shoprite);
+    assert(S11.rows.some(r => /^Leased area ?67000 sqft$/.test(r)), 'LH-11: the Leased area row still reads the tenant row\'s 67000 sqft (the value is not replaced)', JSON.stringify(S11.rows));
+    const sqLine = S11.lines.find(l => l.field === 'leased_sqft');
+    assert(sqLine && /^Verified by you · Sep 26, 2026 · Maple_Plaza_Test_Lease_Amendment\.pdf$/.test(sqLine.text) && sqLine.linked, 'LH-11: beneath it "Verified by you · Sep 26, 2026 · Maple_Plaza_Test_Lease_Amendment.pdf", the document a linked chip (this user uploaded it)', JSON.stringify(sqLine));
+    const capLine = S11.lines.find(l => l.field === 'cap');
+    assert(capLine && /^Verified by you · Sep 22, 2026 · Maple_Plaza_Test_Lease_Amendment\.pdf · p\. 1$/.test(capLine.text) && capLine.linked, 'LH-11: the CAM cap row\'s line cites the amendment, p. 1', JSON.stringify(capLine));
+    is(S11.lines.map(l => l.field).sort(), ['cap', 'leased_sqft'], 'LH-11: lines only for the rows the file shows AND a person decided (lease type, commencement, expiration were never decided — no line)');
+    is(S11.historySummary, 'Verified history (24)', 'LH-11: the collapsed history is titled "Verified history (24)"');
+    is(S11.history.length, 24, 'LH-11: …and lists all 24 events');
+    assert(/^Sep 26, 2026 Corrected Leased sq ft 65,000 → 67,000 Maple_Plaza_Test_Lease_Amendment\.pdf$/.test(S11.history[0]), 'LH-11: newest first: "Sep 26, 2026 · Corrected · Leased sq ft · 65,000 → 67,000 · the amendment"', S11.history[0]);
+    assert(S11.history.some(h => /Rejected Audit rights/.test(h)) && S11.history.some(h => /Reopened Security deposit/.test(h)) && S11.history.some(h => /Confirmed Suite Anchor Unit A-1 ShopRite_Anchor_Tenant_Lease\.pdf · p\. 1/.test(h)), 'LH-11: the history includes the Rejected audit rights, the Reopened security deposit and the confirmed Suite with its page', JSON.stringify(S11.history));
+    assert(S11.history.some(h => /Corrected Admin fee % 10 Entered by a person\. No document on file supports it\./.test(h)), 'LH-11: an entered correction carries its note in the history');
+    assert(!/e2e-test-user-id|someone-else-uid/.test(S11.text), 'LH-11: no uid is rendered anywhere on the file');
+
+    section('LH-12: P5-3 — Luxe: an entered expiration');
+    const L12 = await openFile(F.luxe);
+    const expLine = L12.lines.find(l => l.field === 'end_date');
+    assert(expLine && /^Expiration Verified by you · Entered — no document on file · Sep 25, 2026$/.test(expLine.text) && !expLine.linked, 'LH-12: the Term row\'s Expiration line: "Verified by you · Entered — no document on file · Sep 25, 2026"', JSON.stringify(expLine));
+    is([L12.lines.length, L12.historySummary, L12.history.length], [1, 'Verified history (3)', 3], 'LH-12: one line; three history entries (correct → reopen → correct)');
+    assert(/^Sep 25, 2026 Corrected Expiration 2031-07-07 Entered by a person/.test(L12.history[0]) && /Reopened Expiration/.test(L12.history[1]), 'LH-12: the history reads Corrected · Reopened · Corrected, newest first', JSON.stringify(L12.history));
+
+    section('LH-13: P5-3 — nothing for the undecided; "a person" for another member\'s decision');
+    const S13 = await openFile(F.sunrise), C13 = await openFile(F.coffee), P13 = await openFile(F.prime);
+    is([S13.lines.length, S13.historySummary, S13.verified, C13.lines.length, C13.historySummary, C13.verified], [0, null, null, 0, null, null], 'LH-13: Sunrise and Coffee: no line, no history, no summary');
+    const ltLine = P13.lines.find(l => l.field === 'lease_type');
+    assert(ltLine && /^Verified by a person · Sep 26, 2026 · Prime_Wellness_Spa_Lease\.pdf · p\. 2$/.test(ltLine.text) && ltLine.linked, 'LH-13: Prime\'s Lease type line — decided by ANOTHER member — says "by a person" (never "you"); the document chip links (this user uploaded it)', JSON.stringify(ltLine));
+    assert(/^Verified by a person — 1 term verified · 1 decision, last Sep 26, 2026$/.test(P13.verified || ''), 'LH-13: Prime\'s summary says "by a person"', P13.verified);
 
     section('LH-6: open → leave → reopen → open the file: zero writes');
     await page.evaluate(() => TenantSpace.closeSpace());
@@ -295,6 +337,18 @@ const SUPABASE_MOCK = `
       return { fams: b.familyCount, docs: b.documentCount, decs: b.decisionCount, tenant: window.PropertyLeaseholds.forTenant(pid, 'for-t1'), data: d === null ? 'null' : typeof d };
     }, { pid: FOREIGN, uid: UID });
     is([fo.fams, fo.docs, fo.decs, fo.tenant], [0, 0, 0, null], 'LH-9: the foreign property\'s families, documents and decisions are invisible; no leasehold resolves');
+
+    section('LH-14: P5-3 — a value edited after acquisition is shown as it is; the line says so');
+    await openProp(MAPLE);
+    const writesBefore14 = await writes();
+    await page.evaluate((shop) => { const t = currentProperty().tenants.find(x => x.id === shop); t.__was = t.leased_sqft; t.leased_sqft = '70000'; }, F.shoprite);
+    const S14 = await openFile(F.shoprite);
+    const edited = S14.lines.find(l => l.field === 'leased_sqft');
+    assert(S14.rows.some(r => /^Leased area ?70000 sqft$/.test(r)), 'LH-14: the row shows the EDITED value, 70000 — the decision never replaces it', JSON.stringify(S14.rows));
+    assert(edited && /^Verified at acquisition as 67,000 by you · Sep 26, 2026 · Maple_Plaza_Test_Lease_Amendment\.pdf · the value shown has changed since$/.test(edited.text) && edited.linked, 'LH-14: the line: "Verified at acquisition as 67,000 by you · Sep 26, 2026 · <amendment> · the value shown has changed since"', JSON.stringify(edited));
+    assert(/^Verified by you — 5 terms verified · 24 decisions/.test(S14.verified || ''), 'LH-14: the summary is unchanged (the decision still stands; the shown value is what moved)', S14.verified);
+    await page.evaluate((shop) => { TenantSpace.closeSpace(); const t = currentProperty().tenants.find(x => x.id === shop); t.leased_sqft = t.__was; delete t.__was; }, F.shoprite);
+    is((await writes()) - writesBefore14, 0, 'LH-14: reading the file wrote nothing');
 
     section('LH-10: page errors');
     const real = pageErrors.filter(e => !/cdnjs|jsdelivr|fonts|Failed to fetch|supabase|ResizeObserver/i.test(e));

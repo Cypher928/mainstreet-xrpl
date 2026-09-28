@@ -8,8 +8,12 @@
  * its leasehold during the acquisition and says a person verified the terms —
  * joined on tenants.id = families.id, scoped to THIS property, live and
  * confirmed documents only, links only for the uploader, and nothing written.
+ * P5-3 (V01..V13): what STANDS per field is the last known-action decision by
+ * decided_at (a last reopen ⇒ nothing), computed per leasehold; a correct's
+ * value is its new value; a source resolves by id; the shown value is never
+ * replaced and a line says when it differs; "by you" only for the signed-in uid.
  * Each mutant is a one-token edit that breaks one leg. Every one must be
- * caught by the unit suite or the browser suite.
+ * caught by the unit suites or the browser suite.
  *
  * A FAILING BASELINE IS NOT A PASS.
  */
@@ -17,7 +21,7 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js';
+const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js', DS = 'decision-standing.js';
 
 const MUTANTS = [
   { id: 'L01', file: PL, why: 'the join is by tenant NAME instead of id — two "Vacant" leaseholds share documents',
@@ -50,9 +54,9 @@ const MUTANTS = [
   { id: 'L10', file: APP, why: 'the loader filters on user_id — an organisation member loses the read',
     from: "      db.from('acquisition_document_families').select(PL.SELECT.families).eq('property_id', propertyId).order('created_at', { ascending: true }),",
     to:   "      db.from('acquisition_document_families').select(PL.SELECT.families).eq('property_id', propertyId).eq('user_id', currentUid).order('created_at', { ascending: true })," },
-  { id: 'L11', file: TS, why: 'the verification line is shown with zero decisions',
-    from: "    var acqLineHtml = (_lhSum && _lhSum.count > 0)",
-    to:   "    var acqLineHtml = (_lhSum && _lhSum.count >= 0)" },
+  { id: 'L11', file: TS, why: 'the verification summary (and history) is shown with zero decisions',
+    from: "    if (_lhC && _lhC.decisions > 0) {",
+    to:   "    if (_lhC) {" },
   // EQUIVALENT BY CONSTRUCTION, kept as documentation. The map is keyed by
   // property uuid and set() refuses a projection built for another property
   // (L14), so an entry whose propertyId differs from its key cannot exist and
@@ -78,16 +82,56 @@ const MUTANTS = [
   { id: 'L17', file: TS, why: 'NEGATIVE CONTROL — the records count text starts counting lease documents (scope creep P5-2 deferred)',
     from: "    if (c.events) bits.push(c.events + ' event' + (c.events !== 1 ? 's' : ''));",
     to:   "    if (c.events) bits.push(c.events + ' event' + (c.events !== 1 ? 's' : ''));\n    if (c.leaseDocs) bits.push(c.leaseDocs + ' lease docs');" },
+  // ── P5-3: what stands ─────────────────────────────────────────────────────
+  { id: 'V01', file: DS, why: 'a latest REOPEN is counted as the standing decision',
+    from: "    return last.action === 'reopen' ? null : last;",
+    to:   "    return last;" },
+  { id: 'V02', file: PL, why: 'a standing REJECT is presented as verified',
+    from: "    var verified = d.action === 'confirm' || d.action === 'correct';",
+    to:   "    var verified = d.action === 'confirm' || d.action === 'correct' || d.action === 'reject';" },
+  { id: 'V03', file: DS, why: 'rows are ordered by created_at instead of decided_at',
+    from: "      var x = String(a.decided_at || ''), y = String(b.decided_at || '');",
+    to:   "      var x = String(a.created_at || ''), y = String(b.created_at || '');" },
+  { id: 'V04', file: PL, why: 'standing is computed across ALL of the property\'s decisions, not this leasehold\'s',
+    from: "        verified: standingDecisions(theirs, docs, f.id, uid),",
+    to:   "        verified: standingDecisions(decs, docs, f.id, uid)," },
+  { id: 'V05', file: PL, why: 'an unknown action is counted as a decision',
+    from: "      if (!r || _DS.DECISION_ACTIONS.indexOf(r.action) < 0) return;\n      c.decisions++;",
+    to:   "      if (!r) return;\n      c.decisions++;" },
+  { id: 'V06', file: PL, why: 'a correction\'s value is taken from previous_value (the reading it replaced)',
+    from: "    if (d.action === 'correct') return d.new_value == null ? null : d.new_value;",
+    to:   "    if (d.action === 'correct') return d.previous_value == null ? null : d.previous_value;" },
+  { id: 'V07', file: TS, why: '"by you" is said for ANY decider',
+    from: "    function _who(decidedBy) { return (decidedBy && _uid && decidedBy === _uid) ? 'you' : 'a person'; }",
+    to:   "    function _who(decidedBy) { return 'you'; }" },
+  { id: 'V08', file: TS, why: 'a shown value that differs from the decided one is presented as verified, without the "changed since" note',
+    from: "        var same = !!(_PLm && _PLm.matchesShown(field, e.value, shown));",
+    to:   "        var same = true;" },
+  { id: 'V09', file: TS, why: 'the shown term value is REPLACED by the decided one',
+    from: "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);",
+    to:   "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', ((_lhV && _lhV.byField.leased_sqft && _lhV.byField.leased_sqft.value) || rec.lease.sqft) + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);" },
+  { id: 'V10', file: TS, why: 'the history omits the reopens (the record is edited)',
+    from: "        hist.slice().reverse().map(function (d) {",
+    to:   "        hist.filter(function (d) { return d.action !== 'reopen'; }).reverse().map(function (d) {" },
+  { id: 'V11', file: PL, why: 'a source document is resolved by file NAME instead of id',
+    from: "    for (var i = 0; i < docs.length; i++) { if (docs[i] && docs[i].id === sourceDocumentId) { d = docs[i]; break; } }",
+    to:   "    for (var i = 0; i < docs.length; i++) { if (docs[i] && docs[i].file_name === sourceDocumentId) { d = docs[i]; break; } }" },
+  { id: 'V12', file: PL, why: 'quantities are compared as strings ("67,000" ≠ 67000)',
+    from: "    if (NUMERIC_FIELDS[field]) {\n      var a = _num(decided), b = _num(shown);",
+    to:   "    if (false) {\n      var a = _num(decided), b = _num(shown);" },
+  { id: 'V13', file: PL, why: 'an entered value (no document) is presented as document-backed',
+    from: "      entered: d.action === 'correct' && !d.source_document_id,",
+    to:   "      entered: false," },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plmut-'));
 fs.cpSync(ROOT, tmp, { recursive: true, filter: (src) => { const rel = path.relative(ROOT, src); return !(rel === '.git' || rel.startsWith('.git' + path.sep) || rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)); } });
 try { fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modules'), 'dir'); } catch (_) {}
 const ORIGINAL = {};
-for (const f of [PL, APP, TS]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
+for (const f of [PL, APP, TS, DS]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
 
-// The pure suite first (cheap); the browser suite only when it survives that.
-const SUITES = ['test-property-leaseholds.js', 'test-e2e-property-leaseholds.js'];
+// The pure suites first (cheap); the browser suite only when a mutant survives them.
+const SUITES = ['test-decision-standing.js', 'test-property-leaseholds.js', 'test-e2e-property-leaseholds.js'];
 function runSuites() {
   for (const suite of SUITES) {
     try { execFileSync(process.execPath, [suite], { cwd: tmp, stdio: 'pipe', timeout: 600000 }); }

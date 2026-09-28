@@ -83,8 +83,10 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   is(total >= 28, 'A4 the inventory is not trivially small', total + ' names');
   // Four since P5-2: tenant-space.js assemble() dual-resolves PropertyLeaseholds
   // (the acquired property's leaseholds, documents and decisions).
-  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'PropertyLeaseholds', 'SourceValues'],
-     'A5 four explicit module dependencies');
+  // Five since P5-3: property-leaseholds.js dual-resolves DecisionStanding (the
+  // pure "which term decision stands" rule shared with acquisition-terms.js).
+  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'DecisionStanding', 'MoneyCents', 'PropertyLeaseholds', 'SourceValues'],
+     'A5 five explicit module dependencies');
   // 20 since the Spaces slice: property-workspace.js reads window.PropertyOS to
   // reveal a COLLAPSED #cardLeases before navigating to it.
   // 21 since the billing-readiness slice: tenant-space.js reads
@@ -213,11 +215,11 @@ sec('C. There is no undeclared or unsafe dependency remaining');
   is(runtime.size > 0, 'C4 and names WERE reached — the comparison is not vacuous',
      Array.from(runtime).sort().join(', '));
 
-  // The undeclared-at-runtime set is exactly the three modules plus Selectors.
+  // The undeclared-at-runtime set is exactly the five modules plus Selectors.
   const undeclared = new Set();
   for (const k of Object.keys(R)) (R[k].undeclaredReads || []).forEach(n => undeclared.add(n));
-  eq(Array.from(undeclared).sort(), ['CamPool', 'MoneyCents', 'PropertyLeaseholds', 'Selectors', 'SourceValues'],
-     'C5 the runtime undeclared set is exactly the four dual-resolved modules and Selectors');
+  eq(Array.from(undeclared).sort(), ['CamPool', 'DecisionStanding', 'MoneyCents', 'PropertyLeaseholds', 'Selectors', 'SourceValues'],
+     'C5 the runtime undeclared set is exactly the five dual-resolved modules and Selectors');
   is(Array.from(undeclared).every(n =>
        ['module', 'browser_only'].indexOf(INV.CLASSIFICATION[n].kind) !== -1),
      'C6 and each of those is classified module or browser_only — none is unsafe');
@@ -404,8 +406,12 @@ sec('I. The bundle-trace proof from M2 is intact');
   // list_properties lists managed rows only). Seventeen became eighteen.
   // P5-2 added property-leaseholds.js (pure; tenant-space.js assemble()
   // dual-resolves it, and its map is empty on a server). Eighteen became nineteen.
-  is(RUN.bundle.files.length === 19, 'I4 nineteen files in the bundle',
+  // P5-3 added decision-standing.js (pure, dependency-free; property-leaseholds.js
+  // requires it for the standing-decision rule). Nineteen became twenty.
+  is(RUN.bundle.files.length === 20, 'I4 twenty files in the bundle',
      String(RUN.bundle.files.length));
+  is(RUN.bundle.files.indexOf('decision-standing.js') !== -1,
+     'I4d decision-standing.js is one of them — reached by a require a bundler can see');
   is(RUN.bundle.files.indexOf('property-leaseholds.js') !== -1,
      'I4c property-leaseholds.js is one of them — reached by a require a bundler can see');
   is(RUN.bundle.files.indexOf('property-lifecycle.js') !== -1,

@@ -674,6 +674,7 @@ const SUITES = [
   { label: 'Viewing a property writes nothing; database beats stale cache (e2e, P5-0/P5-1)', cmd: 'node test-e2e-view-is-read-only.js' },
   // P5-2 — the canonical leaseholds, documents and decisions of an acquired
   // property are readable from the Property Workspace (tenants.id = families.id).
+  { label: 'Which term decision stands (shared rule, P5-3)',           cmd: 'node test-decision-standing.js' },
   { label: 'Canonical leaseholds for the property workspace (P5-2)',       cmd: 'node test-property-leaseholds.js' },
   { label: 'Acquired property remembers its leases (e2e, P5-2)',           cmd: 'node test-e2e-property-leaseholds.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },

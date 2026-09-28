@@ -88,6 +88,9 @@ const EXPECTED_UNDECLARED = {
   // decisions). The module's map is filled by the browser's loader only; on a
   // server it is empty, so assemble() gets null and the record is unchanged.
   PropertyLeaseholds: "tenant-space.js assemble() — falls back to require('./property-leaseholds.js'); empty map on a server, every leasehold resolves to null",
+  // P5-3: the "which term decision stands" rule, shared with the Acquisition
+  // Review. Pure and dependency-free; property-leaseholds.js requires it.
+  DecisionStanding: "property-leaseholds.js — falls back to require('./decision-standing.js'); a pure rule over its argument, no state",
 };
 
 const RECORD_KEYS = ['attention', 'cam', 'disputes', 'documents', 'fields',

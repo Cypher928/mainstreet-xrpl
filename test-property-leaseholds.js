@@ -178,11 +178,109 @@ t('F8 PROPERTY_DATA_CLIENT_KEYS is untouched (16 keys, no leasehold key)', /'ten
 t('F9 assemble() consults PropertyLeaseholds.forTenant(property.id, tenantId) — the property being rendered, never a global "current" one', /_PL\.forTenant\(property\.id, tenantId\)/.test(TS));
 t('F10 assemble() unions the leasehold documents into leaseDocs and exposes `leasehold`; the records count text is untouched',
   /fromAcquisition: true/.test(TS) && /leasehold: leasehold,/.test(TS) && /function _countsText\(c\) \{\n    var bits = \[\];\n    if \(c\.events\)/.test(TS) && !/leaseDocs/.test(TS.slice(TS.indexOf('function _countsText'), TS.indexOf('function _countsText') + 600)));
-t('F11 the Space file shows the verification line only with ≥1 decision, and says "by a person"', /_lhSum && _lhSum\.count > 0/.test(TS) && /Verified at acquisition/.test(TS) && /by a person/.test(TS));
+t('F11 the Space file shows the summary and the history only with ≥1 decision, says "by a person" (or "by you"), and says "the value shown has changed since" when it has',
+  /_lhC && _lhC\.decisions > 0/.test(TS) && /'a person'/.test(TS) && /'you'/.test(TS) && /Verified by ' \+ by \+ ' \\u2014 ' \+ nV|Verified by ' \+ by \+ ' — ' \+ nV/.test(TS)
+  && /the value shown has changed since/.test(TS) && /Verified history \(/.test(TS) && /Verified at acquisition as <b>/.test(TS));
+t('F16 P5-3 NEVER replaces a shown value: every lease row is still built from rec.lease.* and rendered from r[1]; the decision only adds the line beneath (r[2])',
+  /leaseRows\.push\(\['Lease type', rec\.lease\.type, _provLine\('lease_type'/.test(TS)
+  && /leaseRows\.push\(\['Leased area', rec\.lease\.sqft \+ ' sqft', _provLine\('leased_sqft', rec\.lease\.sqft\)\]\)/.test(TS)
+  && /leaseRows\.push\(\['CAM cap', String\(rec\.lease\.cap\), _provLine\('cap', rec\.lease\.cap\)\]\)/.test(TS)
+  && /<b>' \+ _esc\(r\[1\]\) \+ '<\/b><\/div>' \+ \(r\[2\] \|\| ''\)/.test(TS));
+t('F17 the decider is never named from data: no displayName/email/profile read in the Space file\'s P5-3 block; only "you" (the signed-in uid) or "a person"',
+  (() => { const blk = TS.slice(TS.indexOf('var _lhV = '), TS.indexOf('var leaseHtml = ')); return blk.length > 0 && !/displayName|email|profile|full_name|_esc\([^)]*decidedBy/.test(blk) && /_signedInUid\(\)/.test(blk) && /_who\(e\.decidedBy\)/.test(blk); })());
 t('F12 a document another member uploaded is labelled as on file, without a link (docLinkHtml renders a missing url inert)', /uploadedByOther \? '<span class="ts-doc-when ts-doc-other">on file/.test(TS));
 t('F13 PropertyRecord is UNCHANGED and reads rec.leaseDocs on the same path (so Ask AI sees the same documents without wiring)', /for \(const d of _arr\(rec\.leaseDocs\)\)/.test(PR) && !/PropertyLeaseholds|leasehold/.test(PR));
 t('F14 field-provenance.js is untouched by P5-2', !/PropertyLeaseholds|acquisition_term_decisions/.test(fs.readFileSync(path.join(__dirname, 'field-provenance.js'), 'utf8')));
 t('F15 index.html loads the module before script.js and tenant-space.js', (() => { const H = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'); const a = H.indexOf('property-leaseholds.js'), b = H.indexOf('<script src="script.js">'), c = H.indexOf('<script src="tenant-space.js">'); return a > 0 && a < b && b < c; })());
+
+// ── G  P5-3: what stands, per leasehold ─────────────────────────────────────
+sec('G  P5-3: the standing decisions of each leasehold (Maple\'s 27 live rows)');
+const { MAPLE_DECISIONS } = require('./test-decision-standing.js');
+const AT = require('./acquisition-terms.js');
+const AMEND = 'e6a60a25-0c1f-4759-b135-7ed0bcfd67bf', LEASE = '3fc9463f-230e-424c-8bba-7dfacafd6a98';
+const G = PL.build(deepFreeze({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, tenants: TENANTS }));
+const gs = G.byLeaseholdId[F.shoprite], gl = G.byLeaseholdId[F.luxe], gsun = G.byLeaseholdId[F.sunrise];
+eq(G.decisionCount, 27, 'G1 all 27 decisions load into the projection');
+eq(gs.decisions.length, 24, 'G2 ShopRite: 24');
+eq(gl.decisions.length, 3, 'G3 Luxe: 3');
+const V = gs.verified.byField;
+t('G4a ShopRite leased_sqft: the 09-26 correction stands — verified, not entered, value "67000", the amendment cited (linked: this user uploaded it)',
+  V.leased_sqft && V.leased_sqft.action === 'correct' && V.leased_sqft.verified === true && V.leased_sqft.entered === false && V.leased_sqft.rejected === false
+  && V.leased_sqft.value === '67000' && V.leased_sqft.decisionId === 'ac6c910d-0cd8-40b4-9587-955cb4f215ec'
+  && V.leased_sqft.source && V.leased_sqft.source.id === AMEND && V.leased_sqft.source.name === 'Maple_Plaza_Test_Lease_Amendment.pdf' && V.leased_sqft.source.live === true && V.leased_sqft.source.url === sp('Maple_Plaza_Test_Lease_Amendment.pdf')
+  && V.leased_sqft.decidedAt === '2026-09-26T16:51:27.322+00:00' && V.leased_sqft.label === 'Leased sq ft');
+t('G4b cap: a CONFIRM stands — its value is the reading confirmed (previous_value "3"), amendment p. 1, the quote carried',
+  V.cap && V.cap.action === 'confirm' && V.cap.verified && V.cap.value === '3' && V.cap.source.id === AMEND && V.cap.sourcePage === 1 && /3% per year/.test(V.cap.sourceQuote) && V.cap.label === 'CAM cap');
+t('G4c suite: correct → reopen → confirm — "Anchor Unit A-1" stands, the ShopRite lease p. 1 cited', V.suite && V.suite.action === 'confirm' && V.suite.value === 'Anchor Unit A-1' && V.suite.source.id === LEASE && V.suite.source.name === 'ShopRite_Anchor_Tenant_Lease.pdf' && V.suite.sourcePage === 1);
+t('G4d base_rent: confirm 1251250 stands', V.base_rent && V.base_rent.verified && V.base_rent.value === '1251250');
+t('G4e admin_fee_pct: an ENTERED correction stands — verified, entered, value "10", no source, the note carried', V.admin_fee_pct && V.admin_fee_pct.verified && V.admin_fee_pct.entered === true && V.admin_fee_pct.value === '10' && V.admin_fee_pct.source === null && /Entered by a person/.test(V.admin_fee_pct.note));
+t('G4f audit_rights: confirm → reopen → REJECT — rejected stands: not verified, not entered', V.audit_rights && V.audit_rights.rejected === true && V.audit_rights.verified === false && V.audit_rights.entered === false && V.audit_rights.actionLabel === 'Rejected');
+t('G4g security_deposit: correct → REOPEN — nothing stands: absent from byField, listed as open', !('security_deposit' in V) && JSON.stringify(gs.verified.openFields) === '["security_deposit"]');
+eq(gs.verified.fields.map(e => e.field), ['cap', 'audit_rights', 'suite', 'base_rent', 'leased_sqft', 'admin_fee_pct'], 'G4h the standing entries, in order of the field\'s first decision');
+t('G4i Luxe end_date: correct → reopen → correct — "2031-07-07" stands, entered', gl.verified.byField.end_date && gl.verified.byField.end_date.value === '2031-07-07' && gl.verified.byField.end_date.entered === true && gl.verified.byField.end_date.label === 'Expiration');
+// PARITY with the Acquisition Review's own rule, per family, per field — the
+// projection's standing decision IS AcquisitionTerms.latestDecision's row.
+let parityN = 0; const parityBad = [];
+[[F.shoprite, gs], [F.luxe, gl], [F.sunrise, gsun]].forEach(([fid, entry]) => {
+  const rows = MAPLE_DECISIONS.filter(r => r.family_id === fid);
+  Object.keys(AT.FIELD_META).forEach(f => {
+    parityN++;
+    const want = AT.latestDecision(rows, f), got = entry.verified.byField[f] || null;
+    if ((want === null) !== (got === null) || (want && got.decisionId !== want.id)) parityBad.push(fid.slice(0, 8) + '/' + f);
+  });
+});
+eq(parityBad, [], `G5 PARITY: for every leasehold × every one of the 27 fields, the standing entry is exactly AcquisitionTerms.latestDecision\'s row (or both null) — ${parityN} comparisons`);
+const shuf = MAPLE_DECISIONS.slice(); for (let i = shuf.length - 1, s = 99; i > 0; i--) { s = (s * 1103515245 + 12345) & 0x7fffffff; const j = s % (i + 1); [shuf[i], shuf[j]] = [shuf[j], shuf[i]]; }
+const Gsh = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: shuf });
+t('G5b shuffled input → the same standing entries and the same history order (decided_at, not arrival)',
+  JSON.stringify(Gsh.byLeaseholdId[F.shoprite].verified) === JSON.stringify(gs.verified) && JSON.stringify(Gsh.byLeaseholdId[F.shoprite].decisions.map(d => d.id)) === JSON.stringify(gs.decisions.map(d => d.id)));
+const reopened = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS.concat([dec({ id: 'x-reopen', family_id: F.shoprite, field_key: 'leased_sqft', action: 'reopen', previous_value: '67000', decided_at: '2026-09-27T00:00:00Z', created_at: '2026-09-27T00:00:00Z' })]) });
+t('G5c a later reopen of leased_sqft: nothing stands for it (open), the other five still do, the history has 25',
+  !('leased_sqft' in reopened.byLeaseholdId[F.shoprite].verified.byField) && reopened.byLeaseholdId[F.shoprite].verified.openFields.includes('leased_sqft') && reopened.byLeaseholdId[F.shoprite].verified.counts.fieldsVerified === 4 && reopened.byLeaseholdId[F.shoprite].decisions.length === 25);
+// Same name, another leasehold / another property.
+const twin = fam('99999999-9999-4999-8999-999999999999', 'ShopRite Supermarkets, Inc.');
+const Gtwin = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES.concat([twin]), documents: DOCS, decisions: MAPLE_DECISIONS });
+t('G6a a second leasehold with the SAME label on this property receives none of the 24 — decisions follow the family id, never the name',
+  Gtwin.byLeaseholdId['99999999-9999-4999-8999-999999999999'].decisions.length === 0 && Gtwin.byLeaseholdId['99999999-9999-4999-8999-999999999999'].verified.counts.decisions === 0 && Gtwin.byLeaseholdId[F.shoprite].decisions.length === 24);
+const Gforeign = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS.concat([dec({ id: 'x-foreign', family_id: F.shoprite, property_id: OTHER_P, field_key: 'leased_sqft', action: 'correct', previous_value: '67000', new_value: '1', decided_at: '2026-09-27T00:00:00Z', created_at: '2026-09-27T00:00:00Z' })]) });
+t('G6b a decision that names ANOTHER property is dropped before the rule runs: leased_sqft still stands at 67000', Gforeign.byLeaseholdId[F.shoprite].verified.byField.leased_sqft.value === '67000' && Gforeign.byLeaseholdId[F.shoprite].decisions.length === 24);
+// Sources.
+const sourced = gs.decisions.filter(d => d.source);
+eq([sourced.length, sourced.every(d => !d.source.missing), Array.from(new Set(sourced.map(d => d.source.name))).sort()], [18, true, ['Maple_Plaza_Test_Lease_Amendment.pdf', 'ShopRite_Anchor_Tenant_Lease.pdf']], 'G7a the 18 sourced rows resolve BY ID to the two documents; the 6 unsourced carry null');
+const oldCite = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: [dec({ id: 'x-old', family_id: F.shoprite, field_key: 'cap', action: 'confirm', previous_value: '3', source_document_id: 'shop-old-version', decided_at: '2026-09-20T01:00:00Z', created_at: '2026-09-20T01:00:00Z' })] }).byLeaseholdId[F.shoprite].verified.byField.cap.source;
+eq([oldCite.name, oldCite.live, oldCite.url, oldCite.missing], ['ShopRite_Lease_OLD_SCAN.pdf', false, null, false], 'G7b a source that is SUPERSEDED now resolves by name (that is what was cited) with url null (not on file to open)');
+const gone = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: [dec({ id: 'x-gone', family_id: F.shoprite, field_key: 'cap', action: 'confirm', previous_value: '3', source_document_id: 'no-such-doc', decided_at: '2026-09-20T01:00:00Z', created_at: '2026-09-20T01:00:00Z' })] }).byLeaseholdId[F.shoprite].verified.byField.cap.source;
+eq([gone.missing, gone.url, gone.id], [true, null, 'no-such-doc'], 'G7c a source row that no longer exists is marked missing, never linked, never invented');
+const asOther = PL.build({ propertyId: P, currentUid: OTHER_UID, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS }).byLeaseholdId[F.shoprite].verified.byField.leased_sqft.source;
+eq([asOther.name, asOther.live, asOther.url, asOther.uploadedByOther], ['Maple_Plaza_Test_Lease_Amendment.pdf', true, null, true], 'G7d another member sees the cited document\'s NAME but gets no url (the P5-2 uploader rule)');
+// Who and when.
+t('G8 decidedBy and decidedAt are carried as the row holds them — a uid, never a name (there is no directory to name anyone from); "you"/"a person" is the surface\'s call',
+  gs.verified.fields.every(e => e.decidedBy === OWN && typeof e.decidedAt === 'string') && !/displayName|email|name:/.test(JSON.stringify(gs.verified.fields.map(e => Object.assign({}, e, { source: null, label: null })))) );
+// matchesShown.
+eq([PL.matchesShown('leased_sqft', '67,000', 67000), PL.matchesShown('leased_sqft', '67000', '67,000 '), PL.matchesShown('leased_sqft', '65000', 67000), PL.matchesShown('cap', '3', 3), PL.matchesShown('cap', '3', '3%'), PL.matchesShown('base_rent', '1251250', '$1,251,250.00')],
+   [true, true, false, true, true, true], 'G9a quantities compare as numbers: 67,000 = 67000; 65000 ≠ 67000; 3 = 3%; 1251250 = $1,251,250.00');
+eq([PL.matchesShown('end_date', '2031-07-07', '2031-07-07'), PL.matchesShown('end_date', '2031-07-07', '2031-07-08'), PL.matchesShown('lease_type', 'NNN', ' nnn'), PL.matchesShown('suite', 'Anchor Unit A-1', 'Anchor Unit A-3')],
+   [true, false, true, false], 'G9b dates exact; enums/text trimmed and case-insensitive');
+eq([PL.matchesShown('leased_sqft', null, 67000), PL.matchesShown('leased_sqft', '67000', null), PL.matchesShown('end_date', '', ''), PL.matchesShown('leased_sqft', 'abc', 'abc')], [false, false, false, false], 'G9c an absent value never matches (two absences are not "verified as shown"); non-numeric text in a numeric field never matches');
+// The projection carries no tenant value and changes none.
+const Gedited = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, tenants: [{ id: F.shoprite, tenant_name: 'ShopRite Supermarkets, Inc.', leased_sqft: '70000' }] });
+t('G10 the standing value comes from the DECISION, never from the tenant row, and the tenant row is not touched: with the tenant edited to 70000 the projection still says 67000 and carries no tenant',
+  Gedited.byLeaseholdId[F.shoprite].verified.byField.leased_sqft.value === '67000' && !('tenant' in Gedited.byLeaseholdId[F.shoprite]) && !('tenants' in Gedited) && TENANTS.find(x => x.id === F.shoprite).leased_sqft === '67000');
+t('G11 property-leaseholds.js still touches no storage API and never requires the acquisition resolver (E9 + D8 of the standing suite hold): the `verified` projection is a value, not a store',
+  !/localStorage|sessionStorage|indexedDB|properties\.data|\.data\.|JSON\.stringify\(|acquisition-terms|AcquisitionTerms/.test(fs.readFileSync(path.join(__dirname, 'property-leaseholds.js'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')));
+eq(gs.verified.counts, { decisions: 24, fieldsDecided: 7, fieldsVerified: 5, fieldsEntered: 1, fieldsRejected: 1, fieldsOpen: 1 }, 'G12a ShopRite counts: 24 decisions · 7 fields decided · 5 verified · 1 entered · 1 rejected · 1 open');
+eq(gl.verified.counts, { decisions: 3, fieldsDecided: 1, fieldsVerified: 1, fieldsEntered: 1, fieldsRejected: 0, fieldsOpen: 0 }, 'G12b Luxe counts: 3 · 1 · 1 · 1 · 0 · 0');
+eq([gs.verified.lastAt, gl.verified.lastAt], ['2026-09-26T16:51:27.322+00:00', '2026-09-25T23:29:00.42+00:00'], 'G12c lastAt: the last decided_at of each');
+eq([gsun.verified.counts.decisions, gsun.verified.fields.length, gsun.verified.lastAt, gsun.decisions.length], [0, 0, null, 0], 'G12d Sunrise (never decided about): zeros, no fields, no lastAt — the surface shows nothing');
+// The history rows.
+const h0 = gs.decisions[0], hc = gs.decisions.find(d => d.id === 'ac6c910d-0cd8-40b4-9587-955cb4f215ec'), hr = gs.decisions.find(d => d.action === 'reject');
+t('G13 every history row carries its label, its action as a word, the value it fixed and the cited document: cap · Confirmed · "3" · amendment; the correction 65000 → 67000; the rejection of Audit rights',
+  h0.label === 'CAM cap' && h0.actionLabel === 'Confirmed' && h0.value === '3' && h0.source.name === 'Maple_Plaza_Test_Lease_Amendment.pdf' && h0.sourcePage === 1
+  && hc.actionLabel === 'Corrected' && hc.previousValue === '65000' && hc.newValue === '67000' && hc.value === '67000'
+  && hr.label === 'Audit rights' && hr.actionLabel === 'Rejected' && hr.source === null);
+const unknownAct = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS.concat([dec({ id: 'x-approve', family_id: F.shoprite, field_key: 'leased_sqft', action: 'approve', new_value: '1', decided_at: '2026-09-27T00:00:00Z', created_at: '2026-09-27T00:00:00Z' })]) }).byLeaseholdId[F.shoprite];
+t('G14 an unknown action is not a decision: it stands for nothing and is not counted (24, not 25), though the raw row remains in the history list', unknownAct.verified.byField.leased_sqft.value === '67000' && unknownAct.verified.counts.decisions === 24 && unknownAct.decisions.length === 25);
+t('G15 D1 still holds after §G: the frozen fixtures are unchanged', DOCS.length === 9 && FAMILIES.length === 5 && MAPLE_DECISIONS.length === 27 && Object.isFrozen(MAPLE_DECISIONS[0]));
 
 console.log(`\n${'─'.repeat(58)}\nRESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }

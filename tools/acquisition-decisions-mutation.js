@@ -78,6 +78,8 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const A = 'acquisition-terms.js';
+// P5-3: the standing-decision rule moved, verbatim, into decision-standing.js.
+const DS = 'decision-standing.js';
 const S = 'script.js';
 const M = 'migrations/026_acquisition_term_decisions.sql';
 
@@ -120,10 +122,10 @@ const MUTANTS = [
   { id: 'O02', file: A, why: 'a rejection reads as an answer anyway',
     from: "    if (d.action === 'reject') {",
     to:   "    if (false) {" },
-  { id: 'O03', file: A, why: 'a reopen leaves the previous decision in force',
+  { id: 'O03', file: DS, why: 'a reopen leaves the previous decision in force',
     from: "    return last.action === 'reopen' ? null : last;",
     to:   '    return last;' },
-  { id: 'O04', file: A, why: 'the earliest decision wins',
+  { id: 'O04', file: DS, why: 'the earliest decision wins',
     from: '    var last = rows[rows.length - 1];',
     to:   '    var last = rows[0];' },
   { id: 'O05', file: A, why: 'a correction leaves the derived flag set',

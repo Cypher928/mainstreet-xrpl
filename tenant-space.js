@@ -93,6 +93,14 @@ window.TenantSpace = (function () {
     } catch (_) { return ''; }
   }
   function _money(n) { try { return '$' + Math.round(Number(n)).toLocaleString('en-US'); } catch (_) { return '$' + n; } }
+  // P5-3: the signed-in uid, browser only — "by you" is said only when the
+  // decider IS the person looking; absent (server, signed out) ⇒ "a person".
+  function _signedInUid() {
+    try {
+      var u = (typeof window !== 'undefined' && window.AuthService && window.AuthService.getCurrentUser) ? window.AuthService.getCurrentUser() : null;
+      return (u && u.id) || null;
+    } catch (_) { return null; }
+  }
 
   // ── Can this tenant be billed? Ask the one place that decides. ──────────────
   //
@@ -445,28 +453,103 @@ window.TenantSpace = (function () {
     var rec = assemble(property, tenantId);
     _openRec = rec;
 
+    // P5-3 — WHAT A PERSON DECIDED ABOUT THESE TERMS DURING THE ACQUISITION.
+    // acquisition_term_decisions is a history (confirm / correct / reject /
+    // reopen); what stands per field is derived by the one rule the Acquisition
+    // Review applies (DecisionStanding, through PropertyLeaseholds.verified):
+    // the last known-action row; a last reopen means nothing stands. The VALUES
+    // in the rows below are the tenant row's (035 wrote them) and are never
+    // replaced here. A line beneath a row says a person verified that value,
+    // entered it with no document, or rejected the document's reading; when the
+    // value shown is no longer the decided one, the line says so and says "at
+    // acquisition". "by you" only when the decider is the person looking.
+    // Nothing renders for a leasehold with no decisions.
+    var _lhV = (rec.leasehold && rec.leasehold.verified) || null;
+    var _lhC = _lhV && _lhV.counts;
+    var _uid = _signedInUid();
+    var _PLm = (typeof window !== 'undefined' && window.PropertyLeaseholds) || null;
+    function _who(decidedBy) { return (decidedBy && _uid && decidedBy === _uid) ? 'you' : 'a person'; }
+    function _fmtDecided(field, v) {
+      if (v == null || v === '') return '';
+      if (_PLm && _PLm.NUMERIC_FIELDS && _PLm.NUMERIC_FIELDS[field]) {
+        var digits = String(v).replace(/[^0-9.\-]/g, ''), n = Number(digits);
+        if (digits !== '' && isFinite(n)) return n.toLocaleString('en-US');
+      }
+      return String(v);
+    }
+    // The cited document: a chip through the P5-2 rule (live, this user's
+    // upload) when it can be opened; its name, unlinked, otherwise.
+    function _srcHtml(src, page) {
+      if (!src) return '';
+      var chip = (src.url && window.docLinkHtml)
+        ? window.docLinkHtml(src.url, _esc(src.name), { className: 'ts-acq-src', title: src.name })
+        : '<span class="ts-acq-src ts-acq-src--plain">' + _esc(src.name) + '</span>';
+      return chip + (page != null ? ' · p. ' + _esc(String(page)) : '');
+    }
+    // The line beneath a row for one field; '' when no decision stands for it.
+    function _provLine(field, shown, prefix) {
+      var e = _lhV && _lhV.byField && _lhV.byField[field];
+      if (!e) return '';
+      var when = _esc(_fmtDate(e.decidedAt));
+      var head = prefix ? '<span class="ts-acq-field">' + _esc(prefix) + '</span> ' : '';
+      var text;
+      if (e.rejected) {
+        text = 'A person rejected the document’s reading · ' + when;
+      } else {
+        var same = !!(_PLm && _PLm.matchesShown(field, e.value, shown));
+        var srcPart = e.entered ? 'Entered — no document on file' : (e.source ? _srcHtml(e.source, e.sourcePage) : '');
+        if (same) {
+          text = 'Verified by ' + _who(e.decidedBy) + ' · ' +
+            (e.entered ? srcPart + ' · ' + when : when + (srcPart ? ' · ' + srcPart : ''));
+        } else {
+          text = 'Verified at acquisition as <b>' + _esc(_fmtDecided(field, e.value)) + '</b> by ' + _who(e.decidedBy) +
+            ' · ' + when + (srcPart ? ' · ' + srcPart : '') + ' · the value shown has changed since';
+        }
+      }
+      return '<div class="ts-acq-line" data-field="' + _esc(field) + '">' + head + text + '</div>';
+    }
+
     var leaseRows = [];
-    if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type]);
+    if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type, _provLine('lease_type', rec.lease.type)]);
     // M8d — the last of the five. M8c fixed the space-list card to `!= null`;
     // leaving this one on truthiness meant the card showed "0 sqft" while the
     // detail view for the same space showed no Leased area row at all.
-    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft']);
-    if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?')]);
-    if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap)]);
+    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);
+    if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?'),
+      _provLine('start_date', rec.lease.start, 'Commencement') + _provLine('end_date', rec.lease.end, 'Expiration')]);
+    if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap), _provLine('cap', rec.lease.cap)]);
     var leaseDocsHtml = (rec.leaseDocs || []).map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('');
-    // P5-2 \u2014 what a person decided about these terms during the acquisition.
-    // The values above are the ones 035 carried across; this says they were
-    // verified, by whom and when. Shown only when there is at least one
-    // decision: a leasehold nobody decided anything about earns no claim.
-    var _lhSum = (rec.leasehold && rec.leasehold.decisionSummary) || null;
-    var acqLineHtml = (_lhSum && _lhSum.count > 0)
-      ? '<div class="ts-acq-verified">Verified at acquisition \u2014 ' + _lhSum.count + ' term decision' + (_lhSum.count !== 1 ? 's' : '') +
-        ' by a person' + (_lhSum.lastAt ? ', last ' + _esc(_fmtDate(_lhSum.lastAt)) : '') + '</div>'
-      : '';
+    // The summary and the full history (collapsed). Shown only when there is at
+    // least one decision: a leasehold nobody decided anything about earns no claim.
+    var acqLineHtml = '', acqHistoryHtml = '';
+    if (_lhC && _lhC.decisions > 0) {
+      var hist = rec.leasehold.decisions || [];
+      var by = (hist.length && hist.every(function (d) { return d.decidedBy && _uid && d.decidedBy === _uid; })) ? 'you' : 'a person';
+      var nV = _lhC.fieldsVerified, nD = _lhC.decisions;
+      acqLineHtml = '<div class="ts-acq-verified">' +
+        (nV > 0 ? 'Verified by ' + by + ' — ' + nV + ' term' + (nV !== 1 ? 's' : '') + ' verified'
+                : 'Reviewed by ' + by + ' — no term currently stands verified') +
+        ' · ' + nD + ' decision' + (nD !== 1 ? 's' : '') +
+        (_lhV.lastAt ? ', last ' + _esc(_fmtDate(_lhV.lastAt)) : '') + '</div>';
+      acqHistoryHtml = '<details class="ts-acq-history"><summary>Verified history (' + nD + ')</summary><div class="ts-acq-hist">' +
+        hist.slice().reverse().map(function (d) {
+          var val = '';
+          if (d.action === 'correct') val = (d.previousValue != null && d.previousValue !== '' ? _fmtDecided(d.fieldKey, d.previousValue) + ' → ' : '') + _fmtDecided(d.fieldKey, d.newValue);
+          else if (d.value != null && d.value !== '') val = _fmtDecided(d.fieldKey, d.value);
+          return '<div class="ts-acq-h">' +
+            '<span class="ts-acq-h-when">' + _esc(_fmtDate(d.decidedAt)) + '</span>' +
+            '<span class="ts-acq-h-act ts-acq-h-act--' + _esc(d.action || '') + '">' + _esc(d.actionLabel || d.action || '') + '</span>' +
+            '<span class="ts-acq-h-field">' + _esc(d.label || d.fieldKey || '') + '</span>' +
+            (val ? '<span class="ts-acq-h-val">' + _esc(val) + '</span>' : '') +
+            (d.source ? '<span class="ts-acq-h-src">' + _srcHtml(d.source, d.sourcePage) + '</span>' : '') +
+            (d.note ? '<span class="ts-acq-h-note">' + _esc(d.note) + '</span>' : '') +
+          '</div>';
+        }).join('') + '</div></details>';
+    }
     var leaseHtml = (leaseRows.length || leaseDocsHtml)
       ? '<div class="ts-lease">' +
-          leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
-          acqLineHtml +
+          leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>' + (r[2] || ''); }).join('') +
+          acqLineHtml + acqHistoryHtml +
           (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms are on file but the document is not \u2014 upload the executed lease so every CAM figure can cite the clause it came from.</div>') +
         '</div>'
       : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
@@ -1124,6 +1207,23 @@ window.TenantSpace = (function () {
       // P5-2: the acquisition's verification line and the "on file, not yours to open" note.
       '.ts-acq-verified{font-size:0.78rem;color:var(--text-3,#94A3B8);padding:2px 0 4px;border-top:1px dashed var(--border-2,#e2e8f0);margin-top:2px;}',
       '.ts-doc-other{font-style:italic;opacity:0.85;}',
+      // P5-3: the line beneath a term ("Verified by …"), the summary and the collapsed history.
+      '.ts-acq-line{font-size:0.72rem;color:var(--text-4,#64748B);margin:-3px 0 3px;line-height:1.35;}',
+      '.ts-acq-line b{color:var(--text-3,#94A3B8);font-weight:700;}',
+      '.ts-acq-field{font-weight:700;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-src{font:inherit;color:var(--text-2,#CBD5E1);background:none;border:none;padding:0;text-decoration:underline dotted;cursor:pointer;}',
+      '.ts-acq-src--plain{text-decoration:none;cursor:default;}',
+      '.ts-acq-history{font-size:0.74rem;color:var(--text-4,#64748B);margin-top:2px;}',
+      '.ts-acq-history summary{cursor:pointer;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-hist{display:flex;flex-direction:column;gap:5px;margin-top:6px;max-height:220px;overflow-y:auto;}',
+      '.ts-acq-h{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}',
+      '.ts-acq-h-when{flex:none;min-width:88px;}',
+      '.ts-acq-h-act{font-weight:800;text-transform:uppercase;font-size:0.62rem;letter-spacing:0.04em;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-h-act--reject{color:#f59e0b;}',
+      '.ts-acq-h-act--reopen{opacity:0.75;}',
+      '.ts-acq-h-field{color:var(--text-2,#CBD5E1);}',
+      '.ts-acq-h-val{font-weight:700;color:var(--text-1,#E2E8F0);}',
+      '.ts-acq-h-note{flex-basis:100%;font-style:italic;opacity:0.85;}',
       '.ts-lease-row b{color:var(--text-1,#E2E8F0);font-weight:700;}',
       '.ts-doc{display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-2,#CBD5E1);text-decoration:none;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:8px;padding:7px 10px;margin-top:6px;max-width:100%;}',
       '.ts-doc:hover{border-color:' + gold + ';}',
