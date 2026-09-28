@@ -672,6 +672,10 @@ const SUITES = [
   { label: 'properties.data — server-owned keys survive a save (P4 preservation)', cmd: 'node test-property-data-preservation.js' },
   { label: 'Acquire → open → save keeps acquisition provenance (e2e)', cmd: 'node test-e2e-acquire-preservation.js' },
   { label: 'Viewing a property writes nothing; database beats stale cache (e2e, P5-0/P5-1)', cmd: 'node test-e2e-view-is-read-only.js' },
+  // P5-2 — the canonical leaseholds, documents and decisions of an acquired
+  // property are readable from the Property Workspace (tenants.id = families.id).
+  { label: 'Canonical leaseholds for the property workspace (P5-2)',       cmd: 'node test-property-leaseholds.js' },
+  { label: 'Acquired property remembers its leases (e2e, P5-2)',           cmd: 'node test-e2e-property-leaseholds.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },
   { label: 'Dispute lifecycle',                         cmd: 'node test-dispute-lifecycle.js' },

@@ -84,6 +84,10 @@ const EXPECTED_UNDECLARED = {
   MoneyCents:   "cam-pool.js:82, variance-breakdown.js:60/187 — falls back to require('./money-cents.js')",
   SourceValues: "cam-pool.js:54, money-cents.js:83 — falls back to require('./source-values.js')",
   Selectors:    'property-workspace.js:42 — falls back to {}, and the hydrator reports the degradation',
+  // P5-2: the Space file's canonical leasehold (acquisition documents and
+  // decisions). The module's map is filled by the browser's loader only; on a
+  // server it is empty, so assemble() gets null and the record is unchanged.
+  PropertyLeaseholds: "tenant-space.js assemble() — falls back to require('./property-leaseholds.js'); empty map on a server, every leasehold resolves to null",
 };
 
 const RECORD_KEYS = ['attention', 'cam', 'disputes', 'documents', 'fields',

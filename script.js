@@ -28994,6 +28994,38 @@ function _mergeCamReconciliationRows(dbData, camRows) {
 // Returns the richer of the two sources — DB or localStorage — measured by tenant count.
 // This prevents a timed-out DB write from making the old (empty) DB record win over
 // the localStorage snapshot that was written before the timeout.
+// P5-2 — the canonical leaseholds of an acquired property: families, their
+// live confirmed documents and the term decisions, read BY PROPERTY_ID under
+// the tables' membership RLS (the same scope the tenants and evidence reads
+// use), projected by PropertyLeaseholds and kept in its map under this
+// property's id. The entry is cleared before the read so a stale set is never
+// shown while the query is pending, and REPLACED when the read lands; nothing
+// is written to the database, the blob or localStorage. No user_id filter: an
+// organisation member who may see the property's tenants may see its
+// leaseholds. Any failure leaves an empty projection — today's behaviour.
+async function loadPropertyLeaseholds(propertyId, currentUid) {
+  const PL = window.PropertyLeaseholds;
+  if (!PL || !propertyId) return null;
+  PL.clear(propertyId);
+  const rows = (r) => (r && Array.isArray(r.data)) ? r.data : [];
+  let fams = [], docs = [], decs = [];
+  try {
+    const [fr, dr, xr] = await Promise.all([
+      db.from('acquisition_document_families').select(PL.SELECT.families).eq('property_id', propertyId).order('created_at', { ascending: true }),
+      db.from('acquisition_documents').select(PL.SELECT.documents).eq('property_id', propertyId).order('created_at', { ascending: true }),
+      db.from('acquisition_term_decisions').select(PL.SELECT.decisions).eq('property_id', propertyId).order('decided_at', { ascending: true }),
+    ]);
+    [fr, dr, xr].forEach(r => { if (r && r.error) console.warn('[PropertyLeaseholds] read failed:', r.error.message); });
+    fams = rows(fr); docs = rows(dr); decs = rows(xr);
+  } catch (e) {
+    console.warn('[PropertyLeaseholds] load failed — the property renders without its acquisition record:', e && e.message);
+  }
+  const built = PL.build({ propertyId, families: fams, documents: docs, decisions: decs, currentUid: currentUid || null });
+  PL.set(propertyId, built);
+  console.log('[PropertyLeaseholds]', { propertyId, leaseholds: built.familyCount, documents: built.documentCount, decisions: built.decisionCount });
+  return built;
+}
+
 async function loadPropertyData(id) {
   if (!id) { console.warn('[loadPropertyData] called with no id — returning null'); return null; }
   let dbData  = null;
@@ -29139,6 +29171,25 @@ async function loadPropertyData(id) {
       } catch (auditErr) {
         console.warn('[NormalizedAudit] read failed — falling back to blob activityLog:', auditErr?.message);
       }
+    }
+
+    // P5-2 — THE PROPERTY REMEMBERS ITS ACQUISITION. The leaseholds a person
+    // confirmed during the deal, the documents filed into them and the term
+    // decisions recorded against them are read here, by property_id, for a
+    // MANAGED (acquired) property only, and kept in PropertyLeaseholds' map
+    // keyed by this property's id. Read-only: nothing is written anywhere.
+    // The gate is the portfolio row itself: a property that is not in _props
+    // (a prospect, a passed deal) is never a workspace property, so nothing is
+    // read for it; a managed row with no families (every legacy property, the
+    // demos) simply gets an empty projection and renders exactly as before.
+    if (dbData && window.PropertyLeaseholds) {
+      const _row = (_props || []).find(p => p && p.id === id);
+      const _PLc = window.PropertyLifecycle;
+      const _managed = !!_row && (_PLc && typeof _PLc.isManaged === 'function'
+        ? _PLc.isManaged(_row)
+        : (_row.lifecycle_stage == null || _row.lifecycle_stage === '' || _row.lifecycle_stage === 'acquired'));
+      if (_managed) await loadPropertyLeaseholds(id, uid);
+      else window.PropertyLeaseholds.clear(id);
     }
 
   } catch (e) {

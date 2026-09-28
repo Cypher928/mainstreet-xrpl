@@ -259,6 +259,32 @@ window.TenantSpace = (function () {
         when: a.effectiveDate || a.uploadedAt || null,
       });
     });
+    // P5-2 — THE LEASE THE ACQUISITION ALREADY VERIFIED. An acquired tenant IS
+    // the leasehold a person confirmed during the deal (tenants.id =
+    // families.id, migration 035), and the documents filed into that leasehold
+    // and the term decisions recorded against it are the property's record of
+    // it. PropertyLeaseholds holds them for THIS property only, read from the
+    // database by property_id; nothing here is written. Documents that are
+    // superseded or filed nowhere are not on file for a tenant and do not
+    // appear. A document links only for its uploader; anyone else sees it is on
+    // file (an honest chip, never a dead click). A tenant without a leasehold —
+    // every legacy tenant — gets null and reads exactly as before.
+    // Dual-resolved like CamPool: the browser has it on window; the server
+    // (the MCP hydrator runs this file in Node) requires the pure module, whose
+    // map is empty there, so every leasehold resolves to null and nothing changes.
+    var _PL = (typeof window !== 'undefined' && window.PropertyLeaseholds)
+           || (typeof require === 'function' ? require('./property-leaseholds.js') : null);
+    var leasehold = (!noIdentity && property && property.id != null && _PL && typeof _PL.forTenant === 'function')
+      ? (_PL.forTenant(property.id, tenantId) || null) : null;
+    if (leasehold) {
+      (leasehold.documents || []).forEach(function (d) {
+        if (d.url && leaseDocs.some(function (x) { return x.url === d.url; })) return;
+        leaseDocs.push({
+          name: d.name, url: d.url, kind: 'pdf', when: d.when,
+          docType: d.docType || null, fromAcquisition: true, uploadedByOther: !!d.uploadedByOther,
+        });
+      });
+    }
     // Grounded summary — facts read from the record, not general knowledge.
     var bits = [];
     // M8d — `!= null`, not truthiness. `summary` is part of the canonical record
@@ -293,6 +319,8 @@ window.TenantSpace = (function () {
       space: { id: tenantId, name: t.tenant_name || 'Space',
                suite: (t.suite || t.unitNumber || '') || null, vacant: t.vacant === true },
       lease: lease, leaseDocs: leaseDocs, summary: summary,
+      // P5-2: the canonical leasehold (family, documents, decisions) or null.
+      leasehold: leasehold,
       camYear: (camRec && camRec.camYear) || null, camResult: camResult,
       counts: { disputes: disputes.length, openDisputes: _openDisputes(disputes),
         events: events.length, photos: photos.length, invoices: invoices.length, warranties: warranties.length, documents: documents.length, notes: notes.length, cam: camEvents.length + (camResult ? 1 : 0) },
@@ -375,7 +403,11 @@ window.TenantSpace = (function () {
   // chips shipped a raw href that 404'd. docLinkHtml() is the single answer.
   function _attachChip(a, icon) {
     var inner = icon + '&nbsp;<span class="ts-doc-name">' + _esc(a.name) + '</span>' +
-      '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span>';
+      '<span class="ts-doc-when">' + _esc(_fmtDate(a.when)) + '</span>' +
+      // P5-2: a document another member uploaded is on file but cannot be
+      // opened from here (the signed-url check is the uploader's); say so
+      // instead of offering a link that would be refused.
+      (a.uploadedByOther ? '<span class="ts-doc-when ts-doc-other">on file · uploaded by another member</span>' : '');
     return window.docLinkHtml
       ? window.docLinkHtml(a.url, inner, { className: 'ts-doc', title: a.name })
       : '<span class="ts-doc">' + inner + '</span>';
@@ -422,9 +454,19 @@ window.TenantSpace = (function () {
     if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?')]);
     if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap)]);
     var leaseDocsHtml = (rec.leaseDocs || []).map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('');
+    // P5-2 \u2014 what a person decided about these terms during the acquisition.
+    // The values above are the ones 035 carried across; this says they were
+    // verified, by whom and when. Shown only when there is at least one
+    // decision: a leasehold nobody decided anything about earns no claim.
+    var _lhSum = (rec.leasehold && rec.leasehold.decisionSummary) || null;
+    var acqLineHtml = (_lhSum && _lhSum.count > 0)
+      ? '<div class="ts-acq-verified">Verified at acquisition \u2014 ' + _lhSum.count + ' term decision' + (_lhSum.count !== 1 ? 's' : '') +
+        ' by a person' + (_lhSum.lastAt ? ', last ' + _esc(_fmtDate(_lhSum.lastAt)) : '') + '</div>'
+      : '';
     var leaseHtml = (leaseRows.length || leaseDocsHtml)
       ? '<div class="ts-lease">' +
           leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>'; }).join('') +
+          acqLineHtml +
           (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms are on file but the document is not \u2014 upload the executed lease so every CAM figure can cite the clause it came from.</div>') +
         '</div>'
       : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
@@ -1079,6 +1121,9 @@ window.TenantSpace = (function () {
       '.ts-empty{font-size:0.78rem;color:var(--text-4,#64748B);}',
       '.ts-lease{display:flex;flex-direction:column;gap:5px;}',
       '.ts-lease-row{display:flex;justify-content:space-between;font-size:0.82rem;color:var(--text-3,#94A3B8);}',
+      // P5-2: the acquisition's verification line and the "on file, not yours to open" note.
+      '.ts-acq-verified{font-size:0.78rem;color:var(--text-3,#94A3B8);padding:2px 0 4px;border-top:1px dashed var(--border-2,#e2e8f0);margin-top:2px;}',
+      '.ts-doc-other{font-style:italic;opacity:0.85;}',
       '.ts-lease-row b{color:var(--text-1,#E2E8F0);font-weight:700;}',
       '.ts-doc{display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-2,#CBD5E1);text-decoration:none;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:8px;padding:7px 10px;margin-top:6px;max-width:100%;}',
       '.ts-doc:hover{border-color:' + gold + ';}',

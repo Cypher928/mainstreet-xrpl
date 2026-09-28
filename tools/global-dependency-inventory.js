@@ -110,6 +110,8 @@ const CLASSIFICATION = {
                   why: "cam-pool.js and variance-breakdown.js fall back to require('./money-cents.js')" },
   SourceValues: { kind: 'module', require: './source-values.js',
                   why: "cam-pool.js and money-cents.js fall back to require('./source-values.js')" },
+  PropertyLeaseholds: { kind: 'module', require: './property-leaseholds.js',
+                  why: "P5-2; tenant-space.js assemble() falls back to require('./property-leaseholds.js') — a pure projection kept in a page-lifetime map that is empty on a server, so every leasehold resolves to null there and the record is unchanged" },
   VarianceBreakdown: { kind: 'module', require: './variance-breakdown.js',
                   why: 'own export assignment in variance-breakdown.js; also a declared dependency' },
 

@@ -81,8 +81,10 @@ sec('A. Every global the graph can reach for is inventoried and classified');
 
   const total = INVENTORY.rows.length;
   is(total >= 28, 'A4 the inventory is not trivially small', total + ' names');
-  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'SourceValues'],
-     'A5 three explicit module dependencies');
+  // Four since P5-2: tenant-space.js assemble() dual-resolves PropertyLeaseholds
+  // (the acquired property's leaseholds, documents and decisions).
+  eq(INVENTORY.byKind.module.slice().sort(), ['CamPool', 'MoneyCents', 'PropertyLeaseholds', 'SourceValues'],
+     'A5 four explicit module dependencies');
   // 20 since the Spaces slice: property-workspace.js reads window.PropertyOS to
   // reveal a COLLAPSED #cardLeases before navigating to it.
   // 21 since the billing-readiness slice: tenant-space.js reads
@@ -214,8 +216,8 @@ sec('C. There is no undeclared or unsafe dependency remaining');
   // The undeclared-at-runtime set is exactly the three modules plus Selectors.
   const undeclared = new Set();
   for (const k of Object.keys(R)) (R[k].undeclaredReads || []).forEach(n => undeclared.add(n));
-  eq(Array.from(undeclared).sort(), ['CamPool', 'MoneyCents', 'Selectors', 'SourceValues'],
-     'C5 the runtime undeclared set is exactly the three dual-resolved modules and Selectors');
+  eq(Array.from(undeclared).sort(), ['CamPool', 'MoneyCents', 'PropertyLeaseholds', 'Selectors', 'SourceValues'],
+     'C5 the runtime undeclared set is exactly the four dual-resolved modules and Selectors');
   is(Array.from(undeclared).every(n =>
        ['module', 'browser_only'].indexOf(INV.CLASSIFICATION[n].kind) !== -1),
      'C6 and each of those is classified module or browser_only — none is unsafe');
@@ -400,8 +402,12 @@ sec('I. The bundle-trace proof from M2 is intact');
   eq(RUN.bundle.unresolved, [], 'I3 nothing unresolved');
   // P3 added property-lifecycle.js (pure; the hydrator refuses a prospect and
   // list_properties lists managed rows only). Seventeen became eighteen.
-  is(RUN.bundle.files.length === 18, 'I4 eighteen files in the bundle',
+  // P5-2 added property-leaseholds.js (pure; tenant-space.js assemble()
+  // dual-resolves it, and its map is empty on a server). Eighteen became nineteen.
+  is(RUN.bundle.files.length === 19, 'I4 nineteen files in the bundle',
      String(RUN.bundle.files.length));
+  is(RUN.bundle.files.indexOf('property-leaseholds.js') !== -1,
+     'I4c property-leaseholds.js is one of them — reached by a require a bundler can see');
   is(RUN.bundle.files.indexOf('property-lifecycle.js') !== -1,
      'I4b the eighteenth is property-lifecycle.js, reached by a literal require');
   eq(INVENTORY.files, RUN.bundle.files,
