@@ -160,7 +160,11 @@ const PR = fs.readFileSync(path.join(__dirname, 'property-record.js'), 'utf8');
 const loaderStart = S.indexOf('async function loadPropertyLeaseholds(');
 const loader = S.slice(loaderStart, S.indexOf('\nasync function loadPropertyData(', loaderStart));
 t('F1 loadPropertyLeaseholds exists and is defined before loadPropertyData', loaderStart > 0 && loader.length > 0);
-t('F2 all three reads are scoped .eq(\'property_id\', propertyId)', (loader.match(/\.eq\('property_id', propertyId\)/g) || []).length === 3);
+t('F2 all four reads are scoped .eq(\'property_id\', propertyId) — P5-4 added the converted review', (loader.match(/\.eq\('property_id', propertyId\)/g) || []).length === 4);
+t('F2b P5-4: the review is read as the CONVERTED one, through its column list only — its raw upload rows are never selected',
+  /\.from\('acquisition_reviews'\)\.select\(PL\.SELECT\.reviews\)\.eq\('property_id', propertyId\)\.eq\('status', 'converted'\)/.test(loader)
+  && PL.SELECT.reviews === 'id, property_id, status, converted_at, canonical:data->analysis->canonical'
+  && !/data\.tenants|'data'|, data,|\bdata\b(?!->)/.test(PL.SELECT.reviews));
 t('F3 none of them filters on user_id: membership RLS decides, as for tenants and evidence', !/user_id/.test(loader));
 t('F3b each read asks for exactly its column list (PL.SELECT.*), never "*": the document text and the abstracted evidence stay out of the workspace load',
   /\.from\('acquisition_document_families'\)\.select\(PL\.SELECT\.families\)/.test(loader)
@@ -182,9 +186,10 @@ t('F11 the Space file shows the summary and the history only with ≥1 decision,
   /_lhC && _lhC\.decisions > 0/.test(TS) && /'a person'/.test(TS) && /'you'/.test(TS) && /Verified by ' \+ by \+ ' \\u2014 ' \+ nV|Verified by ' \+ by \+ ' — ' \+ nV/.test(TS)
   && /the value shown has changed since/.test(TS) && /Verified history \(/.test(TS) && /Verified at acquisition as <b>/.test(TS));
 t('F16 P5-3 NEVER replaces a shown value: every lease row is still built from rec.lease.* and rendered from r[1]; the decision only adds the line beneath (r[2])',
-  /leaseRows\.push\(\['Lease type', rec\.lease\.type, _provLine\('lease_type'/.test(TS)
-  && /leaseRows\.push\(\['Leased area', rec\.lease\.sqft \+ ' sqft', _provLine\('leased_sqft', rec\.lease\.sqft\)\]\)/.test(TS)
-  && /leaseRows\.push\(\['CAM cap', String\(rec\.lease\.cap\), _provLine\('cap', rec\.lease\.cap\)\]\)/.test(TS)
+  /leaseRows\.push\(\['Lease type', rec\.lease\.type, _rowLine\('lease_type'/.test(TS)
+  && /leaseRows\.push\(\['Leased area', rec\.lease\.sqft \+ ' sqft', _rowLine\('leased_sqft', rec\.lease\.sqft\)\]\)/.test(TS)
+  && /leaseRows\.push\(\['CAM cap', String\(rec\.lease\.cap\), _rowLine\('cap', rec\.lease\.cap\)\]\)/.test(TS)
+  && /function _rowLine\(field, shown, prefix\) \{ return _provLine\(field, shown, prefix\) \|\| _acqHistLine\(field, prefix\); \}/.test(TS)
   && /<b>' \+ _esc\(r\[1\]\) \+ '<\/b><\/div>' \+ \(r\[2\] \|\| ''\)/.test(TS));
 t('F17 the decider is never named from data: no displayName/email/profile read in the Space file\'s P5-3 block; only "you" (the signed-in uid) or "a person"',
   (() => { const blk = TS.slice(TS.indexOf('var _lhV = '), TS.indexOf('var leaseHtml = ')); return blk.length > 0 && !/displayName|email|profile|full_name|_esc\([^)]*decidedBy/.test(blk) && /_signedInUid\(\)/.test(blk) && /_who\(e\.decidedBy\)/.test(blk); })());
@@ -281,6 +286,161 @@ t('G13 every history row carries its label, its action as a word, the value it f
 const unknownAct = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS.concat([dec({ id: 'x-approve', family_id: F.shoprite, field_key: 'leased_sqft', action: 'approve', new_value: '1', decided_at: '2026-09-27T00:00:00Z', created_at: '2026-09-27T00:00:00Z' })]) }).byLeaseholdId[F.shoprite];
 t('G14 an unknown action is not a decision: it stands for nothing and is not counted (24, not 25), though the raw row remains in the history list', unknownAct.verified.byField.leased_sqft.value === '67000' && unknownAct.verified.counts.decisions === 24 && unknownAct.decisions.length === 25);
 t('G15 D1 still holds after §G: the frozen fixtures are unchanged', DOCS.length === 9 && FAMILIES.length === 5 && MAPLE_DECISIONS.length === 27 && Object.isFrozen(MAPLE_DECISIONS[0]));
+
+// ── H  P5-4: what the acquisition left, read — never copied ─────────────────
+sec('H  P5-4: acquisition attention, from Maple\'s real converted review');
+const MX = require('./fixtures/maple-acquisition-canonical.js');
+const vm = require('vm');
+const reBox = { window: { SourceValues: require('./source-values.js') }, console };
+vm.createContext(reBox);
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'review-engine.js'), 'utf8'), reBox);
+const RE = reBox.window.ReviewEngine;
+const warnTypes = (t) => RE.deriveTenantReviewState(t).warnings.map(w => w.type);
+const BLOB = deepFreeze(MX.MAPLE_BLOB_TENANTS.map(t => Object.assign({}, t)));
+const blobOf = (id) => BLOB.find(t => t.id === id);
+const HX = PL.build(deepFreeze({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [MX.MAPLE_REVIEW_ROW] }));
+const at = (id) => HX.byLeaseholdId[id].atAcquisition;
+const attOf = (id) => PL.acquisitionAttention(HX.byLeaseholdId[id], PL.currentFromTenant(blobOf(id)), { workspaceWarnings: warnTypes(blobOf(id)) });
+const itemOf = (id, f) => attOf(id).find(x => x.field === f);
+const histOf = (id) => PL.historyForWarnings(HX.byLeaseholdId[id], warnTypes(blobOf(id)));
+
+eq([HX.acquisition && HX.acquisition.reviewId, HX.acquisition && HX.acquisition.source, HX.acquisition && HX.acquisition.analysedAt], [MX.MAPLE_REVIEW_ID, 'fingerprint', '2026-09-26T16:56:24.830Z'],
+   'H1 the converted review is found and read through its stored fingerprint (Maple predates structured states)');
+eq(HX.leaseholdIds.map(id => at(id) && at(id).counts), [
+  { verified: 4, entered: 1, read: 11, unclear: 1, contested: 2, missing: 8 },
+  { verified: 0, entered: 1, read: 4, unclear: 0, contested: 0, missing: 22 },
+  { verified: 0, entered: 0, read: 8, unclear: 1, contested: 0, missing: 18 },
+  { verified: 0, entered: 0, read: 9, unclear: 1, contested: 0, missing: 17 },
+  { verified: 0, entered: 0, read: 0, unclear: 0, contested: 0, missing: 27 },
+], 'H2 each leasehold\'s 27 terms by their state AT ACQUISITION — ShopRite, Luxe, Coffee, Prime, Sunrise — exactly as the review recorded them');
+
+// The survival matrix: acquisition location → post-Acquire location → survives.
+sec('H  the Maple survival matrix (acquisition record → property now)');
+const s1 = itemOf(F.shoprite, 'start_date'), h1 = histOf(F.shoprite).find(h => h.field === 'start_date');
+t('H3 [1] ShopRite start date: CONTESTED at acquisition (lease 2024-03-01 vs amendment 2027-01-01, nothing chosen) → the property shows it missing, the workspace raises it, and the history says contested — not a new "missing" gap',
+  at(F.shoprite).fields.start_date.state === 'contested' && s1.kind === 'contested' && s1.current === 'absent' && s1.representedInWorkspace === true
+  && s1.open === true && h1 && h1.state === 'contested' && warnTypes(blobOf(F.shoprite)).includes('missing_start_date'));
+const s2 = itemOf(F.shoprite, 'audit_rights'), h2 = histOf(F.shoprite).find(h => h.field === 'audit_rights');
+t('H4 [2] ShopRite audit rights: a person REJECTED the reading (standing decision: reject) → unclear at acquisition; the workspace raises "audit rights clause not resolved"; the history carries the rejection',
+  at(F.shoprite).fields.audit_rights.state === 'unclear' && s2.kind === 'unclear' && s2.rejected === true && s2.representedInWorkspace === true
+  && h2 && h2.state === 'unclear' && h2.rejected === true && HX.byLeaseholdId[F.shoprite].verified.byField.audit_rights.rejected === true);
+t('H5 [3,4] Luxe lease type and start date: NOT ESTABLISHED at acquisition → both still missing on the property, both raised by the workspace, both annotated as not established',
+  ['lease_type', 'start_date'].every(f => at(F.luxe).fields[f].state === 'missing' && itemOf(F.luxe, f).current === 'absent' && itemOf(F.luxe, f).representedInWorkspace
+    && histOf(F.luxe).some(h => h.field === f && h.state === 'missing')));
+t('H6 [5,6] Maple Coffee lease type and end date: NOT ESTABLISHED → still missing, raised, annotated',
+  ['lease_type', 'end_date'].every(f => at(F.coffee).fields[f].state === 'missing' && itemOf(F.coffee, f).current === 'absent' && itemOf(F.coffee, f).representedInWorkspace
+    && histOf(F.coffee).some(h => h.field === f && h.state === 'missing')));
+const sun = HX.byLeaseholdId[F.sunrise];
+t('H7 [7] Sunrise SF: NOT ESTABLISHED and NO DOCUMENT at acquisition → the property\'s 0 sf is read as absent, the workspace\'s CAM blocker (missing_sqft) is the signal, and the history says no document was filed',
+  at(F.sunrise).fields.leased_sqft.state === 'missing' && at(F.sunrise).noDocument === true && itemOf(F.sunrise, 'leased_sqft').current === 'absent'
+  && itemOf(F.sunrise, 'leased_sqft').representedInWorkspace && histOf(F.sunrise).some(h => h.field === 'leased_sqft' && h.state === 'missing' && h.noDocument)
+  && attOf(F.sunrise).some(x => x.kind === 'no_document'));
+const everything = JSON.stringify([HX, attOf(F.sunrise), histOf(F.sunrise), PL.propertyAcquisitionAttention(HX, BLOB, warnTypes)]);
+t('H8 Sunrise safety: the unverified 2,800 sf upload is NEVER promoted — no value, count or string of it anywhere in the projection, the attention or the rollup; the leasehold\'s recorded value is none',
+  !/2,?800/.test(everything) && at(F.sunrise).fields.leased_sqft.value === null && MX.MAPLE_SUNRISE_RAW_UPLOAD.leased_sqft === '2800');
+const withRaw = PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS,
+  reviews: [Object.assign({}, MX.MAPLE_REVIEW_ROW, { data: { tenants: [MX.MAPLE_SUNRISE_RAW_UPLOAD] } })] });
+t('H8b …even when a caller hands over a review row that carries the raw upload rows: they are not read (only the selected `canonical` is)',
+  !/2,?800/.test(JSON.stringify(withRaw)) && withRaw.byLeaseholdId[F.sunrise].atAcquisition.counts.missing === 27);
+
+// No double counting: the rollup adds only what the workspace has no word for.
+sec('H  one rolled-up item, nothing counted twice');
+const ROLL = PL.propertyAcquisitionAttention(HX, BLOB, warnTypes);
+eq([ROLL.leaseholds, ROLL.contested, ROLL.unclear, ROLL.read], [4, 1, 2, 7],
+   'H9 Maple\'s rollup: 4 spaces · 1 contested (ShopRite renewal options) · 2 unclear (Coffee and Prime base rent, a derived figure) · 7 lease-row values read by AI and never verified');
+t('H10 no field the workspace already raises is counted: ShopRite start date and audit rights, Luxe/Coffee lease type, dates and Sunrise sq ft are all absent from the rollup',
+  !ROLL.items.some(i => (i.tenantId === F.shoprite && (i.field === 'start_date' || i.field === 'audit_rights'))
+    || (i.tenantId === F.luxe && (i.field === 'lease_type' || i.field === 'start_date'))
+    || (i.tenantId === F.coffee && (i.field === 'lease_type' || i.field === 'end_date'))
+    || i.tenantId === F.sunrise));
+t('H11 no item twice, and no "not established" or "no document" item at all — the workspace already says both',
+  new Set(ROLL.items.map(i => i.tenantId + '|' + i.field)).size === ROLL.items.length && ROLL.items.every(i => i.kind !== 'missing' && i.kind !== 'no_document'));
+eq(ROLL.items.filter(i => i.kind === 'read').map(i => i.tenantId.slice(0, 8) + ':' + i.field).sort(),
+   ['a4ded336:end_date', 'a4ded336:leased_sqft', 'a4ded336:start_date', 'ae6f43fd:leased_sqft', 'ae6f43fd:start_date', 'd1fb1d5a:leased_sqft', '8b175124:end_date'].sort(),
+   'H12 a read-by-AI value is counted only on a Space-file row whose shown value IS the one read (lease type and cap cannot be compared from a fingerprint, so they are not claimed)');
+
+// Current values stay distinct from the historical state.
+sec('H  the current value is the property\'s; the acquisition\'s is history');
+const filled = Object.assign({}, blobOf(F.shoprite), { start_date: '2024-03-01' });
+const fItem = PL.acquisitionAttention(HX.byLeaseholdId[F.shoprite], PL.currentFromTenant(filled), { workspaceWarnings: warnTypes(filled) }).find(x => x.field === 'start_date');
+t('H13 a contested term the workspace has since filled is RESOLVED SINCE (not open) — and the projection itself is untouched: still contested at acquisition',
+  fItem.resolvedSince === true && fItem.open === false && at(F.shoprite).fields.start_date.state === 'contested');
+const moved = Object.assign({}, blobOf(F.prime), { leased_sqft: 5000 });
+const mItem = PL.acquisitionAttention(HX.byLeaseholdId[F.prime], PL.currentFromTenant(moved), {}).find(x => x.field === 'leased_sqft');
+t('H14 a value read by AI that has CHANGED since (Prime 4,500 → 5,000) is flagged changed-since, not "read by AI" — and not counted',
+  mItem.changedSince === true && mItem.valueAtAcquisition === 4500 && mItem.open === false
+  && !PL.propertyAcquisitionAttention(HX, BLOB.map(t => t.id === F.prime ? moved : t), warnTypes).items.some(i => i.tenantId === F.prime && i.field === 'leased_sqft'));
+t('H15 build() and the attention never write: they ran over DEEP-FROZEN tenants and a deep-frozen review row (a write would have thrown in strict mode), and both read exactly as stored',
+  Object.isFrozen(BLOB[0]) && BLOB[0].start_date === '' && Object.isFrozen(MX.MAPLE_REVIEW_ROW) && Object.isFrozen(MX.MAPLE_REVIEW_ROW.canonical)
+  && MX.MAPLE_REVIEW_ROW.canonical.basis === 'leaseholds' && !('states' in MX.MAPLE_REVIEW_ROW.canonical));
+
+// Fail closed: ambiguity shows nothing.
+sec('H  fail closed: when the record cannot be read safely, nothing is shown');
+const BR = (reviews, fams) => PL.build({ propertyId: P, currentUid: OWN, families: fams || FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews });
+const none = (b) => b.acquisition === null && b.leaseholdIds.every(id => b.byLeaseholdId[id].atAcquisition === null);
+const canon = (over) => [Object.assign({}, MX.MAPLE_REVIEW_ROW, { canonical: Object.assign({}, MX.MAPLE_CANONICAL, over) })];
+const fpWith = (mut) => { const rows = JSON.parse(MX.MAPLE_CANONICAL.fingerprint); mut(rows); return JSON.stringify(rows); };
+t('H16 no converted review → nothing', none(BR([])) && PL.propertyAcquisitionAttention(BR([]), BLOB, warnTypes) === null);
+t('H17 two converted reviews on one property → ambiguous → nothing', none(BR([MX.MAPLE_REVIEW_ROW, Object.assign({}, MX.MAPLE_REVIEW_ROW, { id: 'another-review' })])));
+t('H18 a review that is not converted, or of another property → nothing', none(BR([Object.assign({}, MX.MAPLE_REVIEW_ROW, { status: 'complete' })])) && none(BR([Object.assign({}, MX.MAPLE_REVIEW_ROW, { property_id: OTHER_P })])));
+t('H19 a basis other than leaseholds → nothing', none(BR(canon({ basis: undefined }))) && none(BR(canon({ basis: 'uploads' }))));
+t('H20 an unparsable fingerprint → nothing', none(BR(canon({ fingerprint: '[[' }))) && none(BR(canon({ fingerprint: '' }))) && none(BR(canon({ fingerprint: '{}' }))));
+t('H21 a fingerprint entry of the wrong shape, an unfiled row, a repeated leasehold → nothing',
+  none(BR(canon({ fingerprint: fpWith(r => r[0].pop()) }))) && none(BR(canon({ fingerprint: fpWith(r => { r[1][1] = 'unfiled'; }) })))
+  && none(BR(canon({ fingerprint: fpWith(r => { r[1][0] = r[0][0]; }) }))));
+t('H22 an unknown state, an unknown field, or "entered" on a term that was not verified → nothing',
+  none(BR(canon({ fingerprint: fpWith(r => { r[0][3].cap = 'probably'; }) }))) && none(BR(canon({ fingerprint: fpWith(r => { r[0][3].made_up = 'missing'; }) })))
+  && none(BR(canon({ fingerprint: fpWith(r => { r[0][4].start_date = 'entered'; }) }))));
+t('H23 a leasehold in the record that is not one of that review\'s families → nothing (and a family of another review is not adopted)',
+  none(BR(canon({ fingerprint: fpWith(r => { r[0][0] = '99999999-9999-4999-8999-999999999999'; }) })))
+  && none(BR([MX.MAPLE_REVIEW_ROW], FAMILIES.map(f => f.id === F.luxe ? Object.assign({}, f, { review_id: 'other-review' }) : f))));
+t('H24 a decision that says VERIFIED against a record that says otherwise: that field is left out, never guessed',
+  !PL.acquisitionAttention(Object.assign({}, HX.byLeaseholdId[F.shoprite], { verified: { byField: { renewal_options: { verified: true } } } }),
+    PL.currentFromTenant(blobOf(F.shoprite)), {}).some(x => x.field === 'renewal_options'));
+
+// Structured states (written since P5-4) — preferred, and held to the fingerprint.
+sec('H  structured canonical.states: preferred, and must agree with the fingerprint');
+const structured = {};
+JSON.parse(MX.MAPLE_CANONICAL.fingerprint).forEach(([id, , norm, st, or]) => {
+  structured[id] = { states: st, origins: or, values: { lease_type: id === F.shoprite ? 'NNN' : null, leased_sqft: norm.leased_sqft, start_date: norm.lease_start, end_date: norm.lease_end, cap: id === F.shoprite ? 3 : null } };
+});
+const HS = BR(canon({ states: structured }));
+t('H25 structured states that agree with the fingerprint are used (source "states") and carry the lease type and cap values a fingerprint cannot',
+  HS.acquisition.source === 'states' && HS.byLeaseholdId[F.shoprite].atAcquisition.fields.lease_type.value === 'NNN'
+  && JSON.stringify(HS.byLeaseholdId[F.shoprite].atAcquisition.counts) === JSON.stringify(at(F.shoprite).counts));
+const disagree = JSON.parse(JSON.stringify(structured)); disagree[F.shoprite].states.start_date = 'verified';
+t('H26 structured states that DISAGREE with the fingerprint → nothing (two records of one moment that differ are not read)', none(BR(canon({ states: disagree }))));
+t('H27 structured states that are malformed → nothing; they are not silently skipped in favour of the fingerprint', none(BR(canon({ states: { [F.shoprite]: { states: 'x' } } }))) && none(BR(canon({ states: [] }))));
+t('H28 structured states alone (no fingerprint) are read', BR(canon({ states: structured, fingerprint: undefined })).acquisition.source === 'states');
+
+// Read-only and additive, by structure.
+sec('H  read-only and additive, by structure');
+const TSx = fs.readFileSync(path.join(__dirname, 'tenant-space.js'), 'utf8');
+const recBlock = TSx.slice(TSx.indexOf('var acqRecordHtml = \'\';'), TSx.indexOf('var leaseHtml = (leaseRows.length'));
+t('H29 the acquisition record in the Space file is READ-ONLY: a <details> with no button, no handler, no link into the editable review and no decision call',
+  recBlock.length > 0 && /<details class="ts-acq-record"/.test(recBlock) && !/onclick|<button|<a |selectAcquisitionReview|acqConfirmTerm|acqCorrectTerm|acqRejectTerm|acqReopenTerm|acqEnterTerm|_acqSaveDecision|db\./.test(recBlock));
+const histBlock = TSx.slice(TSx.indexOf('var _acqItems ='), TSx.indexOf('function _rowLine('));
+t('H30 the per-row acquisition line is text only (no control) and appears only when NO decision stands for the field',
+  /if \(_lhV && _lhV\.byField && _lhV\.byField\[field\]\) return '';/.test(histBlock) && !/onclick|<button|<a /.test(histBlock));
+const PLS = fs.readFileSync(path.join(__dirname, 'property-leaseholds.js'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+t('H31 property-leaseholds.js still writes nothing and stores nothing (no storage API, no serialiser, no insert/update)',
+  !/localStorage|sessionStorage|indexedDB|JSON\.stringify\(|\.insert\(|\.update\(|\.upsert\(|\.rpc\(/.test(PLS));
+const AS = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+const buildBlock = AS.slice(AS.indexOf('function _acqBuildAnalysis('), AS.indexOf('async function _acqRefreshAnalysis('));
+t('H32 the analysis now also stores structured states — additively: the fingerprint is still written, and the staleness check still compares only the fingerprint',
+  /fingerprint: _acqCanonicalFingerprint\(tenants\)/.test(buildBlock) && /states: _acqCanonicalStates\(tenants\)/.test(buildBlock)
+  && /_acqCanonicalFingerprint\(_acqLeaseholdsOnly\(canon\)\) !== a\.canonical\.fingerprint/.test(AS)
+  && !/a\.canonical\.states/.test(AS.slice(AS.indexOf('function _acqAnalysisStaleParts('), AS.indexOf('function _acqAnalysisStaleParts(') + 3000)));
+// The writer and the reader agree: rows → _acqCanonicalStates → parseCanonicalStates.
+const writerSrc = AS.slice(AS.indexOf('function _acqCanonicalStates('), AS.indexOf('\n}\n', AS.indexOf('function _acqCanonicalStates(')) + 2);
+const wBox = { _acqAnalysisRows: (rows) => rows.filter(r => r && r.tenant_name), out: null };
+vm.createContext(wBox); vm.runInContext(writerSrc + '\nout = _acqCanonicalStates;', wBox);
+const rowsIn = JSON.parse(MX.MAPLE_CANONICAL.fingerprint).map(([id, , norm, st, or]) => ({ id, _source: 'leasehold', tenant_name: norm.tenant_name, _states: st, _origins: or,
+  leased_sqft: norm.leased_sqft, start_date: norm.lease_start, end_date: norm.lease_end, lease_type: null, cap: null }));
+const written = wBox.out(rowsIn);
+const round = PL.parseCanonicalStates(Object.assign({}, MX.MAPLE_CANONICAL, { states: written }));
+t('H33 what the analysis writes is what the property reads: Maple\'s rows through _acqCanonicalStates parse back, agree with the fingerprint, source "states"',
+  round && round.source === 'states' && Object.keys(round.byLeasehold).length === 5 && round.byLeasehold[F.shoprite].states.start_date === 'conflicting');
 
 console.log(`\n${'─'.repeat(58)}\nRESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }

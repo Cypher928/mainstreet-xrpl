@@ -23440,7 +23440,7 @@ function _rqCompactItemHtml(item) {
     <div class="rq-compact-name">${esc(item.tenantName)}</div>
     <span class="trs-badge ${stateCfg.cls}">${stateCfg.label}</span>
     <span class="trs-score ${scoreColor}">Score: ${item.reviewScore}</span>
-    <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>
+    <div class="rq-chips rq-chips--inline">${missingChips}${warnChips}</div>${_rqAcquisitionHistoryHtml(item)}
     <div class="rq-compact-actions" style="display:flex;gap:4px;align-items:center;">
       ${(() => {
         // BOTH ACTIONS ON THIS CARD NAME A TENANT, SO BOTH NEED ONE.
@@ -23476,6 +23476,44 @@ function _rqCompactItemHtml(item) {
       })()}
     </div>
   </div>`;
+}
+
+// P5-4 — WHAT THE ACQUISITION RECORDED ABOUT THE FIELDS THIS CARD NAMES.
+//
+// The card's chips are the CURRENT issue, and they stay exactly as they were:
+// a start date missing today is fixed today, on the property. What this adds is
+// the history behind it, when there is one — a start date that is missing
+// because the lease and its amendment disagreed and nothing was chosen reads
+// very differently from one nobody typed in. It is read from the acquisition's
+// recorded states (PropertyLeaseholds.atAcquisition) and it is never a task: no
+// button, no acquisition action, nothing to resolve in a review that is closed.
+// Nothing about an unverified extraction is shown — the projection never reads
+// one — so a leasehold with no document says only that.
+const _RQ_ACQ_FIELD_WORD = {
+  lease_type: 'Lease type', leased_sqft: 'Sq ft', start_date: 'Start date', end_date: 'End date',
+  cap: 'NNN cap', audit_rights: 'Audit rights',
+};
+function _rqAcquisitionHistoryHtml(item) {
+  const PL = window.PropertyLeaseholds;
+  if (!PL || typeof PL.forTenant !== 'function' || typeof PL.historyForWarnings !== 'function') return '';
+  if (!item || !item.tenantId || !item.propertyId) return '';
+  const entry = PL.forTenant(item.propertyId, item.tenantId);
+  if (!entry || !entry.atAcquisition) return '';
+  const prop = (_props || []).find(p => p && p.id === item.propertyId);
+  const t = ((prop && prop.tenants) || []).find(x => x && x.id === item.tenantId);
+  if (!t) return '';
+  let types = [];
+  try { types = (deriveTenantReviewState(t).warnings || []).map(w => w.type); } catch (_) { return ''; }
+  const hist = PL.historyForWarnings(entry, types);
+  if (!hist.length) return '';
+  const words = h => h.state === 'contested' ? 'contested — the documents disagreed; nothing was chosen'
+    : h.state === 'unclear'  ? (h.rejected ? 'unclear — a person rejected the document’s reading' : 'unclear')
+    : h.state === 'missing'  ? (h.noDocument ? 'not established — no lease document was filed' : 'not established by any document')
+    : h.state === 'read'     ? 'read by AI, not verified'
+    : h.state === 'entered'  ? 'entered by a person'
+    :                          'verified by a person';
+  return `<div class="rq-acq-hist" data-acq-hist="1" style="flex-basis:100%;font-size:0.72rem;font-style:italic;opacity:0.8;margin-top:3px;">At acquisition: ${
+    hist.map(h => `<span data-field="${esc(h.field)}" data-state="${esc(h.state)}">${esc(_RQ_ACQ_FIELD_WORD[h.field] || h.label)} ${esc(words(h))}</span>`).join(' · ')}</div>`;
 }
 
 // Property-level queue: grouped by this property, rendered above tenant table.
@@ -29008,19 +29046,23 @@ async function loadPropertyLeaseholds(propertyId, currentUid) {
   if (!PL || !propertyId) return null;
   PL.clear(propertyId);
   const rows = (r) => (r && Array.isArray(r.data)) ? r.data : [];
-  let fams = [], docs = [], decs = [];
+  let fams = [], docs = [], decs = [], revs = [];
   try {
-    const [fr, dr, xr] = await Promise.all([
+    // P5-4: the fourth read is the converted review — and of its data, ONLY
+    // the analysis's canonical block (PL.SELECT.reviews), which records each
+    // term's state as acquired. Never the review's raw upload rows.
+    const [fr, dr, xr, rr] = await Promise.all([
       db.from('acquisition_document_families').select(PL.SELECT.families).eq('property_id', propertyId).order('created_at', { ascending: true }),
       db.from('acquisition_documents').select(PL.SELECT.documents).eq('property_id', propertyId).order('created_at', { ascending: true }),
       db.from('acquisition_term_decisions').select(PL.SELECT.decisions).eq('property_id', propertyId).order('decided_at', { ascending: true }),
+      db.from('acquisition_reviews').select(PL.SELECT.reviews).eq('property_id', propertyId).eq('status', 'converted'),
     ]);
-    [fr, dr, xr].forEach(r => { if (r && r.error) console.warn('[PropertyLeaseholds] read failed:', r.error.message); });
-    fams = rows(fr); docs = rows(dr); decs = rows(xr);
+    [fr, dr, xr, rr].forEach(r => { if (r && r.error) console.warn('[PropertyLeaseholds] read failed:', r.error.message); });
+    fams = rows(fr); docs = rows(dr); decs = rows(xr); revs = rows(rr);
   } catch (e) {
     console.warn('[PropertyLeaseholds] load failed — the property renders without its acquisition record:', e && e.message);
   }
-  const built = PL.build({ propertyId, families: fams, documents: docs, decisions: decs, currentUid: currentUid || null });
+  const built = PL.build({ propertyId, families: fams, documents: docs, decisions: decs, reviews: revs, currentUid: currentUid || null });
   PL.set(propertyId, built);
   console.log('[PropertyLeaseholds]', { propertyId, leaseholds: built.familyCount, documents: built.documentCount, decisions: built.decisionCount });
   return built;
@@ -31170,8 +31212,31 @@ function _acqBuildAnalysis(review) {
     fingerprint: _acqCanonicalFingerprint(tenants), at: new Date().toISOString(),
     // The other inputs, so a later change to either shows it out of date.
     sqft, invoices: AE.invoiceInputsFingerprint(invoices),
+    // P5-4 — each leasehold's term states, structured. The same facts the
+    // fingerprint already carries (it stays, and the staleness check still
+    // reads only it), stored so that after Acquire the property can say what
+    // was left unresolved without parsing a hash input. Additive: nothing
+    // reads it before Acquire, and the gate is unchanged.
+    states: _acqCanonicalStates(tenants),
   };
   return { report, tenants, invoices, sqft };
+}
+
+// Per leasehold: the resolver's state and origin for every term, and the
+// values of the five terms the property's Space file shows as rows — so the
+// property can later tell whether the value it shows is the one recorded here.
+function _acqCanonicalStates(rows) {
+  const out = {};
+  _acqAnalysisRows(rows).forEach(r => {
+    if (!r || !r.id || r._source !== 'leasehold') return;
+    out[r.id] = {
+      states: Object.assign({}, r._states || {}),
+      origins: Object.assign({}, r._origins || {}),
+      values: { lease_type: r.lease_type ?? null, leased_sqft: r.leased_sqft ?? null,
+                start_date: r.start_date ?? null, end_date: r.end_date ?? null, cap: r.cap ?? null },
+    };
+  });
+  return out;
 }
 
 // After a person acts on a term, an analysis that exists is rebuilt from the

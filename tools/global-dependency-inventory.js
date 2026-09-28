@@ -123,6 +123,7 @@ const CLASSIFICATION = {
          'global could satisfy. Reads {} here; the hydrator reports the degradation ' +
          'as attention.without_selectors_readiness.' },
   PropertyTimeline: { kind: 'browser_only', why: 'property-timeline.js touches document at load' },
+  ReviewEngine:     { kind: 'browser_only', why: "P5-4; property-workspace.js reads it only inside renderAttention (a browser render path) to learn which fields the workspace already raises, so the acquisition's rolled-up attention item never counts them twice; collectAttention, the server path, never touches it" },
   DocViewer:        { kind: 'browser_only', why: 'opens a document in a DOM overlay; tenant-space.js reaches for it only from click handlers, never from assemble()' },
   SpaceActions:     { kind: 'browser_only', why: 'UI action dispatcher' },
   AuthService:      { kind: 'browser_only', why: 'browser SESSION state — the current signed-in user' },

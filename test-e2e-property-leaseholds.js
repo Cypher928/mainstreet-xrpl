@@ -26,6 +26,13 @@
  *   LH-13 P5-3 Sunrise and Coffee: no line, no history; Prime: one line decided by ANOTHER member reads "by a person"
  *   LH-14 P5-3 a shown value edited after acquisition: the row shows the edited value; the line says "Verified at
  *         acquisition as 67,000 … the value shown has changed since"; nothing is written
+ *   LH-15 P5-4 the REAL click path: Portfolio card → Maple → Spaces tab → the ShopRite row → the tenant file:
+ *         Commencement "Contested at acquisition"; Expiration "Read by AI at acquisition"; the read-only record
+ *   LH-16 P5-4 the Maple survival matrix in the Review Queue: each current gap annotated with its acquisition state
+ *   LH-17 P5-4 Overview: ONE acquisition item, nothing the workspace already raises counted twice
+ *   LH-18 P5-4 Sunrise: no document, not established; the unverified 2,800 sf upload never appears
+ *   LH-19 P5-4 read-only: the acquisition record has no control, opens no editable review, writes nothing
+ *   LH-20 P5-4 Luxe: a value read by AI at acquisition and shown unchanged says so; a blank start date says nothing new
  *   LH-10 no page errors
  *
  * The decision fixtures are Maple's 27 live rows (test-decision-standing.js), decided by this user, plus one
@@ -65,8 +72,10 @@ const MAPLE = '3dc8a7b8-170c-4a51-b90d-dde831c56ca9', RV = '59af3e99-82dc-4a97-8
 const LEGACY = 'aaaaaaaa-1111-4111-8111-00000000le9a', PROSPECT = 'bbbbbbbb-2222-4222-8222-0000000pr05p', FOREIGN = 'cccccccc-3333-4333-8333-00000000f0re';
 const F = { luxe: 'd1fb1d5a-aea0-4305-ad8e-82b14e9fee17', coffee: 'ae6f43fd-eb1e-469f-928e-0caa706914a7', prime: 'a4ded336-7195-42d1-9f90-d9f67c6d62d6', shoprite: '8b175124-98c2-46be-a44c-34d622378e44', sunrise: 'c99dda4d-b477-4098-a9e3-2af250a6b8af' };
 const { MAPLE_DECISIONS } = require('./test-decision-standing.js');
+const MX = require('./fixtures/maple-acquisition-canonical.js');
 const T = (id, name, sqft, extra) => Object.assign({ id, tenant_name: name, leased_sqft: sqft, lease_type: 'NNN', start_date: '2024-03-01', end_date: '2029-02-28', cap: null, flags: [], confidence: {}, review: {}, reviewOverrides: {} }, extra || {});
-const MAPLE_TENANTS = [T(F.luxe, 'Luxe Nails', '3000', { suite: 'A-1', end_date: '2031-07-07' }), T(F.coffee, 'Maple Coffee Co.', '3000', { suite: 'B-2' }), T(F.prime, 'Prime Wellness Spa', '4500', { suite: 'C-1' }), T(F.shoprite, 'ShopRite Supermarkets, Inc.', '67000', { suite: '100', cap: '3' }), T(F.sunrise, 'Sunrise Cafe & Bakery LLC', null, { suite: 'D-4' })];
+// P5-4: Maple's tenants exactly as properties.data.tenants holds them on Pilot — the CURRENT values.
+const MAPLE_TENANTS = MX.MAPLE_BLOB_TENANTS.map(t => Object.assign({}, t));
 const tblRow = (t, pid) => ({ id: t.id, property_id: pid, name: t.tenant_name, sqft: t.leased_sqft == null ? null : Number(t.leased_sqft), cap: t.cap == null ? null : Number(t.cap), start_date: t.start_date || null, end_date: t.end_date || null, lease_url: t.leaseUrl || null, lease_type: t.lease_type || null });
 const fam = (id, label, pid, rid) => ({ id, review_id: rid || RV, property_id: pid || MAPLE, user_id: UID, label, family_kind: 'lease', tenant_hint: label, suite_hint: null, created_at: '2026-09-22T15:13:23Z', updated_at: '2026-09-27T03:27:53Z' });
 const sp = (name, uid) => `leases/${uid || UID}/acq_${RV}_1789993792724-${name}`;
@@ -84,7 +93,10 @@ const FIX = {
   // The tenants table mirrors the blob (resync_property_tenants writes lease_url from t.leaseUrl), as every real row does.
   tenants: MAPLE_TENANTS.map(t => tblRow(t, MAPLE)).concat([tblRow(T('leg-t1', 'Legacy Tenant', '900', { leaseUrl: 'leases/' + UID + '/legacy-lease.pdf' }), LEGACY), tblRow(T('for-t1', 'Foreign Tenant', '5000'), FOREIGN)]),
   acquisition_reviews: [{ id: RV, user_id: UID, name: 'Maple plaza', status: 'converted', property_id: MAPLE, converted_at: '2026-09-27T13:40:41Z', created_at: '2026-09-17T19:14:41Z', updated_at: '2026-09-27T13:40:41Z',
-    data: { conversionRecord: { propertyId: MAPLE, reviewId: RV, source: 'acquire_property' }, tenants: [], invoices: [] } }],
+    data: { conversionRecord: { propertyId: MAPLE, reviewId: RV, source: 'acquire_property' },
+            // P5-4: the analysis the acquisition was gated on (its real canonical block), and the raw upload row
+            // Sunrise's leasehold was established from — whose 2,800 sf must never reach the property.
+            analysis: { canonical: MX.MAPLE_CANONICAL }, tenants: [MX.MAPLE_SUNRISE_RAW_UPLOAD], invoices: [] } }],
   acquisition_document_families: [
     fam(F.shoprite, 'ShopRite Supermarkets, Inc.'), fam(F.luxe, 'Luxe Nails'), fam(F.coffee, 'Maple Coffee Co.'), fam(F.prime, 'Prime Wellness Spa'), fam(F.sunrise, 'Sunrise Cafe & Bakery LLC'),
     fam('pppppppp-0000-4000-8000-000000000001', 'Prospect Tenant', PROSPECT, 'rev-prospect'),
@@ -135,10 +147,24 @@ const SUPABASE_MOCK = `
     });
   }
   function makeQ(table) {
-    var f = { eq: {}, in: {}, is: {} }, pending = null, op = 'select', payload = null;
+    var f = { eq: {}, in: {}, is: {} }, pending = null, op = 'select', payload = null, cols = null;
+    // A column list with a JSON path ("canonical:data->analysis->canonical") is projected as PostgREST would:
+    // ONLY the named columns come back. Other selects keep returning whole rows, as before.
+    function proj(r) {
+      if (!cols || cols.indexOf('->') < 0) return C(r);
+      var o = {};
+      cols.split(',').map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (c) {
+        var m = /^(?:([A-Za-z_][A-Za-z0-9_]*):)?([A-Za-z_][A-Za-z0-9_]*)((?:->[A-Za-z_][A-Za-z0-9_]*)*)$/.exec(c);
+        if (!m) return;
+        var v = r[m[2]];
+        m[3].split('->').filter(Boolean).forEach(function (k) { v = (v && typeof v === 'object') ? v[k] : undefined; });
+        o[m[1] || m[2]] = v === undefined ? null : C(v);
+      });
+      return o;
+    }
     function logSel() { _store.__selects.push({ table: table, eq: C(f.eq) }); }
     var q = {
-      select: function () { return q; },
+      select: function (c) { cols = typeof c === 'string' ? c : null; return q; },
       insert: function (rows) { var arr = Array.isArray(rows) ? rows : [rows]; _store.__writes.push({ op: 'insert', table: table, n: arr.length }); arr.forEach(function (r) { _store[table].push(C(r)); }); op = 'insert'; payload = arr; return q; },
       upsert: function (row) { var arr = Array.isArray(row) ? row : [row]; _store.__writes.push({ op: 'upsert', table: table, n: arr.length, ids: arr.map(function (r) { return r.id; }) });
         arr.forEach(function (r) { var i = _store[table].findIndex(function (x) { return x.id === r.id; }); if (i >= 0) Object.assign(_store[table][i], C(r)); else _store[table].push(C(r)); }); op = 'upsert'; payload = arr; return q; },
@@ -147,15 +173,15 @@ const SUPABASE_MOCK = `
       eq: function (c, v) { f.eq[c] = v; return q; }, in: function (c, v) { f.in[c] = v; return q; }, is: function (c, v) { f.is[c] = v; return q; },
       neq: function () { return q; }, not: function () { return q; }, or: function () { return q; }, gte: function () { return q; }, lte: function () { return q; },
       order: function () { return q; }, limit: function () { return q; }, range: function () { return q; }, ilike: function () { return q; },
-      single: function () { logSel(); var r = rowsOf(table, f); return P(r.length ? { data: C(r[0]), error: null } : { data: null, error: { code: 'PGRST116', message: 'no rows' } }); },
-      maybeSingle: function () { logSel(); var r = rowsOf(table, f); return P({ data: r[0] ? C(r[0]) : null, error: null }); },
+      single: function () { logSel(); var r = rowsOf(table, f); return P(r.length ? { data: proj(r[0]), error: null } : { data: null, error: { code: 'PGRST116', message: 'no rows' } }); },
+      maybeSingle: function () { logSel(); var r = rowsOf(table, f); return P({ data: r[0] ? proj(r[0]) : null, error: null }); },
       then: function (res, rej) {
         if (op === 'delete') { var keep = _store[table].filter(function (r) { return !rowsOf(table, f).includes(r); }); _store[table] = keep; return P({ data: null, error: null }).then(res, rej); }
         if (op === 'insert' || op === 'upsert') return P({ data: payload, error: null }).then(res, rej);
         logSel();
         var rows = rowsOf(table, f);
         if (pending) rows.forEach(function (r) { Object.assign(r, pending); });
-        return P({ data: rows.map(C), error: null }).then(res, rej);
+        return P({ data: rows.map(proj), error: null }).then(res, rej);
       }
     };
     return q;
@@ -199,6 +225,15 @@ const SUPABASE_MOCK = `
         // P5-3: the line beneath each term, and the collapsed history.
         lines: Array.from(o.querySelectorAll('.ts-acq-line')).map(l => ({ field: l.getAttribute('data-field'), text: l.textContent.replace(/\s+/g, ' ').trim(), linked: !!l.querySelector('[data-doc-url]'), plainSrc: !!l.querySelector('.ts-acq-src--plain') })),
         historySummary: (o.querySelector('.ts-acq-history > summary') || {}).textContent || null,
+        // P5-4: the acquisition's line under a row, and the read-only record.
+        acqHist: Array.from(o.querySelectorAll('.ts-acq-atacq')).map(l => ({ field: l.getAttribute('data-field'), kind: l.getAttribute('data-kind'), text: l.textContent.replace(/\s+/g, ' ').trim() })),
+        record: (function () {
+          const d = o.querySelector('.ts-acq-record'); if (!d) return null;
+          return { summary: (d.querySelector('summary') || {}).textContent.replace(/\s+/g, ' ').trim(),
+                   controls: d.querySelectorAll('button, a, input, select, textarea, [onclick]').length,
+                   noDoc: !!d.querySelector('[data-kind="no_document"]'),
+                   groups: Array.from(d.querySelectorAll('.ts-acq-rec-grp')).map(g => ({ state: g.getAttribute('data-state'), text: g.textContent.replace(/\s+/g, ' ').trim() })) };
+        })(),
         history: Array.from(o.querySelectorAll('.ts-acq-h')).map(h => Array.from(h.children).map(c => c.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ')),
         rows: Array.from(o.querySelectorAll('.ts-lease-row')).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
         noDocMsg: /Lease terms are on file but the document is not/.test(o.textContent),
@@ -319,6 +354,7 @@ const SUPABASE_MOCK = `
     assert(LG.chips.length === 1 && LG.chips[0].linked && !LG.chips[0].other, 'LH-7: the legacy tenant shows its own lease document (one linked chip), from its own row, exactly as before',
       JSON.stringify({ chips: LG.chips, noDocMsg: LG.noDocMsg }));
     assert(LG.verified === null && !/ShopRite|Maple_Plaza|Luxe/.test(LG.text), 'LH-7: no verification line and nothing of Maple\'s on the legacy file');
+    assert(LG.record === null && LG.acqHist.length === 0, 'LH-7: P5-4 — a property with no acquisition has no acquisition record and no acquisition line');
     is([legProj.fams, legProj.shop, legProj.maple], [0, null, 5], 'LH-7: the legacy projection is empty; asking it for a Maple leasehold yields null; Maple\'s own entry is intact');
 
     section('LH-8: a prospect reads nothing from the acquisition tables');
@@ -349,6 +385,126 @@ const SUPABASE_MOCK = `
     assert(/^Verified by you — 5 terms verified · 24 decisions/.test(S14.verified || ''), 'LH-14: the summary is unchanged (the decision still stands; the shown value is what moved)', S14.verified);
     await page.evaluate((shop) => { TenantSpace.closeSpace(); const t = currentProperty().tenants.find(x => x.id === shop); t.leased_sqft = t.__was; delete t.__was; }, F.shoprite);
     is((await writes()) - writesBefore14, 0, 'LH-14: reading the file wrote nothing');
+
+    // ── P5-4 ────────────────────────────────────────────────────────────────
+    section('LH-15: P5-4 — the REAL click path: Portfolio → Maple → Spaces → the ShopRite row → its file');
+    await page.evaluate(() => { try { TenantSpace.closeSpace(); } catch (_) {} });
+    await page.evaluate(async () => { await backToPortfolio(); });
+    await page.waitForTimeout(1200);
+    // Count any attempt to open the editable acquisition review from here on.
+    await page.evaluate(() => { const o = window.selectAcquisitionReview; window.__acqOpened = 0; window.selectAcquisitionReview = function () { window.__acqOpened++; return o.apply(this, arguments); }; });
+    const writesBefore15 = await writes();
+    const decsBefore15 = await page.evaluate(() => window.__e2eStore.acquisition_term_decisions.length);
+    await page.click('.ptf-prop-card[onclick*="' + MAPLE + '"]');
+    await page.waitForTimeout(3500);
+    await page.click('#wsTabBtn-spaces');
+    await page.waitForTimeout(700);
+    await page.click('#spacesList tr[data-space-id="' + F.shoprite + '"] td.tsl-tenant');
+    await page.waitForSelector('#tsOverlay', { timeout: 8000 });
+    await page.waitForTimeout(300);
+    const R15 = await page.evaluate(() => {
+      const o = document.getElementById('tsOverlay');
+      const rec = o.querySelector('.ts-acq-record');
+      return { rows: Array.from(o.querySelectorAll('.ts-lease-row')).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+               hist: Array.from(o.querySelectorAll('.ts-acq-atacq')).map(l => ({ field: l.getAttribute('data-field'), kind: l.getAttribute('data-kind'), text: l.textContent.replace(/\s+/g, ' ').trim() })),
+               p53: Array.from(o.querySelectorAll('.ts-acq-line')).map(l => l.getAttribute('data-field')).sort(),
+               summary: rec ? rec.querySelector('summary').textContent.replace(/\s+/g, ' ').trim() : null,
+               groups: rec ? Array.from(rec.querySelectorAll('.ts-acq-rec-grp')).map(g => ({ state: g.getAttribute('data-state'), text: g.textContent.replace(/\s+/g, ' ').trim() })) : [],
+               title: (o.querySelector('.ts-title, h2, h3') || {}).textContent || '', text: o.textContent };
+    });
+    assert(/ShopRite/.test(R15.text) && R15.rows.some(r => /^Term ?\? → 2039-02-28$/.test(r)), 'LH-15: the click opened ShopRite\'s file; the Term row shows the CURRENT value, "? → 2039-02-28"', JSON.stringify(R15.rows));
+    const st15 = R15.hist.find(h => h.field === 'start_date');
+    assert(st15 && st15.kind === 'contested' && /^Commencement Contested at acquisition — the documents disagreed and nothing was chosen$/.test(st15.text),
+      'LH-15: beneath it, "Commencement · Contested at acquisition — the documents disagreed and nothing was chosen" (not a missing field)', JSON.stringify(R15.hist));
+    const en15 = R15.hist.find(h => h.field === 'end_date');
+    assert(en15 && en15.kind === 'read' && /^Expiration Read by AI at acquisition · not verified by a person$/.test(en15.text), 'LH-15: and "Expiration · Read by AI at acquisition · not verified by a person" — the value shown is the one read', JSON.stringify(en15));
+    is(R15.hist.map(h => h.field).sort(), ['end_date', 'start_date'], 'LH-15: no acquisition line where a decision stands (Leased area, CAM cap keep their P5-3 line) nor where the value cannot be compared (Lease type)');
+    is(R15.p53, ['cap', 'leased_sqft'], 'LH-15: the P5-3 lines are unchanged');
+    assert(/^Open acquisition record · read-only — 2 contested · 1 unclear · 11 read by AI, not verified · 8 not established$/.test(R15.summary || ''),
+      'LH-15: the file offers "Open acquisition record · read-only — 2 contested · 1 unclear · 11 read by AI, not verified · 8 not established"', R15.summary);
+    const g = (st) => (R15.groups.find(x => x.state === st) || {}).text || '';
+    assert(/Commencement/.test(g('contested')) && /Renewal options/.test(g('contested')) && /Audit rights \(a person rejected the document’s reading\)/.test(g('unclear'))
+      && /Leased sq ft/.test(g('verified')) && /Admin fee %/.test(g('entered')),
+      'LH-15: the record lists contested Commencement and Renewal options, unclear Audit rights (rejected by a person), Leased sq ft verified, Admin fee % entered', JSON.stringify(R15.groups));
+
+    section('LH-16: P5-4 — the Maple survival matrix in the Review Queue');
+    await page.evaluate(() => { TenantSpace.closeSpace(); switchWorkspaceTab('overview'); });
+    await page.waitForTimeout(500);
+    const RQ = await page.evaluate(() => {
+      const out = {};
+      document.querySelectorAll('#propertyReviewQueuePanel [data-rq-tenant-id]').forEach(c => {
+        const h = c.querySelector('.rq-acq-hist');
+        out[c.getAttribute('data-rq-tenant-id')] = { chips: Array.from(c.querySelectorAll('.rq-chip')).map(x => x.textContent.trim()),
+          hist: h ? h.textContent.replace(/\s+/g, ' ').trim() : null, histControls: h ? h.querySelectorAll('button,a,[onclick]').length : 0,
+          parts: h ? Array.from(h.querySelectorAll('[data-field]')).map(x => x.getAttribute('data-field') + ':' + x.getAttribute('data-state')) : [] };
+      });
+      return { cards: out, panelText: (document.getElementById('propertyReviewQueuePanel') || {}).textContent || '' };
+    });
+    const c = (id) => RQ.cards[id] || {};
+    assert(c(F.shoprite).chips && c(F.shoprite).chips.includes('Start Date') && /Start date contested — the documents disagreed; nothing was chosen/.test(c(F.shoprite).hist || '')
+      && /Audit rights unclear — a person rejected the document’s reading/.test(c(F.shoprite).hist || ''),
+      'LH-16 [1][2]: ShopRite — current chip "Start Date"; at acquisition "Start date contested…" and "Audit rights unclear — a person rejected the document’s reading"', JSON.stringify(c(F.shoprite)));
+    is(c(F.luxe).parts, ['lease_type:missing', 'start_date:missing'], 'LH-16 [3][4]: Luxe — lease type and start date: not established at acquisition, still missing now');
+    is(c(F.coffee).parts, ['lease_type:missing', 'end_date:missing'], 'LH-16 [5][6]: Maple Coffee — lease type and end date: not established at acquisition, still missing now');
+    assert(c(F.sunrise).parts.includes('leased_sqft:missing') && /Sq ft not established — no lease document was filed/.test(c(F.sunrise).hist || '') && c(F.sunrise).chips.includes('Sq Ft'),
+      'LH-16 [7]: Sunrise — current chip "Sq Ft" (the CAM blocker); at acquisition "Sq ft not established — no lease document was filed"', JSON.stringify(c(F.sunrise)));
+    assert(Object.values(RQ.cards).every(x => x.histControls === 0) && !/2,?800/.test(RQ.panelText),
+      'LH-16: the history is text only — no button, no acquisition task — and the unverified 2,800 sf appears nowhere in the queue');
+
+    section('LH-17: P5-4 — Overview: one acquisition item, nothing counted twice');
+    const OV = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('#propertyAttentionSlot .pw-item')).map(i => ({
+        t: i.querySelector('.pw-item-title').textContent.trim(), w: i.querySelector('.pw-item-why').textContent.trim(), c: i.className }));
+      const b = window.PropertyLeaseholds.get(currentProperty().id);
+      const roll = window.PropertyLeaseholds.propertyAcquisitionAttention(b, currentProperty().tenants,
+        t => window.ReviewEngine.deriveTenantReviewState(t).warnings.map(w => w.type));
+      return { items, roll };
+    });
+    const acqItems = OV.items.filter(i => /acquisition/i.test(i.t + ' ' + i.w));
+    is(acqItems.length, 1, 'LH-17: exactly ONE attention item speaks of the acquisition');
+    assert(acqItems[0] && acqItems[0].t === 'Unresolved at acquisition on 4 spaces'
+      && /^1 contested · 2 unclear · 7 lease terms shown were read by AI and not verified\. Recorded when the property was acquired; each space’s file says which\.$/.test(acqItems[0].w),
+      'LH-17: "Unresolved at acquisition on 4 spaces — 1 contested · 2 unclear · 7 lease terms shown were read by AI and not verified"', JSON.stringify(acqItems));
+    assert(acqItems[0] && acqItems[0].c.split(/\s+/).includes('pw-item--info') && !/pw-item--(warning|critical|blocker)/.test(acqItems[0].c),
+      'LH-17: the acquisition item is history (info), never raised as a warning or an acquisition task', acqItems[0] && acqItems[0].c);
+    assert(OV.items.some(i => /4 tenants missing lease info/.test(i.t)), 'LH-17: the workspace\'s own item "4 tenants missing lease info" is still there, unchanged');
+    assert(!OV.roll.items.some(i => ['start_date', 'end_date', 'lease_type', 'audit_rights'].includes(i.field) && i.kind !== 'read') && !OV.roll.items.some(i => i.tenantId === F.sunrise),
+      'LH-17: nothing the workspace already raises (missing start/end/lease type, audit rights, Sunrise) is counted in the acquisition item');
+
+    section('LH-18: P5-4 — Sunrise: no document, not established; 2,800 sf never appears');
+    await page.evaluate(() => switchWorkspaceTab('spaces'));
+    await page.waitForTimeout(400);
+    await page.click('#spacesList tr[data-space-id="' + F.sunrise + '"] td.tsl-tenant');
+    await page.waitForSelector('#tsOverlay', { timeout: 8000 });
+    await page.waitForTimeout(300);
+    const SU = await page.evaluate(() => {
+      const o = document.getElementById('tsOverlay'); const d = o.querySelector('.ts-acq-record');
+      return { text: o.textContent, rows: Array.from(o.querySelectorAll('.ts-lease-row')).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+               hist: o.querySelectorAll('.ts-acq-atacq').length, noDoc: d ? (d.querySelector('[data-kind="no_document"]') || {}).textContent || null : null,
+               missing: d ? ((d.querySelector('[data-state="missing"]') || {}).textContent || '') : '' };
+    });
+    assert(SU.noDoc === 'No lease document was filed into this leasehold, so no term was established from a document.' && /Not established by any document \(27\)/.test(SU.missing),
+      'LH-18: Sunrise\'s record: no lease document was filed; all 27 terms not established', JSON.stringify({ noDoc: SU.noDoc, missing: SU.missing.slice(0, 80) }));
+    assert(!/2,?800/.test(SU.text) && SU.hist === 0, 'LH-18: the unverified 2,800 sf upload appears NOWHERE in the file, and no acquisition line is added under its 0 sq ft', JSON.stringify(SU.rows));
+
+    section('LH-19: P5-4 — read-only: no control, no editable review, no write');
+    await page.evaluate(() => TenantSpace.closeSpace());
+    const S19 = await openFile(F.shoprite);
+    await page.evaluate(() => { const d = document.querySelector('#tsOverlay .ts-acq-record'); d.querySelector('summary').click(); });
+    await page.waitForTimeout(200);
+    const ro = await page.evaluate(() => { const d = document.querySelector('#tsOverlay .ts-acq-record');
+      return { open: d.open, controls: d.querySelectorAll('button, a, input, select, textarea, [onclick], [contenteditable]').length,
+               histControls: document.querySelectorAll('#tsOverlay .ts-acq-atacq button, #tsOverlay .ts-acq-atacq a, #tsOverlay .ts-acq-atacq [onclick]').length,
+               opened: window.__acqOpened, decs: window.__e2eStore.acquisition_term_decisions.length }; });
+    assert(ro.open && ro.controls === 0 && ro.histControls === 0, 'LH-19: the record opens in place and holds NO control of any kind; the lines under rows hold none either', JSON.stringify(ro));
+    is([ro.opened, ro.decs - decsBefore15, (await writes()) - writesBefore15], [0, 0, 0], 'LH-19: the editable acquisition review was never opened, no decision was added, and nothing was written across LH-15..LH-19');
+    assert(S19.record && /The acquisition is closed: this is what it recorded, and nothing here can be changed\. The values in Lease & Terms above are the property’s current ones\./.test(S19.text),
+      'LH-19: the record says it is history and that the values above are the current ones');
+
+    section('LH-20: P5-4 — Luxe: an unchanged AI-read value says so; a blank start date adds nothing');
+    const LX20 = await openFile(F.luxe);
+    is(LX20.acqHist.map(h => h.field + ':' + h.kind), ['leased_sqft:read'], 'LH-20: only Leased area carries an acquisition line (3,000 read by AI, shown unchanged); the blank start date adds none (the Review Queue says it); Expiration keeps its P5-3 line');
+    await page.evaluate(() => TenantSpace.closeSpace());
 
     section('LH-10: page errors');
     const real = pageErrors.filter(e => !/cdnjs|jsdelivr|fonts|Failed to fetch|supabase|ResizeObserver/i.test(e));

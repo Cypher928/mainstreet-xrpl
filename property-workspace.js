@@ -146,7 +146,7 @@ window.PropertyWorkspace = (function () {
   // inventory exists to prevent. So renderAttention (browser) passes the scoped
   // breakdown in, the server passes nothing, and the wording degrades to "not
   // established" rather than to a guess.
-  function collectAttention(p, varianceBreakdown) {
+  function collectAttention(p, varianceBreakdown, acquisitionAttention) {
     if (!p) return [];
     var S = window.Selectors || {};
     var rd = (typeof S.derivePropertyReadiness === 'function') ? S.derivePropertyReadiness(p) : {};
@@ -242,6 +242,29 @@ window.PropertyWorkspace = (function () {
       }
     } catch (_e) {}
 
+    // P5-4 — WHAT THE ACQUISITION LEFT UNRESOLVED, ONCE. Supplied by the caller
+    // (renderAttention, browser only) exactly like the variance breakdown: it is
+    // read from the page's acquisition projection, which a server does not have,
+    // so the server's attention list simply has no such item. The summary
+    // already excludes everything the workspace raises itself — a missing start
+    // date is the Review Queue's, annotated there, never counted twice here —
+    // and anything not established or without a document. What is left is what
+    // the workspace has no word for: contested, unclear, and values shown that
+    // an AI read at acquisition and no person verified. It is history, so it is
+    // informational and names no acquisition task: the work is done in the
+    // spaces, on the property's current values.
+    var aa = acquisitionAttention;
+    if (aa && (aa.contested + aa.unclear + aa.read) > 0) {
+      var aparts = [];
+      if (aa.contested) aparts.push(aa.contested + ' contested');
+      if (aa.unclear)   aparts.push(aa.unclear + ' unclear');
+      if (aa.read)      aparts.push(_plural(aa.read, 'lease term shown was', 'lease terms shown were') + ' read by AI and not verified');
+      items.push(_mk('info', '\u{1F4DC}',
+        'Unresolved at acquisition on ' + _plural(aa.leaseholds, 'space', 'spaces'),
+        aparts.join(' · ') + '. Recorded when the property was acquired; each space’s file says which.',
+        { tab: 'spaces', anchors: ['spacesSection'] }, 'View spaces'));
+    }
+
     // Maintenance needing review — from the property's own timeline record.
     try {
       var maint = (p.timeline || []).filter(function (e) {
@@ -259,6 +282,24 @@ window.PropertyWorkspace = (function () {
     var order = { critical: 0, warning: 1, info: 2 };
     items.sort(function (a, b) { return order[a.severity] - order[b.severity]; });
     return items;
+  }
+
+  // P5-4 — the browser half, like _scopedVarianceBreakdown: the acquisition
+  // projection for THIS property (never another's), and the review engine's
+  // warnings per tenant so what the workspace already raises is not counted
+  // twice. Null when there is no projection or it recorded nothing.
+  function _acquisitionAttention(p) {
+    try {
+      var PL = window.PropertyLeaseholds;
+      var RE = window.ReviewEngine;
+      if (!p || !p.id || !PL || typeof PL.get !== 'function' || typeof PL.propertyAcquisitionAttention !== 'function') return null;
+      var built = PL.get(p.id);
+      if (!built || built.propertyId !== p.id) return null;
+      return PL.propertyAcquisitionAttention(built, p.tenants || [], function (t) {
+        if (!RE || typeof RE.deriveTenantReviewState !== 'function') return [];
+        return (RE.deriveTenantReviewState(t).warnings || []).map(function (w) { return w.type; });
+      });
+    } catch (_e) { return null; }
   }
 
   // Reuse the app's navigation primitives to jump to the proof.
@@ -299,7 +340,7 @@ window.PropertyWorkspace = (function () {
 
     // The browser half of the split: the scoped read happens HERE, on a path
     // only a browser takes, and the result is handed to collectAttention.
-    var items = collectAttention(property, _scopedVarianceBreakdown(property));
+    var items = collectAttention(property, _scopedVarianceBreakdown(property), _acquisitionAttention(property));
     _lastItems = items;
 
     // V2: the Property landing page mounts the SAME list. One computation, one

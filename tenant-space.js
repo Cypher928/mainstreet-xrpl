@@ -509,15 +509,46 @@ window.TenantSpace = (function () {
       return '<div class="ts-acq-line" data-field="' + _esc(field) + '">' + head + text + '</div>';
     }
 
+    // P5-4 — WHAT THE ACQUISITION LEFT UNRESOLVED, AS HISTORY. Read from the
+    // converted review's recorded term states (PropertyLeaseholds.atAcquisition),
+    // never re-derived and never editable here. A line appears under a row only
+    // when no decision stands for it (P5-3 already speaks then) and only when it
+    // says something the workspace cannot know: that the documents disagreed,
+    // were unclear, or that the value shown is one an AI read and nobody
+    // verified. A term not established at acquisition that is still blank says
+    // nothing new — the Review Queue already lists it — so it gets no line.
+    var _acqItems = (_PLm && rec.leasehold && typeof _PLm.acquisitionAttention === 'function')
+      ? _PLm.acquisitionAttention(rec.leasehold, { lease_type: rec.lease.type, leased_sqft: rec.lease.sqft,
+          start_date: rec.lease.start, end_date: rec.lease.end, cap: rec.lease.cap })
+      : [];
+    function _acqHistLine(field, prefix) {
+      if (_lhV && _lhV.byField && _lhV.byField[field]) return '';
+      var it = null;
+      for (var i = 0; i < _acqItems.length; i++) { if (_acqItems[i].field === field) { it = _acqItems[i]; break; } }
+      if (!it) return '';
+      var text = '';
+      if (it.kind === 'contested') text = 'Contested at acquisition — ' + (it.resolvedSince ? 'the value shown was set since' : 'the documents disagreed and nothing was chosen');
+      else if (it.kind === 'unclear') text = 'Unclear at acquisition — ' + (it.resolvedSince ? 'the value shown was set since' : 'a document had language here but no clear value');
+      else if (it.kind === 'missing') text = it.resolvedSince ? 'Not established at acquisition — the value shown was entered since' : '';
+      else if (it.kind === 'read' && it.comparable) text = it.changedSince
+        ? 'Read by AI at acquisition as <b>' + _esc(_fmtDecided(field, it.valueAtAcquisition)) + '</b> · the value shown has changed since'
+        : 'Read by AI at acquisition · not verified by a person';
+      if (!text) return '';
+      var head = prefix ? '<span class="ts-acq-field">' + _esc(prefix) + '</span> ' : '';
+      return '<div class="ts-acq-atacq" data-field="' + _esc(field) + '" data-kind="' + _esc(it.kind) + '">' + head + text + '</div>';
+    }
+    // The row's line: the standing decision's (P5-3) when there is one, else the acquisition's.
+    function _rowLine(field, shown, prefix) { return _provLine(field, shown, prefix) || _acqHistLine(field, prefix); }
+
     var leaseRows = [];
-    if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type, _provLine('lease_type', rec.lease.type)]);
+    if (rec.lease.type)  leaseRows.push(['Lease type', rec.lease.type, _rowLine('lease_type', rec.lease.type)]);
     // M8d — the last of the five. M8c fixed the space-list card to `!= null`;
     // leaving this one on truthiness meant the card showed "0 sqft" while the
     // detail view for the same space showed no Leased area row at all.
-    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);
+    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _rowLine('leased_sqft', rec.lease.sqft)]);
     if (rec.lease.start || rec.lease.end) leaseRows.push(['Term', (rec.lease.start || '?') + ' → ' + (rec.lease.end || '?'),
-      _provLine('start_date', rec.lease.start, 'Commencement') + _provLine('end_date', rec.lease.end, 'Expiration')]);
-    if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap), _provLine('cap', rec.lease.cap)]);
+      _rowLine('start_date', rec.lease.start, 'Commencement') + _rowLine('end_date', rec.lease.end, 'Expiration')]);
+    if (rec.lease.cap != null) leaseRows.push(['CAM cap', String(rec.lease.cap), _rowLine('cap', rec.lease.cap)]);
     var leaseDocsHtml = (rec.leaseDocs || []).map(function (a) { return _attachChip(a, '\u{1F4C4}'); }).join('');
     // The summary and the full history (collapsed). Shown only when there is at
     // least one decision: a leasehold nobody decided anything about earns no claim.
@@ -546,10 +577,57 @@ window.TenantSpace = (function () {
           '</div>';
         }).join('') + '</div></details>';
     }
-    var leaseHtml = (leaseRows.length || leaseDocsHtml)
+    // P5-4 — THE ACQUISITION RECORD, READ-ONLY. What the acquisition recorded
+    // for this lease, every term by its state then. It is built from the
+    // projection alone: there is no control here and no path into the
+    // acquisition review's editable screen — the review is closed, and the
+    // current values are the workspace's own. Nothing about an unverified
+    // upload (the raw extraction rows) is read, so nothing of it can appear.
+    var acqRecordHtml = '';
+    var _atA = rec.leasehold && rec.leasehold.atAcquisition;
+    if (_atA) {
+      var _groups = [
+        { state: 'contested', label: 'Contested — the documents disagreed; nothing was chosen' },
+        { state: 'unclear',   label: 'Unclear' },
+        { state: 'missing',   label: 'Not established by any document' },
+        { state: 'read',      label: 'Read by AI · not verified by a person' },
+        { state: 'entered',   label: 'Entered by a person · no document supported it' },
+        { state: 'verified',  label: 'Verified by a person' },
+      ];
+      var _standing = (_lhV && _lhV.byField) || {};
+      var _fieldsOf = function (st) {
+        return Object.keys(_atA.fields).map(function (f) { return _atA.fields[f]; })
+          .filter(function (x) { return x.state === st; });
+      };
+      var _partsOf = [];
+      ['contested', 'unclear', 'read', 'missing'].forEach(function (st) {
+        var n = _atA.counts[st] || 0;
+        if (n) _partsOf.push(n + ' ' + (st === 'read' ? 'read by AI, not verified' : st === 'missing' ? 'not established' : st));
+      });
+      acqRecordHtml = '<details class="ts-acq-record" data-review="' + _esc(_atA.reviewId) + '">' +
+        '<summary>Open acquisition record · read-only' + (_partsOf.length ? ' — ' + _esc(_partsOf.join(' · ')) : '') + '</summary>' +
+        '<div class="ts-acq-rec-body">' +
+          '<div class="ts-acq-rec-note">Recorded when this property was acquired' +
+            (_atA.convertedAt ? ' (' + _esc(_fmtDate(_atA.convertedAt)) + ')' : '') +
+            '. The acquisition is closed: this is what it recorded, and nothing here can be changed. ' +
+            'The values in Lease &amp; Terms above are the property’s current ones.</div>' +
+          (_atA.noDocument ? '<div class="ts-acq-rec-nodoc" data-kind="no_document">No lease document was filed into this leasehold, so no term was established from a document.</div>' : '') +
+          _groups.map(function (g) {
+            var fs = _fieldsOf(g.state);
+            if (!fs.length) return '';
+            return '<div class="ts-acq-rec-grp" data-state="' + _esc(g.state) + '">' +
+              '<span class="ts-acq-rec-h">' + _esc(g.label) + ' (' + fs.length + ')</span>' +
+              '<span class="ts-acq-rec-fields">' + fs.map(function (x) {
+                var rej = g.state === 'unclear' && _standing[x.field] && _standing[x.field].rejected;
+                return _esc(x.label) + (rej ? ' <i>(a person rejected the document’s reading)</i>' : '');
+              }).join(' · ') + '</span></div>';
+          }).join('') +
+        '</div></details>';
+    }
+    var leaseHtml = (leaseRows.length || leaseDocsHtml || acqRecordHtml)
       ? '<div class="ts-lease">' +
           leaseRows.map(function (r) { return '<div class="ts-lease-row"><span>' + _esc(r[0]) + '</span><b>' + _esc(r[1]) + '</b></div>' + (r[2] || ''); }).join('') +
-          acqLineHtml + acqHistoryHtml +
+          acqLineHtml + acqHistoryHtml + acqRecordHtml +
           (leaseDocsHtml || '<div class="ts-empty" style="margin-top:6px">Lease terms are on file but the document is not \u2014 upload the executed lease so every CAM figure can cite the clause it came from.</div>') +
         '</div>'
       : _empty('No lease document on file. Upload the executed lease and any amendments so every CAM figure can cite its source.');
@@ -1224,6 +1302,17 @@ window.TenantSpace = (function () {
       '.ts-acq-h-field{color:var(--text-2,#CBD5E1);}',
       '.ts-acq-h-val{font-weight:700;color:var(--text-1,#E2E8F0);}',
       '.ts-acq-h-note{flex-basis:100%;font-style:italic;opacity:0.85;}',
+      // P5-4: the acquisition's history under a row, and the read-only record.
+      '.ts-acq-atacq{font-size:0.72rem;color:var(--text-4,#64748B);margin:-3px 0 3px;line-height:1.35;font-style:italic;}',
+      '.ts-acq-atacq b{font-style:normal;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-record{font-size:0.74rem;color:var(--text-4,#64748B);margin-top:2px;}',
+      '.ts-acq-record summary{cursor:pointer;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-rec-body{display:flex;flex-direction:column;gap:6px;margin-top:6px;}',
+      '.ts-acq-rec-note{font-style:italic;}',
+      '.ts-acq-rec-nodoc{color:#f59e0b;}',
+      '.ts-acq-rec-grp{display:flex;flex-direction:column;gap:2px;}',
+      '.ts-acq-rec-h{font-weight:800;text-transform:uppercase;font-size:0.62rem;letter-spacing:0.04em;color:var(--text-3,#94A3B8);}',
+      '.ts-acq-rec-fields{color:var(--text-2,#CBD5E1);}',
       '.ts-lease-row b{color:var(--text-1,#E2E8F0);font-weight:700;}',
       '.ts-doc{display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-2,#CBD5E1);text-decoration:none;background:var(--theme-panel,#0A0D12);border:1px solid rgba(var(--line-rgb,255,255,255),0.12);border-radius:8px;padding:7px 10px;margin-top:6px;max-width:100%;}',
       '.ts-doc:hover{border-color:' + gold + ';}',

@@ -12,6 +12,9 @@
  * decided_at (a last reopen ⇒ nothing), computed per leasehold; a correct's
  * value is its new value; a source resolves by id; the shown value is never
  * replaced and a line says when it differs; "by you" only for the signed-in uid.
+ * P5-4 (A01..A19): the acquisition's recorded states are READ, fail closed on
+ * any ambiguity, never promote an unverified extraction, never count what the
+ * workspace already raises, and never open a write path onto the closed review.
  * Each mutant is a one-token edit that breaks one leg. Every one must be
  * caught by the unit suites or the browser suite.
  *
@@ -21,7 +24,7 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js', DS = 'decision-standing.js';
+const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js', DS = 'decision-standing.js', PW = 'property-workspace.js';
 
 const MUTANTS = [
   { id: 'L01', file: PL, why: 'the join is by tenant NAME instead of id — two "Vacant" leaseholds share documents',
@@ -108,8 +111,8 @@ const MUTANTS = [
     from: "        var same = !!(_PLm && _PLm.matchesShown(field, e.value, shown));",
     to:   "        var same = true;" },
   { id: 'V09', file: TS, why: 'the shown term value is REPLACED by the decided one',
-    from: "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);",
-    to:   "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', ((_lhV && _lhV.byField.leased_sqft && _lhV.byField.leased_sqft.value) || rec.lease.sqft) + ' sqft', _provLine('leased_sqft', rec.lease.sqft)]);" },
+    from: "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', rec.lease.sqft + ' sqft', _rowLine('leased_sqft', rec.lease.sqft)]);",
+    to:   "    if (rec.lease.sqft != null) leaseRows.push(['Leased area', ((_lhV && _lhV.byField.leased_sqft && _lhV.byField.leased_sqft.value) || rec.lease.sqft) + ' sqft', _rowLine('leased_sqft', rec.lease.sqft)]);" },
   { id: 'V10', file: TS, why: 'the history omits the reopens (the record is edited)',
     from: "        hist.slice().reverse().map(function (d) {",
     to:   "        hist.filter(function (d) { return d.action !== 'reopen'; }).reverse().map(function (d) {" },
@@ -122,13 +125,56 @@ const MUTANTS = [
   { id: 'V13', file: PL, why: 'an entered value (no document) is presented as document-backed',
     from: "      entered: d.action === 'correct' && !d.source_document_id,",
     to:   "      entered: false," },
+  // ── P5-4: acquisition attention, read — never copied ──────────────────────
+  { id: 'A01', file: PL, why: 'a fingerprint row that is not a leasehold (an unfiled extraction) is accepted',
+    from: "      if (e[1] !== 'leasehold') return null;", to: "" },
+  { id: 'A02', file: PL, why: 'two converted reviews on one property are not treated as ambiguous',
+    from: "    if (mine.length !== 1) return null;", to: "    if (!mine.length) return null;" },
+  { id: 'A03', file: PL, why: 'structured states that disagree with the fingerprint are read anyway',
+    from: "    if (s && f && !_sameStates(s, f)) return null;", to: "" },
+  { id: 'A04', file: PL, why: 'a leasehold the review does not own is adopted into the record',
+    from: "    if (!ids.every(function (id) { return famOfReview[id]; })) return null;", to: "" },
+  { id: 'A05', file: PL, why: 'a CONTESTED term is presented as merely missing (the defect P5-4 exists for)',
+    from: "conflicting: 'contested', missing: 'missing' };", to: "conflicting: 'missing', missing: 'missing' };" },
+  { id: 'A06', file: PL, why: 'the rolled-up item counts fields the workspace already raises (double counting)',
+    from: "        if (!it.open || it.representedInWorkspace) return false;", to: "        if (!it.open) return false;" },
+  { id: 'A07', file: PL, why: 'the rolled-up item counts terms that were merely not established',
+    from: "        if (it.kind === 'contested' || it.kind === 'unclear') return true;", to: "        if (it.kind === 'contested' || it.kind === 'unclear' || it.kind === 'missing') return true;" },
+  { id: 'A08', file: PL, why: 'a value is claimed "read by AI" without comparing it to the value shown',
+    from: "&& it.current === 'present' && it.comparable;", to: "&& it.current === 'present';" },
+  { id: 'A09', file: PL, why: 'a value changed since acquisition is still reported as the AI\'s unverified reading',
+    from: "        open: !resolvedSince && !changedSince,", to: "        open: !resolvedSince," },
+  { id: 'A10', file: APP, why: 'the loader reads every review of the property, not the converted one',
+    from: ".select(PL.SELECT.reviews).eq('property_id', propertyId).eq('status', 'converted'),", to: ".select(PL.SELECT.reviews).eq('property_id', propertyId)," },
+  { id: 'A11', file: PL, why: 'an area of 0 counts as a value (Sunrise would read as resolved)',
+    from: "return !isNaN(n) && n > 0; }", to: "return !isNaN(n) && n >= 0; }" },
+  { id: 'A12', file: TS, why: 'the acquisition line is drawn even where a decision stands',
+    from: "      if (_lhV && _lhV.byField && _lhV.byField[field]) return '';\n      var it = null;", to: "      var it = null;" },
+  { id: 'A13', file: TS, why: 'the read-only record offers a way into the editable acquisition review',
+    from: "'<summary>Open acquisition record · read-only'", to: "'<summary><button onclick=\"selectAcquisitionReview(\\'' + _esc(_atA.reviewId) + '\\')\">Edit</button>Open acquisition record · read-only'" },
+  { id: 'A14', file: TS, why: 'a term not established and still blank gets a line the Review Queue already says',
+    from: "text = it.resolvedSince ? 'Not established at acquisition — the value shown was entered since' : '';", to: "text = it.resolvedSince ? 'Not established at acquisition — the value shown was entered since' : 'Not established at acquisition';" },
+  { id: 'A15', file: APP, why: 'the Review Queue history carries an action — an acquisition task after Acquire',
+    from: "At acquisition: ${\n    hist.map(", to: "<button onclick=\"selectAcquisitionReview()\">Resolve</button>At acquisition: ${\n    hist.map(" },
+  { id: 'A16', file: APP, why: 'the analysis no longer stores structured states (future reviews fall back to the fingerprint forever)',
+    from: "    states: _acqCanonicalStates(tenants),\n", to: "\n" },
+  { id: 'A17', file: PL, why: 'an analysis of anything but leaseholds is read as the acquisition record',
+    from: "if (!_isObj(canonical) || canonical.basis !== 'leaseholds') return null;", to: "if (!_isObj(canonical)) return null;" },
+  { id: 'A18', file: PL, why: '"entered" is accepted on a term that was not verified',
+    from: "      if (v !== 'entered' || states[g] !== 'verified') return null;", to: "      if (v !== 'entered') return null;" },
+  { id: 'A19', file: PL, why: 'unreadable structured states are skipped in favour of the fingerprint',
+    from: "    if (hasS && !s) return null;                       // structured but unreadable: do not fall back past it", to: "" },
+  { id: 'A20', file: PL, why: 'a person\'s rejection of the audit-rights reading is dropped from the history',
+    from: "      var rejected = !!(sd && sd.rejected);", to: "      var rejected = false;" },
+  { id: 'A21', file: PW, why: 'the acquisition item is raised as a warning — an acquisition task, not history',
+    from: "      items.push(_mk('info', '\\u{1F4DC}',", to: "      items.push(_mk('warning', '\\u{1F4DC}'," },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plmut-'));
 fs.cpSync(ROOT, tmp, { recursive: true, filter: (src) => { const rel = path.relative(ROOT, src); return !(rel === '.git' || rel.startsWith('.git' + path.sep) || rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)); } });
 try { fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modules'), 'dir'); } catch (_) {}
 const ORIGINAL = {};
-for (const f of [PL, APP, TS, DS]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
+for (const f of [PL, APP, TS, DS, PW]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 // The pure suites first (cheap); the browser suite only when a mutant survives them.
 const SUITES = ['test-decision-standing.js', 'test-property-leaseholds.js', 'test-e2e-property-leaseholds.js'];

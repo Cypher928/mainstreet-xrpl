@@ -107,7 +107,11 @@ sec('A. Every global the graph can reach for is inventoried and classified');
   // 25 since the vacancy slice: tenant-space.js reads window.recordVacantSpace
   // — a WRITE path in the app shell — only from the "Mark space vacant" form's
   // submit handler, guarded by typeof, never from assemble().
-  eq(INVENTORY.byKind.browser_only.length, 25, 'A6 twenty-five browser-only names');
+  // 26 since P5-4: property-workspace.js reads window.ReviewEngine inside
+  // renderAttention (browser only) to tell which fields the workspace already
+  // raises, so the acquisition's rolled-up item never counts them twice.
+  // collectAttention — the server path — never reaches it.
+  eq(INVENTORY.byKind.browser_only.length, 26, 'A6 twenty-six browser-only names');
   eq(INVENTORY.byKind.env.slice().sort(),
      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_URL', 'VERCEL_ENV', 'XRPL_NETWORK'],

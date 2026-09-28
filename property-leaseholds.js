@@ -55,6 +55,22 @@
  * re-resolve terms and never changes a shown value — matchesShown() only lets a
  * surface SAY whether the shown value is the one that was decided.
  *
+ * AT ACQUISITION (P5-4). What the acquisition left unresolved must still be
+ * traceable after Acquire, WITHOUT a second attention store. Acquire keeps
+ * every acquisition row in place; what it drops is the KIND of each gap
+ * (contested / unclear / read by AI / not established), because the roster it
+ * writes carries values only. The one place those kinds survive is the
+ * converted review's own `data.analysis.canonical` — the analysis the Acquire
+ * gate requires to be current. `atAcquisition` is a READ of that record:
+ * structured `states` when the review has them (written since P5-4), else the
+ * `fingerprint` it has always stored. Anything ambiguous — not exactly one
+ * converted review, a basis other than leaseholds, an unknown field or state,
+ * a leasehold that is not one of that review's, structured states that
+ * disagree with the fingerprint — yields NOTHING rather than a guess.
+ * `acquisitionAttention()` then derives, at render time, what is still open:
+ * the state at acquisition × the standing decision (P5-3) × the value shown
+ * now. Nothing here is stored, copied or editable; it is history, read.
+ *
  * window.PropertyLeaseholds in the browser; module.exports for Node.
  */
 (function (root, factory) {
@@ -90,10 +106,16 @@
     'previous_value', 'new_value', 'source_document_id', 'source_quote', 'source_page',
     'decided_by', 'decided_at', 'note', 'created_at',
   ];
+  // P5-4: the converted review, and of its data ONLY the analysis's canonical
+  // block. Never `data` itself: that holds the raw upload rows (Maple's
+  // unverified 2,800 sf Sunrise reading among them), and the workspace has no
+  // business reading an unverified extraction.
+  var REVIEW_COLUMNS = ['id', 'property_id', 'status', 'converted_at', 'canonical:data->analysis->canonical'];
   var SELECT = Object.freeze({
     families:  FAMILY_COLUMNS.join(', '),
     documents: DOCUMENT_COLUMNS.join(', '),
     decisions: DECISION_COLUMNS.join(', '),
+    reviews:   REVIEW_COLUMNS.join(', '),
   });
 
   var BUCKETS = { leases: 1, invoices: 1 };
@@ -301,6 +323,321 @@
     return { fields: fields, byField: byField, openFields: open, counts: c, lastAt: lastAt };
   }
 
+  // ── P5-4: what the acquisition left, read from the converted review ────────
+
+  // The resolver's five states (acquisition-terms.js TERM_STATES) and the words
+  // the workspace uses for them — the Lease Matrix's vocabulary, one to one.
+  var RESOLVER_STATE = { verified: 'verified', ai_extracted: 'read', unclear: 'unclear', conflicting: 'contested', missing: 'missing' };
+  // The Space file's lease rows. Only these carry a line under a value.
+  var ROW_FIELDS = ['lease_type', 'leased_sqft', 'start_date', 'end_date', 'cap'];
+  // The fingerprint's normalised row (AcquisitionEngine.normalizeAcqTenant)
+  // names three of those differently; lease_type and cap are not in it at all,
+  // so a fingerprint can never vouch for their value (structured states can).
+  var FINGERPRINT_VALUE_KEY = { leased_sqft: 'leased_sqft', start_date: 'lease_start', end_date: 'lease_end' };
+  // Where a term lives on a workspace tenant, when it lives there at all.
+  // The acquisition-only terms (TI allowance, guaranty, co-tenancy…) have no
+  // home on a workspace tenant: the workspace cannot show or edit them.
+  var TENANT_KEY = {
+    leased_sqft: 'leased_sqft', lease_type: 'lease_type', start_date: 'start_date', end_date: 'end_date', cap: 'cap',
+    cap_base_amount: 'capBaseAmount', admin_fee_pct: 'admin_fee_pct', admin_fee_basis: 'admin_fee_basis',
+    gross_up_pct: 'gross_up_pct', expense_stop: 'expense_stop', audit_rights: 'audit_rights',
+    pro_rata_method: 'pro_rata_method', renewal_options: 'renewal_options', tenant_name: 'tenant_name',
+    base_rent: 'base_rent', security_deposit: 'security_deposit', suite: 'suite', excluded_categories: 'excluded_categories',
+  };
+  // The review-engine warning types that already name a field in the
+  // workspace. A field one of these covers is ALREADY an attention item there;
+  // the acquisition's history annotates it and is never counted again.
+  var WORKSPACE_WARNING_FIELD = {
+    missing_lease_type: 'lease_type', missing_sqft: 'leased_sqft', missing_start_date: 'start_date',
+    missing_end_date: 'end_date', nnn_cap_missing: 'cap', audit_rights_unknown: 'audit_rights',
+    audit_rights_present: 'audit_rights', admin_fee_present: 'admin_fee_pct', gross_up_present: 'gross_up_pct',
+    expense_stop_present: 'expense_stop', low_sqft_confidence: 'leased_sqft',
+  };
+
+  function _isObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+
+  /** One leasehold's states and origins, validated. Null when anything is not what the resolver writes. */
+  function _validStates(states, origins) {
+    if (!_isObj(states)) return null;
+    var o = origins == null ? {} : origins;
+    if (!_isObj(o)) return null;
+    var outS = {}, outO = {}, keys = Object.keys(states);
+    for (var i = 0; i < keys.length; i++) {
+      var f = keys[i], s = states[f];
+      if (!FIELD_LABELS[f] || !RESOLVER_STATE[s]) return null;       // an unknown field or state: not ours to read
+      outS[f] = s;
+    }
+    var okeys = Object.keys(o);
+    for (var j = 0; j < okeys.length; j++) {
+      var g = okeys[j], v = o[g];
+      if (!FIELD_LABELS[g]) return null;
+      if (v === null || v === undefined) { outO[g] = null; continue; }
+      // `entered` is the one origin, and only a verified term can carry it.
+      if (v !== 'entered' || states[g] !== 'verified') return null;
+      outO[g] = 'entered';
+    }
+    return { states: outS, origins: outO };
+  }
+
+  function _fromFingerprint(fp) {
+    if (typeof fp !== 'string' || !fp) return null;
+    var arr;
+    try { arr = JSON.parse(fp); } catch (_) { return null; }
+    if (!Array.isArray(arr) || !arr.length) return null;
+    var by = {};
+    for (var i = 0; i < arr.length; i++) {
+      var e = arr[i];
+      // [leaseholdId, source, normalizedRow, _states, _origins] — exactly.
+      if (!Array.isArray(e) || e.length !== 5) return null;
+      var id = e[0];
+      if (typeof id !== 'string' || !id || by[id]) return null;     // no id, or the same leasehold twice
+      if (e[1] !== 'leasehold') return null;                         // an analysis of anything else is not a record of leaseholds
+      if (e[2] !== null && !_isObj(e[2])) return null;
+      var v = _validStates(e[3], e[4]);
+      if (!v) return null;
+      var values = {};
+      Object.keys(FINGERPRINT_VALUE_KEY).forEach(function (f) {
+        var n = e[2] ? e[2][FINGERPRINT_VALUE_KEY[f]] : undefined;
+        if (n !== undefined) values[f] = n;
+      });
+      by[id] = { states: v.states, origins: v.origins, values: values };
+    }
+    return by;
+  }
+
+  function _fromStructured(st) {
+    if (!_isObj(st)) return null;
+    var ids = Object.keys(st);
+    if (!ids.length) return null;
+    var by = {};
+    for (var i = 0; i < ids.length; i++) {
+      var e = st[ids[i]];
+      if (!_isObj(e)) return null;
+      var v = _validStates(e.states, e.origins);
+      if (!v) return null;
+      var values = {};
+      if (e.values != null) {
+        if (!_isObj(e.values)) return null;
+        var vk = Object.keys(e.values);
+        for (var k = 0; k < vk.length; k++) {
+          if (ROW_FIELDS.indexOf(vk[k]) < 0) return null;
+          values[vk[k]] = e.values[vk[k]];
+        }
+      }
+      by[ids[i]] = { states: v.states, origins: v.origins, values: values };
+    }
+    return by;
+  }
+
+  // Two maps with the same keys and the same value under each (a null origin
+  // and an absent one are the same fact).
+  function _sameMap(a, b, dropNull) {
+    var keep = function (o) { return Object.keys(o || {}).filter(function (k) { return !dropNull || o[k] != null; }).sort(); };
+    var ka = keep(a), kb = keep(b);
+    if (ka.length !== kb.length) return false;
+    for (var i = 0; i < ka.length; i++) { if (ka[i] !== kb[i] || a[ka[i]] !== b[kb[i]]) return false; }
+    return true;
+  }
+  function _sameStates(a, b) {
+    var ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+    if (ka.length !== kb.length || ka.some(function (k, i) { return k !== kb[i]; })) return false;
+    return ka.every(function (id) {
+      return _sameMap(a[id].states, b[id].states, false) && _sameMap(a[id].origins, b[id].origins, true);
+    });
+  }
+
+  /**
+   * The per-leasehold term states an acquisition's canonical block recorded.
+   * Structured `states` first (written since P5-4); the `fingerprint` every
+   * earlier review stored otherwise. When BOTH are present they must agree.
+   * @returns {{ source: 'states'|'fingerprint', byLeasehold: object }|null}
+   */
+  function parseCanonicalStates(canonical) {
+    if (!_isObj(canonical) || canonical.basis !== 'leaseholds') return null;
+    var hasS = canonical.states !== undefined, hasF = typeof canonical.fingerprint === 'string';
+    var s = hasS ? _fromStructured(canonical.states) : null;
+    var f = hasF ? _fromFingerprint(canonical.fingerprint) : null;
+    if (hasS && !s) return null;                       // structured but unreadable: do not fall back past it
+    if (s && f && !_sameStates(s, f)) return null;      // two records of one moment that disagree
+    if (s) {
+      // Values the structured block does not carry may still come from the fingerprint.
+      if (f) Object.keys(s).forEach(function (id) {
+        Object.keys(f[id].values).forEach(function (k) { if (!(k in s[id].values)) s[id].values[k] = f[id].values[k]; });
+      });
+      return { source: 'states', byLeasehold: s };
+    }
+    return f ? { source: 'fingerprint', byLeasehold: f } : null;
+  }
+
+  /**
+   * The converted review that recorded this property's acquisition, and what it
+   * recorded — or null. Exactly one converted review of THIS property, whose
+   * canonical block reads cleanly, and every leasehold it names is one of that
+   * review's families on this property.
+   */
+  function acquisitionRecord(reviews, propertyId, families) {
+    var mine = _arr(reviews).filter(function (r) { return r.property_id === propertyId && r.status === 'converted'; });
+    if (mine.length !== 1) return null;
+    var r = mine[0];
+    // Only the selected `canonical` (SELECT.reviews). A whole review row is not
+    // read here: its data carries the raw, unverified upload rows.
+    var canonical = r.canonical;
+    var parsed = parseCanonicalStates(canonical);
+    if (!parsed) return null;
+    var famOfReview = {};
+    _arr(families).forEach(function (f) { if (f.id && f.review_id === r.id && _sameProperty(f, propertyId)) famOfReview[f.id] = true; });
+    var ids = Object.keys(parsed.byLeasehold);
+    if (!ids.every(function (id) { return famOfReview[id]; })) return null;   // a leasehold this review does not own
+    return { reviewId: r.id, convertedAt: r.converted_at || null, analysedAt: canonical.at || null,
+             source: parsed.source, byLeasehold: parsed.byLeasehold };
+  }
+
+  /** One leasehold's record, as the workspace reads it. Null when the acquisition did not record it. */
+  function _atAcquisitionEntry(record, leaseholdId, liveDocumentCount) {
+    if (!record || !record.byLeasehold[leaseholdId]) return null;
+    var rec = record.byLeasehold[leaseholdId];
+    var fields = {}, counts = { verified: 0, entered: 0, read: 0, unclear: 0, contested: 0, missing: 0 };
+    Object.keys(rec.states).forEach(function (f) {
+      var raw = rec.states[f];
+      var state = (raw === 'verified' && rec.origins[f] === 'entered') ? 'entered' : RESOLVER_STATE[raw];
+      counts[state]++;
+      fields[f] = { field: f, label: fieldLabel(f), state: state,
+                    value: Object.prototype.hasOwnProperty.call(rec.values, f) ? rec.values[f] : undefined };
+    });
+    return {
+      reviewId: record.reviewId, convertedAt: record.convertedAt, analysedAt: record.analysedAt, source: record.source,
+      fields: fields, counts: counts,
+      // A leasehold with no lease document filed into it — every term it has
+      // was read from nothing, and nothing here may be presented as documented.
+      noDocument: liveDocumentCount === 0,
+    };
+  }
+
+  function _present(field, v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === 'string' && v.trim() === '') return false;
+    // An area of zero is not an area (the CAM gate reads it as missing too).
+    if (field === 'leased_sqft') { var n = _num(v); return !isNaN(n) && n > 0; }
+    return true;
+  }
+
+  /**
+   * What the acquisition left open for ONE leasehold, derived now:
+   *   state at acquisition × the standing decision (P5-3) × the value shown now.
+   *
+   *   current    { <field>: value } as the surface shows it (a tenant, or the
+   *              Space file's lease rows); a field absent from it is 'not_tracked'
+   *   opts.workspaceWarnings  the review-engine warning types for this tenant
+   *
+   * Each item: { field, label, kind, rejected, current, valueAtAcquisition,
+   *   comparable, changedSince, resolvedSince, representedInWorkspace, open }.
+   * A field whose standing decision contradicts its recorded state is left out
+   * (fail closed). The leasehold with no document adds one `no_document` item.
+   */
+  function acquisitionAttention(entry, current, opts) {
+    var at = entry && entry.atAcquisition;
+    if (!at) return [];
+    var cur = _isObj(current) ? current : {};
+    var o = opts || {};
+    var represented = {};
+    _arr(o.workspaceWarnings).forEach(function (t) { if (WORKSPACE_WARNING_FIELD[t]) represented[WORKSPACE_WARNING_FIELD[t]] = true; });
+    var standing = (entry.verified && entry.verified.byField) || {};
+    var out = [];
+    Object.keys(at.fields).forEach(function (f) {
+      var a = at.fields[f];
+      if (a.state === 'verified' || a.state === 'entered') return;
+      var sd = standing[f];
+      if (sd && sd.verified) return;                                  // a decision says verified; the record says otherwise
+      var rejected = !!(sd && sd.rejected);
+      if (rejected && a.state !== 'unclear') return;                  // a rejection resolves to unclear, nothing else
+      var tracked = Object.prototype.hasOwnProperty.call(cur, f);
+      var shown = tracked ? cur[f] : undefined;
+      var present = tracked && _present(f, shown);
+      var comparable = a.value !== undefined && a.value !== null && a.value !== '';
+      var changedSince = !!(present && comparable && !matchesShown(f, a.value, shown));
+      // A term the acquisition could not establish that the workspace now holds
+      // was set since — by a person, in the workspace. Not an open gap.
+      var resolvedSince = present && (a.state === 'missing' || a.state === 'contested' || a.state === 'unclear');
+      out.push({
+        field: f, label: a.label, kind: a.state, rejected: rejected,
+        current: tracked ? (present ? 'present' : 'absent') : 'not_tracked',
+        valueAtAcquisition: comparable ? a.value : null, comparable: comparable,
+        changedSince: changedSince, resolvedSince: resolvedSince,
+        representedInWorkspace: !!represented[f],
+        open: !resolvedSince && !changedSince,
+      });
+    });
+    if (at.noDocument) out.push({ field: null, label: null, kind: 'no_document', rejected: false, current: 'not_tracked',
+      valueAtAcquisition: null, comparable: false, changedSince: false, resolvedSince: false, representedInWorkspace: false, open: true });
+    return out;
+  }
+
+  /** The value a workspace tenant shows for each term it has a home for. */
+  function currentFromTenant(t) {
+    var cur = {};
+    if (!t) return cur;
+    Object.keys(TENANT_KEY).forEach(function (f) { cur[f] = t[TENANT_KEY[f]]; });
+    return cur;
+  }
+
+  /**
+   * The ONE rolled-up line for a property's Needs attention: what the
+   * acquisition left open that the workspace has no word for. Counted, per
+   * leasehold, are only items that are open, that the workspace does not
+   * already raise (a missing start date is the Review Queue's; it is annotated
+   * there, never counted twice), and that say something about a value a person
+   * can see: contested or unclear anywhere, read-by-AI only where the value
+   * shown is the one that was read. Not established and no-document are never
+   * counted here — the workspace already says both.
+   *   warningTypesFor(t) → the review-engine warning types for a tenant.
+   * @returns {{ leaseholds, contested, unclear, read, items[] }|null}
+   */
+  function propertyAcquisitionAttention(built, tenants, warningTypesFor) {
+    if (!built || !built.byLeaseholdId) return null;
+    var byId = {};
+    _arr(tenants).forEach(function (t) { if (t.id != null) byId[t.id] = t; });
+    var out = { leaseholds: 0, contested: 0, unclear: 0, read: 0, items: [] };
+    var any = false;
+    (built.leaseholdIds || []).forEach(function (id) {
+      var e = built.byLeaseholdId[id];
+      if (!e || !e.atAcquisition) return;
+      any = true;
+      var t = byId[id];
+      if (!t) return;                                                 // the tenant is gone; nothing to point at
+      var warnings = typeof warningTypesFor === 'function' ? (warningTypesFor(t) || []) : [];
+      var counted = acquisitionAttention(e, currentFromTenant(t), { workspaceWarnings: warnings }).filter(function (it) {
+        if (!it.open || it.representedInWorkspace) return false;
+        if (it.kind === 'contested' || it.kind === 'unclear') return true;
+        return it.kind === 'read' && ROW_FIELDS.indexOf(it.field) >= 0 && it.current === 'present' && it.comparable;
+      });
+      if (!counted.length) return;
+      out.leaseholds++;
+      counted.forEach(function (it) { out[it.kind]++; out.items.push({ tenantId: id, field: it.field, kind: it.kind }); });
+    });
+    return any ? out : null;
+  }
+
+  /**
+   * The acquisition's word on each field a workspace warning names — for the
+   * Review Queue, which shows the CURRENT issue and may add what the
+   * acquisition recorded about it. Never a task: history, annotated.
+   */
+  function historyForWarnings(entry, warningTypes) {
+    var at = entry && entry.atAcquisition;
+    if (!at) return [];
+    var standing = (entry.verified && entry.verified.byField) || {};
+    var seen = {}, out = [];
+    _arr(warningTypes).forEach(function (t) {
+      var f = WORKSPACE_WARNING_FIELD[t];
+      if (!f || seen[f] || !at.fields[f]) return;
+      seen[f] = true;
+      var sd = standing[f];
+      out.push({ type: t, field: f, label: at.fields[f].label, state: at.fields[f].state,
+                 rejected: !!(sd && sd.rejected), noDocument: at.noDocument });
+    });
+    return out;
+  }
+
   /**
    * The projection for ONE property.
    *
@@ -319,6 +656,8 @@
     var fams = _arr(inp.families).filter(function (f) { return f.id && _sameProperty(f, propertyId); });
     var docs = _arr(inp.documents).filter(function (d) { return _sameProperty(d, propertyId); });
     var decs = _arr(inp.decisions).filter(function (d) { return _sameProperty(d, propertyId); });
+    // P5-4: what the acquisition recorded, or null (fail closed).
+    var acqRecord = acquisitionRecord(inp.reviews, propertyId, fams);
 
     var byId = {}, ids = [], docCount = 0, decCount = 0;
     fams.forEach(function (f) {
@@ -349,6 +688,8 @@
         decisionSummary: _decisionSummary(history),
         // P5-3: what currently STANDS per field, by the shared rule.
         verified: standingDecisions(theirs, docs, f.id, uid),
+        // P5-4: each term's state as the acquisition recorded it, or null.
+        atAcquisition: _atAcquisitionEntry(acqRecord, f.id, mine.length),
       };
       ids.push(f.id);
       docCount += mine.length;
@@ -376,6 +717,9 @@
       decisionCount: decCount,
       tenantsMatched: matched,
       tenantsWithoutLeasehold: without,
+      // P5-4: the review the acquisition was recorded in, when it reads cleanly.
+      acquisition: acqRecord ? { reviewId: acqRecord.reviewId, convertedAt: acqRecord.convertedAt,
+                                 analysedAt: acqRecord.analysedAt, source: acqRecord.source } : null,
       builtAt: new Date().toISOString(),
     };
   }
@@ -417,6 +761,12 @@
     FIELD_LABELS: FIELD_LABELS, NUMERIC_FIELDS: NUMERIC_FIELDS,
     fieldLabel: fieldLabel, actionLabel: actionLabel,
     matchesShown: matchesShown, resolveSource: resolveSource, standingDecisions: standingDecisions,
+    // P5-4
+    REVIEW_COLUMNS: REVIEW_COLUMNS, RESOLVER_STATE: RESOLVER_STATE, ROW_FIELDS: ROW_FIELDS,
+    WORKSPACE_WARNING_FIELD: WORKSPACE_WARNING_FIELD,
+    parseCanonicalStates: parseCanonicalStates, acquisitionRecord: acquisitionRecord,
+    acquisitionAttention: acquisitionAttention, currentFromTenant: currentFromTenant,
+    propertyAcquisitionAttention: propertyAcquisitionAttention, historyForWarnings: historyForWarnings,
     build: build,
     set: set, clear: clear, get: get, has: has, forTenant: forTenant,
     _reset: _reset,
