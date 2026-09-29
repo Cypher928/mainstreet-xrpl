@@ -182,7 +182,8 @@ const MUTANTS = [
   { id: 'B05', file: PL, why: 'with no lifecycle event the review\'s OWNER is presented as the person who acquired the property',
     from: "        by: ev ? (ev.actor_uid || null) : null,", to: "        by: ev ? (ev.actor_uid || null) : (r.user_id || null)," },
   { id: 'B06', file: PL, why: 'a superseded upload is counted as a document filed into a leasehold',
-    from: "      if (d.superseded_by_document_id) dc.superseded++;\n      else if", to: "      if (false) dc.superseded++;\n      else if" },
+    // P5-6B: the filing rule moved into _filing(), shared by the episode and the memory.
+    from: "    if (d.superseded_by_document_id) return 'superseded';\n    if (d.family_id", to: "    if (false) return 'superseded';\n    if (d.family_id" },
   { id: 'B07', file: PL, why: 'an event on ANOTHER property (property_id) is read as this property\'s acquisition',
     from: "        && _sameProperty(e, propertyId)\n", to: "\n" },
   { id: 'B08', file: PL, why: 'an event whose subject is another property is read as this property\'s acquisition',

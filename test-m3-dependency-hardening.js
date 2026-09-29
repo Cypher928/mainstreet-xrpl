@@ -222,7 +222,10 @@ sec('C. There is no undeclared or unsafe dependency remaining');
   // The undeclared-at-runtime set is exactly the five modules plus Selectors.
   const undeclared = new Set();
   for (const k of Object.keys(R)) (R[k].undeclaredReads || []).forEach(n => undeclared.add(n));
-  eq(Array.from(undeclared).sort(), ['CamPool', 'DecisionStanding', 'MoneyCents', 'PropertyLeaseholds', 'Selectors', 'SourceValues'],
+  // P5-6B: DecisionStanding left this set — the hydrator now requires
+  // property-leaseholds.js at module load, outside the shim, so its
+  // window.DecisionStanding lookup no longer runs under it.
+  eq(Array.from(undeclared).sort(), ['CamPool', 'MoneyCents', 'PropertyLeaseholds', 'Selectors', 'SourceValues'],
      'C5 the runtime undeclared set is exactly the five dual-resolved modules and Selectors');
   is(Array.from(undeclared).every(n =>
        ['module', 'browser_only'].indexOf(INV.CLASSIFICATION[n].kind) !== -1),
@@ -395,9 +398,9 @@ sec('H. Ownership, read-only, evidence, provenance and unavailable are unchanged
      'H10 a failed evidence read is still reported');
   is(R.degraded.degraded.indexOf('tenants.from_table_no_review_state') !== -1,
      'H11 and the tenant fallback still flags its missing review state');
-  eq(RICH.record.keys, ['attention', 'cam', 'disputes', 'documents', 'fields',
+  eq(RICH.record.keys, ['acquisition', 'attention', 'cam', 'disputes', 'documents', 'fields',
                         'identity', 'meta', 'spaces', 'timeline'],
-     'H12 the record shape is unchanged');
+     'H12 the record shape is unchanged but for P5-6B\'s one acquisition section');
 }
 
 // ── I. The M2 bundle proof still holds ─────────────────────────────────────

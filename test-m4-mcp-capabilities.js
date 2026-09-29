@@ -392,7 +392,7 @@ sec('F. The record, and one tenant inside it');
 
   // One data model. get_property must not invent a second shape.
   eq(Object.keys(r.data).sort(),
-     ['attention', 'cam', 'disputes', 'documents', 'fields', 'identity',
+     ['acquisition', 'attention', 'cam', 'disputes', 'documents', 'fields', 'identity',
       'propertyId', 'spaces', 'timeline'],
      'F8 the sections are PropertyRecord\'s own, plus the id that was asked for');
 
@@ -792,7 +792,7 @@ sec('L. The same question gives the same shape');
     shapes.push(Object.keys(r.data).sort().join(','));
   }
   eq(new Set(shapes).size, 1, 'L1 get_property returns one shape across four back-end states');
-  is(shapes[0].split(',').length === 9, 'L2 with nine fields every time', shapes[0]);
+  is(shapes[0].split(',').length === 10, 'L2 with ten fields every time (P5-6B: + acquisition)', shapes[0]);
 
   const envShapes = [];
   for (const [tool, args] of [['list_properties', {}], ['get_property', { propertyId: PROP }],

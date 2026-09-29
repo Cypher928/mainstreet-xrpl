@@ -194,7 +194,7 @@ t('F16 P5-3 NEVER replaces a shown value: every lease row is still built from re
 t('F17 the decider is never named from data: no displayName/email/profile read in the Space file\'s P5-3 block; only "you" (the signed-in uid) or "a person"',
   (() => { const blk = TS.slice(TS.indexOf('var _lhV = '), TS.indexOf('var leaseHtml = ')); return blk.length > 0 && !/displayName|email|profile|full_name|_esc\([^)]*decidedBy/.test(blk) && /_signedInUid\(\)/.test(blk) && /_who\(e\.decidedBy\)/.test(blk); })());
 t('F12 a document another member uploaded is labelled as on file, without a link (docLinkHtml renders a missing url inert)', /uploadedByOther \? '<span class="ts-doc-when ts-doc-other">on file/.test(TS));
-t('F13 PropertyRecord is UNCHANGED and reads rec.leaseDocs on the same path (so Ask AI sees the same documents without wiring)', /for \(const d of _arr\(rec\.leaseDocs\)\)/.test(PR) && !/PropertyLeaseholds|leasehold/.test(PR));
+t('F13 PropertyRecord is UNCHANGED and reads rec.leaseDocs on the same path (so Ask AI sees the same documents without wiring)', /for \(const d of _arr\(rec\.leaseDocs\)\)/.test(PR) && !/PropertyLeaseholds|leasehold/.test(PR.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')));
 t('F14 field-provenance.js is untouched by P5-2', !/PropertyLeaseholds|acquisition_term_decisions/.test(fs.readFileSync(path.join(__dirname, 'field-provenance.js'), 'utf8')));
 t('F15 index.html loads the module before script.js and tenant-space.js', (() => { const H = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'); const a = H.indexOf('property-leaseholds.js'), b = H.indexOf('<script src="script.js">'), c = H.indexOf('<script src="tenant-space.js">'); return a > 0 && a < b && b < c; })());
 

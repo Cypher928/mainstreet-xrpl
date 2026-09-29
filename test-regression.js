@@ -677,6 +677,7 @@ const SUITES = [
   // property are readable from the Property Workspace (tenants.id = families.id).
   { label: 'Which term decision stands (shared rule, P5-3)',           cmd: 'node test-decision-standing.js' },
   { label: 'Canonical leaseholds for the property workspace (P5-2)',       cmd: 'node test-property-leaseholds.js' },
+  { label: 'Server-side acquisition memory (P5-6B)',                       cmd: 'node test-p5-6b-acquisition-memory.js' },
   { label: 'Acquired property remembers its leases (e2e, P5-2)',           cmd: 'node test-e2e-property-leaseholds.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },

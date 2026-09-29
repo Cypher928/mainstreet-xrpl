@@ -136,12 +136,19 @@
   // (source_key set) are the blob's history, already shown, never read here.
   var EVENT_COLUMNS = ['id', 'property_id', 'actor_uid', 'actor_email', 'action', 'subject_type', 'subject_id',
                        'old_value', 'new_value', 'detail', 'client_ts', 'created_at', 'source_key'];
+  // P5-6B: the server's acquisition-memory read of the converted review — the
+  // REVIEW_COLUMNS above plus exactly two more paths of its frozen data: the
+  // invoices acquire_property carried (035 carries every object in this array)
+  // and the conversion record (WALT / occupancy at acquisition). Still never
+  // `data` itself. The browser's read (SELECT.reviews) is unchanged.
+  var MEMORY_REVIEW_COLUMNS = REVIEW_COLUMNS.concat(['invoices:data->invoices', 'conversion:data->conversionRecord']);
   var SELECT = Object.freeze({
     families:  FAMILY_COLUMNS.join(', '),
     documents: DOCUMENT_COLUMNS.join(', '),
     decisions: DECISION_COLUMNS.join(', '),
     reviews:   REVIEW_COLUMNS.join(', '),
     events:    EVENT_COLUMNS.join(', '),
+    memoryReviews: MEMORY_REVIEW_COLUMNS.join(', '),
   });
 
   var BUCKETS = { leases: 1, invoices: 1 };
@@ -666,6 +673,13 @@
 
   // ── P5-5: the acquisition episode, as History may tell it ─────────────────
 
+  /** How an episode document ended up: replaced by a later upload, filed into a leasehold, or neither. */
+  function _filing(d) {
+    if (d.superseded_by_document_id) return 'superseded';
+    if (d.family_id && d.family_status === 'confirmed') return 'filed';
+    return 'unfiled';
+  }
+
   function _minMax(rows, key) {
     var lo = null, hi = null;
     rows.forEach(function (r) {
@@ -722,11 +736,7 @@
     var ev = acquiredEvent(events, propertyId, r.id);
 
     var dc = { total: docs.length, filed: 0, unfiled: 0, superseded: 0 };
-    docs.forEach(function (d) {
-      if (d.superseded_by_document_id) dc.superseded++;
-      else if (d.family_id && d.family_status === 'confirmed') dc.filed++;
-      else dc.unfiled++;
-    });
+    docs.forEach(function (d) { dc[_filing(d)]++; });
     var dmm = _minMax(docs, 'created_at');
     var fmm = _minMax(fams, 'created_at');
     var xc = { count: decs.length, confirm: 0, correct: 0, reject: 0, reopen: 0 }, xf = {}, xa = {};
@@ -903,6 +913,231 @@
     };
   }
 
+  // ── P5-6B: the acquisition memory, as a server read may tell it ───────────
+  //
+  // ONE object answering "what happened when we acquired this property", for a
+  // reader that has no page and no map: the MCP hydrator. It is composed here,
+  // from build() — so the standing rule, the at-acquisition parse, the
+  // episode, the milestones and the unresolved sums are the ones the browser
+  // shows, never restated — and it is RETURNED, never stored: memory() does
+  // not call set(), and holds nothing between calls.
+  //
+  // Three kinds of fact, kept apart so no reader can mistake one for another:
+  //   memory   what the acquisition recorded (frozen rows, 034 + 036)
+  //   current  what the property holds NOW (lifecycle columns; the current
+  //            tenant beside each standing decision, compared, never merged)
+  //   sources  where each remembered fact can be checked (row ids, the
+  //            documents, the quote and page a decision cited)
+  //
+  // Status: 'ok'; 'empty' — no acquisition episode on record for this
+  // property; 'degraded' — an episode exists but some of its memory is
+  // missing, ambiguous or inconsistent (each cause named in `reasons`);
+  // 'unavailable' — a read failed, so nothing is claimed at all.
+  // `limitations` name true, permanent gaps in what the record can support
+  // (an actor stored only as a uid, invoices with no original…), so a reader
+  // does not state more than the record holds.
+
+  var MEMORY_VERSION = 1;
+
+  function _finite(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+  function _strOrNull(v) { return (typeof v === 'string' && v.trim() !== '') ? v : null; }
+
+  /**
+   * What acquire_property carried into the property's invoices: every object
+   * in the review's `data.invoices` (035, step 9), by value. Null when the
+   * column was not read. The lines have no document and no link to the
+   * property's current invoices — said, not implied.
+   */
+  function _carriedInvoices(review, eventCount) {
+    if (!review || review.invoices === undefined) return null;
+    var list = Array.isArray(review.invoices) ? review.invoices.filter(_isObj) : [];
+    var lines = list.map(function (e) {
+      var amt = typeof e.amount === 'number' ? e.amount : _num(e.amount);
+      return { vendorName: _strOrNull(e.vendorName), amount: isFinite(amt) ? amt : null,
+               category: _strOrNull(e.category), invoiceDate: _strOrNull(e.invoiceDate),
+               fileNameAsRecorded: _strOrNull(e.fileName) };
+    });
+    var summable = lines.every(function (l) { return l.amount !== null; });
+    var total = summable ? Math.round(lines.reduce(function (s, l) { return s + l.amount; }, 0) * 100) / 100 : null;
+    return { count: lines.length, total: total, lines: lines,
+             countMatchesEvent: eventCount == null ? null : eventCount === lines.length,
+             originalsLinked: false, linkedToCurrentInvoices: false };
+  }
+
+  /** WALT and occupancy as the conversion recorded them, or null. Refused when the record names another review or property. */
+  function _conversionMetrics(conv, reviewId, propertyId) {
+    if (!_isObj(conv)) return { metrics: null, mismatch: false };
+    if ((conv.reviewId != null && conv.reviewId !== reviewId) || (conv.propertyId != null && conv.propertyId !== propertyId)) {
+      return { metrics: null, mismatch: true };
+    }
+    var w = _isObj(conv.waltAtAcquisition) ? conv.waltAtAcquisition : {};
+    var o = _isObj(conv.occupancyAtAcquisition) ? conv.occupancyAtAcquisition : {};
+    return { mismatch: false, metrics: {
+      waltYears: _finite(w.walt), waltMonths: _finite(w.waltMonths), weightedSqft: _finite(w.weightedSqft),
+      occupancyRate: _finite(o.occupancyRate), occupiedSqft: _finite(o.occupiedSqft),
+      buildingSqft: _finite(o.buildingSqft), vacantSqft: _finite(o.vacantSqft),
+    } };
+  }
+
+  /** The value a tenant shows now beside a standing decision: the same, different, absent, or not a tenant field at all. */
+  function _compareCurrent(field, decided, tenant) {
+    if (!Object.prototype.hasOwnProperty.call(TENANT_KEY, field)) return 'not_tracked';
+    var shown = currentFromTenant(tenant)[field];
+    if (!_present(field, shown)) return 'absent';
+    return matchesShown(field, decided, shown) ? 'same' : 'different';
+  }
+
+  function _statesOf(at, state) {
+    return Object.keys(at.fields).filter(function (f) { return at.fields[f].state === state; })
+      .map(function (f) { return { field: f, label: at.fields[f].label }; });
+  }
+
+  /**
+   * The acquisition memory of ONE property.
+   *
+   * @param {object} input
+   *   propertyId                    the property (required)
+   *   property   { lifecycle_stage, acquired_at }   the property row's lifecycle columns
+   *   families, documents, decisions, reviews, events
+   *                                 the rows read for this property, in the
+   *                                 SELECT columns (reviews: SELECT.memoryReviews)
+   *   tenants                       the property's CURRENT tenants, for the
+   *                                 `current` comparison only
+   *   failed     string[]           names of reads that failed → 'unavailable'
+   *   truncated  string[]           names of reads that may be cut short → 'degraded'
+   * Never throws on bad input; never mutates its inputs; never touches the map.
+   */
+  function memory(input) {
+    var inp = input || {};
+    var propertyId = inp.propertyId || null;
+    var prop = _isObj(inp.property) ? inp.property : {};
+    var out = { kind: 'acquisition_memory', version: MEMORY_VERSION, propertyId: propertyId,
+                status: null, reasons: [], limitations: [], memory: null, current: null, sources: null };
+    var failed = _arr(inp.failed).map(String);
+    if (!propertyId || failed.length) {
+      out.status = 'unavailable';
+      out.reasons = failed.length ? failed.map(function (f) { return 'read_failed:' + f; }) : ['no_property'];
+      return out;
+    }
+    var current = { lifecycleStage: prop.lifecycle_stage || null, acquiredAt: prop.acquired_at || null, leaseholds: [] };
+    out.current = current;
+    var reasons = [];
+    _arr(inp.truncated).forEach(function (t) { reasons.push('read_truncated:' + String(t)); });
+
+    var converted = _arr(inp.reviews).filter(function (r) { return _isObj(r) && r.property_id === propertyId && r.status === 'converted'; });
+    if (converted.length !== 1) {
+      // None: no episode is on record. More than one: nothing is picked.
+      if (converted.length > 1) reasons.push('ambiguous_episodes');
+      else if (current.acquiredAt) reasons.push('acquired_without_episode_record');
+      out.reasons = reasons;
+      out.status = reasons.length ? 'degraded' : 'empty';
+      if (out.status === 'empty') out.reasons = ['no_acquisition_episode'];
+      return out;
+    }
+    var r = converted[0];
+    var tenants = _arr(inp.tenants);
+    var built = build({ propertyId: propertyId, families: inp.families, documents: inp.documents, decisions: inp.decisions,
+                        reviews: converted, events: inp.events, tenants: tenants, currentUid: null });
+    var ep = built.episode;
+    var limitations = [];
+
+    var tenantById = {};
+    tenants.forEach(function (t) { if (t && t.id != null) tenantById[t.id] = t; });
+    var evidence = [];
+    var noDocument = false, differs = false;
+    var leaseholds = built.leaseholdIds.filter(function (id) { return built.byLeaseholdId[id].family.reviewId === r.id; }).map(function (id) {
+      var e = built.byLeaseholdId[id];
+      var v = e.verified, at = e.atAcquisition;
+      var t = tenantById[id] || null;
+      var cmp = {};
+      var fields = v.fields.map(function (s) {
+        if (s.source || s.sourceQuote) evidence.push({
+          decisionId: s.decisionId, leaseholdId: id, field: s.field,
+          documentId: s.source ? s.source.id : null, documentName: s.source ? s.source.name : null,
+          documentLive: s.source ? s.source.live : null, documentMissing: s.source ? s.source.missing : null,
+          page: s.sourcePage, quote: s.sourceQuote,
+        });
+        if (t && !s.rejected) {
+          cmp[s.field] = _compareCurrent(s.field, s.value, t);
+          if (cmp[s.field] === 'different' || cmp[s.field] === 'absent') differs = true;
+        }
+        return { field: s.field, label: s.label, action: s.action, value: s.value, verified: s.verified,
+                 entered: s.entered, rejected: s.rejected, decidedAt: s.decidedAt, decidedByUid: s.decidedBy,
+                 decisionId: s.decisionId, sourceDocumentId: s.source ? s.source.id : null };
+      });
+      current.leaseholds.push({ leaseholdId: id, tenantOnProperty: !!t,
+                                tenantName: t ? (t.tenant_name || t.name || null) : null, standingVsCurrent: cmp });
+      if (!e.documents.length) noDocument = true;
+      return {
+        leaseholdId: id, label: e.family.label, kind: e.family.kind, tenantHint: e.family.tenantHint,
+        suiteHint: e.family.suiteHint, createdAt: e.family.createdAt,
+        documentIds: e.documents.map(function (d) { return d.id; }),
+        decisionCount: e.decisions.length,
+        standing: { fields: fields, openFields: v.openFields.map(function (f) { return { field: f, label: fieldLabel(f) }; }),
+                    counts: v.counts },
+        atAcquisition: at ? { counts: at.counts, contested: _statesOf(at, 'contested'), unclear: _statesOf(at, 'unclear'),
+                              noDocument: at.noDocument } : null,
+      };
+    });
+
+    var invoices = _carriedInvoices(r, ep.acquired && ep.acquired.counts ? ep.acquired.counts.invoices : null);
+    var conv = r.conversion === undefined ? { metrics: null, mismatch: false, unread: true } : _conversionMetrics(r.conversion, r.id, propertyId);
+
+    // Degraded: the episode exists, and part of its memory is missing or does not agree with itself.
+    if (!ep.acquired || ep.acquired.source !== 'property_events') reasons.push('no_acquisition_event');
+    if (!built.acquisition) reasons.push('at_acquisition_unrecorded');
+    if (invoices === null) reasons.push('carried_invoices_unread');
+    else if (invoices.countMatchesEvent === false) reasons.push('invoice_count_mismatch');
+    if (conv.unread) reasons.push('conversion_record_unread');
+    else if (conv.mismatch) reasons.push('conversion_record_mismatch');
+    if (current.acquiredAt && ep.acquired && _time(current.acquiredAt) !== _time(ep.acquired.at)) reasons.push('acquired_at_mismatch');
+    if (ep.acquired && ep.acquired.counts && ep.acquired.counts.leaseholds != null
+        && ep.acquired.counts.leaseholds !== leaseholds.length) reasons.push('leasehold_count_mismatch');
+
+    // Limitations: true of the record, and permanent; they bound what may be said.
+    if (ep.acquired && ep.acquired.by && !ep.acquired.byEmail) limitations.push('actor_uid_only');
+    if (ep.acquired && !ep.acquired.by) limitations.push('no_actor_recorded');
+    if (built.acquisition && built.acquisition.source === 'fingerprint') limitations.push('analysis_fingerprint_only');
+    if (invoices && invoices.count) limitations.push('invoice_originals_not_linked', 'carried_invoices_not_linked_to_current');
+    if (!conv.unread && !conv.mismatch && !conv.metrics) limitations.push('metrics_not_recorded');
+    if (noDocument) limitations.push('leasehold_without_document');
+    if (differs) limitations.push('current_differs_from_decided');
+
+    var docs = _arr(inp.documents).filter(function (d) { return _isObj(d) && d.review_id === r.id && _sameProperty(d, propertyId); })
+      .slice().sort(function (a, b) { return _time(a.created_at) - _time(b.created_at); });
+
+    out.status = reasons.length ? 'degraded' : 'ok';
+    out.reasons = reasons;
+    out.limitations = limitations;
+    out.memory = {
+      episode: { reviewId: ep.review.id, startedAt: ep.review.startedAt, startedByUid: ep.review.startedBy,
+                 convertedAt: ep.review.convertedAt, analysedAt: ep.analysedAt,
+                 analysisSource: built.acquisition ? built.acquisition.source : null, activityCount: ep.review.activityCount },
+      acquired: ep.acquired ? { at: ep.acquired.at, byUid: ep.acquired.by, byEmail: ep.acquired.byEmail,
+                                source: ep.acquired.source, eventId: ep.acquired.eventId, counts: ep.acquired.counts } : null,
+      leaseholdCount: leaseholds.length,
+      leaseholds: leaseholds,
+      documents: ep.documents,
+      decisions: ep.decisions,
+      unresolvedAtAcquisition: ep.unresolved,
+      carried: { invoices: invoices, metrics: conv.metrics },
+      milestones: episodeMilestones(ep),
+    };
+    out.sources = {
+      review: { table: 'acquisition_reviews', id: r.id },
+      event: (ep.acquired && ep.acquired.eventId) ? { table: 'property_events', id: ep.acquired.eventId } : null,
+      documents: docs.map(function (d) {
+        var filing = _filing(d);
+        return { documentId: d.id || null, fileName: d.file_name || null, docType: d.doc_type || null,
+                 docTypeStatus: d.doc_type_status || null, docDate: d.doc_date || null, confirmedAt: d.confirmed_at || null,
+                 createdAt: d.created_at || null, filing: filing, leaseholdId: filing === 'filed' ? d.family_id : null,
+                 supersededBy: d.superseded_by_document_id || null, hasOriginal: !!d.storage_path };
+      }),
+      decisionEvidence: evidence,
+    };
+    return out;
+  }
+
   // ── The per-property map. Page-lifetime only. ──────────────────────────────
   var _byProperty = new Map();
 
@@ -949,6 +1184,8 @@
     // P5-5
     EVENT_COLUMNS: EVENT_COLUMNS, acquiredEvent: acquiredEvent, acquisitionEpisode: acquisitionEpisode, episodeMilestones: episodeMilestones,
     build: build,
+    // P5-6B
+    MEMORY_REVIEW_COLUMNS: MEMORY_REVIEW_COLUMNS, memory: memory,
     set: set, clear: clear, get: get, has: has, forTenant: forTenant,
     _reset: _reset,
   };

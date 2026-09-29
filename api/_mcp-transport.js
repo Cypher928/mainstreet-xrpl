@@ -128,6 +128,12 @@ const LIMITS = {
   DOCUMENTS: 100,
   CAM_ROWS: 100,
   ATTENTION: 50,
+  // P5-6B — the acquisition section. Its per-leasehold lists are bounded by
+  // the term vocabulary (27 fields); these cap the lists that grow with data.
+  ACQ_LEASEHOLDS: 50,
+  ACQ_DOCUMENTS: 100,
+  ACQ_EVIDENCE: 100,
+  ACQ_INVOICE_LINES: 100,
   // get_timeline is paginated rather than capped, because paging a timeline is
   // a thing a caller legitimately wants to do.
   PAGE_DEFAULT: 100,
@@ -148,11 +154,12 @@ const RPC = {
  * The only keys a context may ever have.
  *
  * `token` and `now` are built from the request's Authorization header and the
- * server clock. The other three are test seams and are reachable ONLY through
- * serve()'s second parameter. Exported so a test can assert the set rather than
- * trust this comment.
+ * server clock. The other four are test seams and are reachable ONLY through
+ * serve()'s second parameter (`userFetch`, P5-6B, stands in for the caller's
+ * own transport the hydrator uses for the acquisition reads). Exported so a
+ * test can assert the set rather than trust this comment.
  */
-const CTX_KEYS = ['token', 'now', 'sbFetch', 'authFetch', 'deps'];
+const CTX_KEYS = ['token', 'now', 'sbFetch', 'authFetch', 'deps', 'userFetch'];
 
 /**
  * Build the context. The one place a ctx is created.
@@ -174,6 +181,7 @@ function _buildContext(bearer, nowMs, seam) {
     if (seam.sbFetch)   ctx.sbFetch   = seam.sbFetch;
     if (seam.authFetch) ctx.authFetch = seam.authFetch;
     if (seam.deps)      ctx.deps      = seam.deps;
+    if (seam.userFetch) ctx.userFetch = seam.userFetch;
   }
   return Object.freeze(ctx);
 }
@@ -324,6 +332,7 @@ function _boundData(toolName, data, bounded) {
         byTenant: bt,
       });
     }
+    d.acquisition = _boundAcquisition(d.acquisition, bounded);
   } else if (toolName === 'get_tenant') {
     d.disputes  = _cap(d.disputes,  LIMITS.DISPUTES,  'data.disputes',  bounded);
     d.documents = _cap(d.documents, LIMITS.DOCUMENTS, 'data.documents', bounded);
@@ -333,6 +342,37 @@ function _boundData(toolName, data, bounded) {
     d.items     = _cap(d.items,     LIMITS.ATTENTION, 'data.items',     bounded);
   }
   return d;
+}
+
+/**
+ * P5-6B — the acquisition section's growing lists, capped and disclosed like
+ * every other section. Rebuilt onto fresh objects; null stays null.
+ */
+function _boundAcquisition(acq, bounded) {
+  if (!acq || typeof acq !== 'object') return acq;
+  const a = Object.assign({}, acq);
+  if (a.memory && typeof a.memory === 'object') {
+    const m = Object.assign({}, a.memory);
+    m.leaseholds = _cap(m.leaseholds, LIMITS.ACQ_LEASEHOLDS, 'data.acquisition.memory.leaseholds', bounded);
+    if (m.carried && m.carried.invoices && typeof m.carried.invoices === 'object') {
+      m.carried = Object.assign({}, m.carried, { invoices: Object.assign({}, m.carried.invoices, {
+        lines: _cap(m.carried.invoices.lines, LIMITS.ACQ_INVOICE_LINES, 'data.acquisition.memory.carried.invoices.lines', bounded),
+      }) });
+    }
+    a.memory = m;
+  }
+  if (a.current && typeof a.current === 'object') {
+    a.current = Object.assign({}, a.current, {
+      leaseholds: _cap(a.current.leaseholds, LIMITS.ACQ_LEASEHOLDS, 'data.acquisition.current.leaseholds', bounded),
+    });
+  }
+  if (a.sources && typeof a.sources === 'object') {
+    a.sources = Object.assign({}, a.sources, {
+      documents: _cap(a.sources.documents, LIMITS.ACQ_DOCUMENTS, 'data.acquisition.sources.documents', bounded),
+      decisionEvidence: _cap(a.sources.decisionEvidence, LIMITS.ACQ_EVIDENCE, 'data.acquisition.sources.decisionEvidence', bounded),
+    });
+  }
+  return a;
 }
 
 /**
@@ -438,6 +478,60 @@ function _redactReviewers(toolName, data) {
   return d;
 }
 
+/**
+ * P5-6B — the REVIEWER POLICY, applied to the acquisition section.
+ *
+ * The acquisition memory names its actors as they are stored: user ids (and an
+ * email when the event row has one). The claim a caller needs is WHO in
+ * relation to itself — "you acquired this" or "another user did" — and that
+ * survives without the identifier. So every actor id becomes 'caller',
+ * 'another_user' or null (none on file), and every email is dropped with
+ * `…EmailPresent` stating whether one was on file. The in-app record keeps
+ * the ids; only this boundary narrows them.
+ */
+function _actorRel(uid, callerUid) {
+  if (uid == null || uid === '') return null;
+  return (callerUid && uid === callerUid) ? 'caller' : 'another_user';
+}
+function _redactAcquisition(acq, callerUid) {
+  if (!acq || typeof acq !== 'object' || !acq.memory || typeof acq.memory !== 'object') return acq;
+  const m = Object.assign({}, acq.memory);
+  if (m.episode && typeof m.episode === 'object') {
+    const e = Object.assign({}, m.episode);
+    e.startedBy = _actorRel(e.startedByUid, callerUid);
+    delete e.startedByUid;
+    m.episode = e;
+  }
+  if (m.acquired && typeof m.acquired === 'object') {
+    const q = Object.assign({}, m.acquired);
+    q.by = _actorRel(q.byUid, callerUid);
+    q.byEmailPresent = q.byEmail != null;
+    delete q.byUid; delete q.byEmail;
+    m.acquired = q;
+  }
+  if (Array.isArray(m.leaseholds)) {
+    m.leaseholds = m.leaseholds.map(function (l) {
+      if (!l || !l.standing || !Array.isArray(l.standing.fields)) return l;
+      return Object.assign({}, l, { standing: Object.assign({}, l.standing, {
+        fields: l.standing.fields.map(function (f) {
+          const o = Object.assign({}, f, { decidedBy: _actorRel(f.decidedByUid, callerUid) });
+          delete o.decidedByUid;
+          return o;
+        }),
+      }) });
+    });
+  }
+  if (Array.isArray(m.milestones)) {
+    m.milestones = m.milestones.map(function (x) {
+      if (!x || typeof x !== 'object') return x;
+      const o = Object.assign({}, x, { actor: _actorRel(x.actorUid, callerUid), actorEmailPresent: x.actorEmail != null });
+      delete o.actorUid; delete o.actorEmail;
+      return o;
+    });
+  }
+  return Object.assign({}, acq, { memory: m });
+}
+
 // ── the envelope, on the way out ───────────────────────────────────────────
 
 const BOUNDED_CAVEAT = 'response.bounded';
@@ -449,12 +543,15 @@ const REDACTED_CAVEAT = 'response.redacted_for_transport';
  * Order matters only in that bounding runs before the size check, so the check
  * measures what will actually be sent.
  */
-function _project(toolName, env, win) {
+function _project(toolName, env, win, callerUid) {
   const bounded = [];
   let data = env.data;
 
   if (data !== null && data !== undefined) {
     data = _redactReviewers(toolName, data);
+    if (toolName === 'get_property' && data.acquisition) {
+      data = Object.assign({}, data, { acquisition: _redactAcquisition(data.acquisition, callerUid) });
+    }
     data = (toolName === 'get_timeline' && win) ? _pageTimeline(data, win) : data;
     data = _boundData(toolName, data, bounded);
   }
@@ -472,6 +569,7 @@ function _project(toolName, env, win) {
     },
     readsPolicy: 'summarised — tables and counts, not query strings',
     reviewerPolicy: 'reviewer identity withheld; byPresent states whether one is on file',
+    acquisitionActorPolicy: 'acquisition actors reported as caller / another_user; ids and emails withheld',
   };
   if (bounded.length) prov.bounded = bounded;
 
@@ -491,11 +589,13 @@ function _project(toolName, env, win) {
   }
   caveats.push({
     code: REDACTED_CAVEAT, severity: 'info', scope: 'provenance',
-    message: 'Two fields are narrowed at this boundary and nowhere else: ' +
+    message: 'Identity and query detail are narrowed at this boundary and nowhere else: ' +
       'provenance.reads is summarised to tables and counts rather than query ' +
       'strings, and reviewer identity is withheld — fieldProvenance.by is null ' +
       'with byPresent stating whether an identity is on file. A state of ' +
-      'manually_confirmed still means a named reviewer approved the field.',
+      'manually_confirmed still means a named reviewer approved the field. ' +
+      'In the acquisition section every actor is reported as caller or ' +
+      'another_user, never by id or email.',
   });
 
   return { data: data, provenance: prov, caveats: caveats, asOf: env.asOf };
@@ -693,7 +793,7 @@ async function serve(request, seam) {
              body: _rpcError(id, RPC.INTERNAL, 'The capability failed to complete.') };
   }
 
-  const projected = _project(name, env, win);
+  const projected = _project(name, env, win, identity.userId);
 
   const payload = _toolResult(projected);
   const bytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
@@ -719,5 +819,6 @@ module.exports = {
   // through a full request.
   _buildContext, _splitInput, _window, _cap, _capKeys, _boundData,
   _pageTimeline, _summariseReads, _redactField, _redactReviewers,
+  _redactAcquisition, _boundAcquisition,
   _project, _publicTools, _advertisedSchema,
 };

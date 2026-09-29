@@ -424,7 +424,7 @@ sec('C. The context is server-owned — the P0');
   is(!('nowMs' in (T._buildContext('t', 1) || {})), 'C13 nowMs never becomes a ctx key');
   eq(Object.keys(T._buildContext('t', 1)).sort(), ['now', 'token'],
      'C14 _buildContext names every key it sets');
-  eq(T.CTX_KEYS.slice().sort(), ['authFetch', 'deps', 'now', 'sbFetch', 'token'],
+  eq(T.CTX_KEYS.slice().sort(), ['authFetch', 'deps', 'now', 'sbFetch', 'token', 'userFetch'],
      'C15 and the documented allow-list matches');
 
   /**

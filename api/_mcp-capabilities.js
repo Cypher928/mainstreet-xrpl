@@ -540,6 +540,47 @@ function sectionValue(status, value) {
   return status === STATUS.UNAVAILABLE ? null : value;
 }
 
+/**
+ * P5-6B — the acquisition section's status is the one its composer stated
+ * (PropertyLeaseholds.memory): ok, empty (no acquisition episode on record),
+ * degraded, unavailable. It is mapped, never recomputed; anything else — a
+ * missing section, an unknown word — is unavailable.
+ */
+function _acquisitionStatus(acq) {
+  const s = acq && typeof acq === 'object' ? acq.status : null;
+  if (s === 'ok') return STATUS.OK;
+  if (s === 'empty') return STATUS.EMPTY;
+  if (s === 'degraded') return STATUS.DEGRADED;
+  return STATUS.UNAVAILABLE;
+}
+
+/**
+ * The acquisition section's reasons and limitations as caveats, so a caller
+ * that reads caveats first learns what the memory cannot support before it
+ * reads the memory. Codes only; the section itself carries the detail.
+ */
+function _acquisitionCaveats(acq) {
+  const st = _acquisitionStatus(acq);
+  const reasons = (acq && Array.isArray(acq.reasons)) ? acq.reasons : [];
+  const limits  = (acq && Array.isArray(acq.limitations)) ? acq.limitations : [];
+  const out = [];
+  if (st === STATUS.UNAVAILABLE) {
+    out.push({ code: 'acquisition.unavailable', severity: SEVERITY.UNAVAILABLE, scope: 'acquisition',
+      message: 'The acquisition memory could not be read (' + (reasons.join(', ') || 'unknown') + '). ' +
+               'It is reported as null: this is not a statement that the property was never acquired.' });
+  } else if (st === STATUS.DEGRADED) {
+    out.push({ code: 'acquisition.degraded', severity: SEVERITY.DEGRADED, scope: 'acquisition',
+      message: 'The acquisition memory is partial or inconsistent: ' + reasons.join(', ') + '. ' +
+               'What is present is as recorded; what is missing is not implied.' });
+  }
+  if (limits.length && st !== STATUS.UNAVAILABLE) {
+    out.push({ code: 'acquisition.limitations', severity: SEVERITY.INFO, scope: 'acquisition',
+      message: 'The acquisition record cannot support more than it holds: ' + limits.join(', ') + '. ' +
+               'Acquisition values are as decided at acquisition, not current property values.' });
+  }
+  return out;
+}
+
 /** Turn a record's meta + the hydrator's degradation list into caveats. */
 function buildCaveats(unavailable, degradedCodes) {
   const out = [];
@@ -665,6 +706,11 @@ async function _hydrateOwned(propertyId, userId, c) {
     propertyId, userId,
     sbFetch: c.sbFetch,
     deps:    c.deps,
+    // P5-6B — the caller's token, the one userId was just resolved from, so
+    // the hydrator's acquisition reads run AS the caller under RLS. It goes to
+    // the hydrator and nowhere else: not into the record, the envelope or reads.
+    userToken: c.token,
+    userFetch: c.userFetch,
   });
 }
 
@@ -711,6 +757,7 @@ async function getProperty(args, ctx) {
     disputes:  st('disputes',  rec.disputes),
     attention: st('attention', rec.attention),
     documents: st('documents', rec.documents),
+    acquisition: _acquisitionStatus(rec.acquisition),
   };
 
   // M7 — say why leased area and occupancy are absent, when they are. Both
@@ -732,6 +779,8 @@ async function getProperty(args, ctx) {
                                   'spaces[' + (sp && sp.tenantId) + '].lease.cap');
     if (cv) propertyCaveats.push(cv);
   }
+  // P5-6B — the acquisition section's own word on what it could not say.
+  for (const cv of _acquisitionCaveats(rec.acquisition)) propertyCaveats.push(cv);
   // M8d — the same contract get_attention states, now that it is true here too.
   if (status.attention !== STATUS.UNAVAILABLE) {
     propertyCaveats.push({
@@ -757,6 +806,9 @@ async function getProperty(args, ctx) {
     // returns. See _attentionItems.
     attention:  sectionValue(status.attention, _attentionItems(rec.attention)),
     documents:  sectionValue(status.documents, rec.documents),
+    // P5-6B — what the acquisition recorded, kept apart from the current
+    // property state above. Null when unavailable, never an empty memory.
+    acquisition: sectionValue(status.acquisition, rec.acquisition),
   };
 
   return envelope({
@@ -773,6 +825,9 @@ async function getProperty(args, ctx) {
       ownership: 'properties.user_id = authenticated user',
       store: STORE.BLOB,
       evidenceStore: STORE.TABLE + ' (tenant_field_evidence)',
+      // P5-6B — where the acquisition section came from, and as whom.
+      acquisitionStore: 'acquisition_reviews, acquisition_document_families, acquisition_documents, ' +
+                        'acquisition_term_decisions, property_events — read as the authenticated caller, under RLS',
       units: unitsFor(['identity', 'lease', 'cam', 'disputes', 'fields']),
       openDisputeRule: DISPUTE_RULE,
       areaBasis: (rec.identity && rec.identity.areaBasis) || null,

@@ -130,8 +130,20 @@ function fixture() {
   const rec = PR.assemble(f, sentinelDeps);
 
   eq(Object.keys(rec).sort().join(','),
-     'attention,cam,disputes,documents,fields,identity,meta,spaces,timeline',
-     'J1  assemble() returns the declared top-level shape');
+     'acquisition,attention,cam,disputes,documents,fields,identity,meta,spaces,timeline',
+     'J1  assemble() returns the declared top-level shape (P5-6B: + acquisition)');
+  // P5-6B — the acquisition section is passed through, never composed here:
+  // null where no composer supplied one (the browser), the object itself where
+  // one did (the server hydrator), and never listed as unavailable.
+  eq(rec.acquisition, null, 'J1a acquisition is null when the property carries none');
+  is(rec.meta.unavailable.indexOf('acquisition') === -1, 'J1b and a missing acquisition is not reported as an unavailable section here');
+  {
+    const acq = { kind: 'acquisition_memory', status: 'ok' };
+    const rec2 = PR.assemble(Object.assign({}, fixture(), { acquisition: acq }), sentinelDeps);
+    is(rec2.acquisition === acq, 'J1c a supplied acquisition section is passed through as the same object, not re-derived');
+    const rec3 = PR.assemble(Object.assign({}, fixture(), { acquisition: 'not an object' }), sentinelDeps);
+    eq(rec3.acquisition, null, 'J1d anything that is not an object is not passed through');
+  }
 
   // M7 REVERSED THIS ASSERTION, DELIBERATELY.
   //
@@ -332,7 +344,7 @@ function fixture() {
   if (live.error) { bad('J30 PropertyRecord is loaded by the page', live.error); }
   else {
     ok('J30 PropertyRecord is loaded by the page');
-    eq(live.keys, 'attention,cam,disputes,documents,fields,identity,meta,spaces,timeline',
+    eq(live.keys, 'acquisition,attention,cam,disputes,documents,fields,identity,meta,spaces,timeline',
        'J30b with the same shape as in Node');
     eq(live.unavailable.length, 0, 'J31 every real dependency is present in the page',
        live.unavailable.join(','));

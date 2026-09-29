@@ -463,6 +463,12 @@
       disputes:  _arr(p && p.disputes).slice(),
       attention: attention,
       documents: documents,
+      // P5-6B — the acquisition memory, passed through as composed by
+      // PropertyLeaseholds.memory() in the server hydrator. It carries its own
+      // status (ok / empty / degraded / unavailable) and is never re-derived
+      // here. Null where no composer ran (the browser builds its record without
+      // one; its Property Workspace reads PropertyLeaseholds directly).
+      acquisition: (p && p.acquisition && typeof p.acquisition === 'object') ? p.acquisition : null,
       // Absence with a reason. `spaces: null` means "could not be composed", and
       // a reader must not collapse that into "this property has no spaces".
       meta: { unavailable: unavailable },

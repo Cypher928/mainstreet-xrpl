@@ -50,6 +50,22 @@
  *                              `fields` provenance section is silently wrong —
  *                              present, plausible, and empty.
  *
+ * P5-6B — AND THE ACQUISITION MEMORY, READ AS THE CALLER
+ *
+ *   4–8. acquisition_document_families, acquisition_documents,
+ *        acquisition_term_decisions, acquisition_reviews (converted),
+ *        property_events (stage_changed) — by property_id, in the columns
+ *        PropertyLeaseholds.SELECT names, composed by PropertyLeaseholds.memory()
+ *        into ONE section, record.acquisition.
+ *
+ *   These five do NOT use the service transport. The service role holds no
+ *   privilege on families or decisions, and is not given one. They run with
+ *   the caller's own Supabase access token and the publishable key, so the
+ *   tables' existing RLS judges every row, and only after the two ownership
+ *   layers above and the managed-stage check have passed. Two transports in
+ *   one module is deliberate: service role for what this module has always
+ *   read, the caller for what the database already lets the caller read.
+ *
  * NOT read: tenant_review_audit (feeds activityLog, which PropertyRecord never
  * looks at) and cam_reconciliations (the record's cam section reads the
  * camReconciliation snapshot from the blob; the browser's extra merge goes
@@ -68,6 +84,12 @@ const PropertyRecord = require('../property-record.js');
 // property's record; a prospect or passed deal is refused by name, not
 // hydrated as if it were part of the portfolio.
 const PropertyLifecycle = require('../property-lifecycle.js');
+// P5-6B — the acquisition memory is composed by the SAME pure module the
+// browser's Property Workspace uses (standing decisions, at-acquisition
+// states, the episode). Only its memory() composer is called here: never
+// set()/get()/forTenant(), whose map is page-lifetime state that on a warm
+// server would be shared across requests and users.
+const PropertyLeaseholds = require('../property-leaseholds.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
@@ -119,6 +141,87 @@ async function _defaultFetch(pathAndQuery, options = {}) {
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   return { status: res.status, json };
+}
+
+/**
+ * P5-6B — the CALLER'S transport, for the acquisition reads only.
+ *
+ * The service role holds no privilege on acquisition_document_families or
+ * acquisition_term_decisions (024b / 026c: "no server code touches this
+ * table"), and P5-6B does not grant it one. These reads therefore run as the
+ * authenticated caller: the publishable key as `apikey` — never the service
+ * key, so the request cannot be treated as service-role — and the caller's own
+ * Supabase access token as the bearer. PostgREST runs them as `authenticated`
+ * with auth.uid() = the caller, under the tables' existing RLS. That is the
+ * database's own boundary behind the ownership check hydrate() has already
+ * passed.
+ *
+ * The token is used for this request and nothing else: it is not returned, not
+ * logged, not placed in `reads`, the record, an error or a caveat.
+ */
+async function _defaultUserFetch(pathAndQuery, token, options = {}) {
+  if (!SUPABASE_ANON_KEY || !token) return { status: 401, json: { error: 'no_user_session' } };
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/rest/v1${pathAndQuery}`, {
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${token}`,
+        'Prefer': '',
+      },
+    });
+  } catch (e) {
+    const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return {
+      status: timedOut ? 504 : 502,
+      json: { error: timedOut ? 'read_timeout' : 'read_unreachable',
+              timeoutMs: timedOut ? READ_TIMEOUT_MS : null },
+    };
+  }
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  return { status: res.status, json };
+}
+
+/** The ceiling on rows per acquisition read. A read that reaches it may be cut short, and says so. */
+const ACQ_ROW_LIMIT = 1000;
+
+/**
+ * P5-6B — the five acquisition reads, for ONE property the caller owns, in
+ * the column lists PropertyLeaseholds.SELECT defines (the browser's loader
+ * asks for the same, with the review read widened by exactly two frozen paths:
+ * SELECT.memoryReviews). Every read is filtered by that property's id; the
+ * review read by status = converted; the events read by action =
+ * stage_changed. Run in parallel; any failure is named, never swallowed.
+ */
+async function _readAcquisition(userSb, propertyId) {
+  const S = PropertyLeaseholds.SELECT;
+  const pid = encodeURIComponent(propertyId);
+  const sel = (s) => encodeURIComponent(String(s).replace(/\s+/g, ''));
+  const lim = `&limit=${ACQ_ROW_LIMIT}`;
+  const paths = {
+    families:  `/acquisition_document_families?property_id=eq.${pid}&select=${sel(S.families)}&order=created_at.asc${lim}`,
+    documents: `/acquisition_documents?property_id=eq.${pid}&select=${sel(S.documents)}&order=created_at.asc${lim}`,
+    decisions: `/acquisition_term_decisions?property_id=eq.${pid}&select=${sel(S.decisions)}&order=decided_at.asc${lim}`,
+    reviews:   `/acquisition_reviews?property_id=eq.${pid}&status=eq.converted&select=${sel(S.memoryReviews)}${lim}`,
+    events:    `/property_events?property_id=eq.${pid}&action=eq.stage_changed&select=${sel(S.events)}&order=created_at.asc${lim}`,
+  };
+  const names = Object.keys(paths);
+  const results = await Promise.all(names.map(async (n) => {
+    try { return await userSb(paths[n], { method: 'GET' }); } catch (_e) { return null; }
+  }));
+  const rows = {}, failed = [], truncated = [];
+  names.forEach((n, i) => {
+    const r = results[i];
+    if (!r || r.status >= 300 || !Array.isArray(r.json)) { failed.push(n); rows[n] = []; return; }
+    rows[n] = r.json;
+    if (r.json.length >= ACQ_ROW_LIMIT) truncated.push(n);
+  });
+  return { rows, failed, truncated };
 }
 
 /** Methods that would change data. None of them may ever appear here. */
@@ -196,6 +299,13 @@ const REFUSAL = {
  *   userId      {string}   required — the AUTHENTICATED user. Absent ⇒ refused.
  *   sbFetch     {function} optional transport, for tests. Wrapped read-only.
  *   deps        {object}   optional dependency set, for tests.
+ *   userToken   {string}   P5-6B — the caller's Supabase access token, the one
+ *                          the userId was resolved from. Used ONLY for the
+ *                          acquisition reads, as the caller. Absent ⇒ the
+ *                          acquisition section is `unavailable`; the service
+ *                          transport is never used in its place.
+ *   userFetch   {function} P5-6B — optional caller transport, for tests:
+ *                          (pathAndQuery, token, options). Wrapped read-only.
  * @returns {Promise<{ok, record?, reason?, reads, degraded}>}
  */
 async function hydrate(opts) {
@@ -226,7 +336,7 @@ async function hydrate(opts) {
   //      read. ──────────────────────────────────────────────────────────────
   const propRes = await sb(
     `/properties?id=eq.${encodeURIComponent(propertyId)}` +
-    `&user_id=eq.${encodeURIComponent(userId)}&select=id,name,sqft,data,lifecycle_stage`,
+    `&user_id=eq.${encodeURIComponent(userId)}&select=id,name,sqft,data,lifecycle_stage,acquired_at`,
     { method: 'GET' });
   if (propRes.status >= 300) return { ok: false, reason: REFUSAL.READ_FAILED, reads, degraded: [] };
   const rows = Array.isArray(propRes.json) ? propRes.json : [];
@@ -353,6 +463,37 @@ async function hydrate(opts) {
     }
   }
 
+  // ── 3b. P5-6B — the acquisition memory ───────────────────────────────────
+  //      Only here: after the ownership check and the managed-stage check
+  //      have passed, so a caller who does not own this property, or asks for
+  //      a prospect, causes no acquisition read at all. The five reads run as
+  //      the CALLER (see _defaultUserFetch); the memory is composed by the
+  //      shared pure module, request-local, and attached to this request's
+  //      property object alone. The token stays in this function.
+  property.acquisition = await (async () => {
+    const lifecycle = { lifecycle_stage: row.lifecycle_stage == null ? null : row.lifecycle_stage,
+                        acquired_at: row.acquired_at == null ? null : row.acquired_at };
+    const token = String(o.userToken == null ? '' : o.userToken).replace(/^Bearer\s+/i, '').trim();
+    if (!token) {
+      return PropertyLeaseholds.memory({ propertyId, property: lifecycle, failed: ['user_session'] });
+    }
+    // An injected service transport with no caller transport is a harness:
+    // it must never reach the network through the default, and it never
+    // borrows the service transport for these reads. The section says so.
+    const rawUser = o.userFetch || (o.sbFetch ? null : _defaultUserFetch);
+    if (!rawUser) {
+      return PropertyLeaseholds.memory({ propertyId, property: lifecycle, failed: ['user_transport'] });
+    }
+    const userSb  = _readOnly(async (p, options) => { reads.push(p); return rawUser(p, token, options); });
+    const acq = await _readAcquisition(userSb, propertyId);
+    return PropertyLeaseholds.memory({
+      propertyId, property: lifecycle,
+      families: acq.rows.families, documents: acq.rows.documents, decisions: acq.rows.decisions,
+      reviews: acq.rows.reviews, events: acq.rows.events,
+      tenants: property.tenants, failed: acq.failed, truncated: acq.truncated,
+    });
+  })();
+
   // ── 4. Assemble, with dependencies handed over explicitly ────────────────
   const deps = o.deps || DEPS.load();
   const missing = DEPS.missing(deps);
@@ -400,4 +541,7 @@ module.exports = {
   // M9. The read bound, exported so a test can assert it is applied rather than
   // trust the comment above it.
   READ_TIMEOUT_MS, _defaultFetch,
+  // P5-6B. The caller transport and the acquisition reads, exported so a test
+  // can assert the key and bearer it sends, and the paths it issues.
+  _defaultUserFetch, _readAcquisition, ACQ_ROW_LIMIT,
 };
