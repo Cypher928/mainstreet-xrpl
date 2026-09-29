@@ -498,8 +498,12 @@ sec('D. The hydrator: read as the caller, only after the checks');
     const mem = PS.slice(PS.indexOf('function memory(input)'), PS.indexOf('var _byProperty'));
     is(mem.length > 0 && !/\bset\(|_byProperty/.test(mem), 'G7 memory() holds no module state and never calls set()');
     is(!/\.standing\(|standingByField\(/.test(mem) && /build\(/.test(mem), 'G8 memory() restates no standing rule — it composes build()');
-    const MIG = fs.readdirSync('./migrations').filter(f => /^03[7-9]|^0[4-9]\d/.test(f));
-    eq(MIG, [], 'G9 no migration was added');
+    // P5-6B itself added no migration. Later, separately approved migrations
+    // (039, the register's leasehold link) are not P5-6B's and are listed here
+    // by name, so an unexplained new file still fails this check.
+    const MIG = fs.readdirSync('./migrations').filter(f => /^03[7-9]|^0[4-9]\d/.test(f))
+      .filter(f => !/^039_register_leasehold_link(_rollback)?\.sql$/.test(f));
+    eq(MIG, [], 'G9 no migration was added for P5-6B');
     const CS = strip(fs.readFileSync('./api/_mcp-capabilities.js', 'utf8'));
     is(/userToken: c\.token/.test(CS) && (CS.match(/c\.token/g) || []).length >= 2, 'G10 the token is handed to the hydrator — and to nothing new');
   }

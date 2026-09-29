@@ -5318,7 +5318,52 @@ function findTenantMatch(tenants, incoming, skipIdx) {
   return null;
 }
 
-async function _runLeaseJobPipeline(jobId, placeholderIdx) {
+// ─── The register row a lease upload produced, written after its tenant ──────
+//
+// lease_documents.tenant_id is the leasehold the document belongs to, and
+// migration 039 makes that a foreign key: (tenant_id, property_id) must name a
+// tenants row of the same property. Two things follow for the upload paths.
+//
+//   · The id written must be the id the tenant row actually has. The bulk
+//     pipeline used to write norm.id — minted by mintTenantIdentity and then
+//     discarded when finalEntry took `id: jobId` — so every bulk register row
+//     pointed at a tenant that never existed. It now writes the row's real id:
+//     jobId, or the existing tenant's id when the upload was matched to one.
+//
+//   · The tenant row must exist when the register row is written. Bulk upload
+//     writes tenant rows ONCE, after the whole batch (resyncTenantsToTable at
+//     the end of handleBulkLeases), so each file's register write is queued
+//     and flushed after that resync. A tenant that was not persisted — held
+//     for review (_pendingJobReview), failed, or refused — is not linked:
+//     api/lease-documents.js saves the document with tenant_id null rather
+//     than lose it, and says so (linked:false).
+//
+// A caller that passes no queue (the single-file retry) writes immediately,
+// with the same real id and the same fallback.
+async function _saveLeaseRegisterWrite(w) {
+  if (!w) return null;
+  let extractedText = null;
+  try { extractedText = await w.extractedText; } catch (_) { extractedText = null; }
+  return saveLeaseDocument({
+    propertyId:      w.propertyId,
+    tenantId:        w.tenantId,
+    tenantName:      w.tenantName,
+    fileName:        w.fileName,
+    fileUrl:         w.fileUrl,
+    extractedText:   extractedText,
+    parsingStatus:   w.parsingStatus,
+    extractionModel: w.extractionModel,
+    usedPdfDirect:   w.usedPdfDirect,
+  }).catch(e => { console.warn('[saveLeaseDocument:bulk] failed:', e?.message); return null; });
+}
+
+async function _flushLeaseRegisterWrites(queue) {
+  const pending = Array.isArray(queue) ? queue.splice(0, queue.length) : [];
+  for (const w of pending) await _saveLeaseRegisterWrite(w);   // sequential: one request at a time
+  return pending.length;
+}
+
+async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
   const job = _leaseJobs.get(jobId);
   if (!job) { console.error('[_runLeaseJobPipeline] job not found:', jobId); return; }
   const file       = job._file;
@@ -5567,6 +5612,13 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       tenantData[placeholderIdx] = finalEntry;
     }
 
+    // The id the tenant row for this upload actually has: the existing tenant's
+    // when the upload was matched to one, otherwise this job's (finalEntry.id).
+    // The evidence below and the register row are both written against it.
+    const _linkedTenantId = (_match && _match.index != null)
+      ? (tenantData[_match.index] && tenantData[_match.index].id)
+      : finalEntry.id;
+
     // Persist the evidence the extraction produced. The normalizer already
     // builds complete snapshots from the model's `quotes` — verbatim clause,
     // extraction model, timestamp — and marks them confidence 'estimated' /
@@ -5578,10 +5630,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
     // immediately, carrying its own pending-review state, so the viewer can show
     // the clause while making clear no one has confirmed it yet.
     try {
-      const _linkedId = (_match && _match.index != null)
-        ? (tenantData[_match.index] && tenantData[_match.index].id)
-        : finalEntry.id;
-      _persistExtractedEvidence(propertyId, _linkedId, finalEntry.fieldEvidence);
+      _persistExtractedEvidence(propertyId, _linkedTenantId, finalEntry.fieldEvidence);
     } catch (e) { console.warn('[evidence] extraction snapshots not persisted:', e && e.message); }
     storeLeaseFile(jobId, file);
 
@@ -5606,26 +5655,26 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx) {
       finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: null });
     }
 
-    // Phase 22A/22C: persist lease document record.
-    // For vision-path leases, await the text extraction promise started earlier.
-    // finalizeLeaseJob / failLeaseJob have already updated the UI — this wait is invisible.
-    (async () => {
-      const _extractedText = usedPdfDirect
-        ? (await _visionTextPromise)
-        : (leaseText && !leaseText.startsWith('[Claude') ? leaseText : null);
-      saveLeaseDocument({
-        propertyId:      propertyId,
-        tenantId:        norm?.id || null,
-        tenantName:      finalEntry.tenant_name || null,
-        fileName:        file.name,
-        fileUrl:         leaseUrl,
-        extractedText:   _extractedText,
-        parsingStatus:   status,
-        // The model that ran, not a literal. See normalizeExtractedTenant().
-        extractionModel: norm?._extractionModel ?? null,
-        usedPdfDirect:   usedPdfDirect,
-      }).catch(e => console.warn('[saveLeaseDocument:bulk] failed:', e?.message));
-    })();
+    // Phase 22A/22C: persist lease document record — against the tenant row's
+    // REAL id (see _saveLeaseRegisterWrite), and, when the caller queues it,
+    // only after the batch has written its tenant rows. For vision-path leases
+    // the text is the promise started earlier; it is awaited at write time.
+    const _registerWrite = {
+      propertyId:      propertyId,
+      tenantId:        _linkedTenantId || null,
+      tenantName:      finalEntry.tenant_name || null,
+      fileName:        file.name,
+      fileUrl:         leaseUrl,
+      extractedText:   usedPdfDirect
+        ? _visionTextPromise
+        : (leaseText && !leaseText.startsWith('[Claude') ? leaseText : null),
+      parsingStatus:   status,
+      // The model that ran, not a literal. See normalizeExtractedTenant().
+      extractionModel: norm?._extractionModel ?? null,
+      usedPdfDirect:   usedPdfDirect,
+    };
+    if (Array.isArray(registerQueue)) registerQueue.push(_registerWrite);
+    else _saveLeaseRegisterWrite(_registerWrite);
 
   } catch (err) {
     logError('lease_processFile', err, { propId: propertyId, fileName: file.name, jobId });
@@ -5703,6 +5752,9 @@ async function handleBulkLeases(fileList) {
   if (!property.id) await saveProperty(property);
 
   const BATCH_SIZE = 2;
+  // Register rows are written after this batch's tenant rows (see
+  // _saveLeaseRegisterWrite), so each file's write waits here until then.
+  const _registerQueue = [];
   const processFile = async (file) => {
     // jobId IS the tenantId — single UUID shared by both systems, preventing duplicates.
     const jobId = createLeaseJob(file, property.id);
@@ -5712,7 +5764,7 @@ async function handleBulkLeases(fileList) {
     property.tenants = [...tenantData];
     renderBulkResults();
 
-    await _runLeaseJobPipeline(jobId, placeholderIdx);
+    await _runLeaseJobPipeline(jobId, placeholderIdx, _registerQueue);
 
     completed++;
     _progUpdate();
@@ -5753,9 +5805,16 @@ async function handleBulkLeases(fileList) {
   // Save property row, then resync tenants ONCE after all files are done.
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
   captureCheckpoint(activePropId, 'Before lease upload');
-  await saveProperty(property);
-  // Exclude failed extractions — only persist tenants with at minimum a real name
-  await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  try {
+    await saveProperty(property);
+    // Exclude failed extractions — only persist tenants with at minimum a real name
+    await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  } finally {
+    // The register rows, now that the tenant rows they name exist. In a
+    // finally so a failed save never drops a document: an unpersisted tenant
+    // is simply not linked (api/lease-documents.js saves it unlinked).
+    await _flushLeaseRegisterWrites(_registerQueue);
+  }
   {
     const successCount = tenantData.filter(t => t && t.status === 'success').length;
     logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
@@ -9716,10 +9775,25 @@ async function clearBulkResults() {
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
-  // Delete all tenant rows for this property from Supabase
+  // Delete this property's tenant rows from Supabase — except any a document is
+  // linked to. Since migration 039 lease_documents.tenant_id is a foreign key
+  // (ON DELETE NO ACTION): a leasehold with a filed document is history and is
+  // not removed by clearing the upload list, and including it would make the
+  // whole delete fail. If the linked set cannot be read, nothing is deleted —
+  // keeping a row is recoverable, orphaning a document is not.
   if (prop?.id) {
-    const { error } = await db.from('tenants').delete().eq('property_id', prop.id);
-    if (error) console.error('[clearBulkResults] delete error:', error.message);
+    const { data: linked, error: linkErr } = await db.from('lease_documents')
+      .select('tenant_id').eq('property_id', prop.id).not('tenant_id', 'is', null);
+    if (linkErr) {
+      console.error('[clearBulkResults] linked-document check failed — no tenant rows deleted:', linkErr.message);
+    } else {
+      const keep = [...new Set((linked || []).map(r => r && r.tenant_id).filter(Boolean))];
+      let del = db.from('tenants').delete().eq('property_id', prop.id);
+      if (keep.length) del = del.not('id', 'in', `(${keep.join(',')})`);
+      const { error } = await del;
+      if (error) console.error('[clearBulkResults] delete error:', error.message);
+      else if (keep.length) console.log('[clearBulkResults] kept', keep.length, 'tenant id(s) that documents are linked to');
+    }
   }
   if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   await savePropertyData();
@@ -27581,15 +27655,19 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
     const absent = (existing || []).map(t => String(t.id)).filter(id => !keep.has(id));
     if (!absent.length) return;
 
-    const [{ data: camRefs, error: camErr }, { data: evRefs, error: evErr }] = await Promise.all([
+    // lease_documents too, as resync_property_tenants does since 039: a tenant a
+    // document is linked to is kept (and its delete would be refused anyway).
+    const [{ data: camRefs, error: camErr }, { data: evRefs, error: evErr }, { data: docRefs, error: docErr }] = await Promise.all([
       db.from('cam_reconciliations').select('tenant_id').in('tenant_id', absent),
       db.from('tenant_field_evidence').select('tenant_id').in('tenant_id', absent),
+      db.from('lease_documents').select('tenant_id').in('tenant_id', absent),
     ]);
-    if (camErr || evErr) throw (camErr || evErr);
+    if (camErr || evErr || docErr) throw (camErr || evErr || docErr);
 
     const referenced = new Set([
       ...(camRefs || []).map(r => String(r.tenant_id)),
       ...(evRefs  || []).map(r => String(r.tenant_id)),
+      ...(docRefs || []).map(r => String(r.tenant_id)),
     ]);
     const removable = absent.filter(id => !referenced.has(id));
     const retained  = absent.length - removable.length;
@@ -28293,6 +28371,12 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
       return { ok: false, reason: result.error || `HTTP ${resp.status}`, code: result.code, keySource: result.keySource, detail: result.detail };
     }
     console.log('[saveLeaseDocument] persisted', fileName, 'for property', propertyId);
+    // Since 039 the link is a foreign key: a tenant that is not a row of this
+    // property yet (held for review, not saved) is not linked — the document is
+    // kept, unfiled. Said, not hidden.
+    if (tenantId && result.linked === false) {
+      console.info('[saveLeaseDocument] saved unlinked — tenant', tenantId, 'is not a persisted leasehold of this property');
+    }
     // Property memory: a document reaching the property is part of its history.
     // Lease extractions already emit `lease_uploaded`, so this only records
     // documents stored without a tenant context — no duplicate events.
@@ -28312,7 +28396,7 @@ async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, f
         }
       }
     } catch (_e) { console.warn('[timeline] document_uploaded skipped:', _e && _e.message); }
-    return { ok: true, data: result.data };
+    return { ok: true, data: result.data, linked: result.linked };
   } catch (e) {
     console.error('[saveLeaseDocument] exception:', e?.message);
     return { ok: false, reason: e?.message || 'network error' };
@@ -30030,11 +30114,16 @@ async function confirmDeleteProperty() {
   cancelBtn.disabled   = true;
 
   try {
-    // Delete tenants explicitly (cascade from properties may not cover the tenants table)
-    const { error: tenantErr } = await db.from('tenants').delete().eq('property_id', propId);
-    if (tenantErr) throw tenantErr;
-    // Delete the property — all child tables cascade (cam_reconciliations, lease_documents,
-    // lease_jobs, tenant_field_evidence, tenant_review_audit all have ON DELETE CASCADE)
+    // Delete the property — one statement. Its child tables cascade: tenants
+    // (tenants_property_id_fkey is ON DELETE CASCADE), cam_reconciliations,
+    // lease_documents, lease_jobs, tenant_field_evidence, tenant_review_audit.
+    //
+    // Tenants are no longer deleted first. Since migration 039 a document is
+    // linked to its leasehold by lease_documents_leasehold_fk (ON DELETE NO
+    // ACTION), so deleting a linked tenant on its own is refused — a separate
+    // tenants delete would fail for any property with a filed lease. Deleting
+    // the property removes the tenants and their documents in the same
+    // statement, which is what the constraint's end-of-statement check allows.
     const { error } = await db.from('properties').delete().eq('id', propId);
     if (error) throw error;
   } catch (e) {

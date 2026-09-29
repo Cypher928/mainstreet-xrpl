@@ -55,6 +55,18 @@ function _isMigrationMissing(json) {
   return obj.code === '42P01' || (msg.includes('does not exist') || (msg.includes('relation') && msg.includes('exist')));
 }
 
+// Migration 039: lease_documents.tenant_id is the leasehold (tenants.id) of the
+// SAME property — lease_documents_leasehold_fk, (tenant_id, property_id) →
+// tenants(id, property_id). A write naming a tenant that is not (yet) a row of
+// this property is refused with 23503 on exactly that constraint. Any other
+// error — another constraint, another code — is not this, and is not retried.
+function _isLeaseholdLinkRefused(json) {
+  if (!json) return false;
+  const obj = Array.isArray(json) ? (json[0] || {}) : json;
+  return obj.code === '23503'
+    && /lease_documents_leasehold_fk/.test(String(obj.message || '') + ' ' + String(obj.details || ''));
+}
+
 async function sbFetch(path, options = {}) {
   const k = key();
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -125,22 +137,36 @@ export default async function handler(req, res) {
       used_pdf_direct:  usedPdfDirect  === true,
     };
 
-    let result;
-    if (existingRows.length > 0) {
-      // Update existing record
-      const existingId = existingRows[0].id;
-      result = await sbFetch(
-        `/lease_documents?id=eq.${encodeURIComponent(existingId)}`,
-        { method: 'PATCH', body: JSON.stringify(payload) }
-      );
-      console.log('[lease-documents] PATCH', result.status, existingId);
-    } else {
+    const existingId = existingRows.length > 0 ? existingRows[0].id : null;
+    const write = async (p) => {
+      if (existingId) {
+        // Update existing record
+        const r = await sbFetch(
+          `/lease_documents?id=eq.${encodeURIComponent(existingId)}`,
+          { method: 'PATCH', body: JSON.stringify(p) }
+        );
+        console.log('[lease-documents] PATCH', r.status, existingId);
+        return r;
+      }
       // Insert new record
-      result = await sbFetch('/lease_documents', {
+      const r = await sbFetch('/lease_documents', {
         method: 'POST',
-        body:   JSON.stringify(payload),
+        body:   JSON.stringify(p),
       });
-      console.log('[lease-documents] INSERT', result.status);
+      console.log('[lease-documents] INSERT', r.status);
+      return r;
+    };
+
+    let result = await write(payload);
+    let linked = !!payload.tenant_id;
+    // A document is never lost because its leasehold is not persisted yet (a
+    // tenant held for review, a failed save): the same write is made once more
+    // with tenant_id null — the document is kept, unfiled — and the response
+    // says linked:false. Only the leasehold-link refusal is retried.
+    if (result.status >= 300 && payload.tenant_id && _isLeaseholdLinkRefused(result.json)) {
+      console.warn('[lease-documents] leasehold link refused (no such tenant in this property) — saving unlinked');
+      result = await write({ ...payload, tenant_id: null });
+      linked = false;
     }
 
     if (result.status >= 300) {
@@ -157,7 +183,7 @@ export default async function handler(req, res) {
     }
 
     const data = Array.isArray(result.json) ? result.json : [result.json];
-    return res.status(200).json({ ok: true, data, keySource: KEY_SOURCE });
+    return res.status(200).json({ ok: true, data, linked, keySource: KEY_SOURCE });
   }
 
   // GET — list lease documents for a property, ordered by most recent first.
