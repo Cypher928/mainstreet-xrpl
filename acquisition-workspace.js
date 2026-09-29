@@ -94,6 +94,22 @@
   }
 
   /**
+   * P5-6A — the review is a closed acquisition: its record, documents,
+   * leaseholds and decisions are read-only. This is the SAME predicate
+   * migration 036 enforces in the database (status = 'converted', nothing
+   * softer), so the screen never offers a control the database would refuse.
+   * It is deliberately wider than isConverted(): a converted row whose
+   * conversionRecord is missing or whose property is gone (an orphan) is still
+   * frozen — history does not reopen because the property it produced was
+   * deleted.
+   */
+  function isFrozen(review) {
+    return !!review && review.status === 'converted';
+  }
+  /** What the screen says, and what a refused act reports. */
+  var FROZEN_NOTICE = 'This acquisition is closed. Its record is read-only.';
+
+  /**
    * The initial reading for a review that has never had a stage set.
    *
    * Deliberately coarse. `financials` and `review` are never derived: nothing
@@ -387,6 +403,7 @@
     STAGES: STAGES, STAGE_LABELS: STAGE_LABELS, TERMINAL_STAGE: TERMINAL_STAGE,
     ACTIVITY_TYPES: ACTIVITY_TYPES, ACTIVITY_CAP: ACTIVITY_CAP,
     isValidStage: isValidStage, stageIndex: stageIndex, isConverted: isConverted,
+    isFrozen: isFrozen, FROZEN_NOTICE: FROZEN_NOTICE,
     deriveStage: deriveStage, stageOf: stageOf,
     newReviewData: newReviewData, upgradeReview: upgradeReview, needsUpgrade: needsUpgrade,
     recordActivity: recordActivity,

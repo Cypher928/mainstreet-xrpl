@@ -30562,6 +30562,47 @@ function _acqRecord(review, entry) {
   return review;
 }
 
+// ── P5-6A: a converted review is a closed acquisition ────────────────────────
+// The database refuses every change to a converted review and to its
+// documents, leaseholds and decisions (migration 036). The screen mirrors
+// that rule rather than discovering it: the renderers draw no control on a
+// frozen review, and every entry point that would write refuses first, with
+// the same sentence, so a click never becomes a database error. The one write
+// the freeze admits — the legacy revert made by
+// _revertAcquisitionsForDeletedProperty through _saveAcqReview — is not
+// guarded here, because it is the database's own exception too.
+function _acqFrozen(reviewOrId) {
+  const AW = _AW();
+  const review = (reviewOrId && typeof reviewOrId === 'object') ? reviewOrId
+    : _acqReviews.find(r => r && r.id === reviewOrId);
+  return !!(AW && review && AW.isFrozen(review));
+}
+
+// True — and the person told — when the act must not proceed.
+function _acqRefuseFrozen(reviewOrId) {
+  if (!_acqFrozen(reviewOrId)) return false;
+  showToast('🔒 ' + _AW().FROZEN_NOTICE, { color: '#1f2937', textColor: '#e5e7eb', duration: 5000 });
+  return true;
+}
+
+// The notice under the header, and the panel's read-only dress (uploads,
+// Delete and Run Analysis hidden by CSS while #acqDetailPanel.acq-frozen).
+function _acqRenderFrozenNotice(review) {
+  const panel = document.getElementById('acqDetailPanel');
+  const el = document.getElementById('acqFrozenNotice');
+  const frozen = _acqFrozen(review);
+  if (panel) panel.classList.toggle('acq-frozen', frozen);
+  if (!el) return;
+  if (!frozen) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const cr = review.data && review.data.conversionRecord;
+  const at = (cr && cr.convertedAt) || review.converted_at || null;
+  const when = at && !isNaN(new Date(at)) ? new Date(at).toLocaleDateString() : null;
+  el.style.display = '';
+  el.innerHTML = '<strong>' + esc(_AW().FROZEN_NOTICE) + '</strong> '
+    + (when ? 'Acquired ' + esc(when) + '. ' : '')
+    + 'The documents, leaseholds, decisions and analysis below are the record of that acquisition and cannot be changed — here or anywhere.';
+}
+
 // ── Acquisition documents (P1-2) ──────────────────────────────────────────────
 // Every file an acquisition review is given is kept: the original in the private
 // `leases` bucket, its text in a row, and a row even when extraction fails.
@@ -30668,6 +30709,10 @@ async function _acqLoadDocuments(reviewId) {
 // than by a line of JavaScript a browser could be persuaded to skip.
 async function _acqSaveDocument(fields) {
   if (_acqDocsUnavailable) return null;
+  // P5-6A: every document write — upload, classification, retype, filing,
+  // confirmation, reading, disposition — comes through here; a closed
+  // acquisition refuses them all, as the database does (036).
+  if (_acqRefuseFrozen(fields && fields.reviewId)) return null;
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return null;
@@ -30747,6 +30792,7 @@ async function _acqLoadFamilies(reviewId) {
 // ever belong to a review its owner owns.
 async function _acqSaveFamily(reviewId, fields) {
   if (_acqDocsUnavailable) return null;
+  if (_acqRefuseFrozen(reviewId)) return null;   // P5-6A: no new or renamed leasehold on a closed acquisition
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return null;
@@ -30783,6 +30829,7 @@ async function _acqSaveFamily(reviewId, fields) {
 async function _acqSupersedePrevious(reviewId, fileName, intakeId, newDocId) {
   const previous = _AD().findSuperseded(_acqDocRows(reviewId), fileName, intakeId);
   if (!previous || !newDocId || previous.id === newDocId) return null;
+  if (_acqFrozen(reviewId)) return null;   // P5-6A (unreachable: the upload before it was refused)
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return null;
@@ -31074,6 +31121,10 @@ async function _acqSaveDecision(fields, term) {
   // The review this act is about, captured before the first await — see
   // "Cross-review isolation".
   const reviewId = _activeAcqId;
+  // P5-6A: Confirm, Correct, Reject, Reopen and Enter all land here. What a
+  // person decided stands as it stood at acquisition; no decision is appended
+  // to a closed acquisition (036 refuses the INSERT).
+  if (_acqRefuseFrozen(reviewId)) return null;
   try {
     const { data: { user } } = await db.auth.getUser();
     if (!user?.id) return null;
@@ -31294,6 +31345,7 @@ function _acqCanonicalStates(rows) {
 async function _acqRefreshAnalysis(reviewId) {
   const review = _acqReviews.find(r => r && r.id === reviewId);
   if (!review || !review.data || !review.data.analysis) return false;
+  if (_acqFrozen(review)) return false;   // P5-6A: silent — the act before it was already refused and said so
   // An analysis of nothing would replace the stored one with an empty report.
   if (!_acqLeaseholdsOnly(_acqCanonicalRows(reviewId)).length) {
     showToast(_acqNoLeaseholdsMessage(reviewId), { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
@@ -31388,7 +31440,9 @@ function _acqAnalysisStaleParts(review) {
 function _acqUpdateStaleNotice() {
   const review = _acqReviews.find(r => r && r.id === _activeAcqId);
   const el = document.getElementById('acqStaleNotice');
-  const why = review ? _acqAnalysisStale(review) : null;
+  // P5-6A: a closed acquisition's analysis is the record, not a draft that
+  // could be behind anything — the notice never invites a refresh there.
+  const why = review && !_acqFrozen(review) ? _acqAnalysisStale(review) : null;
   if (el) {
     if (!why) { el.style.display = 'none'; el.innerHTML = ''; }
     else {
@@ -31579,6 +31633,7 @@ async function acqResolveExtraction(rowKey, action, familyId) {
   const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
   const review = _acqReviews.find(r => r && r.id === reviewId);
   if (!AL || !review || !rowKey) return false;
+  if (_acqRefuseFrozen(review)) return false;   // P5-6A
   const entry = _acqUnmatched(reviewId).find(x => x.key === rowKey);
   if (!entry || entry.resolution) return false;
   const R = AL.RESOLUTION;
@@ -31637,6 +31692,7 @@ async function acqReopenExtraction(rowKey) {
   const reviewId = _activeAcqId;
   const review = _acqReviews.find(r => r && r.id === reviewId);
   if (!AL || !review || !rowKey) return false;
+  if (_acqRefuseFrozen(review)) return false;   // P5-6A
   const res = Object.assign({}, _acqResolutions(reviewId));
   const prior = res[rowKey];
   if (!prior || prior.action === AL.RESOLUTION.NEW_LEASEHOLD) return false;
@@ -31707,6 +31763,7 @@ async function acqSetDocDisposition(docId, action) {
   const review = _acqReviews.find(r => r && r.id === reviewId);
   const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
   if (!review || !row || ![AD.DISPOSITION.NOT_RELEVANT, AD.DISPOSITION.DUPLICATE].includes(action)) return false;
+  if (_acqRefuseFrozen(review)) return false;   // P5-6A
   const { data: { user } } = await db.auth.getUser();
   const at = new Date().toISOString();
   const docs = Object.assign({}, _acqDocDispositions(reviewId));
@@ -31734,6 +31791,7 @@ async function acqClearDocDisposition(docId) {
   const docs = Object.assign({}, _acqDocDispositions(reviewId));
   const prior = docs[docId];
   if (!review || !prior) return false;
+  if (_acqRefuseFrozen(review)) return false;   // P5-6A
   delete docs[docId];
   const res = Object.assign({}, _acqResolutions(reviewId));
   if (prior.linkedRow && res[prior.linkedRow] && res[prior.linkedRow].linkedDocument === docId) delete res[prior.linkedRow];
@@ -31853,6 +31911,9 @@ function _renderAcqDocuments() {
   const groups = AD.groupDocuments(rows, _acqFamilyRows(_activeAcqId));
   const byId   = new Map(rows.map(r => [r.id, r]));
   const pendingById = new Map(_acqPendingDocuments(_activeAcqId).map(p => [p.doc.id, p]));
+  // P5-6A: on a closed acquisition every document is shown as it was filed;
+  // no type control, no confirm, no read, no filing, no disposition, no undo.
+  const frozen = _acqFrozen(_activeAcqId);
 
   // One document. The classification says what it is AND how settled that is,
   // every time it is shown — a proposal that renders like a fact is the thing
@@ -31888,12 +31949,14 @@ function _renderAcqDocuments() {
     const supersededNote = current ? '' :
       `<div class="acq-doc-superseded">Replaced by a newer upload of this file name — kept on record.</div>`;
 
-    const typeControl = `
+    const typeControl = frozen
+      ? `<span class="acq-doc-type-fixed" data-doc-type-fixed="${esc(r.doc_type || '')}" title="What this document is — as filed at acquisition">${esc(r.doc_type ? AD.docTypeLabel(r.doc_type) : 'Type not set')}</span>`
+      : `
       <select class="acq-doc-type" data-doc-id="${esc(r.id)}" title="What this document is">
         ${AD.DOC_TYPE_NAMES.map(n =>
           `<option value="${esc(n)}"${r.doc_type === n ? ' selected' : ''}>${esc(AD.docTypeLabel(n))}</option>`).join('')}
       </select>`;
-    const confirmBtn = (cls.status === 'proposed')
+    const confirmBtn = (!frozen && cls.status === 'proposed')
       ? `<button class="acq-doc-confirm" data-doc-id="${esc(r.id)}" title="${esc(cls.note)}">Confirm</button>` : '';
 
     // P1-4: whether this document has been read for its terms. Only for the
@@ -31906,7 +31969,7 @@ function _renderAcqDocuments() {
     const abs      = reading ? { label: 'Reading terms…', cls: 'pending' } : _ACQ_ABS_STATUS[r.abstraction_status];
     const termsChip = (abstractable && abs)
       ? ` · <span class="acq-doc-terms ${esc(abs.cls)}" data-abstraction="${esc(reading ? 'reading' : (r.abstraction_status || ''))}">${esc(abs.label)}</span>` : '';
-    const readBtn = (abstractable && current && !reading
+    const readBtn = (!frozen && abstractable && current && !reading
                      && r.abstraction_status !== 'success' && r.abstraction_status !== 'partial')
       ? `<button class="acq-doc-reabstract" data-doc-id="${esc(r.id)}" title="Read what this document says about the lease terms, from its stored text">Read terms</button>` : '';
 
@@ -31925,7 +31988,9 @@ function _renderAcqDocuments() {
       const v = AD.familyForCorrection(_acqWithEvidence(r), _acqFamilyRows(_activeAcqId));
       if (v.kind === 'none') {
         unfiled = '<div class="acq-doc-unfiled">'
-          + (v.canBegin
+          + (v.canBegin && frozen
+              ? '<div class="acq-doc-unfiled-why">No matching leasehold — filed in none when the property was acquired.</div>'
+              : v.canBegin
               ? '<div class="acq-doc-unfiled-why">No matching leasehold found. '
                 + 'This document can begin a leasehold if you confirm that it belongs to this '
                 + 'tenant’s lease history.</div>'
@@ -31943,19 +32008,23 @@ function _renderAcqDocuments() {
     if (disp && current) {
       place = `<div class="acq-doc-disposed" data-disposition="${esc(disp.action)}">`
         + (disp.action === AD.DISPOSITION.DUPLICATE ? 'Marked a duplicate' : 'Marked not relevant') + ' by a person — kept on record, placed in no leasehold'
-        + ` <button type="button" class="acq-doc-undispose" data-doc-id="${esc(r.id)}">Undo</button></div>`;
+        + (frozen ? '</div>' : ` <button type="button" class="acq-doc-undispose" data-doc-id="${esc(r.id)}">Undo</button></div>`);
     } else if (pend) {
       const fams = _acqFamilyRows(_activeAcqId);
       const aiFiled = r.family_id && r.family_status !== 'confirmed' && fams.some(f => f && f.id === r.family_id);
+      // A pending document on a CLOSED acquisition is a fact of the record
+      // (acquire_property admits none; a legacy episode may hold one): named,
+      // with nothing to do about it.
       place = `<div class="acq-doc-place" data-pending="${esc(pend.reasons.join('; '))}">`
-        + `<span class="acq-doc-place-why">Needs a person: ${esc(pend.reasons.join('; '))}</span>`
-        + (aiFiled ? ` <button type="button" class="acq-doc-confirm-family" data-doc-id="${esc(r.id)}">Confirm leasehold</button>` : '')
-        + ` <select class="acq-doc-match" data-doc-id="${esc(r.id)}" aria-label="Match to a leasehold">`
-        + `<option value="">${aiFiled ? 'Match to a different leasehold…' : 'Match to a leasehold…'}</option>`
-        + fams.filter(f => f && f.id !== r.family_id).map(f => `<option value="${esc(f.id)}">${esc(f.label || f.tenant_hint || 'Unnamed leasehold')}</option>`).join('')
-        + '</select>'
-        + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.NOT_RELEVANT)}">Not relevant</button>`
-        + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.DUPLICATE)}">Duplicate</button>`
+        + `<span class="acq-doc-place-why">${frozen ? 'Left unresolved at acquisition: ' : 'Needs a person: '}${esc(pend.reasons.join('; '))}</span>`
+        + (frozen ? '' :
+            (aiFiled ? ` <button type="button" class="acq-doc-confirm-family" data-doc-id="${esc(r.id)}">Confirm leasehold</button>` : '')
+          + ` <select class="acq-doc-match" data-doc-id="${esc(r.id)}" aria-label="Match to a leasehold">`
+          + `<option value="">${aiFiled ? 'Match to a different leasehold…' : 'Match to a leasehold…'}</option>`
+          + fams.filter(f => f && f.id !== r.family_id).map(f => `<option value="${esc(f.id)}">${esc(f.label || f.tenant_hint || 'Unnamed leasehold')}</option>`).join('')
+          + '</select>'
+          + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.NOT_RELEVANT)}">Not relevant</button>`
+          + ` <button type="button" class="acq-doc-dispose" data-doc-id="${esc(r.id)}" data-action="${esc(AD.DISPOSITION.DUPLICATE)}">Duplicate</button>`)
         + '</div>';
     }
 
@@ -32058,6 +32127,8 @@ function _renderAcqTerms() {
   const el = document.getElementById('acqTermsList');
   if (!el) return;
   const AT = _AT(), AD = _AD();
+  // P5-6A: on a closed acquisition every term is drawn, and no act is offered.
+  const frozen = _acqFrozen(_activeAcqId);
   const families = _acqFamilyRows(_activeAcqId);
   const countEl = document.getElementById('acqTermsCount');
 
@@ -32181,7 +32252,7 @@ function _renderAcqTerms() {
       // A missing term has nothing to confirm, correct or reject. A person may
       // ENTER it, and the value is then theirs: verified, with no document.
       const enterGate = _acqDecisionsUnavailable ? ' disabled title="Decisions are not being filed — run migration 026 first."' : '';
-      const actions = entered ? `
+      const actions = frozen ? '' : entered ? `
         <div class="acq-term-actions">${reopen}</div>`
         : actionable ? `
         <div class="acq-term-actions">
@@ -32322,6 +32393,7 @@ function _acqUnfiledListHtml(reviewId) {
   const n = open.length;
   const fams = _acqFamilyRows(reviewId);
   const R = AL.RESOLUTION;
+  const frozen = _acqFrozen(reviewId);   // P5-6A: shown, never resolvable or undoable
   const src = (x) => {
     const sf = x.row.leased_sqft != null && x.row.leased_sqft !== '' && !isNaN(Number(x.row.leased_sqft))
       ? Number(x.row.leased_sqft).toLocaleString('en-US') : null;
@@ -32330,7 +32402,7 @@ function _acqUnfiledListHtml(reviewId) {
       + (file ? ` <span class="acq-lm-unfiled-file">Source: ${esc(file)}</span>` : '')
       + (_ACQ_UNFILED_WHY[x.why] ? ` <span class="acq-lm-unfiled-why">· ${esc(_ACQ_UNFILED_WHY[x.why])}</span>` : '');
   };
-  const controls = (x) => x.why === 'no_document'
+  const controls = (x) => frozen ? '' : x.why === 'no_document'
     ? `<span class="acq-um-actions">
         <select class="acq-um-match" data-row="${esc(x.key || '')}" aria-label="Match to a leasehold"${x.key ? '' : ' disabled'}>
           <option value="">Match to a leasehold…</option>
@@ -32351,7 +32423,7 @@ function _acqUnfiledListHtml(reviewId) {
                : 'New leasehold: ' + ((fam && fam.label) || 'established');
     return `<li class="acq-um-resolved" data-row="${esc(x.key || '')}" data-action="${esc(e.action)}"><span class="acq-lm-unfiled-name">${esc(x.row.tenant_name || x.row.tenantName || 'Unnamed')}</span>`
       + ` — <span class="acq-um-what">${esc(what)}</span>`
-      + (e.action !== R.NEW_LEASEHOLD ? ` <button type="button" class="acq-um-reopen" data-row="${esc(x.key || '')}">Undo</button>` : '')
+      + (e.action !== R.NEW_LEASEHOLD && !frozen ? ` <button type="button" class="acq-um-reopen" data-row="${esc(x.key || '')}">Undo</button>` : '')
       + '</li>';
   };
   return `<details class="acq-lm-unfiled" data-unresolved="${n}">
@@ -32429,6 +32501,10 @@ function _acqLeaseholdHeadHtml(familyId) {
   const m = _acqMatrixFor(_activeAcqId);
   const e = m && m.leaseholds.find(x => x.leaseholdId === familyId);
   if (!LM || !e) return '';
+  const frozen = _acqFrozen(_activeAcqId);   // P5-6A: the evidence note says the record is closed
+  const evidenceNote = frozen
+    ? 'Every term with the document and clause behind it, its page and confidence, and what a person decided — as they stood when the property was acquired. This record is closed.'
+    : 'Every term with the document and clause behind it, its page and confidence, and what a person decided — Confirm, Correct, Reject, Reopen or Enter here.';
   const row = _acqCanonicalRows(_activeAcqId).rows.find(r => r && r._leaseholdId === familyId) || {};
   const resolved = _acqFamilyTerms(familyId);
 
@@ -32506,7 +32582,7 @@ function _acqLeaseholdHeadHtml(familyId) {
       <div class="acq-lh-headline">${esc(LM.headline(e))}</div>
       ${overview}${attn}${terms}${documents}
       <h5 class="acq-lh-sec-head acq-lh-evidence-head" data-section="evidence">Evidence &amp; decisions</h5>
-      <div class="acq-lh-evidence-note">Every term with the document and clause behind it, its page and confidence, and what a person decided — Confirm, Correct, Reject, Reopen or Enter here.</div>
+      <div class="acq-lh-evidence-note">${esc(evidenceNote)}</div>
     </div>`;
 }
 
@@ -32650,6 +32726,7 @@ async function acqCorrectTerm(familyId, field) {
   const reviewId = _activeAcqId;
   const term = _acqTermFor(familyId, field);
   if (!term) return;
+  if (_acqRefuseFrozen(reviewId)) return;   // P5-6A: before the person is asked for a value
   const current = _acqTermValue(term);
   const next = (typeof prompt === 'function')
     ? prompt(`Correct “${term.label}”.\n\nWhat the documents say: ${current === null ? 'nothing' : current}`,
@@ -32694,6 +32771,7 @@ async function acqEnterTerm(familyId, field) {
   const AT = _AT();
   const term = _acqTermFor(familyId, field);
   if (!AT || !term || term.state !== 'missing') return;
+  if (_acqRefuseFrozen(reviewId)) return;   // P5-6A: before the person is asked for a value
   const meta = AT.FIELD_META[field] || {};
   const hint = meta.type === 'enum' ? 'one of: ' + (meta.values || []).join(', ')
              : (_ACQ_TYPE_HINT[meta.type] || 'a value');
@@ -33292,6 +33370,7 @@ function selectAcquisitionReview(id) {
   const _orphan = _acqOrphaned(review);
   badge.textContent = _orphan ? 'converted — property no longer exists' : review.status;
   badge.className = 'acq-detail-badge ' + (_orphan ? 'orphaned' : review.status);
+  _acqRenderFrozenNotice(review);
   _renderAcqConvertAction(review);
   _renderAcqStageChips(review);
 
@@ -33338,6 +33417,9 @@ async function deleteActiveAcquisitionReview() {
   const id     = _activeAcqId;
   const review = _acqReviews.find(r => r.id === id);
   if (!id || !review) return;
+  // P5-6A: a closed acquisition is never deleted (036 refuses the DELETE;
+  // delete_prospect_acquisition refused it already).
+  if (_acqRefuseFrozen(review)) return;
 
   // P3 — an episode on a prospect property is removed together with that
   // property, through delete_prospect_acquisition (migration 034): admin only,
@@ -33445,10 +33527,21 @@ function _renderAcqConvertAction(review) {
   const el = document.getElementById('acqConvertAction');
   if (!el) return;
   const cr = review?.data?.conversionRecord;
-  if (_acqOrphaned(review)) {
+  if (_acqOrphaned(review) && _acqFrozen(review)) {
+    // P5-6A: the property this record produced is gone, and the record stays
+    // closed — it is the history of that acquisition, and history is not
+    // rewritten onto a new property. Nothing is offered.
+    el.innerHTML = `<div class="acq-orphan acq-orphan-frozen">
+      <div class="acq-orphan-head">Converted — property no longer exists</div>
+      <div class="acq-orphan-body">The property created from this review has been deleted.
+        This review, its documents and its analysis are kept as the record of that acquisition, read-only.</div>
+    </div>`;
+  } else if (_acqOrphaned(review)) {
     // Say what is true, then offer the way out. The analysis, tenants and
     // invoices on this review are untouched — only the property built from
     // them is gone, so converting again rebuilds it from the same evidence.
+    // (Unreachable while every orphan is a converted review — kept for a
+    // record that was reverted to `complete` and then lost its property.)
     el.innerHTML = `<div class="acq-orphan">
       <div class="acq-orphan-head">Converted — property no longer exists</div>
       <div class="acq-orphan-body">The property created from this review has been deleted.
@@ -33609,6 +33702,16 @@ async function _acqAcquireInPlace(review) {
 async function convertAcquisitionToProperty() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+
+  // P5-6A: a converted review — an orphan included — is closed. The legacy
+  // "Convert Again" wrote a new conversionRecord onto it, which 036 refuses;
+  // refusing here first means no property is built for a record that cannot
+  // then be linked to it.
+  if (_acqFrozen(review)) {
+    _hideAcqConvertModal();
+    showToast('🔒 ' + _AW().FROZEN_NOTICE, { color: '#1f2937', textColor: '#e5e7eb', duration: 6000 });
+    return;
+  }
 
   // P4: a review that has its property is acquired IN PLACE — the same
   // property becomes acquired. Everything below this line is the legacy
@@ -33790,6 +33893,14 @@ function _updateAcqAnalyzeBtn() {
   // answer ('' current, a sentence when not, null while it cannot yet be told).
   const review      = _acqReviews.find(r => r && r.id === _activeAcqId);
   const hasAnalysis = !!(review && review.data && review.data.analysis);
+  // P5-6A: nothing runs on a closed acquisition; the bar is hidden by CSS
+  // and the button disabled underneath it, so neither path re-analyses.
+  if (review && _acqFrozen(review)) {
+    btn.disabled = true;
+    btn.textContent = '⚡ Run Analysis';
+    if (note) note.textContent = _AW().FROZEN_NOTICE;
+    return;
+  }
   const why         = hasAnalysis ? _acqAnalysisStale(review) : null;
   const current     = hasAnalysis && why === '';
   btn.disabled = !ready;
@@ -33809,8 +33920,13 @@ function _updateAcqAnalyzeBtn() {
 }
 
 function acqSaveSqft(val) {
-  _acqSqFt = parseFloat(val) || 0;
   const review = _acqReviews.find(r => r.id === _activeAcqId);
+  if (_acqRefuseFrozen(review)) {   // P5-6A: the area is part of the record
+    const sqftEl = document.getElementById('acqTotalSqft');
+    if (sqftEl) sqftEl.value = _acqSqFt || '';
+    return;
+  }
+  _acqSqFt = parseFloat(val) || 0;
   if (review) { review.data = review.data || {}; review.data.totalSqFt = _acqSqFt; }
   _updateAcqAnalyzeBtn();
   // The area is an input to the analysis: a different one puts it out of date
@@ -33855,6 +33971,7 @@ async function acqHandleLeaseFiles(fileList) {
   if (!files.length) return;
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  if (_acqRefuseFrozen(review)) return;   // P5-6A: nothing is added to a closed acquisition
   // Captured now, before anything is awaited — see "Cross-review isolation".
   const tenants = _acqWorkingList(review, 'tenants', _acqTenants);
 
@@ -33990,6 +34107,7 @@ async function acqHandleInvoiceFiles(fileList) {
   if (!files.length) return;
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  if (_acqRefuseFrozen(review)) return;   // P5-6A
   // Captured now, before anything is awaited — see "Cross-review isolation".
   const invoices = _acqWorkingList(review, 'invoices', _acqInvoices);
 
@@ -34097,6 +34215,9 @@ async function acqHandleInvoiceFiles(fileList) {
 async function runAcquisitionAnalysis() {
   const review = _acqReviews.find(r => r.id === _activeAcqId);
   if (!review) return;
+  // P5-6A: the analysis on a closed acquisition is the record of the term
+  // states as acquired (data.analysis.canonical); it is never re-run.
+  if (_acqRefuseFrozen(review)) return;
   const btn = document.getElementById('acqAnalyzeBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
 

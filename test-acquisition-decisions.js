@@ -713,7 +713,8 @@ t('the screen offers Enter on a missing term, and Reopen alone on an entered one
   ok(/const entered = term\.support === 'entered';/.test(R), 'the panel does not recognise an entered term');
   ok(/Entered by a person · No document on file supports this value/.test(R), 'the entered tag is missing or shortened');
   ok(/data-origin="entered"/.test(R));
-  ok(/const actions = entered \? `\s*<div class="acq-term-actions">\$\{reopen\}<\/div>`/.test(R),
+  // P5-6A: a closed acquisition offers nothing at all; that gate sits in front of the entered/open choice.
+  ok(/const actions = frozen \? '' : entered \? `\s*<div class="acq-term-actions">\$\{reopen\}<\/div>`/.test(R),
      'an entered term offers Confirm/Correct/Reject');
   const Bind = fnBody(S, '_acqBindTermControls');
   ok(/acq-term-enter/.test(Bind) && /acqEnterTerm\(family, field\)/.test(Bind), 'Enter is not bound');

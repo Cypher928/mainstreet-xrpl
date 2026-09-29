@@ -403,6 +403,8 @@ sec('H. P4 ACQUIRE IN PLACE: a review that has its property is acquired through 
       _acqReviews: [review], _activeAcqId: review.id, _props: [], _archivedProps: [], _propsLoadedOk: true,
       _acqRevs: new Map(),
       _acqOrphaned: () => false,
+      // P5-6A: every review in these worlds is open; the freeze never fires.
+      _acqFrozen: () => false, _acqRefuseFrozen: () => false, showToast: () => {},
       _acqEnsureRecord: async () => {},
       _acqRecordLoaded: () => o.loaded !== false,
       _acqUnresolvedExtractions: () => 0, _acqPendingDocuments: () => [],

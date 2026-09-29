@@ -40,6 +40,29 @@
  *     G11  the demo seed records the timestamp it SENT as a revision
  *     G12  the conflict handler keeps the local copy
  *
+ *   P5-6A — a converted review is frozen (the client half of migration 036)
+ *     F01  isFrozen is never true
+ *     F02  isFrozen is isConverted (an orphan thaws)
+ *     F03  a decision can still be filed on a frozen review
+ *     F04  a document can still be written on a frozen review
+ *     F05  a family can still be written on a frozen review
+ *     F06  the terms panel still offers Confirm / Correct / Reject / Reopen / Enter
+ *     F07  the documents panel still offers the type select
+ *     F08  the documents panel still offers Read terms
+ *     F09  the documents panel still offers confirm-leasehold / match / dispose
+ *     F10  the unmatched list still offers match / new / not-a-tenant
+ *     F11  Delete still asks and deletes
+ *     F12  Run Analysis still runs
+ *     F13  the refresh after an act still rewrites the analysis
+ *     F14  the stale notice still invites a refresh
+ *     F15  the Run Analysis button is not disabled
+ *     F16  the notice is not drawn on open
+ *     F17  leases can still be uploaded
+ *     F18  the area can still be changed
+ *     F19  an orphaned converted review still offers Convert Again
+ *     F20  Convert Again still runs on a frozen review
+ *     F21  a disposition can still be made
+ *
  * A FAILING BASELINE IS NOT A PASS.
  */
 const fs = require('fs');
@@ -109,6 +132,51 @@ const MUTANTS = [
     from: '    _acqReviews.unshift(_AW().upgradeReview(review));', to: '    _acqReviews.unshift(_acqAdopt(review));' },
   { id: 'G12', file: S, why: 'the conflict handler keeps the local copy',
     from: '    if (idx >= 0) _acqReviews[idx] = fresh; else _acqReviews.unshift(fresh);', to: '    void idx;' },
+
+  // ── P5-6A: the freeze ────────────────────────────────────────────────────
+  { id: 'F01', file: W, why: 'isFrozen is never true',
+    from: "    return !!review && review.status === 'converted';", to: '    return false;' },
+  { id: 'F02', file: W, why: 'isFrozen is isConverted (an orphan thaws)',
+    from: "    return !!review && review.status === 'converted';", to: '    return isConverted(review);' },
+  { id: 'F03', file: S, why: 'a decision can still be filed on a frozen review',
+    from: '  // to a closed acquisition (036 refuses the INSERT).\n  if (_acqRefuseFrozen(reviewId)) return null;', to: '  // to a closed acquisition (036 refuses the INSERT).' },
+  { id: 'F04', file: S, why: 'a document can still be written on a frozen review',
+    from: '  if (_acqRefuseFrozen(fields && fields.reviewId)) return null;', to: '  void fields;' },
+  { id: 'F05', file: S, why: 'a family can still be written on a frozen review',
+    from: '  if (_acqRefuseFrozen(reviewId)) return null;   // P5-6A: no new or renamed leasehold on a closed acquisition', to: '  void reviewId;' },
+  { id: 'F06', file: S, why: 'the terms panel still offers the five acts',
+    from: "      const actions = frozen ? '' : entered ? `", to: '      const actions = entered ? `' },
+  { id: 'F07', file: S, why: 'the documents panel still offers the type select',
+    from: '    const typeControl = frozen\n', to: '    const typeControl = false\n' },
+  { id: 'F08', file: S, why: 'the documents panel still offers Read terms',
+    from: '    const readBtn = (!frozen && abstractable && current && !reading', to: '    const readBtn = (abstractable && current && !reading' },
+  { id: 'F09', file: S, why: 'the documents panel still offers confirm-leasehold / match / dispose',
+    from: "        + (frozen ? '' :\n            (aiFiled ?", to: "        + (false ? '' :\n            (aiFiled ?" },
+  { id: 'F10', file: S, why: 'the unmatched list still offers match / new / not-a-tenant',
+    from: "  const controls = (x) => frozen ? '' : x.why === 'no_document'", to: "  const controls = (x) => x.why === 'no_document'" },
+  { id: 'F11', file: S, why: 'Delete still asks and deletes',
+    from: '  // delete_prospect_acquisition refused it already).\n  if (_acqRefuseFrozen(review)) return;', to: '  // delete_prospect_acquisition refused it already).' },
+  { id: 'F12', file: S, why: 'Run Analysis still runs',
+    from: '  // states as acquired (data.analysis.canonical); it is never re-run.\n  if (_acqRefuseFrozen(review)) return;', to: '  // states as acquired (data.analysis.canonical); it is never re-run.' },
+  { id: 'F13', file: S, why: 'the refresh after an act still rewrites the analysis',
+    from: '  if (_acqFrozen(review)) return false;   // P5-6A: silent', to: '  if (false) return false;   // P5-6A: silent' },
+  { id: 'F14', file: S, why: 'the stale notice still invites a refresh',
+    from: '  const why = review && !_acqFrozen(review) ? _acqAnalysisStale(review) : null;', to: '  const why = review ? _acqAnalysisStale(review) : null;' },
+  { id: 'F15', file: S, why: 'the Run Analysis button is not disabled',
+    from: '  if (review && _acqFrozen(review)) {\n    btn.disabled = true;', to: '  if (false) {\n    btn.disabled = true;' },
+  { id: 'F16', file: S, why: 'the notice is not drawn on open',
+    from: '  _acqRenderFrozenNotice(review);\n  _renderAcqConvertAction(review);', to: '  _renderAcqConvertAction(review);' },
+  { id: 'F17', file: S, why: 'leases can still be uploaded',
+    from: '  if (_acqRefuseFrozen(review)) return;   // P5-6A: nothing is added to a closed acquisition', to: '  void review;' },
+  { id: 'F18', file: S, why: 'the area can still be changed',
+    from: '  if (_acqRefuseFrozen(review)) {   // P5-6A: the area is part of the record', to: '  if (false) {   // P5-6A: the area is part of the record' },
+  { id: 'F19', file: S, why: 'an orphaned converted review still offers Convert Again',
+    from: '  if (_acqOrphaned(review) && _acqFrozen(review)) {', to: '  if (false) {' },
+  { id: 'F20', file: S, why: 'Convert Again still runs on a frozen review',
+    from: '  if (_acqFrozen(review)) {\n    _hideAcqConvertModal();', to: '  if (false) {\n    _hideAcqConvertModal();' },
+  { id: 'F21', file: S, why: 'a disposition can still be made',
+    from: "  if (!review || !row || ![AD.DISPOSITION.NOT_RELEVANT, AD.DISPOSITION.DUPLICATE].includes(action)) return false;\n  if (_acqRefuseFrozen(review)) return false;   // P5-6A",
+    to:   "  if (!review || !row || ![AD.DISPOSITION.NOT_RELEVANT, AD.DISPOSITION.DUPLICATE].includes(action)) return false;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-ws-mut-'));

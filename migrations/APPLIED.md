@@ -67,6 +67,7 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260926223919` | `033_property_lifecycle_integrity` | `migrations/033_property_lifecycle_integrity.sql` @ `516ef3a2` — applied 2026-09-26 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim | identical |
 | `20260927032753` | `034_property_at_new_acquisition` | `migrations/034_property_at_new_acquisition.sql` @ `6c3eca61` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `bc755162…` on both sides) | identical |
 | `20260927132042` | `035_acquire_property` | `migrations/035_acquire_property.sql` @ `818c1804` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `69bde81d…` on both sides) | identical |
+| `20260929090159` | `036_acquisition_episode_frozen` | `migrations/036_acquisition_episode_frozen.sql` @ `3bdd558d` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `02908aee…` on both sides) | identical |
 
 Tally: 27 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
@@ -210,6 +211,31 @@ These files were applied through the SQL editor or the bundle
    injected mid-transaction failures that left nothing behind. The temporary
    client guard on the legacy Acquire path stays in place until the in-place
    path is proven in the browser.
+10. **Since 036 (P5-6A), a converted acquisition is frozen.** An
+   `acquisition_reviews` row with `status = 'converted'`, and every
+   `acquisition_documents`, `acquisition_document_families` and
+   `acquisition_term_decisions` row naming it, refuses INSERT / UPDATE / DELETE
+   for every role, service role included (`acq_reviews_frozen`,
+   `acq_children_frozen`, predicate `_acq_episode_frozen`; errcode 23000). The
+   only writes admitted are a foreign key's own cascade or SET NULL (trigger
+   depth > 1) and the exact legacy-revert shape (property already gone, status
+   → complete, only the conversion bookkeeping keys changed), which 034's
+   validated CHECK `acq_reviews_open_has_property` already refuses on Pilot,
+   so it is unreachable today. `acquire_property` is unaffected (it updates an
+   open review). anon lost its unused privileges on `acquisition_reviews` and
+   `acquisition_documents`; the rollback does not re-grant them. No RLS policy,
+   membership predicate, column, constraint, index, data or 028–035 function
+   changed. Applied 2026-09-29 with no data change (catalog outside 036 and
+   every table hash identical before and after). Verified live in rolled-back
+   transactions: the matrix passed 200/200 (owner, org member, org admin, anon,
+   stranger and service role on a converted episode, an open episode, an
+   in-transaction acquire with an injected failure, cascades and the revert
+   path with the CHECK present and lifted); the rollback rehearsal removed
+   exactly 036's objects and left the rest of the catalog identical. Note for
+   later migrations: on Pilot the service role holds no privilege on
+   `acquisition_document_families` or `acquisition_term_decisions` (024b/026c
+   grant them to `authenticated` only). A deliberate correction of a converted
+   episode must lift the freeze inside its own transaction, on the record.
 
 ## Decisions this manifest does not make
 

@@ -506,6 +506,113 @@ t('the module itself: acquired is the last stage and the only terminal one', () 
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+sec('P5-6A — a converted review is frozen: the module predicate');
+
+t('isFrozen is exactly the database predicate: status = converted, nothing softer, nothing wider', () => {
+  eq(AW.isFrozen({ status: 'converted', data: { conversionRecord: { propertyId: 'p1' } } }), true, 'converted with a record');
+  eq(AW.isFrozen({ status: 'converted', data: {} }), true, 'converted without a record (an orphan is still frozen)');
+  eq(AW.isFrozen({ status: 'converted', data: { conversionRecord: { propertyId: null } } }), true, 'converted, record without a property');
+  eq(AW.isFrozen({ status: 'converted' }), true, 'converted with no data at all');
+  for (const s of ['draft', 'analyzing', 'complete', 'closed', '', undefined, null]) eq(AW.isFrozen({ status: s, data: { conversionRecord: { propertyId: 'p1' } } }), false, 'status ' + s);
+  eq(AW.isFrozen(null), false); eq(AW.isFrozen(undefined), false); eq(AW.isFrozen({}), false);
+});
+
+t('isFrozen is wider than isConverted, never narrower', () => {
+  const rows = [
+    { status: 'converted', data: { conversionRecord: { propertyId: 'p1' } } },
+    { status: 'converted', data: {} },
+    { status: 'complete', data: { conversionRecord: { propertyId: 'p1' } } },
+    legacyRow(), AW.upgradeReview(legacyRow({ status: 'converted' })),
+  ];
+  for (const r of rows) if (AW.isConverted(r)) ok(AW.isFrozen(r), 'converted but not frozen: ' + JSON.stringify(r.status));
+});
+
+t('the notice is one sentence, shared with the migration\'s hint', () => {
+  eq(AW.FROZEN_NOTICE, 'This acquisition is closed. Its record is read-only.');
+  const mig = fs.readFileSync(path.join(ROOT, 'migrations/036_acquisition_episode_frozen.sql'), 'utf8');
+  ok(mig.includes("hint = 'This acquisition is closed. Its record is read-only.'"), 'the children trigger\'s hint is the same sentence');
+  ok(/status\s*=\s*'converted'/.test(code('migrations/036_acquisition_episode_frozen.sql')), 'the migration freezes on status = converted');
+  ok(fs.existsSync(path.join(ROOT, 'migrations/036_acquisition_episode_frozen_rollback.sql')), 'the rollback exists');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+sec('P5-6A — the glue: no control drawn, every write refused first');
+
+t('one predicate and one refusal in script.js, both through the module', () => {
+  const F = fnBody(S, '_acqFrozen');
+  ok(F.includes('AW.isFrozen(review)'), 'the glue asks the module');
+  const Rf = fnBody(S, '_acqRefuseFrozen');
+  ok(Rf.includes('if (!_acqFrozen(reviewOrId)) return false;') && Rf.includes('_AW().FROZEN_NOTICE') && Rf.includes('return true;'), 'the refusal tells the person and answers true');
+});
+
+t('every entry point that would write a converted review or its children refuses before its first await', () => {
+  for (const name of ['acqHandleLeaseFiles', 'acqHandleInvoiceFiles', 'runAcquisitionAnalysis', 'acqResolveExtraction', 'acqReopenExtraction',
+                      'acqSetDocDisposition', 'acqClearDocDisposition', '_acqSaveDocument', '_acqSaveFamily', '_acqSaveDecision',
+                      'deleteActiveAcquisitionReview', 'acqSaveSqft',
+                      // the two acts that ask the person for a value refuse BEFORE asking
+                      'acqCorrectTerm', 'acqEnterTerm']) {
+    const body = fnBody(S, name).replace(/\/\/.*$/gm, '');   // comments mention "await" too
+    const guard = body.indexOf('_acqRefuseFrozen(');
+    ok(guard !== -1, name + ' has no freeze guard');
+    const firstAwait = body.indexOf('await ');
+    ok(firstAwait === -1 || guard < firstAwait, name + ': the guard comes after an await');
+  }
+  for (const name of ['_acqRefreshAnalysis', '_acqSupersedePrevious', 'convertAcquisitionToProperty']) {
+    ok(fnBody(S, name).includes('_acqFrozen('), name + ' has no freeze check');
+  }
+});
+
+t('the decision, document and family writers are the choke points the five acts, the uploads and the filings all pass through', () => {
+  for (const name of ['acqConfirmTerm', 'acqCorrectTerm', 'acqRejectTerm', 'acqReopenTerm', 'acqEnterTerm']) ok(fnBody(S, name).includes('_acqSaveDecision('), name);
+  for (const name of ['acqConfirmDocType', 'acqSetDocType', 'acqMatchDocument', 'acqConfirmDocFamily', 'acqBeginLeasehold', '_acqAbstractDocument', '_acqProposeSiblings']) ok(fnBody(S, name).includes('_acqSaveDocument('), name);
+});
+
+t('the renderers draw no control on a frozen review', () => {
+  const T = fnBody(S, '_renderAcqTerms');
+  ok(T.includes('const frozen = _acqFrozen(_activeAcqId);'), 'terms: no predicate');
+  ok(T.includes("const actions = frozen ? '' : entered ?"), 'terms: Confirm/Correct/Reject/Reopen/Enter still drawn');
+  const Hd = fnBody(S, '_acqLeaseholdHeadHtml');
+  ok(Hd.includes('const frozen = _acqFrozen(_activeAcqId);') && Hd.includes('This record is closed.'), 'leasehold head: the evidence note still invites acts');
+  const U = fnBody(S, '_acqUnfiledListHtml');
+  ok(U.includes("const controls = (x) => frozen ? '' :"), 'unmatched: match/new/dismiss still drawn');
+  ok(U.includes('e.action !== R.NEW_LEASEHOLD && !frozen'), 'unmatched: Undo still drawn');
+  const D = fnBody(S, '_renderAcqDocuments');
+  ok(D.includes('const frozen = _acqFrozen(_activeAcqId);'), 'documents: no predicate');
+  ok(D.includes('const typeControl = frozen') && D.includes('acq-doc-type-fixed'), 'documents: the type select still drawn');
+  ok(D.includes("const confirmBtn = (!frozen && cls.status === 'proposed')"), 'documents: Confirm still drawn');
+  ok(D.includes('const readBtn = (!frozen && abstractable'), 'documents: Read terms still drawn');
+  ok(D.includes('v.canBegin && frozen'), 'documents: This begins the leasehold still drawn');
+  ok(D.includes("(frozen ? '</div>' : ` <button type=\"button\" class=\"acq-doc-undispose\""), 'documents: Undo still drawn');
+  ok(D.includes("+ (frozen ? '' :\n            (aiFiled ?"), 'documents: confirm-family / match / dispose still drawn');
+});
+
+t('the stale-analysis notice and Run Analysis are silent on a frozen review; the banner is drawn on open', () => {
+  ok(fnBody(S, '_acqUpdateStaleNotice').includes('const why = review && !_acqFrozen(review) ? _acqAnalysisStale(review) : null;'));
+  const B = fnBody(S, '_updateAcqAnalyzeBtn');
+  ok(B.includes('if (review && _acqFrozen(review)) {') && B.includes('btn.disabled = true;') && B.includes('note.textContent = _AW().FROZEN_NOTICE'));
+  const Sel = fnBody(S, 'selectAcquisitionReview');
+  ok(Sel.indexOf('_acqRenderFrozenNotice(review);') !== -1 && Sel.indexOf('_acqRenderFrozenNotice(review);') < Sel.indexOf('_renderAcqConvertAction(review);'), 'the banner is not drawn on open');
+  const N = fnBody(S, '_acqRenderFrozenNotice');
+  ok(N.includes("panel.classList.toggle('acq-frozen', frozen)") && N.includes('_AW().FROZEN_NOTICE'));
+  const H = code('index.html');
+  ok(/id="acqFrozenNotice"/.test(H) && /id="acqDeleteBtn"/.test(H), 'index.html: the notice or the Delete id is missing');
+  ok(/#acqDetailPanel\.acq-frozen \.acq-upload-btn, #acqDetailPanel\.acq-frozen #acqDeleteBtn,\s*#acqDetailPanel\.acq-frozen \.acq-analyze-bar \{ display: none; \}/.test(H), 'index.html: uploads, Delete and Run Analysis are not hidden on a frozen panel');
+});
+
+t('an orphaned converted review is offered nothing — no Convert Again onto a record that is closed', () => {
+  const C = fnBody(S, '_renderAcqConvertAction');
+  ok(C.includes('if (_acqOrphaned(review) && _acqFrozen(review)) {') && C.includes('acq-orphan-frozen') && C.includes('read-only'));
+  ok(C.indexOf('acq-orphan-frozen') < C.indexOf('Convert Again'), 'the frozen branch does not come first');
+  const V = fnBody(S, 'convertAcquisitionToProperty');
+  ok(V.indexOf('if (_acqFrozen(review)) {') < V.indexOf('_acqAcquireInPlace(review)'), 'the convert guard is not the first thing');
+});
+
+t('the legacy revert path is NOT guarded in the client — it is the database\'s own exception (036 shape 2)', () => {
+  ok(!fnBody(S, '_saveAcqReview').includes('_acqFrozen') && !fnBody(S, '_saveAcqReview').includes('_acqRefuseFrozen'), '_saveAcqReview must stay unguarded');
+  ok(!fnBody(S, '_revertAcquisitionsForDeletedProperty').includes('_acqRefuseFrozen'), 'the revert must stay unguarded');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 console.log('\n' + '─'.repeat(64));
 console.log(`RESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); }

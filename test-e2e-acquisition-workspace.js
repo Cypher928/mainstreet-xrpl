@@ -362,6 +362,141 @@ const CHIPS = () => [].slice.call(document.querySelectorAll('#acqStageChips .acq
         JSON.stringify(converted.chips));
   check('the row says why', /stage is fixed/i.test(converted.note), converted.note.replace(/\s+/g, ' ').slice(0, 80));
 
+  // ── 6a · P5-6A: the converted review is FROZEN on screen ─────────────────
+  // The panel is redrawn as the product does it (re-open the review), then
+  // every control is looked for, and every entry point is called directly —
+  // the way a stale tab, a keyboard or a console would — and must write nothing.
+  const frozenUI = await page.evaluate(async (id) => {
+    window.__toasts = [];
+    selectAcquisitionReview(id);
+    await new Promise(r => setTimeout(r, 400));
+    // A record a legacy episode could hold: a proposed, unfiled, readable
+    // document and a raw extracted row with no document — in memory only.
+    const rev = _acqReviews.find(x => x.id === id);
+    rev.data.tenants.push({ id: 't-late', tenant_name: 'Late Row', leased_sqft: '900', _status: 'ok' });
+    (_acqDocs.get(id) || []).push({ id: 'doc-late', review_id: id, user_id: 'u1', intake_id: 'ik-late', file_name: 'Late_Amendment.pdf', intake_kind: 'lease',
+      parsing_status: 'success', doc_type: 'amendment', doc_type_status: 'proposed', doc_type_source: 'ai', family_id: null, family_status: 'unfiled',
+      classification_history: [], created_at: '2026-03-02T10:00:00.000Z' });
+    _renderAcqDocuments();   // documents, and the Lease Matrix with its unmatched list
+    await new Promise(r => setTimeout(r, 200));
+    const q = (s) => document.querySelectorAll('#acqDetailPanel ' + s).length;
+    const vis = (el) => !!el && getComputedStyle(el).display !== 'none';
+    const notice = document.getElementById('acqFrozenNotice');
+    const um = { umControls: q('.acq-um-new') + q('.acq-um-dismiss') + q('.acq-um-match') + q('.acq-um-reopen') + q('.acq-um-docs'), umShown: q('.acq-um-open') };
+    acqOpenLeasehold('fam-coastal');   // the leasehold's record, where the five acts would be drawn
+    await new Promise(r => setTimeout(r, 100));
+    return Object.assign(um, {
+      panelFrozen: document.getElementById('acqDetailPanel').classList.contains('acq-frozen'),
+      notice: vis(notice) ? notice.textContent.replace(/\s+/g, ' ').trim() : null,
+      termActs: q('.acq-term-confirm') + q('.acq-term-correct') + q('.acq-term-reject') + q('.acq-term-reopen') + q('.acq-term-enter'),
+      termRows: q('.acq-term-row'),
+      evidenceNote: (document.querySelector('#acqTermsList .acq-lh-evidence-note') || {}).textContent || '',
+      docControls: q('select.acq-doc-type') + q('.acq-doc-confirm') + q('.acq-doc-reabstract') + q('.acq-doc-begin') + q('.acq-doc-confirm-family') + q('.acq-doc-match') + q('.acq-doc-dispose') + q('.acq-doc-undispose'),
+      docRows: q('.acq-doc-row'), fixedTypes: q('.acq-doc-type-fixed'),
+      lateDocShown: !!document.querySelector('#acqDocsList .acq-doc-row[data-doc-id="doc-late"]'),
+      lateDocWhy: (document.querySelector('#acqDocsList .acq-doc-row[data-doc-id="doc-late"] .acq-doc-place-why') || {}).textContent || '',
+      uploadsVisible: [].slice.call(document.querySelectorAll('#acqDetailPanel .acq-upload-btn')).filter(vis).length,
+      deleteVisible: vis(document.getElementById('acqDeleteBtn')),
+      analyzeVisible: vis(document.querySelector('#acqDetailPanel .acq-analyze-bar')),
+      analyzeDisabled: document.getElementById('acqAnalyzeBtn').disabled,
+      analyzeNote: (document.getElementById('acqAnalyzeNote') || {}).textContent,
+      staleVisible: vis(document.getElementById('acqStaleNotice')),
+      chips: document.querySelectorAll('#acqStageChips .acq-stage-chip').length,
+      chipsEnabled: [].slice.call(document.querySelectorAll('#acqStageChips .acq-stage-chip')).filter(b => !b.disabled).length,
+      convertLink: !!document.querySelector('#acqConvertAction .acq-converted-link'),
+      report: !!document.querySelector('#acqReportContainer') && document.getElementById('acqReportContainer').innerHTML.length > 0,
+    });
+  }, NEW_ID);
+  check('P5-6A: the panel is dressed read-only and the notice says the acquisition is closed',
+        frozenUI.panelFrozen && /This acquisition is closed\. Its record is read-only\./.test(frozenUI.notice || '') && /Acquired /.test(frozenUI.notice || ''), String(frozenUI.notice));
+  check('P5-6A: the leasehold\'s terms are all drawn, and not one Confirm / Correct / Reject / Reopen / Enter; the evidence note says the record is closed',
+        frozenUI.termRows > 0 && frozenUI.termActs === 0 && /This record is closed/.test(frozenUI.evidenceNote), JSON.stringify([frozenUI.termRows, frozenUI.termActs, frozenUI.evidenceNote.slice(-40)]));
+  check('P5-6A: every document is drawn with its type fixed, and no type select, Confirm, Read terms, begin, confirm-leasehold, match, disposition or Undo',
+        frozenUI.docRows === 2 && frozenUI.fixedTypes === 2 && frozenUI.docControls === 0, JSON.stringify([frozenUI.docRows, frozenUI.fixedTypes, frozenUI.docControls]));
+  check('P5-6A: a document left pending is named as left at acquisition, with nothing to do', frozenUI.lateDocShown && /Left unresolved at acquisition/.test(frozenUI.lateDocWhy), frozenUI.lateDocWhy.slice(0, 80));
+  check('P5-6A: an unmatched extraction is listed and offers no match / new leasehold / not a tenant / undo', frozenUI.umShown === 1 && frozenUI.umControls === 0, JSON.stringify([frozenUI.umShown, frozenUI.umControls]));
+  check('P5-6A: Upload Leases, Upload Invoices, Delete and Run Analysis are gone; the button is disabled underneath and says why',
+        frozenUI.uploadsVisible === 0 && !frozenUI.deleteVisible && !frozenUI.analyzeVisible && frozenUI.analyzeDisabled && /read-only/.test(frozenUI.analyzeNote || ''),
+        JSON.stringify([frozenUI.uploadsVisible, frozenUI.deleteVisible, frozenUI.analyzeVisible, frozenUI.analyzeDisabled, frozenUI.analyzeNote]));
+  check('P5-6A: no "analysis out of date" notice invites a refresh (a raw row was added; the record is the record)', !frozenUI.staleVisible);
+  check('P5-6A: what stays — the stage chips (all locked), the Converted → Open Property link, the report', frozenUI.chips === 6 && frozenUI.chipsEnabled === 0 && frozenUI.convertLink && frozenUI.report, JSON.stringify([frozenUI.chips, frozenUI.chipsEnabled, frozenUI.convertLink, frozenUI.report]));
+
+  const frozenWrites = await page.evaluate(async (id) => {
+    window.__toasts = [];
+    const S = window.__store;
+    S.acquisition_term_decisions = S.acquisition_term_decisions || [];
+    const before = {
+      row: JSON.stringify(S.acquisition_reviews.find(x => x.id === id)),
+      decs: S.acquisition_term_decisions.length, docs: S.acquisition_documents.length, fams: S.acquisition_document_families.length,
+      props: _props.length, sqft: _acqReviews.find(x => x.id === id).data.totalSqFt,
+    };
+    const results = {};
+    // the five acts
+    window.prompt = () => '777';
+    results.confirm = await acqConfirmTerm('fam-coastal', 'leased_sqft');
+    results.correct = await acqCorrectTerm('fam-coastal', 'leased_sqft');
+    results.reject  = await acqRejectTerm('fam-coastal', 'tenant_name');
+    results.enter   = await acqEnterTerm('fam-coastal', 'security_deposit');
+    results.decision = await _acqSaveDecision({ familyId: 'fam-coastal', fieldKey: 'leased_sqft', action: 'confirm', newValue: '4200' }, { value: 4200 });
+    // documents, families, analysis, uploads, sqft, dispositions, extractions, delete, convert-again
+    results.doc    = await _acqSaveDocument({ reviewId: id, intakeId: 'ik-x', fileName: 'x.pdf', intakeKind: 'lease' });
+    results.retype = await acqSetDocType('doc-coastal', 'amendment');
+    results.read   = await acqReabstractDocument('doc-coastal');
+    results.fam    = await _acqSaveFamily(id, { label: 'Late Leasehold', tenantHint: 'Late', familyKind: 'lease' });
+    results.refresh = await _acqRefreshAnalysis(id);
+    await runAcquisitionAnalysis();
+    await acqHandleLeaseFiles([new File(['x'], 'late.pdf', { type: 'application/pdf' })]);
+    await acqHandleInvoiceFiles([new File(['x'], 'inv.pdf', { type: 'application/pdf' })]);
+    acqSaveSqft('999');
+    results.dispose = await acqSetDocDisposition('doc-late', 'not_relevant');
+    results.resolve = await acqResolveExtraction('t-late', 'dismissed');
+    results.reopen  = await acqReopenExtraction('t-late');
+    window.confirm = () => { results.confirmAsked = true; return true; };
+    await deleteActiveAcquisitionReview();
+    await convertAcquisitionToProperty();
+    await new Promise(r => setTimeout(r, 400));
+    const after = {
+      row: JSON.stringify(S.acquisition_reviews.find(x => x.id === id)),
+      decs: S.acquisition_term_decisions.length, docs: S.acquisition_documents.length, fams: S.acquisition_document_families.length,
+      props: _props.length, sqft: _acqReviews.find(x => x.id === id).data.totalSqFt,
+      sqftField: document.getElementById('acqTotalSqft').value,
+      panelOpen: document.getElementById('acqDetailPanel').style.display === 'block',
+    };
+    return { before, after, results, toasts: window.__toasts.slice(), rowSame: before.row === after.row };
+  }, NEW_ID);
+  const rz = frozenWrites.results;
+  check('P5-6A: the five acts and the decision writer return null and file nothing', rz.confirm == null && rz.correct == null && rz.reject == null && rz.enter == null && rz.decision === null
+        && frozenWrites.after.decs === frozenWrites.before.decs, JSON.stringify([rz.confirm, rz.correct, rz.reject, rz.enter, rz.decision, frozenWrites.before.decs, frozenWrites.after.decs]));
+  check('P5-6A: document, retype, read, family and upload writes return null and store nothing', rz.doc === null && rz.fam === null && frozenWrites.after.docs === frozenWrites.before.docs && frozenWrites.after.fams === frozenWrites.before.fams,
+        JSON.stringify([rz.doc, rz.fam, frozenWrites.before.docs, frozenWrites.after.docs, frozenWrites.before.fams, frozenWrites.after.fams]));
+  check('P5-6A: the analysis is not re-run and the stored row is byte-identical after every attempt (no save, no activity, no revision)', rz.refresh === false && frozenWrites.rowSame, frozenWrites.rowSame ? '' : 'ROW CHANGED');
+  check('P5-6A: the area is not changed, on the record or in the field', frozenWrites.after.sqft === frozenWrites.before.sqft && String(frozenWrites.after.sqftField) === String(frozenWrites.before.sqft), JSON.stringify([frozenWrites.before.sqft, frozenWrites.after.sqft, frozenWrites.after.sqftField]));
+  check('P5-6A: dispositions and extraction resolutions are refused', rz.dispose === false && rz.resolve === false && rz.reopen === false, JSON.stringify([rz.dispose, rz.resolve, rz.reopen]));
+  check('P5-6A: Delete never even asks; the review stays and the panel stays open', !rz.confirmAsked && frozenWrites.after.panelOpen && !!JSON.parse(frozenWrites.after.row), JSON.stringify([rz.confirmAsked, frozenWrites.after.panelOpen]));
+  check('P5-6A: Convert again builds no property', frozenWrites.after.props === frozenWrites.before.props, JSON.stringify([frozenWrites.before.props, frozenWrites.after.props]));
+  check('P5-6A: each refusal tells the person, in the one sentence', frozenWrites.toasts.length >= 10 && frozenWrites.toasts.every(t => /This acquisition is closed\. Its record is read-only\./.test(t)),
+        frozenWrites.toasts.length + ' toasts; other: ' + frozenWrites.toasts.filter(t => !/read-only/.test(t)).join(' | '));
+
+  // An orphan — the property this record produced is gone — is still closed, and offered nothing.
+  const orphan = await page.evaluate(async (id) => {
+    window.__toasts = [];
+    const keep = _props.slice();
+    _props = []; _propsLoadedOk = true; _archivedProps = [];
+    const rev = _acqReviews.find(x => x.id === id);
+    _renderAcqConvertAction(rev);
+    const html = document.getElementById('acqConvertAction').innerHTML;
+    const propsBefore = _props.length;
+    await convertAcquisitionToProperty();
+    await new Promise(r => setTimeout(r, 300));
+    const out = { orphaned: _acqOrphaned(rev), frozenBox: /acq-orphan-frozen/.test(html), readOnly: /read-only/.test(html), convertBtn: /acq-convert-btn|Convert Again/.test(html),
+                  propsAfter: _props.length, propsBefore, status: __store.acquisition_reviews.find(x => x.id === id).status, toasts: window.__toasts.slice() };
+    _props = keep; _renderAcqConvertAction(rev);
+    return out;
+  }, NEW_ID);
+  check('P5-6A: an orphaned converted review says its property is gone and that the record is kept read-only — no Convert Again',
+        orphan.orphaned && orphan.frozenBox && orphan.readOnly && !orphan.convertBtn, JSON.stringify(orphan));
+  check('P5-6A: converting the orphan again is refused before any property is built', orphan.propsAfter === orphan.propsBefore && orphan.status === 'converted' && orphan.toasts.some(t => /read-only/.test(t)), JSON.stringify([orphan.propsAfter, orphan.status, orphan.toasts]));
+
   const lockedTry = await page.evaluate(async (id) => {
     window.__toasts = [];
     const before = __store.acquisition_reviews.find(x => x.id === id).data.stage;
@@ -389,6 +524,20 @@ const CHIPS = () => [].slice.call(document.querySelectorAll('#acqStageChips .acq
   check('the revert is recorded with the stage it moved to', reverted.lastType === 'conversion_reverted' && reverted.lastTo === 'report',
         JSON.stringify([reverted.lastType, reverted.lastTo]));
   check('the analysis survives the whole round trip', reverted.analysisIntact);
+
+  // The freeze follows the status, both ways: reverted to complete, the review
+  // is open again and the controls return. (On Pilot 034's CHECK refuses this
+  // revert; the stand-in has no CHECK, so the client's half is what is proved.)
+  const thawed = await page.evaluate(async (id) => {
+    selectAcquisitionReview(id);
+    await new Promise(r => setTimeout(r, 400));
+    acqOpenLeasehold('fam-coastal');
+    const q = (s) => document.querySelectorAll('#acqDetailPanel ' + s).length;
+    return { frozen: document.getElementById('acqDetailPanel').classList.contains('acq-frozen'),
+             notice: getComputedStyle(document.getElementById('acqFrozenNotice')).display,
+             acts: q('.acq-term-confirm') + q('.acq-term-enter'), types: q('select.acq-doc-type'), status: _acqReviews.find(x => x.id === id).status };
+  }, NEW_ID);
+  check('P5-6A: once reverted (status complete) the panel is open again — notice gone, acts and type selects back', !thawed.frozen && thawed.notice === 'none' && thawed.acts > 0 && thawed.types > 0 && thawed.status === 'complete', JSON.stringify(thawed));
 
   check('no unexpected dialogs', dialogs.length === 0, dialogs.join(' | ') || 'none');
   check('no uncaught errors across the walk', errs.length === 0, errs.slice(0, 3).join(' | ') || 'clean');

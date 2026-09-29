@@ -1,6 +1,6 @@
 // test-acq-orphan-repair.js
 // ============================================================================
-// An acquisition review whose property was deleted must not be a dead end.
+// An acquisition review whose property was deleted must be TOLD THE TRUTH.
 //
 // Harborview Retail Center read "Converted" with nothing in the portfolio. Two
 // separate defects behind one symptom:
@@ -14,9 +14,14 @@
 //      protected against — so it stopped preventing a duplicate and started
 //      preventing the repair. That review could never be converted again.
 //
-// This walks the repair through the real UI: render the acquisition section,
-// open the orphaned review, click Convert Again by its visible label, and check
-// a property comes back with the review and its analysis intact.
+// What this walks changed in P5-6A. A converted review is a CLOSED acquisition:
+// migration 036 refuses every change to it, its documents, leaseholds and
+// decisions — including the "Convert Again" write (a new conversionRecord on a
+// converted row). So the orphan is still detected and still named on the card
+// and in the detail badge, its analysis is still rendered, but no Convert Again
+// is offered, a conversion attempt is refused before any property is built,
+// and the review stays exactly as it was: the record of that acquisition.
+// (Re-converting a closed record, if ever wanted, is a deliberate data act.)
 //
 // The false positive this must never produce: if loadProperties() FAILS, _props
 // is empty and every converted review would look orphaned — the product would
@@ -165,20 +170,25 @@ const CLICK_LABEL = function (rx) {
   check('and the card does not present a healthy "Converted"',
         !!card && /orphaned/.test(card.chip), card ? card.chip : '');
 
-  // ── Option B: a raw-only orphan cannot be rebuilt from extractions ──────
+  // ── P5-6A: a raw-only orphan is a closed record, offered nothing ─────────
   // Harborview on the Pilot is exactly this: raw extracted rows, no leasehold.
-  // Its extractions are not tenants, so Convert Again waits until a person
-  // resolves them — it does not rebuild the property from them.
+  // Before P5-6A the screen offered Convert Again, disabled until the
+  // extractions were resolved. A converted review is frozen now, so there is
+  // nothing to resolve them INTO: the unmatched entries are listed, read-only.
   await page.evaluate((rid) => { window.__tables = {}; selectAcquisitionReview(rid); }, ORPHAN_ID);
   await page.waitForTimeout(900);
   const rawOnly = await page.evaluate(() => ({
     action: ((document.getElementById('acqConvertAction') || {}).innerText || '').replace(/\s+/g, ' '),
-    disabled: !!(document.querySelector('#acqConvertAction .acq-convert-btn') || {}).disabled }));
-  check('Option B: a raw-only orphan offers Convert Again disabled — its 2 extractions must be resolved first',
-        rawOnly.disabled && /2 extracted entries need to be resolved before this property can be acquired/.test(rawOnly.action), rawOnly.action.slice(0, 140));
+    convertBtn: !!document.querySelector('#acqConvertAction .acq-convert-btn'),
+    frozen: document.getElementById('acqDetailPanel').classList.contains('acq-frozen'),
+    unmatched: document.querySelectorAll('#acqTermsList .acq-um-open').length,
+    umControls: document.querySelectorAll('#acqTermsList .acq-um-new, #acqTermsList .acq-um-dismiss, #acqTermsList .acq-um-match').length }));
+  check('P5-6A: a raw-only orphan is closed — no Convert Again, its 2 extractions listed with nothing to resolve them into',
+        rawOnly.frozen && !rawOnly.convertBtn && /read-only/i.test(rawOnly.action) && rawOnly.unmatched === 2 && rawOnly.umControls === 0,
+        JSON.stringify([rawOnly.frozen, rawOnly.convertBtn, rawOnly.unmatched, rawOnly.umControls, rawOnly.action.slice(0, 100)]));
 
   // The same review with its leases on file, each in its leasehold — the
-  // state a resolved review is in. The repair itself is what follows.
+  // state a resolved review is in. Before P5-6A this is where the repair ran.
   await page.evaluate(async (rid) => {
     const fam = (id, label) => ({ id, review_id: rid, user_id: 'u1', label, tenant_hint: label, family_kind: 'lease', created_at: '2026-01-14T10:00:00.000Z' });
     const doc = (id, fid, produced, file) => ({ id, review_id: rid, user_id: 'u1', intake_id: 'ik-' + id, file_name: file, intake_kind: 'lease',
@@ -193,100 +203,82 @@ const CLICK_LABEL = function (rx) {
     await _acqEnsureRecord(rid);
   }, ORPHAN_ID);
 
-  // ── open it and find the way out ─────────────────────────────────────────
+  // ── open it: the truth is told, and nothing is offered ───────────────────
   await page.evaluate((rid) => selectAcquisitionReview(rid), ORPHAN_ID);
   await page.waitForTimeout(700);
 
   const detail = await page.evaluate(() => ({
     badge: (document.getElementById('acqDetailBadge') || {}).textContent || '',
     action: (document.getElementById('acqConvertAction') || {}).innerText || '',
+    actionHtml: (document.getElementById('acqConvertAction') || {}).innerHTML || '',
+    notice: ((document.getElementById('acqFrozenNotice') || {}).textContent || '').replace(/\s+/g, ' ').trim(),
+    noticeShown: getComputedStyle(document.getElementById('acqFrozenNotice')).display !== 'none',
     analysisRendered: ((document.getElementById('acqReportContainer') || {}).innerHTML || '').length > 50,
+    termRows: document.querySelectorAll('#acqTermsList .acq-lm-row').length,
   }));
   check('the detail badge states the orphaned state, not just "converted"',
         /no longer exists/i.test(detail.badge), detail.badge);
   check('the analysis is still rendered — nothing was lost with the property',
         detail.analysisRendered);
-  check('a "Convert Again" action is offered', /convert again/i.test(detail.action),
-        detail.action.replace(/\s+/g, ' ').slice(0, 90));
+  check('P5-6A: the closed-acquisition notice is shown', detail.noticeShown && /This acquisition is closed\. Its record is read-only\./.test(detail.notice), detail.notice.slice(0, 90));
+  check('P5-6A: the action area says the property is gone and the record is kept read-only — NO "Convert Again"',
+        /no longer exists/i.test(detail.action) && /read-only/i.test(detail.action) && !/convert again/i.test(detail.action) && !/acq-convert-btn/.test(detail.actionHtml),
+        detail.action.replace(/\s+/g, ' ').slice(0, 120));
+  check('P5-6A: the two leaseholds are still drawn, read-only', detail.termRows === 2, String(detail.termRows));
 
   const clicked = await page.evaluate(CLICK_LABEL, 'convert again');
-  check('Convert Again is findable and clickable by its label', !!clicked, clicked || 'not found');
-  await page.waitForTimeout(500);
+  check('P5-6A: there is no Convert Again to find by its label', clicked === null, clicked || 'none');
 
-  const modal = await page.evaluate(() => {
-    const m = document.getElementById('acqConvertModal');
-    const rep = document.getElementById('acqConvertModalRepair');
-    return { open: !!m && m.style.display === 'flex',
-             repairShown: !!rep && rep.style.display !== 'none',
-             repairText: (rep || {}).textContent || '',
-             confirm: (document.getElementById('acqConvertConfirmBtn') || {}).textContent || '' };
-  });
-  check('the modal explains this is a rebuild, not a first conversion',
-        modal.repairShown && /rebuilds it from the same analysis/i.test(modal.repairText),
-        modal.repairText.slice(0, 80));
-  check('and its confirm button is labelled for the repair', /convert again/i.test(modal.confirm), modal.confirm);
-
-  // ── the guard must NOT fire ──────────────────────────────────────────────
+  // ── a conversion attempt is refused before anything is built ─────────────
   const dialogs = [];
   page.on('dialog', d => { dialogs.push(d.message()); });
+  const before = await page.evaluate(() => JSON.stringify(_acqReviews[0]));
+  await page.evaluate(() => { window.__toasts = []; const o = window.showToast; window.showToast = function (m, x) { window.__toasts.push(String(m)); return o ? o(m, x) : undefined; }; });
   await page.evaluate(() => convertAcquisitionToProperty());
   await page.waitForTimeout(1200);
-
-  check('the duplicate guard does not block the repair',
-        !dialogs.some(m => /already been converted/i.test(m)), dialogs.join(' | ') || 'no dialog');
 
   const after = await page.evaluate(() => {
     const r = _acqReviews[0], d = r.data || {};
     return {
       propCount: (_props || []).length,
-      newPropName: (_props || [])[0] ? _props[0].name : null,
-      newPropId: (_props || [])[0] ? _props[0].id : null,
       recordId: d.conversionRecord ? d.conversionRecord.propertyId : null,
       historyLen: (d.conversionHistory || []).length,
-      historyOldId: (d.conversionHistory || [])[0] ? d.conversionHistory[0].propertyId : null,
-      historyReason: (d.conversionHistory || [])[0] ? d.conversionHistory[0].supersededReason : null,
       reviewName: r.name,
       status: r.status,
       analysisIntact: !!(d.analysis && d.analysis.summary && d.analysis.summary.revenueAtRisk === 41200),
       tenantsIntact: (d.tenants || []).length === 2,
       topRisksIntact: (d.analysis && d.analysis.topRisks || []).length === 1,
+      row: JSON.stringify(r),
+      modalOpen: (document.getElementById('acqConvertModal') || {}).style.display === 'flex',
+      toasts: window.__toasts.slice(),
     };
   });
 
-  check('a property exists again', after.propCount === 1, String(after.propCount));
-  check('it is the property this review describes', after.newPropName === 'Harborview Retail Center', after.newPropName);
-  check('the review still points at a property that exists',
-        after.recordId && after.recordId === after.newPropId, `${after.recordId} vs ${after.newPropId}`);
-  check('the review is still named and still converted',
-        after.reviewName === 'Harborview Retail Center' && after.status === 'converted',
-        `${after.reviewName} / ${after.status}`);
+  check('P5-6A: the conversion is refused with the one sentence, not with an alert', after.toasts.some(t => /This acquisition is closed\. Its record is read-only\./.test(t)) && dialogs.length === 0,
+        (after.toasts.join(' | ') || 'no toast') + (dialogs.length ? ' | dialogs: ' + dialogs.join(' | ') : ''));
+  check('P5-6A: no property is built', after.propCount === 0, String(after.propCount));
+  check('P5-6A: the review is untouched — still converted, still naming the deleted property, no conversion history written',
+        after.row === before && after.status === 'converted' && after.recordId === 'prop-gone-0001' && after.historyLen === 0, JSON.stringify([after.status, after.recordId, after.historyLen]));
+  check('and the modal is closed', !after.modalOpen);
 
-  // "Preserving the original acquisition review and analysis" is the requirement.
-  check('the original analysis survived the repair', after.analysisIntact);
-  check('the extracted tenants survived the repair',  after.tenantsIntact);
-  check('the risk findings survived the repair',      after.topRisksIntact);
+  // "Preserving the original acquisition review and analysis" is still the requirement.
+  check('the original analysis survived', after.analysisIntact);
+  check('the extracted tenants survived',  after.tenantsIntact);
+  check('the risk findings survived',      after.topRisksIntact);
 
-  // Nothing important disappears — same rule as the Space workspace.
-  check('the superseded conversion is kept, not overwritten', after.historyLen === 1, String(after.historyLen));
-  check('and it still names the property that was deleted',
-        after.historyOldId === 'prop-gone-0001', after.historyOldId);
-  check('and records why it was superseded',
-        /no longer exists/i.test(after.historyReason || ''), after.historyReason);
-
-  // ── the state is repaired, so the guard must come back ───────────────────
-  const guardBack = await page.evaluate(() => {
+  // ── the orphan stays an orphan, and stays closed ─────────────────────────
+  const still = await page.evaluate(() => {
     const r = _acqReviews[0];
-    return { orphanNow: _acqOrphaned(r) };
+    return { orphanNow: _acqOrphaned(r), frozen: _acqFrozen(r) };
   });
-  check('the review is no longer orphaned once repaired', guardBack.orphanNow === false);
+  check('P5-6A: the review is still orphaned (nothing pretended to repair it) and still frozen', still.orphanNow === true && still.frozen === true, JSON.stringify(still));
 
   dialogs.length = 0;
   await page.evaluate(() => convertAcquisitionToProperty());
   await page.waitForTimeout(900);
-  check('duplicate prevention is restored — a second conversion is refused',
-        dialogs.some(m => /already been converted/i.test(m)), dialogs.join(' | ') || 'no dialog');
+  check('a second attempt is refused the same way, without a dialog', dialogs.length === 0, dialogs.join(' | ') || 'no dialog');
   const propsAfterSecond = await page.evaluate(() => (_props || []).length);
-  check('and no duplicate property was created', propsAfterSecond === 1, String(propsAfterSecond));
+  check('and still no property was created', propsAfterSecond === 0, String(propsAfterSecond));
 
   // ── the false positive: a FAILED load must never look like a deletion ────
   const blip = await page.evaluate(() => {

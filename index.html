@@ -6723,6 +6723,14 @@
     .acq-analysis-stale { font-size: 0.76rem; color: var(--c-fbbf24, #fbbf24); background: rgba(251, 191, 36, 0.08);
       border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 7px; padding: 8px 12px; margin-bottom: 10px; }
     #acqStaleNotice { font-size: 0.82rem; margin: -8px 0 16px; }
+    /* P5-6A: the closed-acquisition notice, and the panel drawn read-only under it. */
+    .acq-frozen-notice { font-size: 0.82rem; color: var(--text-2); background: rgba(var(--line-rgb), 0.06);
+      border: 1px solid rgba(var(--line-rgb), 0.25); border-radius: 7px; padding: 9px 12px; margin: 0 0 14px; line-height: 1.5; }
+    .acq-frozen-notice strong { color: var(--text-1); }
+    #acqDetailPanel.acq-frozen .acq-upload-btn, #acqDetailPanel.acq-frozen #acqDeleteBtn,
+    #acqDetailPanel.acq-frozen .acq-analyze-bar { display: none; }
+    #acqDetailPanel.acq-frozen #acqTotalSqft { pointer-events: none; opacity: 0.7; }
+    .acq-doc-type-fixed { font-size: 0.74rem; color: var(--text-3); }
     .acq-analysis-stale .acq-stale-refresh { margin-left: 8px; }
 
     /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
@@ -7771,8 +7779,14 @@
     <span class="acq-detail-title" id="acqDetailTitle"></span>
     <span class="acq-detail-badge" id="acqDetailBadge"></span>
     <span id="acqConvertAction"></span>
-    <button class="acq-back-btn acq-delete-btn" onclick="deleteActiveAcquisitionReview()" title="Delete this review permanently" style="margin-left:auto;border-color:rgba(239,68,68,0.3);color:var(--c-f87171);">&#x1F5D1; Delete</button>
+    <button class="acq-back-btn acq-delete-btn" id="acqDeleteBtn" onclick="deleteActiveAcquisitionReview()" title="Delete this review permanently" style="margin-left:auto;border-color:rgba(239,68,68,0.3);color:var(--c-f87171);">&#x1F5D1; Delete</button>
   </div>
+
+  <!-- P5-6A: a converted review is a closed acquisition. The database refuses
+       every change to it (migration 036); this says so before anyone tries,
+       and the renderers below draw no control while it shows. Filled by
+       _acqRenderFrozenNotice. -->
+  <div class="acq-frozen-notice" id="acqFrozenNotice" role="status" style="display:none"></div>
 
   <!-- Review stage (P1-1). Rendered by _renderAcqStageChips from
        AcquisitionWorkspace.stageChips; a person moves between stages here,
