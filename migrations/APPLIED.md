@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (39 rows as of 039, in applied order; 037 and 038 are unused)
+## Recorded history (40 rows as of 042, in applied order; 037, 038, 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -69,8 +69,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260927132042` | `035_acquire_property` | `migrations/035_acquire_property.sql` @ `818c1804` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `69bde81d…` on both sides) | identical |
 | `20260929090159` | `036_acquisition_episode_frozen` | `migrations/036_acquisition_episode_frozen.sql` @ `3bdd558d` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `02908aee…` on both sides) | identical |
 | `20260929220633` | `039_register_leasehold_link` | `migrations/039_register_leasehold_link.sql` @ `252b20ba` — applied 2026-09-29 through the Supabase MCP `apply_migration`, after the client/API change in the same commit was live on Pilot; the recorded text is the file verbatim (md5 `48016063…` on both sides) | identical |
+| `20260929231137` | `042_register_relink_deterministic` | `migrations/042_register_relink_deterministic.sql` @ `5b8ae787` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `528bdc61…` on both sides) | identical |
 
-Tally (39 rows as of 039): 29 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (40 rows as of 042): 30 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -255,6 +256,24 @@ These files were applied through the SQL editor or the bundle
    RLS flags, table grants, other constraints and other functions identical
    before and after; the 53-row 042 candidate set still proves 53/53. Do not
    `VALIDATE` the constraint while any historical row is undecided.
+12. **Since 042, 53 register rows are linked and carry their old value.**
+   Exactly the 53 rows approved from the 042 dry run (a fixed list of
+   document / expected tenant_id / proposed tenant triples in the file; no
+   rule selected them) now name the leasehold they were uploaded as, of their
+   own property, and hold the audited historical value in `legacy_tenant_id`.
+   Every row was re-proved in the transaction against the dry run's evidence
+   (single job whose id is the tenant, same stored upload on both sides, one
+   storage object, target unclaimed, not Miracle Mile). The other 38
+   historical rows — 9 Miracle Mile List A, 11 List B, 4 List C (Prime
+   Wellness `6f09adbf…` among them) and 14 List D — and the one empty row are
+   byte-identical and still unresolved; `lease_documents_leasehold_fk` stays
+   **NOT VALID**. The table's own BEFORE UPDATE trigger set `updated_at` on the
+   53. Applied 2026-09-29 with every other table, storage, policies, grants,
+   RLS flags, constraints, functions and columns identical before and after.
+   The 042 rollback restores the 53 values exactly (it drops and re-adds the
+   identical NOT VALID constraint in its transaction) and refuses once any of
+   the 53 has moved on; 039's rollback refuses while `legacy_tenant_id` holds
+   values, so 042 must be rolled back first.
 
 ## Decisions this manifest does not make
 
