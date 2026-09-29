@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (35 rows, in applied order)
+## Recorded history (39 rows as of 039, in applied order; 037 and 038 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -68,8 +68,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260927032753` | `034_property_at_new_acquisition` | `migrations/034_property_at_new_acquisition.sql` @ `6c3eca61` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `bc755162…` on both sides) | identical |
 | `20260927132042` | `035_acquire_property` | `migrations/035_acquire_property.sql` @ `818c1804` — applied 2026-09-27 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `69bde81d…` on both sides) | identical |
 | `20260929090159` | `036_acquisition_episode_frozen` | `migrations/036_acquisition_episode_frozen.sql` @ `3bdd558d` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `02908aee…` on both sides) | identical |
+| `20260929220633` | `039_register_leasehold_link` | `migrations/039_register_leasehold_link.sql` @ `252b20ba` — applied 2026-09-29 through the Supabase MCP `apply_migration`, after the client/API change in the same commit was live on Pilot; the recorded text is the file verbatim (md5 `48016063…` on both sides) | identical |
 
-Tally: 27 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (39 rows as of 039): 29 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -236,6 +237,24 @@ These files were applied through the SQL editor or the bundle
    `acquisition_document_families` or `acquisition_term_decisions` (024b/026c
    grant them to `authenticated` only). A deliberate correction of a converted
    episode must lift the freeze inside its own transaction, on the record.
+11. **Since 039, `lease_documents.tenant_id` is a property-scoped link to the
+   leasehold.** `lease_documents_leasehold_fk` is `(tenant_id, property_id)` →
+   `tenants (id, property_id)`, ON UPDATE / ON DELETE NO ACTION, **NOT VALID**:
+   the 91 historical values that resolve to no tenant were not checked, not
+   changed and not declared valid; every new INSERT, and every UPDATE that
+   changes `tenant_id` or `property_id`, is checked (service role included).
+   A tenant a document is linked to cannot be deleted on its own; deleting a
+   property still cascades tenants and documents in one statement.
+   `resync_property_tenants` retains register-linked tenants (prosrc md5
+   `dd782746…`; SECURITY DEFINER, `search_path`, owner and ACL unchanged).
+   `lease_documents.legacy_tenant_id` (uuid, nullable) exists and is empty;
+   only a separately approved relink (042) may fill it, and the rollback
+   refuses once it holds a value. Applied 2026-09-29 after the client/API
+   change in the same commit was live, with no data change: every public table
+   hash (lease_documents on its original columns), storage objects, policies,
+   RLS flags, table grants, other constraints and other functions identical
+   before and after; the 53-row 042 candidate set still proves 53/53. Do not
+   `VALIDATE` the constraint while any historical row is undecided.
 
 ## Decisions this manifest does not make
 
