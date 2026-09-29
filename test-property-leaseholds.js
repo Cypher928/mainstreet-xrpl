@@ -160,10 +160,10 @@ const PR = fs.readFileSync(path.join(__dirname, 'property-record.js'), 'utf8');
 const loaderStart = S.indexOf('async function loadPropertyLeaseholds(');
 const loader = S.slice(loaderStart, S.indexOf('\nasync function loadPropertyData(', loaderStart));
 t('F1 loadPropertyLeaseholds exists and is defined before loadPropertyData', loaderStart > 0 && loader.length > 0);
-t('F2 all four reads are scoped .eq(\'property_id\', propertyId) — P5-4 added the converted review', (loader.match(/\.eq\('property_id', propertyId\)/g) || []).length === 4);
+t('F2 all five reads are scoped .eq(\'property_id\', propertyId) — P5-4 added the converted review, P5-5 the property\'s lifecycle events', (loader.match(/\.eq\('property_id', propertyId\)/g) || []).length === 5);
 t('F2b P5-4: the review is read as the CONVERTED one, through its column list only — its raw upload rows are never selected',
   /\.from\('acquisition_reviews'\)\.select\(PL\.SELECT\.reviews\)\.eq\('property_id', propertyId\)\.eq\('status', 'converted'\)/.test(loader)
-  && PL.SELECT.reviews === 'id, property_id, status, converted_at, canonical:data->analysis->canonical'
+  && PL.SELECT.reviews === 'id, property_id, status, converted_at, created_at, user_id, activity_count:data->activityCount, canonical:data->analysis->canonical'
   && !/data\.tenants|'data'|, data,|\bdata\b(?!->)/.test(PL.SELECT.reviews));
 t('F3 none of them filters on user_id: membership RLS decides, as for tenants and evidence', !/user_id/.test(loader));
 t('F3b each read asks for exactly its column list (PL.SELECT.*), never "*": the document text and the abstracted evidence stay out of the workspace load',
@@ -441,6 +441,108 @@ const written = wBox.out(rowsIn);
 const round = PL.parseCanonicalStates(Object.assign({}, MX.MAPLE_CANONICAL, { states: written }));
 t('H33 what the analysis writes is what the property reads: Maple\'s rows through _acqCanonicalStates parse back, agree with the fingerprint, source "states"',
   round && round.source === 'states' && Object.keys(round.byLeasehold).length === 5 && round.byLeasehold[F.shoprite].states.start_date === 'conflicting');
+
+// ── §I  P5-5: the acquisition episode, composed for History ─────────────────
+//
+// One property, one History; the converted review is the episode's record.
+// Every fact below is read from the row that supports it — the review row,
+// the acquisition tables, the ONE direct property_events row — and a fact
+// with no row is null, never guessed. Maple's real rows throughout.
+sec('I  P5-5: the acquisition episode, composed for History');
+const EVS = deepFreeze(MX.MAPLE_PROPERTY_EVENTS.map(e => Object.assign({}, e, { detail: Object.assign({}, e.detail) })));
+const IX = PL.build(deepFreeze({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [MX.MAPLE_REVIEW_ROW], events: EVS }));
+const EP = IX.episode;
+t('I1 an acquired property with its converted review HAS an episode: the review, when it was opened (created_at) and by whom (user_id), and its activity count',
+  !!EP && EP.review.id === RV && EP.review.startedAt === MX.MAPLE_REVIEW_CREATED_AT && EP.review.startedBy === OWN && EP.review.activityCount === 45 && EP.review.convertedAt === MX.MAPLE_CONVERTED_AT);
+eq(EP.acquired, { at: MX.MAPLE_CONVERTED_AT, by: OWN, byEmail: null, source: 'property_events', eventId: '9b9f424e-6cad-4649-8eea-c4a39ad85ec1', counts: { leaseholds: 5, tenants: 5, invoices: 5 } },
+  'I2 "Property acquired" is the ONE direct property_events row acquire_property wrote: its time, its actor (the caller), its id and its counts');
+eq(EP.documents, { total: 9, filed: 5, unfiled: 1, superseded: 3, first: '2026-09-20T00:00:00Z', last: '2026-09-23T02:06:18Z' }, 'I3 documents: this review\'s rows, told honestly — filed, left unfiled, superseded — with first and last upload');
+eq(EP.leaseholds, { count: 5, first: '2026-09-22T15:13:23Z', last: '2026-09-22T15:13:23Z' }, 'I4 leaseholds: this review\'s families');
+eq(EP.decisions, { count: 27, confirm: 10, correct: 12, reject: 1, reopen: 4, leaseholds: 2, actors: 1, first: '2026-09-22T15:18:26.132+00:00', last: '2026-09-26T16:51:27.322+00:00' },
+  'I5 decisions: the 27 real rows by action, across 2 leaseholds, one actor, first and last');
+t('I6 the analysis current at acquisition is dated from the canonical block (P5-4), and the unresolved summary SUMS the per-leasehold at-acquisition counts — the P5-4 projection, not a second system',
+  EP.analysedAt === '2026-09-26T16:56:24.830Z' && JSON.stringify(EP.unresolved) === JSON.stringify({ leaseholds: 5, contested: 2, unclear: 3, read: 32, missing: 92, noDocument: 1 })
+  && EP.unresolved.contested === Object.keys(IX.byLeaseholdId).reduce((s, id) => s + IX.byLeaseholdId[id].atAcquisition.counts.contested, 0));
+const MS = PL.episodeMilestones(EP);
+eq(MS.map(m => m.key), ['started', 'leaseholds', 'documents', 'decisions', 'analysed', 'acquired'], 'I7 milestones, oldest first, only those the sources support');
+t('I8 each milestone carries its source table and a date from that table; only "started" and "acquired" carry an actor, and the acquired actor is the event\'s',
+  MS.every(m => m.at && m.source) && MS.find(m => m.key === 'started').actorUid === OWN && MS.find(m => m.key === 'acquired').actorUid === OWN && MS.find(m => m.key === 'acquired').source === 'property_events'
+  && MS.filter(m => m.actorUid).length === 2);
+t('I9 milestone wording is counted from the rows: "9 lease documents reviewed", "5 filed into leaseholds · 1 left unfiled · 3 superseded by later uploads", "27 term decisions by a person", "10 confirmed · 12 corrected · 1 rejected · 4 reopened · on 2 leaseholds"',
+  MS.find(m => m.key === 'documents').label === '9 lease documents reviewed' && /^5 filed into leaseholds · 1 left unfiled · 3 superseded by later uploads · from 2026-09-20$/.test(MS.find(m => m.key === 'documents').detail)
+  && MS.find(m => m.key === 'decisions').label === '27 term decisions by a person' && /^10 confirmed · 12 corrected · 1 rejected · 4 reopened · on 2 leaseholds · from 2026-09-22$/.test(MS.find(m => m.key === 'decisions').detail)
+  && MS.find(m => m.key === 'acquired').detail === '5 leaseholds became spaces · 5 invoices carried over');
+
+sec('I  no acquisition history');
+t('I10 a legacy property (no converted review) has NO episode and no milestones — nothing is invented for it',
+  PL.build({ propertyId: P, currentUid: OWN, families: [], documents: [], decisions: [], reviews: [], events: EVS }).episode === null && PL.episodeMilestones(null).length === 0);
+t('I11 a review of ANOTHER property, or one not converted, is not this property\'s episode',
+  PL.build({ propertyId: P, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [Object.assign({}, MX.MAPLE_REVIEW_ROW, { property_id: OTHER_P })], events: EVS }).episode === null
+  && PL.build({ propertyId: P, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [Object.assign({}, MX.MAPLE_REVIEW_ROW, { status: 'complete' })], events: EVS }).episode === null);
+t('I12 two converted reviews on one property → ambiguous → no episode (the same rule as the at-acquisition record)',
+  PL.build({ propertyId: P, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [MX.MAPLE_REVIEW_ROW, Object.assign({}, MX.MAPLE_REVIEW_ROW, { id: 'another' })], events: EVS }).episode === null);
+
+sec('I  actor and date provenance');
+const epWith = (events, over) => PL.build({ propertyId: P, currentUid: OWN, families: FAMILIES, documents: DOCS, decisions: MAPLE_DECISIONS, reviews: [Object.assign({}, MX.MAPLE_REVIEW_ROW, over || {})], events }).episode;
+const noEv = epWith([]);
+t('I13 with NO lifecycle event the acquisition is dated from the review\'s converted_at and has NO actor (source acquisition_reviews) — the date is durable, the actor is not, so it is omitted',
+  noEv.acquired && noEv.acquired.at === MX.MAPLE_CONVERTED_AT && noEv.acquired.by === null && noEv.acquired.source === 'acquisition_reviews' && noEv.acquired.eventId === null && noEv.acquired.counts === null
+  && PL.episodeMilestones(noEv).find(m => m.key === 'acquired').actorUid === null);
+t('I14 with neither an event nor converted_at there is no "acquired" at all — not a milestone with an invented date; likewise no created_at ⇒ no "started"',
+  epWith([], { converted_at: null }).acquired === null && PL.episodeMilestones(epWith([], { converted_at: null })).every(m => m.key !== 'acquired')
+  && epWith([], { converted_at: null, created_at: null }).review.startedAt === null && PL.episodeMilestones(epWith([], { converted_at: null, created_at: null })).every(m => m.key !== 'started' && m.key !== 'acquired'));
+const ev0 = EVS[0];
+t('I15 the event must name THIS review: an acquire row whose detail names another review is another episode\'s — actor omitted, date from the review',
+  epWith([Object.assign({}, ev0, { detail: { source: 'acquire_property', reviewId: 'another-review' } })]).acquired.source === 'acquisition_reviews');
+t('I16 the event must be on THIS property — by property_id AND by subject_id — another property\'s acquisition is never this one\'s',
+  epWith([Object.assign({}, ev0, { property_id: OTHER_P })]).acquired.source === 'acquisition_reviews'
+  && epWith([Object.assign({}, ev0, { subject_id: OTHER_P })]).acquired.source === 'acquisition_reviews'
+  && epWith([Object.assign({}, ev0, { property_id: OTHER_P, subject_id: OTHER_P })]).acquired.source === 'acquisition_reviews');
+t('I17 a DERIVED event (source_key set) is never a lifecycle event, even one shaped like an acquisition — the derive trigger mirrors blob saves, attributed to the saver',
+  epWith([Object.assign({}, ev0, { source_key: 'timeline:x' })]).acquired.source === 'acquisition_reviews'
+  && PL.acquiredEvent(EVS, P, RV) === ev0 && PL.acquiredEvent(EVS, P, RV).action === 'stage_changed' && EVS[1].source_key && PL.acquiredEvent([EVS[1]], P, RV) === null);
+t('I18 exactly ONE such event: two acquire rows for the same episode is not what 035 promised → the actor is not claimed from either',
+  PL.acquiredEvent([ev0, Object.assign({}, ev0, { id: 'dup' })], P, RV) === null && epWith([ev0, Object.assign({}, ev0, { id: 'dup' })]).acquired.source === 'acquisition_reviews');
+t('I19 only a prospect → acquired stage change counts: passed, reopened or a non-stage action is not an acquisition',
+  PL.acquiredEvent([Object.assign({}, ev0, { new_value: 'passed' })], P, RV) === null && PL.acquiredEvent([Object.assign({}, ev0, { old_value: 'passed', new_value: 'prospect' })], P, RV) === null
+  && PL.acquiredEvent([Object.assign({}, ev0, { action: 'manual_maintenance' })], P, RV) === null);
+t('I20 the event\'s actor_email, when the row carries one, travels with the actor; the review\'s owner is the "started by" actor; no display string from properties.data is ever an actor',
+  epWith([Object.assign({}, ev0, { actor_email: 'dan@example.test' })]).acquired.byEmail === 'dan@example.test' && EP.review.startedBy === OWN
+  && !/client_actor|\.actor\b/.test(PLS.slice(PLS.indexOf('function acquisitionEpisode('), PLS.indexOf('function episodeMilestones('))));
+t('I21 an activity count that is not a number is null, not a guess', epWith(EVS, { activity_count: 'lots' }).review.activityCount === null && epWith(EVS, { activity_count: undefined }).review.activityCount === null);
+
+sec('I  scoping, read-only, no duplication — by structure');
+const loader5 = AS.slice(AS.indexOf('async function loadPropertyLeaseholds('), AS.indexOf('async function loadPropertyData('));
+t('I22 the events read is property-scoped and asks for stage_changed rows only, through PL.SELECT.events — never "*", never the whole table',
+  /\.from\('property_events'\)\.select\(PL\.SELECT\.events\)\.eq\('property_id', propertyId\)\.eq\('action', 'stage_changed'\)/.test(loader5) && !/select\('\*'\)/.test(loader5)
+  && PL.SELECT.events === 'id, property_id, actor_uid, actor_email, action, subject_type, subject_id, old_value, new_value, detail, client_ts, created_at, source_key');
+t('I23 the review read now also asks for created_at, user_id and the activity COUNT (a JSON-path scalar) — still never the review\'s data, tenants or activity array',
+  /created_at, user_id, activity_count:data->activityCount/.test(PL.SELECT.reviews) && !/data->activity\b|data->tenants|, data,|\bdata\b(?!->)/.test(PL.SELECT.reviews));
+t('I24 property-leaseholds.js still writes nothing (no storage API, no serialiser, no insert/update/rpc) — the episode is composed, not stored', !/localStorage|sessionStorage|indexedDB|JSON\.stringify\(|\.insert\(|\.update\(|\.upsert\(|\.rpc\(/.test(PLS));
+t('I25 inputs are not mutated: the frozen events and review row survive the build', Object.isFrozen(EVS[0]) && Object.isFrozen(EVS[0].detail) && Object.isFrozen(MX.MAPLE_REVIEW_ROW));
+const PCV = fs.readFileSync(path.join(__dirname, 'property-cabinet-view.js'), 'utf8');
+const acqSec = PCV.slice(PCV.indexOf('function _acquisitionSectionHtml('), PCV.indexOf('function openAcquisitionRecord('));
+t('I26 the History section is READ-ONLY: its only controls are two navigation buttons (View spaces, View acquisition record); no input, no edit, no decision call, no db, no save',
+  (acqSec.match(/<button/g) || []).length === 2 && /PropertyCabinetView\.goTab\(\\'spaces\\'\)/.test(acqSec) && /PropertyCabinetView\.openAcquisitionRecord\(this\.dataset\.review\)/.test(acqSec)
+  && !/<input|<select|<textarea|contenteditable|acqConfirmTerm|acqCorrectTerm|acqRejectTerm|acqReopenTerm|acqEnterTerm|_acqSaveDecision|db\.|savePropert|localStorage|appendPropertyTimelineEvent/.test(acqSec));
+const doorway = PCV.slice(PCV.indexOf('function openAcquisitionRecord('), PCV.indexOf('// History: every property record'));
+t('I27 the doorway is navigation only: it calls selectAcquisitionReview and nothing else — no write, no timeline append, no state copied',
+  /window\.selectAcquisitionReview\(reviewId\)/.test(doorway) && !/db\.|\.insert|\.update|\.upsert|savePropert|appendPropertyTimelineEvent|localStorage/.test(doorway));
+t('I28 the section says who acquired only from the durable actor: "you" when it is the viewer, the stored email if any, otherwise omitted — never a properties.data actor string',
+  /if \(uid && me && uid === me\) return 'you';/.test(PCV) && /if \(email\) return String\(email\);/.test(PCV) && /return null;/.test(PCV.slice(PCV.indexOf('function _who('), PCV.indexOf('function _acquisitionSectionHtml(')))
+  && /_who\(ep\.acquired\.by, ep\.acquired\.byEmail\)/.test(acqSec) && !/acquired\.by \|\||startedBy \|\|/.test(acqSec)
+  && !/client_actor|ev\.actor|\.actor\b/.test(acqSec));
+const lifeRows = AS.slice(AS.indexOf('function _lifecycleTimelineRows('), AS.indexOf('function renderPropertyActivity('));
+t('I29 the Overview\'s "Property acquired" row is DERIVED for display: built from the episode, flagged derived, and never pushed into property.timeline (no push, no append, no save)',
+  /derived: true/.test(lifeRows) && /type: 'property_acquired'/.test(lifeRows) && !/\.timeline\.push|\.timeline = |appendPropertyTimelineEvent|savePropert|localStorage/.test(lifeRows)
+  && /\.concat\(_lifecycleTimelineRows\(property\)\)/.test(AS.slice(AS.indexOf('function renderPropertyActivity('), AS.indexOf('function renderPropertyActivity(') + 2500)));
+t('I30 a derived row has no Edit and no Evidence control, and its View goes to History',
+  /\(ev\.manual && !ev\.derived\)/.test(AS) && /!ev\.derived && window\.DocViewer/.test(AS) && /openDrawer\('history'\)/.test(AS.slice(AS.indexOf('function renderPropertyActivity('), AS.indexOf('function renderPropertyActivity(') + 12000)));
+
+const PWS = fs.readFileSync(path.join(__dirname, 'property-workspace.js'), 'utf8');
+t('I31 the property-level "Unresolved at acquisition on N spaces" line takes N from PropertyWorkspace.acquisitionAttention — the same rollup Needs attention shows, exported once — never from the episode\'s raw term totals; those stay for the Space files and the record',
+  /acquisitionAttention: _acquisitionAttention,/.test(PWS) && /window\.PropertyWorkspace\.acquisitionAttention\(property\)/.test(acqSec)
+  && /'Unresolved at acquisition on ' \+ _plural\(aa\.leaseholds, 'space', 'spaces'\)/.test(acqSec) && !/u\.missing|u\.contested|u\.read\b|u\.leaseholds/.test(acqSec));
 
 console.log(`\n${'─'.repeat(58)}\nRESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }

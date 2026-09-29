@@ -469,5 +469,8 @@ window.PropertyWorkspace = (function () {
     // breakdown fixture directly — including the unaccounted and no-breakdown
     // cases, which the demo's fully-explained reconciliation cannot produce.
     unbilledPoolNarrative: unbilledPoolNarrative,
+    // P5-5: the acquisition rollup (browser only), so Property History leads with
+    // the SAME count Needs attention shows — one authority, not a second one.
+    acquisitionAttention: _acquisitionAttention,
   };
 })();

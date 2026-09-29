@@ -96,7 +96,21 @@ const FIX = {
     data: { conversionRecord: { propertyId: MAPLE, reviewId: RV, source: 'acquire_property' },
             // P5-4: the analysis the acquisition was gated on (its real canonical block), and the raw upload row
             // Sunrise's leasehold was established from — whose 2,800 sf must never reach the property.
-            analysis: { canonical: MX.MAPLE_CANONICAL }, tenants: [MX.MAPLE_SUNRISE_RAW_UPLOAD], invoices: [] } }],
+            // P5-5: the rest of the real analysis too, so the History doorway can open the converted review
+            // and its report renders as it does live; and the real activity count.
+            analysis: Object.assign({ canonical: MX.MAPLE_CANONICAL }, MX.MAPLE_ANALYSIS_REPORT), activityCount: 45,
+            tenants: [MX.MAPLE_SUNRISE_RAW_UPLOAD], invoices: [] } }],
+  // P5-5: the property's lifecycle events. Maple's two REAL rows — the one acquire_property wrote, and the one the
+  // derive trigger mirrored from the blob (source_key set; never lifecycle history) — plus another property's
+  // acquisition (its own review), and a would-be acquire row naming a review that is not Maple's.
+  property_events: MX.MAPLE_PROPERTY_EVENTS.map(e => Object.assign({}, e, { actor_uid: e.actor_uid === MX.MAPLE_OWNER_UID ? UID : e.actor_uid })).concat([
+    { id: 'ev-foreign-acq', property_id: FOREIGN, actor_uid: OTHER_UID, actor_email: null, action: 'stage_changed', subject_type: 'property', subject_id: FOREIGN,
+      old_value: 'prospect', new_value: 'acquired', detail: { source: 'acquire_property', reviewId: 'rev-foreign', leaseholds: 1, tenants: 1, invoices: 0 },
+      client_ts: '2026-02-01T00:00:00Z', created_at: '2026-02-01T00:00:00Z', source_key: null },
+    { id: 'ev-legacy-manual', property_id: LEGACY, actor_uid: UID, actor_email: null, action: 'manual_maintenance', subject_type: null, subject_id: null,
+      old_value: null, new_value: null, detail: { source: 'timeline', title: 'Roof patched', client_actor: 'User' },
+      client_ts: '2026-03-01T00:00:00Z', created_at: '2026-03-01T00:00:00Z', source_key: 'timeline:tl-legacy-1' },
+  ]),
   acquisition_document_families: [
     fam(F.shoprite, 'ShopRite Supermarkets, Inc.'), fam(F.luxe, 'Luxe Nails'), fam(F.coffee, 'Maple Coffee Co.'), fam(F.prime, 'Prime Wellness Spa'), fam(F.sunrise, 'Sunrise Cafe & Bakery LLC'),
     fam('pppppppp-0000-4000-8000-000000000001', 'Prospect Tenant', PROSPECT, 'rev-prospect'),
@@ -132,7 +146,7 @@ const SUPABASE_MOCK = `
   var _user = { id: '${UID}', email: 'e2e@test.local' };
   var _store = ${JSON.stringify(FIX)};
   _store.__writes = []; _store.__selects = [];
-  var SCOPED = { tenants: 1, acquisition_document_families: 1, acquisition_documents: 1, acquisition_term_decisions: 1, acquisition_reviews: 1, tenant_field_evidence: 1, tenant_review_audit: 1, cam_reconciliations: 1 };
+  var SCOPED = { tenants: 1, acquisition_document_families: 1, acquisition_documents: 1, acquisition_term_decisions: 1, acquisition_reviews: 1, tenant_field_evidence: 1, tenant_review_audit: 1, cam_reconciliations: 1, property_events: 1 };
   function memberProps() { return _store.properties.filter(function (p) { return p.user_id === _user.id; }).map(function (p) { return p.id; }); }
   var P = function (v) { return Promise.resolve(v); };
   function C(x) { return JSON.parse(JSON.stringify(x)); }
@@ -505,6 +519,180 @@ const SUPABASE_MOCK = `
     const LX20 = await openFile(F.luxe);
     is(LX20.acqHist.map(h => h.field + ':' + h.kind), ['leased_sqft:read'], 'LH-20: only Leased area carries an acquisition line (3,000 read by AI, shown unchanged); the blank start date adds none (the Review Queue says it); Expiration keeps its P5-3 line');
     await page.evaluate(() => TenantSpace.closeSpace());
+
+    // ── P5-5 ────────────────────────────────────────────────────────────────
+    section('LH-21: P5-5 — the REAL click path: Maple → Property tab → History tile → the Acquisition section');
+    const eventsBefore21 = await page.evaluate(() => window.__e2eStore.property_events.length);
+    const writesBefore21 = await writes();
+    await page.click('#wsTabBtn-property');
+    await page.waitForTimeout(500);
+    await page.click('.pcv-tile[data-drawer="history"]');
+    await page.waitForTimeout(500);
+    const H21 = await page.evaluate(() => {
+      const sec = document.querySelector('#propertyOsBody .pcv-acq');
+      const T = (el) => el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+      const tile = document.querySelector('.pcv-tile[data-drawer="history"]');
+      return {
+        present: !!sec, review: sec && sec.getAttribute('data-review'), source: sec && sec.getAttribute('data-acquired-source'),
+        first: sec && sec.parentNode.firstElementChild === sec,
+        lead: sec && T(sec.querySelector('.pcv-acq-lead')),
+        ms: sec ? Array.from(sec.querySelectorAll('.pcv-acq-ms')).map(li => ({ key: li.getAttribute('data-key'), source: li.getAttribute('data-source'), actor: li.getAttribute('data-actor'),
+          when: T(li.querySelector('.pcv-acq-w')), label: T(li.querySelector('.pcv-acq-l')), detail: T(li.querySelector('.pcv-acq-d')) })) : [],
+        unresolved: sec && T(sec.querySelector('.pcv-acq-unres')), unresolvedFlag: sec && sec.querySelector('.pcv-acq-unres').getAttribute('data-unresolved'),
+        unresolvedSpaces: sec && sec.querySelector('.pcv-acq-unres').getAttribute('data-spaces'),
+        rollupSpaces: (window.PropertyWorkspace.acquisitionAttention(currentProperty()) || {}).leaseholds,
+        episodeUnresolved: (window.PropertyLeaseholds.get(currentProperty().id) || { episode: {} }).episode.unresolved,
+        foot: sec && T(sec.querySelector('.pcv-acq-foot')),
+        note: sec && T(sec.querySelector('.pos-note')),
+        controls: sec ? Array.from(sec.querySelectorAll('button, a, input, select, textarea, [onclick], [contenteditable]')).map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [],
+        drawerTitle: T(document.querySelector('.pcv-dtitle')),
+        allActivity: T(document.querySelector('.pcv-arows--history')),
+        selects: window.__e2eStore.__selects.filter(s => s.table === 'property_events'),
+      };
+    });
+    assert(H21.present && H21.review === RV && H21.source === 'property_events' && H21.drawerTitle === 'History' && H21.first,
+      'LH-21: the History drawer opens with an Acquisition section FIRST, naming the converted review and sourcing the acquisition from property_events', JSON.stringify({ present: H21.present, review: H21.review, source: H21.source, first: H21.first }));
+    is(H21.lead, 'This property came into MainStreet through an acquisition that started Sep 17, 2026 (opened by you) and closed Sep 27, 2026, acquired by you.',
+      'LH-21: the lead says when it started (the review\'s created_at), who opened it, when it closed and who acquired it — "you", because the durable actor is the viewer');
+    is(H21.ms.map(m => m.key), ['started', 'leaseholds', 'documents', 'decisions', 'analysed', 'acquired'], 'LH-21: six milestones, oldest first, each one supported by a row');
+    is(H21.ms.map(m => m.source), ['acquisition_reviews', 'acquisition_document_families', 'acquisition_documents', 'acquisition_term_decisions', 'acquisition_reviews', 'property_events'], 'LH-21: each milestone names the table it was read from');
+    const m21 = (k) => H21.ms.find(m => m.key === k) || {};
+    assert(m21('started').when === 'Sep 17, 2026' && m21('started').label === 'Acquisition started by you' && m21('acquired').when === 'Sep 27, 2026' && m21('acquired').label === 'Property acquired by you'
+      && m21('acquired').detail === '5 leaseholds became spaces · 5 invoices carried over',
+      'LH-21: "Sep 17, 2026 · Acquisition started by you" … "Sep 27, 2026 · Property acquired by you — 5 leaseholds became spaces · 5 invoices carried over"', JSON.stringify([m21('started'), m21('acquired')]));
+    assert(m21('documents').label === '9 lease documents reviewed' && /^5 filed into leaseholds · 1 left unfiled · 3 superseded by later uploads · from 2026-09-20$/.test(m21('documents').detail)
+      && m21('leaseholds').label === '5 leaseholds established'
+      && m21('decisions').label === '28 term decisions by a person' && /^11 confirmed · 12 corrected · 1 rejected · 4 reopened · on 3 leaseholds · from 2026-09-22$/.test(m21('decisions').detail)
+      && m21('analysed').when === 'Sep 26, 2026',
+      'LH-21: documents (9: 5 filed · 1 unfiled · 3 superseded), 5 leaseholds, 28 decisions (11 · 12 · 1 · 4 on 3 leaseholds — the other member\'s Prime decision counted), analysis Sep 26', JSON.stringify(H21.ms));
+    is(H21.ms.filter(m => m.actor).map(m => m.key), ['started', 'acquired'], 'LH-21: only the two milestones with a durable actor say who');
+    is(H21.unresolvedFlag, '1', 'LH-21: what was left unresolved is read from the P5-4 projection');
+    is(H21.unresolved, 'Unresolved at acquisition on 4 spaces 1 contested · 2 unclear · 7 lease terms shown were read by AI and not verified. Each space’s file lists its terms as they stood at acquisition, including those no document ever established; the acquisition record holds the detail. View spaces',
+      'LH-21: the property-level line leads with the SPACES affected — the same "4 spaces · 1 contested · 2 unclear · 7 read" Needs attention shows — and points to the spaces and the record for the terms; no raw term count');
+    assert(H21.unresolvedSpaces === '4' && H21.rollupSpaces === 4 && H21.episodeUnresolved && H21.episodeUnresolved.missing === 92 && H21.episodeUnresolved.noDocument === 1,
+      'LH-21: the 4 comes from PropertyWorkspace.acquisitionAttention (one authority); the per-term counts (92 not established, Sunrise with no document) are still held by the episode for the Space files and the record', JSON.stringify({ s: H21.unresolvedSpaces, r: H21.rollupSpaces, e: H21.episodeUnresolved }));
+    assert(/^The detailed acquisition record — documents, leaseholds, term decisions, evidence, analysis and 45 recorded acts — stays in Acquisitions\. View acquisition record$/.test(H21.foot || ''),
+      'LH-21: the foot says the detailed record still exists (45 recorded acts) and offers "View acquisition record →"', H21.foot);
+    is(H21.controls, ['View spaces', 'View acquisition record'], 'LH-21: the section holds exactly two controls, both navigation — no input, no edit');
+    assert(/^Read-only here: this summary is composed from the acquisition’s records and cannot be changed from the property\. The acquisition record itself is kept, and worked on, in Acquisitions\.$/.test(H21.note || ''),
+      'LH-21: and says what is read-only (this summary) without describing the linked record as an immutable snapshot', H21.note);
+    assert(/Property state restored from sync/.test(H21.allActivity || ''), 'LH-21: the existing "All activity" list is still there below, unchanged (the blob\'s sync_restored row)', H21.allActivity);
+    assert(H21.selects.length >= 1 && H21.selects.some(s => s.eq.property_id === MAPLE) && H21.selects.every(s => s.eq.property_id && s.eq.action === 'stage_changed'),
+      'LH-21: every property_events read so far names ONE property and asks for stage_changed rows only — never an unscoped read (RLS scope + narrow select)', JSON.stringify(H21.selects));
+    const tile21 = await page.evaluate(() => { PropertyCabinetView.closeDrawer(); const t = document.querySelector('.pcv-tile[data-drawer="history"]'); return t ? t.textContent.replace(/\s+/g, ' ').trim() : null; });
+    assert(/1 event/.test(tile21 || '') && /acquired Sep 27, 2026/.test(tile21 || ''), 'LH-21: the History tile keeps its record count (1 event) and adds "acquired Sep 27, 2026"', tile21);
+    is([(await writes()) - writesBefore21, (await page.evaluate(() => window.__e2eStore.property_events.length)) - eventsBefore21], [0, 0], 'LH-21: opening History wrote nothing and added no event');
+
+    section('LH-22: P5-5 — the doorway: "View acquisition record →" opens the converted review, writes nothing');
+    await page.click('.pcv-tile[data-drawer="history"]');
+    await page.waitForTimeout(400);
+    const openedBefore22 = await page.evaluate(() => window.__acqOpened);
+    const writesBefore22 = await writes();
+    await page.click('#propertyOsBody .pcv-acq .pcv-acq-open');
+    await page.waitForTimeout(1500);
+    const D22 = await page.evaluate(() => ({
+      panel: document.getElementById('acqDetailPanel').style.display, title: document.getElementById('acqDetailTitle').textContent.trim(),
+      badge: document.getElementById('acqDetailBadge').textContent.trim(), workflowHidden: document.getElementById('mainWorkflow').style.display === 'none',
+      opened: window.__acqOpened, events: window.__e2eStore.property_events.length, review: window.__e2eStore.acquisition_reviews[0].status,
+      activityN: window.__e2eStore.acquisition_reviews[0].data.activityCount,
+      inserts: window.__e2eStore.__writes.filter(w => w.op === 'insert' || w.op === 'upsert').map(w => w.table),
+    }));
+    assert(D22.panel === 'block' && D22.title === 'Maple plaza' && D22.badge === 'converted' && D22.workflowHidden && D22.opened === openedBefore22 + 1,
+      'LH-22: the doorway opens the converted review in the Acquisitions section, through the one real function (selectAcquisitionReview), as "converted"', JSON.stringify(D22));
+    is([(await writes()) - writesBefore22, D22.events - eventsBefore21, D22.review, D22.activityN, D22.inserts.filter(t => t === 'property_events' || t === 'properties').length],
+      [0, 0, 'converted', 45, 0], 'LH-22: nothing was written: no event, no review change, no activity entry, no property save');
+    // Back the way a person would go: the review's Back, then Maple's card.
+    await page.evaluate(() => closeAcquisitionDetail());
+    await page.waitForTimeout(600);
+    await page.click('.ptf-prop-card[onclick*="' + MAPLE + '"]');
+    await page.waitForTimeout(3500);
+
+    section('LH-23: P5-5 — the Overview timeline still works, and shows "Property acquired" DERIVED, never stored');
+    const T23 = await page.evaluate(() => {
+      const panel = document.getElementById('propertyActivityPanel');
+      const rows = Array.from(document.querySelectorAll('#propertyActivityPanel .tl-item')).map(r => ({
+        derived: r.getAttribute('data-derived'), source: r.getAttribute('data-source'), badge: (r.querySelector('.tl-type-badge') || {}).textContent, title: (r.querySelector('.tl-title') || {}).textContent,
+        edit: !!r.querySelector('.tl-edit-btn'), evidence: !!r.querySelector('.tl-view-btn--ev'), view: (r.querySelector('.tl-view-btn') || {}).textContent }));
+      return { header: panel.querySelector('.ap-title').textContent.replace(/\s+/g, ' ').trim(), add: !!panel.querySelector('.tl-add-btn'), rows,
+               blob: currentProperty().timeline.map(e => e.type), stored: window.__e2eStore.properties.find(p => p.id === currentProperty().id).data.timeline.map(e => e.type) };
+    });
+    assert(/Property Timeline — 2 events$/.test(T23.header), 'LH-23: the Overview timeline counts the blob\'s one entry plus the one lifecycle event', T23.header);
+    const d23 = T23.rows.find(r => r.derived === '1'), s23 = T23.rows.find(r => r.derived !== '1');
+    assert(d23 && d23.source === 'property_events' && d23.badge === 'Lifecycle' && d23.title === 'Property acquired by you' && !d23.edit && !d23.evidence && /History/.test(d23.view || ''),
+      'LH-23: "Property acquired by you" is a Lifecycle row from property_events with no Edit and no Evidence — its one control goes to History', JSON.stringify(d23));
+    assert(s23 && /Property state restored from sync/.test(s23.title || '') && T23.add, 'LH-23: the existing sync_restored row and the Add button are still there — ordinary property activity is untouched', JSON.stringify(s23));
+    is([T23.blob, T23.stored], [['sync_restored'], []], 'LH-23: property.timeline holds ONLY the blob\'s own entry in memory (sync_restored, not yet saved) and the store holds none — the lifecycle row was never pushed into either');
+    await page.evaluate(async () => { await saveProperty(currentProperty()); });
+    await page.waitForTimeout(300);
+    const after23 = await page.evaluate(() => ({ stored: window.__e2eStore.properties.find(p => p.id === currentProperty().id).data.timeline.map(e => e.type), events: window.__e2eStore.property_events.length,
+      eventInserts: window.__e2eStore.__writes.filter(w => w.table === 'property_events').length }));
+    is([after23.stored, after23.events - eventsBefore21, after23.eventInserts], [['sync_restored'], 0, 0], 'LH-23: after a real save the stored blob still has only its own entry, and property_events gained nothing — no duplicate event, no flood');
+
+    section('LH-26: P5-5 — with no lifecycle event on record, the acquisition is dated from the review and NO ONE is named as acquirer');
+    const N26 = await page.evaluate(async ({ maple, uid }) => {
+      const saved = window.__e2eStore.property_events;
+      window.__e2eStore.property_events = saved.filter(e => e.property_id !== maple);   // the acquire row is gone; the review still says converted_at
+      await loadPropertyLeaseholds(maple, uid);
+      PropertyCabinetView.openDrawer('history');
+      const sec = document.querySelector('#propertyOsBody .pcv-acq');
+      const T = (el) => el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+      const li = sec && sec.querySelector('.pcv-acq-ms[data-key="acquired"]');
+      const out = { lead: T(sec && sec.querySelector('.pcv-acq-lead')), source: sec && sec.getAttribute('data-acquired-source'),
+        acquired: li ? { actor: li.getAttribute('data-actor'), label: T(li.querySelector('.pcv-acq-l')), source: li.getAttribute('data-source'), when: T(li.querySelector('.pcv-acq-w')) } : null,
+        started: T(sec && sec.querySelector('.pcv-acq-ms[data-key="started"] .pcv-acq-l')) };
+      switchWorkspaceTab('overview'); renderPropertyActivity(currentProperty());
+      const row = document.querySelector('#propertyActivityPanel .tl-item[data-derived="1"]');
+      out.overview = row ? { title: row.querySelector('.tl-title').textContent, source: row.getAttribute('data-source') } : null;
+      window.__e2eStore.property_events = saved;
+      await loadPropertyLeaseholds(maple, uid);
+      PropertyCabinetView.closeDrawer();
+      return out;
+    }, { maple: MAPLE, uid: UID });
+    assert(/ and closed Sep 27, 2026\.$/.test(N26.lead || '') && !/acquired by/.test(N26.lead || '') && N26.source === 'acquisition_reviews'
+      && N26.acquired && N26.acquired.actor === null && N26.acquired.label === 'Property acquired' && N26.acquired.when === 'Sep 27, 2026' && N26.acquired.source === 'acquisition_reviews'
+      && N26.started === 'Acquisition started by you',
+      'LH-26: the lead ends at "closed Sep 27, 2026." with no acquirer; the acquired milestone is dated from acquisition_reviews and names nobody; "started by you" is still the review\'s owner', JSON.stringify(N26));
+    assert(N26.overview && N26.overview.title === 'Property acquired' && N26.overview.source === 'acquisition_reviews', 'LH-26: the Overview lifecycle row likewise says "Property acquired" with no actor, sourced from the review', JSON.stringify(N26.overview));
+
+    section('LH-24: P5-5 — a property with no acquisition history shows no episode and nothing invented');
+    await page.evaluate(async () => { await backToPortfolio(); });
+    await page.waitForTimeout(1200);
+    await page.click('.ptf-prop-card[onclick*="' + LEGACY + '"]');
+    await page.waitForTimeout(3000);
+    await page.click('#wsTabBtn-property');
+    await page.waitForTimeout(400);
+    // The page hash (#property/history) carries the open drawer across properties — existing deep-link behaviour.
+    // Click the tile when the landing page is shown; otherwise History is already open.
+    if (await page.$('.pcv-tile[data-drawer="history"]')) { await page.click('.pcv-tile[data-drawer="history"]'); await page.waitForTimeout(400); }
+    const L24 = await page.evaluate(() => ({
+      section: !!document.querySelector('#propertyOsBody .pcv-acq'), drawer: (document.querySelector('.pcv-dtitle') || {}).textContent,
+      episode: (window.PropertyLeaseholds.get(currentProperty().id) || {}).episode,
+      derivedRows: document.querySelectorAll('#propertyActivityPanel .tl-item[data-derived="1"]').length,
+      selects: window.__e2eStore.__selects.filter(s => s.table === 'property_events').map(s => s.eq.property_id),
+    }));
+    assert(L24.drawer === 'History' && !L24.section && L24.episode === null && L24.derivedRows === 0,
+      'LH-24: the legacy property\'s History has no Acquisition section, its projection has no episode, and its Overview shows no lifecycle row — its derived manual_maintenance event is not an acquisition', JSON.stringify(L24));
+    const opened24 = Array.from(new Set(L24.selects));
+    assert(opened24.includes(MAPLE) && opened24.includes(LEGACY) && opened24.every(id => [MAPLE, LEGACY, FOREIGN].includes(id)),
+      'LH-24: property_events was read only for properties this session opened (Maple, the legacy row, and the foreign one LH-9 opened to prove scoping), each by its own id — never unscoped', JSON.stringify(opened24));
+
+    section('LH-25: P5-5 — scoping: another member\'s acquisition never reaches this session');
+    const S25 = await page.evaluate(async (foreign) => {
+      const fb = window.PropertyLeaseholds.get(foreign);
+      // The same read the loader makes, for the other member's property: under the emulated member RLS it yields nothing,
+      // although the store holds that property's acquire event.
+      const r = await window.supabase.createClient().from('property_events').select('id, property_id').eq('property_id', foreign).eq('action', 'stage_changed');
+      return {
+        foreignEpisode: fb ? fb.episode : 'no projection', foreignRowsSeen: (r.data || []).length,
+        foreignRowsInStore: window.__e2eStore.property_events.filter(e => e.property_id === foreign).length,
+        foreignEventInDom: /ev-foreign-acq|Foreign Plaza/.test(document.getElementById('propertyOsBody').textContent),
+        mapleEvent: (window.PropertyLeaseholds.get('3dc8a7b8-170c-4a51-b90d-dde831c56ca9') || { episode: { acquired: {} } }).episode.acquired.eventId,
+        eventsUnchanged: window.__e2eStore.property_events.length,
+      };
+    }, FOREIGN);
+    assert((S25.foreignEpisode === null || S25.foreignEpisode === 'no projection') && S25.foreignRowsSeen === 0 && S25.foreignRowsInStore === 1 && !S25.foreignEventInDom && S25.mapleEvent === '9b9f424e-6cad-4649-8eea-c4a39ad85ec1',
+      'LH-25: the other member\'s acquire event exists in the store but RLS returns none of it to this session; the foreign property has no episode, its acquisition appears nowhere, and Maple\'s acquisition is its own event', JSON.stringify(S25));
+    is(S25.eventsUnchanged - eventsBefore21, 0, 'LH-25: across LH-21..LH-25 property_events was never written');
 
     section('LH-10: page errors');
     const real = pageErrors.filter(e => !/cdnjs|jsdelivr|fonts|Failed to fetch|supabase|ResizeObserver/i.test(e));

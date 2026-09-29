@@ -71,6 +71,20 @@
  * the state at acquisition × the standing decision (P5-3) × the value shown
  * now. Nothing here is stored, copied or editable; it is history, read.
  *
+ * THE ACQUISITION EPISODE (P5-5). A property has one permanent identity; its
+ * acquisition is an episode in that life, and the converted review IS that
+ * episode's record. `episode` composes, at read time, what the permanent
+ * workspace's History can say about it, from the canonical rows already read
+ * here plus ONE more: the property's `stage_changed` rows in property_events.
+ * It names the episode (the review, when it was opened and by whom), the
+ * milestones its sources support (documents filed, leaseholds established,
+ * decisions recorded, the analysis current at acquisition), the acquisition
+ * itself (the ONE direct property_events row acquire_property wrote — its
+ * actor and time; failing that the review's converted_at, with no actor) and
+ * what the acquisition left unresolved (summed from `atAcquisition`). Nothing
+ * is written; nothing from the episode is copied into the property; the
+ * detail stays in the acquisition workspace, which History links to.
+ *
  * window.PropertyLeaseholds in the browser; module.exports for Node.
  */
 (function (root, factory) {
@@ -110,12 +124,24 @@
   // block. Never `data` itself: that holds the raw upload rows (Maple's
   // unverified 2,800 sf Sunrise reading among them), and the workspace has no
   // business reading an unverified extraction.
-  var REVIEW_COLUMNS = ['id', 'property_id', 'status', 'converted_at', 'canonical:data->analysis->canonical'];
+  // P5-5 adds the episode's own facts: when it was opened (created_at), by
+  // whom (user_id — the caller of begin_acquisition, the row's owner) and how
+  // many acts its workspace recorded (data.activityCount, a number; never the
+  // activity array itself, which is the acquisition workspace's to show).
+  var REVIEW_COLUMNS = ['id', 'property_id', 'status', 'converted_at', 'created_at', 'user_id',
+                        'activity_count:data->activityCount', 'canonical:data->analysis->canonical'];
+  // P5-5: the property's lifecycle events. The loader asks for stage_changed
+  // rows only; the projection then keeps the ONE direct row acquire_property
+  // wrote (source_key null). Rows the 030 trigger mirrored from the blob
+  // (source_key set) are the blob's history, already shown, never read here.
+  var EVENT_COLUMNS = ['id', 'property_id', 'actor_uid', 'actor_email', 'action', 'subject_type', 'subject_id',
+                       'old_value', 'new_value', 'detail', 'client_ts', 'created_at', 'source_key'];
   var SELECT = Object.freeze({
     families:  FAMILY_COLUMNS.join(', '),
     documents: DOCUMENT_COLUMNS.join(', '),
     decisions: DECISION_COLUMNS.join(', '),
     reviews:   REVIEW_COLUMNS.join(', '),
+    events:    EVENT_COLUMNS.join(', '),
   });
 
   var BUCKETS = { leases: 1, invoices: 1 };
@@ -638,10 +664,158 @@
     return out;
   }
 
+  // ── P5-5: the acquisition episode, as History may tell it ─────────────────
+
+  function _minMax(rows, key) {
+    var lo = null, hi = null;
+    rows.forEach(function (r) {
+      var v = r && r[key]; if (!v) return;
+      if (!lo || String(v) < String(lo)) lo = v;
+      if (!hi || String(v) > String(hi)) hi = v;
+    });
+    return { first: lo, last: hi };
+  }
+
+  /**
+   * The one lifecycle event that acquired this property from this episode:
+   * a DIRECT property_events row (source_key null) — action stage_changed,
+   * prospect → acquired, on this property, whose detail names this review.
+   * Exactly one, or null: two would mean the record is not what 035 promised
+   * (one row per acquisition), and a row naming another review is another
+   * episode's. A derived row (source_key set) is never a lifecycle event.
+   */
+  function acquiredEvent(events, propertyId, reviewId) {
+    if (!propertyId || !reviewId) return null;
+    var hits = _arr(events).filter(function (e) {
+      return _isObj(e) && e.source_key == null && e.action === 'stage_changed'
+        && _sameProperty(e, propertyId)
+        && (e.subject_type == null || e.subject_type === 'property')
+        && (e.subject_id == null || e.subject_id === propertyId)
+        && e.old_value === 'prospect' && e.new_value === 'acquired'
+        && _isObj(e.detail) && e.detail.reviewId === reviewId;
+    });
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  /**
+   * The episode: null unless exactly one converted review of THIS property is
+   * present (the same rule acquisitionRecord applies). Every fact comes from
+   * a durable row; a fact whose source is absent is null, never guessed.
+   *
+   *   review      { id, startedAt, startedBy, convertedAt, activityCount }
+   *   acquired    { at, by, byEmail, source: 'property_events'|'acquisition_reviews', eventId, counts }
+   *               `by` only from the event row; a review-dated acquisition has no actor
+   *   documents   { total, filed, unfiled, superseded, first, last }   this review's rows
+   *   leaseholds  { count, first, last }                                this review's families
+   *   decisions   { count, confirm, correct, reject, reopen, leaseholds, actors, first, last }
+   *   analysedAt  the canonical analysis's timestamp, when it reads cleanly (P5-4)
+   *   unresolved  summed atAcquisition counts across the property's leaseholds, or null
+   *               { leaseholds, contested, unclear, read, missing, noDocument }
+   */
+  function acquisitionEpisode(reviews, propertyId, families, documents, decisions, events, byLeaseholdId, acqRecord) {
+    var mine = _arr(reviews).filter(function (r) { return r.property_id === propertyId && r.status === 'converted'; });
+    if (mine.length !== 1) return null;
+    var r = mine[0];
+    var fams = _arr(families).filter(function (f) { return f.review_id === r.id && _sameProperty(f, propertyId); });
+    var docs = _arr(documents).filter(function (d) { return d.review_id === r.id && _sameProperty(d, propertyId); });
+    var decs = _arr(decisions).filter(function (d) { return d.review_id === r.id && _sameProperty(d, propertyId) && _DS.DECISION_ACTIONS.indexOf(d.action) >= 0; });
+    var ev = acquiredEvent(events, propertyId, r.id);
+
+    var dc = { total: docs.length, filed: 0, unfiled: 0, superseded: 0 };
+    docs.forEach(function (d) {
+      if (d.superseded_by_document_id) dc.superseded++;
+      else if (d.family_id && d.family_status === 'confirmed') dc.filed++;
+      else dc.unfiled++;
+    });
+    var dmm = _minMax(docs, 'created_at');
+    var fmm = _minMax(fams, 'created_at');
+    var xc = { count: decs.length, confirm: 0, correct: 0, reject: 0, reopen: 0 }, xf = {}, xa = {};
+    decs.forEach(function (d) { xc[d.action]++; if (d.family_id) xf[d.family_id] = 1; if (d.decided_by) xa[d.decided_by] = 1; });
+    var xmm = _minMax(decs.map(function (d) { return { at: d.decided_at || d.created_at }; }), 'at');
+
+    var unresolved = null;
+    if (acqRecord) {
+      unresolved = { leaseholds: 0, contested: 0, unclear: 0, read: 0, missing: 0, noDocument: 0 };
+      Object.keys(byLeaseholdId || {}).forEach(function (id) {
+        var at = byLeaseholdId[id] && byLeaseholdId[id].atAcquisition;
+        if (!at) return;
+        unresolved.leaseholds++;
+        unresolved.contested += at.counts.contested; unresolved.unclear += at.counts.unclear;
+        unresolved.read += at.counts.read;           unresolved.missing += at.counts.missing;
+        if (at.noDocument) unresolved.noDocument++;
+      });
+    }
+
+    var acquiredAt = ev ? (ev.created_at || ev.client_ts || null) : (r.converted_at || null);
+    return {
+      review: { id: r.id, startedAt: r.created_at || null, startedBy: r.user_id || null, convertedAt: r.converted_at || null,
+                activityCount: (typeof r.activity_count === 'number' && r.activity_count >= 0) ? r.activity_count : null },
+      acquired: acquiredAt ? {
+        at: acquiredAt,
+        by: ev ? (ev.actor_uid || null) : null,
+        byEmail: ev ? (ev.actor_email || null) : null,
+        source: ev ? 'property_events' : 'acquisition_reviews',
+        eventId: ev ? (ev.id || null) : null,
+        counts: (ev && _isObj(ev.detail)) ? { leaseholds: ev.detail.leaseholds == null ? null : ev.detail.leaseholds,
+                                              tenants: ev.detail.tenants == null ? null : ev.detail.tenants,
+                                              invoices: ev.detail.invoices == null ? null : ev.detail.invoices } : null,
+      } : null,
+      documents:  { total: dc.total, filed: dc.filed, unfiled: dc.unfiled, superseded: dc.superseded, first: dmm.first, last: dmm.last },
+      leaseholds: { count: fams.length, first: fmm.first, last: fmm.last },
+      decisions:  { count: xc.count, confirm: xc.confirm, correct: xc.correct, reject: xc.reject, reopen: xc.reopen,
+                    leaseholds: Object.keys(xf).length, actors: Object.keys(xa).length, first: xmm.first, last: xmm.last },
+      analysedAt: acqRecord ? (acqRecord.analysedAt || null) : null,
+      unresolved: unresolved,
+    };
+  }
+
+  /**
+   * The episode as dated milestones, oldest first — ONLY those whose source
+   * supports them. Each: { key, at, label, detail, actorUid, actorEmail,
+   * source }. Nothing about the acquisition is invented to fill a gap: an
+   * episode with no documents has no documents milestone.
+   */
+  function episodeMilestones(ep) {
+    if (!ep) return [];
+    var out = [];
+    var n = function (k, one, many) { return k + ' ' + (k === 1 ? one : many); };
+    if (ep.review.startedAt) out.push({ key: 'started', at: ep.review.startedAt, label: 'Acquisition started',
+      detail: 'A due-diligence review was opened for this property.', actorUid: ep.review.startedBy, actorEmail: null, source: 'acquisition_reviews' });
+    if (ep.documents.total > 0 && ep.documents.last) out.push({ key: 'documents', at: ep.documents.last,
+      label: n(ep.documents.total, 'lease document reviewed', 'lease documents reviewed'),
+      detail: n(ep.documents.filed, 'filed into a leasehold', 'filed into leaseholds')
+        + (ep.documents.unfiled ? ' · ' + n(ep.documents.unfiled, 'left unfiled', 'left unfiled') : '')
+        + (ep.documents.superseded ? ' · ' + n(ep.documents.superseded, 'superseded by a later upload', 'superseded by later uploads') : '')
+        + (ep.documents.first && ep.documents.first !== ep.documents.last ? ' · from ' + String(ep.documents.first).slice(0, 10) : ''),
+      actorUid: null, actorEmail: null, source: 'acquisition_documents' });
+    if (ep.leaseholds.count > 0 && ep.leaseholds.last) out.push({ key: 'leaseholds', at: ep.leaseholds.last,
+      label: n(ep.leaseholds.count, 'leasehold established', 'leaseholds established'),
+      detail: 'Each became a space of this property at acquisition.'
+        + (ep.leaseholds.first && ep.leaseholds.first !== ep.leaseholds.last ? ' From ' + String(ep.leaseholds.first).slice(0, 10) + '.' : ''),
+      actorUid: null, actorEmail: null, source: 'acquisition_document_families' });
+    if (ep.decisions.count > 0 && ep.decisions.last) out.push({ key: 'decisions', at: ep.decisions.last,
+      label: n(ep.decisions.count, 'term decision by a person', 'term decisions by a person'),
+      detail: [ep.decisions.confirm ? ep.decisions.confirm + ' confirmed' : '', ep.decisions.correct ? ep.decisions.correct + ' corrected' : '',
+               ep.decisions.reject ? ep.decisions.reject + ' rejected' : '', ep.decisions.reopen ? ep.decisions.reopen + ' reopened' : '']
+        .filter(Boolean).join(' · ') + ' · on ' + n(ep.decisions.leaseholds, 'leasehold', 'leaseholds')
+        + (ep.decisions.first && ep.decisions.first !== ep.decisions.last ? ' · from ' + String(ep.decisions.first).slice(0, 10) : ''),
+      actorUid: null, actorEmail: null, source: 'acquisition_term_decisions' });
+    if (ep.analysedAt) out.push({ key: 'analysed', at: ep.analysedAt, label: 'Analysis current at acquisition',
+      detail: 'The term states this analysis recorded are the ones the property remembers as at acquisition.', actorUid: null, actorEmail: null, source: 'acquisition_reviews' });
+    if (ep.acquired) out.push({ key: 'acquired', at: ep.acquired.at, label: 'Property acquired',
+      detail: ep.acquired.counts && ep.acquired.counts.leaseholds != null
+        ? n(ep.acquired.counts.leaseholds, 'leasehold became a space', 'leaseholds became spaces')
+          + (ep.acquired.counts.invoices ? ' · ' + n(ep.acquired.counts.invoices, 'invoice carried over', 'invoices carried over') : '')
+        : 'The review was converted; the property became part of the portfolio.',
+      actorUid: ep.acquired.by, actorEmail: ep.acquired.byEmail, source: ep.acquired.source });
+    out.sort(function (a, b) { return String(a.at) < String(b.at) ? -1 : (String(a.at) > String(b.at) ? 1 : 0); });
+    return out;
+  }
+
   /**
    * The projection for ONE property.
    *
-   * @param {object} input  { propertyId, families, documents, decisions, currentUid, tenants? }
+   * @param {object} input  { propertyId, families, documents, decisions, reviews?, events?, currentUid, tenants? }
    *   families/documents/decisions: the rows read for this property (by
    *   property_id). tenants is optional and only used for the join report.
    * @returns {{ propertyId, byLeaseholdId, leaseholdIds, familyCount, documentCount,
@@ -707,6 +881,9 @@
     var matched = 0, without = 0;
     tenants.forEach(function (t) { if (t.id != null && byId[t.id]) matched++; else without++; });
 
+    // P5-5: the episode, composed from the rows above and the lifecycle events.
+    var episode = acquisitionEpisode(inp.reviews, propertyId, fams, docs, decs, inp.events, byId, acqRecord);
+
     return {
       propertyId: propertyId,
       byLeaseholdId: byId,
@@ -720,6 +897,8 @@
       // P5-4: the review the acquisition was recorded in, when it reads cleanly.
       acquisition: acqRecord ? { reviewId: acqRecord.reviewId, convertedAt: acqRecord.convertedAt,
                                  analysedAt: acqRecord.analysedAt, source: acqRecord.source } : null,
+      // P5-5: the acquisition episode for History, or null.
+      episode: episode,
       builtAt: new Date().toISOString(),
     };
   }
@@ -767,6 +946,8 @@
     parseCanonicalStates: parseCanonicalStates, acquisitionRecord: acquisitionRecord,
     acquisitionAttention: acquisitionAttention, currentFromTenant: currentFromTenant,
     propertyAcquisitionAttention: propertyAcquisitionAttention, historyForWarnings: historyForWarnings,
+    // P5-5
+    EVENT_COLUMNS: EVENT_COLUMNS, acquiredEvent: acquiredEvent, acquisitionEpisode: acquisitionEpisode, episodeMilestones: episodeMilestones,
     build: build,
     set: set, clear: clear, get: get, has: has, forTenant: forTenant,
     _reset: _reset,

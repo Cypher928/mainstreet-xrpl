@@ -199,9 +199,14 @@ window.PropertyCabinetView = (function () {
     }
     if (key === 'history') {
       var n = idx.records.length;
-      if (!n) return { line1: 'No activity yet', line2: 'Everything recorded on this property', empty: true };
+      // P5-5: the acquisition is part of the history even when nothing has
+      // been recorded since. Read from the episode; the count stays the
+      // records' own.
+      var ep = _episode(property);
+      var acq = (ep && ep.acquired) ? ' · acquired ' + _fmtDate(ep.acquired.at) : '';
+      if (!n) return { line1: 'No activity yet', line2: (ep ? 'Acquisition on record' + acq : 'Everything recorded on this property'), empty: !ep };
       var latest = idx.records.slice().sort(function (a, b) { return (new Date(b.when).getTime() || 0) - (new Date(a.when).getTime() || 0); })[0];
-      return { line1: _plural(n, 'event'), line2: 'All activity' + (latest && latest.when ? ' · latest ' + _fmtDate(latest.when) : ''), empty: false };
+      return { line1: _plural(n, 'event'), line2: 'All activity' + (latest && latest.when ? ' · latest ' + _fmtDate(latest.when) : '') + acq, empty: false };
     }
     if (key === 'financing') {
       var reserves = (property.escrowReserves || []).length;
@@ -527,7 +532,10 @@ window.PropertyCabinetView = (function () {
 
     return '<div class="pcv pcv--drawer" data-drawer="' + key + '">' + _crumb(d.label) +
       _drawerHead(d, _esc(sub), add) +
-      '<div class="pcv-dbody">' + top + histNote + yearChips + catChips + docsHtml +
+      '<div class="pcv-dbody">' +
+        // P5-5: the acquisition episode first — how the property came to be here.
+        (key === 'history' ? _acquisitionSectionHtml(property) : '') +
+        top + histNote + yearChips + catChips + docsHtml +
         (key === 'building' || docsHtml ? '<div class="pcv-sec-title">Records <span class="pcv-count">' + recs.length + '</span></div>' : '') +
         listHtml + storyPointers +
         (key === 'history' ? _historyListHtml(property, idx) : '') +
@@ -547,6 +555,108 @@ window.PropertyCabinetView = (function () {
       '<summary><span class="pcv-samples-tag">Reference samples</span> Examples of what a building keeps on file — ' +
         '<b>not records on this property</b> (demo only)</summary>' +
       '<div class="pcv-samples-body">' + html + '</div></details>';
+  }
+
+  // ── P5-5: the acquisition episode, at the top of History ───────────────────
+  //
+  // A property has one identity; its acquisition is an episode in that life,
+  // and the converted review is that episode's record. This section COMPOSES
+  // what History can say about it from PropertyLeaseholds' episode projection
+  // (the review row, the acquisition tables, the ONE lifecycle event
+  // acquire_property wrote) and links to the detailed record. It stores
+  // nothing, writes nothing, and copies nothing into the property: every
+  // milestone is read from the row that supports it, and a fact with no row
+  // is not shown. Two controls only, both navigation: "View spaces" and
+  // "View acquisition record". Nothing here edits the acquisition.
+  function _episode(property) {
+    try {
+      var PL = window.PropertyLeaseholds;
+      if (!PL || !property || !property.id || typeof PL.get !== 'function') return null;
+      var b = PL.get(property.id);
+      return (b && b.propertyId === property.id && b.episode) ? b.episode : null;
+    } catch (_e) { return null; }
+  }
+  // The signed-in uid, browser only. "by you" is said only when the durable
+  // actor IS the person looking; a stored email is shown as itself; with
+  // neither, the actor is omitted rather than guessed.
+  function _signedInUid() {
+    try {
+      var u = (window.AuthService && window.AuthService.getCurrentUser) ? window.AuthService.getCurrentUser() : null;
+      return (u && u.id) || null;
+    } catch (_e) { return null; }
+  }
+  function _who(uid, email) {
+    var me = _signedInUid();
+    if (uid && me && uid === me) return 'you';
+    if (email) return String(email);
+    return null;
+  }
+  function _acquisitionSectionHtml(property) {
+    var ep = _episode(property);
+    if (!ep) return '';
+    var PL = window.PropertyLeaseholds;
+    var ms = (PL && typeof PL.episodeMilestones === 'function') ? PL.episodeMilestones(ep) : [];
+    var startedBy = _who(ep.review.startedBy, null);
+    var acquiredBy = ep.acquired ? _who(ep.acquired.by, ep.acquired.byEmail) : null;
+    var lead = 'This property came into MainStreet through an acquisition'
+      + (ep.review.startedAt ? ' that started ' + _fmtDate(ep.review.startedAt) + (startedBy ? ' (opened by ' + startedBy + ')' : '') : '')
+      + (ep.acquired ? ' and closed ' + _fmtDate(ep.acquired.at) + (acquiredBy ? ', acquired by ' + acquiredBy : '') : ', and its close has not been recorded')
+      + '.';
+    var rows = ms.map(function (m) {
+      var by = _who(m.actorUid, m.actorEmail);
+      return '<li class="pcv-acq-ms" data-key="' + _esc(m.key) + '" data-source="' + _esc(m.source) + '"' + (m.actorUid ? ' data-actor="1"' : '') + '>' +
+        '<span class="pcv-acq-w">' + _esc(_fmtDate(m.at)) + '</span>' +
+        '<span class="pcv-acq-l">' + _esc(m.label) + (by ? ' <span class="pcv-acq-by">by ' + _esc(by) + '</span>' : '') + '</span>' +
+        '<span class="pcv-acq-d">' + _esc(m.detail) + '</span>' +
+      '</li>';
+    }).join('');
+    // The property-level line leads with the SPACES affected, from the one
+    // rollup Needs attention already shows (PropertyWorkspace.acquisitionAttention,
+    // built on the P5-4 projection). The per-term counts the episode holds
+    // (ep.unresolved: contested, unclear, read, not established, no document)
+    // stay in each Space file and in the acquisition record; History does not
+    // repeat them as a raw term count.
+    var u = ep.unresolved, unres, aa = null;
+    try { if (window.PropertyWorkspace && typeof window.PropertyWorkspace.acquisitionAttention === 'function') aa = window.PropertyWorkspace.acquisitionAttention(property); } catch (_e) { aa = null; }
+    var viewSpaces = ' <button type="button" class="pcv-link" onclick="PropertyCabinetView.goTab(\'spaces\')">View spaces ' + _icon('go') + '</button>';
+    if (aa && (aa.contested + aa.unclear + aa.read) > 0) {
+      var parts = [];
+      if (aa.contested) parts.push(aa.contested + ' contested');
+      if (aa.unclear)   parts.push(aa.unclear + ' unclear');
+      if (aa.read)      parts.push(_plural(aa.read, 'lease term shown was', 'lease terms shown were') + ' read by AI and not verified');
+      unres = '<div class="pcv-acq-unres" data-unresolved="1" data-spaces="' + aa.leaseholds + '">' +
+        '<b>' + _esc('Unresolved at acquisition on ' + _plural(aa.leaseholds, 'space', 'spaces')) + '</b> ' +
+        _esc(parts.join(' · ') + '. Each space’s file lists its terms as they stood at acquisition, including those no document ever established; the acquisition record holds the detail.') +
+        viewSpaces + '</div>';
+    } else if (aa && u) {
+      unres = '<div class="pcv-acq-unres" data-unresolved="1" data-spaces="0">' +
+        _esc('Nothing is left unresolved from the acquisition beyond what Needs attention already tracks. Each space’s file lists its terms as they stood at acquisition.') + viewSpaces + '</div>';
+    } else if (u) {
+      unres = '<div class="pcv-acq-unres" data-unresolved="1" data-spaces="">' +
+        _esc('Terms left unresolved at acquisition are listed in each space’s file and in the acquisition record.') + viewSpaces + '</div>';
+    } else {
+      unres = '<div class="pcv-acq-unres" data-unresolved="0">' + _esc('The acquisition’s recorded term states could not be read, so what it left unresolved is not shown here.') + '</div>';
+    }
+    var foot = '<div class="pcv-acq-foot">' +
+      _esc('The detailed acquisition record — documents, leaseholds, term decisions, evidence, analysis'
+        + (ep.review.activityCount != null ? ' and ' + _plural(ep.review.activityCount, 'recorded act') : '') + ' — stays in Acquisitions.') +
+      ' <button type="button" class="pcv-link pcv-acq-open" data-review="' + _esc(ep.review.id) + '" onclick="PropertyCabinetView.openAcquisitionRecord(this.dataset.review)">View acquisition record ' + _icon('go') + '</button>' +
+    '</div>';
+    return '<section class="pcv-acq" data-review="' + _esc(ep.review.id) + '" data-acquired-source="' + _esc(ep.acquired ? ep.acquired.source : '') + '">' +
+      '<div class="pcv-sec-title">Acquisition <span class="pcv-count">episode</span></div>' +
+      '<div class="pcv-acq-lead">' + _esc(lead) + '</div>' +
+      (rows ? '<ol class="pcv-acq-list">' + rows + '</ol>' : '') +
+      unres + foot +
+      '<div class="pos-note">Read-only here: this summary is composed from the acquisition’s records and cannot be changed from the property. The acquisition record itself is kept, and worked on, in Acquisitions.</div>' +
+    '</section>';
+  }
+  /** The doorway: the converted review, in the Acquisitions section, as it is. Navigation only — nothing is written. */
+  function openAcquisitionRecord(reviewId) {
+    if (!reviewId) return false;
+    try {
+      if (typeof window.selectAcquisitionReview === 'function') { window.selectAcquisitionReview(reviewId); return true; }
+    } catch (_e) {}
+    return false;
   }
 
   // History: every property record, as rows pointing back to their home drawer.
@@ -1061,6 +1171,20 @@ window.PropertyCabinetView = (function () {
       '.pcv-arow-d{font-size:0.7rem;color:var(--text-4,#64748B);white-space:nowrap;}',
       '.pcv-more-note{font-size:0.74rem;color:var(--text-4,#64748B);margin-top:8px;}',
       '.pcv-empty{font-size:0.8rem;color:var(--text-4,#64748B);line-height:1.55;}',
+      // P5-5: the acquisition episode at the top of History
+      '.pcv-acq{margin:4px 0 14px;padding:12px 14px;border:1px solid ' + line + '0.10);border-left:3px solid ' + gold + ';border-radius:10px;background:' + line + '0.03);}',
+      '.pcv-acq-lead{font-size:0.86rem;color:var(--text-2,#CBD5E1);line-height:1.5;margin-top:6px;}',
+      '.pcv-acq-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;}',
+      '.pcv-acq-ms{display:grid;grid-template-columns:96px 1fr;gap:2px 10px;align-items:baseline;border-top:1px solid ' + line + '0.06);padding-top:6px;}',
+      '.pcv-acq-ms:first-child{border-top:none;padding-top:0;}',
+      '.pcv-acq-w{font-size:0.74rem;color:var(--text-4,#64748B);white-space:nowrap;}',
+      '.pcv-acq-l{font-size:0.82rem;font-weight:700;color:var(--text-1,#E2E8F0);}',
+      '.pcv-acq-by{font-weight:600;color:var(--text-3,#94A3B8);}',
+      '.pcv-acq-d{grid-column:2;font-size:0.76rem;color:var(--text-4,#64748B);line-height:1.45;}',
+      '.pcv-acq-unres{margin-top:10px;font-size:0.8rem;color:var(--text-2,#CBD5E1);line-height:1.5;}',
+      '.pcv-acq-foot{margin-top:8px;font-size:0.78rem;color:var(--text-3,#94A3B8);line-height:1.5;}',
+      '.pcv-acq .pcv-link{display:inline-flex;align-items:center;gap:3px;}',
+      '@media (max-width:480px){.pcv-acq-ms{grid-template-columns:1fr;} .pcv-acq-d{grid-column:1;}}',
       // drawers
       '.pcv-crumb{display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text-4,#64748B);}',
       '.pcv-back{display:inline-flex;align-items:center;gap:3px;font:600 0.78rem/1 inherit;color:' + gold + ';background:none;border:none;cursor:pointer;padding:6px 0;}',
@@ -1143,6 +1267,7 @@ window.PropertyCabinetView = (function () {
   return {
     render: render, state: state, tileMeta: tileMeta,
     openDrawer: openDrawer, closeDrawer: closeDrawer, openRecord: openRecord, openSpace: openSpace, goTab: goTab,
+    openAcquisitionRecord: openAcquisitionRecord,   // P5-5: navigation only
     filter: filter, setYear: setYear, setCategory: setCategory, showMore: showMore, showMoreHistory: showMoreHistory,
     setPage: setPage, setInvoiceFilter: setInvoiceFilter, setQuery: setQuery,
     openInvoiceFolder: openInvoiceFolder, setInvoiceMode: setInvoiceMode, openInvoice: openInvoice,

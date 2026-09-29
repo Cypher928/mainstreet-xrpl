@@ -24,7 +24,7 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js', DS = 'decision-standing.js', PW = 'property-workspace.js';
+const PL = 'property-leaseholds.js', APP = 'script.js', TS = 'tenant-space.js', DS = 'decision-standing.js', PW = 'property-workspace.js', PCV = 'property-cabinet-view.js';
 
 const MUTANTS = [
   { id: 'L01', file: PL, why: 'the join is by tenant NAME instead of id — two "Vacant" leaseholds share documents',
@@ -129,7 +129,7 @@ const MUTANTS = [
   { id: 'A01', file: PL, why: 'a fingerprint row that is not a leasehold (an unfiled extraction) is accepted',
     from: "      if (e[1] !== 'leasehold') return null;", to: "" },
   { id: 'A02', file: PL, why: 'two converted reviews on one property are not treated as ambiguous',
-    from: "    if (mine.length !== 1) return null;", to: "    if (!mine.length) return null;" },
+    from: "    if (mine.length !== 1) return null;\n    var r = mine[0];\n    // Only the selected", to: "    if (!mine.length) return null;\n    var r = mine[0];\n    // Only the selected" },
   { id: 'A03', file: PL, why: 'structured states that disagree with the fingerprint are read anyway',
     from: "    if (s && f && !_sameStates(s, f)) return null;", to: "" },
   { id: 'A04', file: PL, why: 'a leasehold the review does not own is adopted into the record',
@@ -168,13 +168,60 @@ const MUTANTS = [
     from: "      var rejected = !!(sd && sd.rejected);", to: "      var rejected = false;" },
   { id: 'A21', file: PW, why: 'the acquisition item is raised as a warning — an acquisition task, not history',
     from: "      items.push(_mk('info', '\\u{1F4DC}',", to: "      items.push(_mk('warning', '\\u{1F4DC}'," },
+
+  // ── P5-5: the acquisition episode for History ──────────────────────────────
+  { id: 'B01', file: PL, why: 'a DERIVED event (mirrored from a blob save, attributed to the saver) is read as the acquisition',
+    from: "      return _isObj(e) && e.source_key == null && e.action === 'stage_changed'", to: "      return _isObj(e) && e.action === 'stage_changed'" },
+  { id: 'B02', file: PL, why: 'an acquire event naming ANOTHER review is claimed as this episode\'s',
+    from: "        && _isObj(e.detail) && e.detail.reviewId === reviewId;", to: "        ;" },
+  { id: 'B03', file: PL, why: 'two acquire rows for one episode: the first is taken instead of refusing to claim an actor',
+    from: "    return hits.length === 1 ? hits[0] : null;", to: "    return hits[0] || null;" },
+  { id: 'B04', file: PL, why: 'the episode is built from the first of two converted reviews on one property',
+    from: "    var mine = _arr(reviews).filter(function (r) { return r.property_id === propertyId && r.status === 'converted'; });\n    if (mine.length !== 1) return null;\n    var r = mine[0];\n    var fams",
+    to: "    var mine = _arr(reviews).filter(function (r) { return r.property_id === propertyId && r.status === 'converted'; });\n    if (!mine.length) return null;\n    var r = mine[0];\n    var fams" },
+  { id: 'B05', file: PL, why: 'with no lifecycle event the review\'s OWNER is presented as the person who acquired the property',
+    from: "        by: ev ? (ev.actor_uid || null) : null,", to: "        by: ev ? (ev.actor_uid || null) : (r.user_id || null)," },
+  { id: 'B06', file: PL, why: 'a superseded upload is counted as a document filed into a leasehold',
+    from: "      if (d.superseded_by_document_id) dc.superseded++;\n      else if", to: "      if (false) dc.superseded++;\n      else if" },
+  { id: 'B07', file: PL, why: 'an event on ANOTHER property (property_id) is read as this property\'s acquisition',
+    from: "        && _sameProperty(e, propertyId)\n", to: "\n" },
+  { id: 'B08', file: PL, why: 'an event whose subject is another property is read as this property\'s acquisition',
+    from: "        && (e.subject_id == null || e.subject_id === propertyId)\n", to: "\n" },
+  { id: 'B09', file: PL, why: 'a passed / reopened stage change is read as an acquisition',
+    from: "        && e.old_value === 'prospect' && e.new_value === 'acquired'\n", to: "\n" },
+  { id: 'B10', file: PL, why: 'terms read by AI are summed into the "contested" figure of the unresolved summary',
+    from: "        unresolved.contested += at.counts.contested; unresolved.unclear += at.counts.unclear;", to: "        unresolved.contested += at.counts.contested + at.counts.read; unresolved.unclear += at.counts.unclear;" },
+  { id: 'B11', file: PL, why: 'an "Acquisition started" milestone is drawn with no date to support it',
+    from: "    if (ep.review.startedAt) out.push({ key: 'started', at: ep.review.startedAt,", to: "    if (true) out.push({ key: 'started', at: ep.review.startedAt," },
+  { id: 'B12', file: PL, why: '"Property acquired" is drawn from converted_at with an invented date when there is none',
+    from: "    if (ep.acquired) out.push({ key: 'acquired', at: ep.acquired.at,", to: "    if (ep.acquired || ep.review.id) out.push({ key: 'acquired', at: (ep.acquired || {}).at || ep.review.startedAt," },
+  { id: 'B13', file: APP, why: 'the loader reads every property event, not the stage changes',
+    from: ".eq('property_id', propertyId).eq('action', 'stage_changed').order('created_at', { ascending: true }),", to: ".eq('property_id', propertyId).order('created_at', { ascending: true })," },
+  { id: 'B14', file: APP, why: 'the Overview\'s lifecycle row is no longer marked derived — it draws like a stored entry (Edit, evidence, no History link)',
+    from: "      derived: true, timestamp: ep.acquired.at, type: 'property_acquired', severity: 'success',", to: "      derived: false, timestamp: ep.acquired.at, type: 'property_acquired', severity: 'success'," },
+  { id: 'B15', file: APP, why: 'the lifecycle row is pushed into property.timeline — the next save stores a copy and the derive trigger mirrors it as a second event',
+    from: "  const tlAll = (Array.isArray(property.timeline) ? property.timeline.slice() : [])\n    .concat(_lifecycleTimelineRows(property))",
+    to: "  if (Array.isArray(property.timeline)) _lifecycleTimelineRows(property).forEach(r => { if (!property.timeline.some(x => x.id === r.id)) property.timeline.push(r); });\n  const tlAll = (Array.isArray(property.timeline) ? property.timeline.slice() : [])" },
+  { id: 'B16', file: PCV, why: 'the doorway records the visit as a timeline event on the property',
+    from: "      if (typeof window.selectAcquisitionReview === 'function') { window.selectAcquisitionReview(reviewId); return true; }",
+    to: "      if (typeof window.selectAcquisitionReview === 'function') { if (window.appendPropertyTimelineEvent && window.currentProperty) window.appendPropertyTimelineEvent(window.currentProperty(), { type: 'acquisition_opened', title: 'Acquisition record opened' }); window.selectAcquisitionReview(reviewId); return true; }" },
+  { id: 'B17', file: PCV, why: 'the History section grows an edit control on the acquisition',
+    from: "      '<div class=\"pos-note\">Read-only here: this summary", to: "      '<button type=\"button\" class=\"pcv-btn\" onclick=\"PropertyCabinetView.openAcquisitionRecord(this.dataset.review)\">Edit acquisition</button>' +\n      '<div class=\"pos-note\">Read-only here: this summary" },
+  { id: 'B21', file: PCV, why: 'the property-level line counts every leasehold with an at-acquisition record (5) instead of the spaces Needs attention raises (4)',
+    from: "        '<b>' + _esc('Unresolved at acquisition on ' + _plural(aa.leaseholds, 'space', 'spaces')) + '</b> ' +", to: "        '<b>' + _esc('Unresolved at acquisition on ' + _plural(u ? u.leaseholds : aa.leaseholds, 'space', 'spaces')) + '</b> ' +" },
+  { id: 'B18', file: PCV, why: 'any durable actor is presented as "you"',
+    from: "    if (uid && me && uid === me) return 'you';", to: "    if (uid) return 'you';" },
+  { id: 'B19', file: PCV, why: 'with no actor on record, the review\'s owner is named as the acquirer',
+    from: "    var acquiredBy = ep.acquired ? _who(ep.acquired.by, ep.acquired.byEmail) : null;", to: "    var acquiredBy = ep.acquired ? _who(ep.acquired.by || ep.review.startedBy, ep.acquired.byEmail) : null;" },
+  { id: 'B20', file: PCV, why: 'the History section is drawn for a property with no episode (an empty, invented acquisition)',
+    from: "    var ep = _episode(property);\n    if (!ep) return '';", to: "    var ep = _episode(property) || { review: { id: 'none', startedAt: null, startedBy: null, convertedAt: null, activityCount: null }, acquired: null, documents: { total: 0 }, leaseholds: { count: 0 }, decisions: { count: 0 }, analysedAt: null, unresolved: null };" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plmut-'));
 fs.cpSync(ROOT, tmp, { recursive: true, filter: (src) => { const rel = path.relative(ROOT, src); return !(rel === '.git' || rel.startsWith('.git' + path.sep) || rel === 'node_modules' || rel.startsWith('node_modules' + path.sep)); } });
 try { fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modules'), 'dir'); } catch (_) {}
 const ORIGINAL = {};
-for (const f of [PL, APP, TS, DS, PW]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
+for (const f of [PL, APP, TS, DS, PW, PCV]) ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 // The pure suites first (cheap); the browser suite only when a mutant survives them.
 const SUITES = ['test-decision-standing.js', 'test-property-leaseholds.js', 'test-e2e-property-leaseholds.js'];

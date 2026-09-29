@@ -25223,7 +25223,7 @@ const _ACTIVITY_FILTER_GROUPS = {
   leases:    ['lease_uploaded', 'extraction_completed', 'extraction_warning', 'amendment_uploaded', 'amendment_applied', 'field_overridden', 'review_confirmed'],
   cam:       ['invoice_imported', 'derived_metrics_rebuilt'],
   disputes:  ['dispute_created', 'dispute_resolved'],
-  system:    ['sync_restored', 'merge_recovered', 'export_generated'],
+  system:    ['sync_restored', 'merge_recovered', 'export_generated', 'property_acquired'],
 };
 const _ACTIVITY_FILTER_LABELS = { all: 'All', leases: 'Leases', cam: 'CAM', disputes: 'Disputes', system: 'System' };
 let _propertyActivityFilter = 'all';
@@ -25264,16 +25264,52 @@ function _tlScopeMatch(ev, id) {
   return (ev.subject && ev.subject.id === id) || ev.tenantId === id;
 }
 
+// P5-5 — the property's LIFECYCLE events, for display beside its timeline.
+//
+// "Property acquired" is a real, durable event: the one property_events row
+// acquire_property wrote, read by PropertyLeaseholds into the episode. It is
+// DERIVED here, into a row shaped like a timeline entry so the renderer below
+// can draw it, and it is never pushed into property.timeline: the next save
+// would persist a copy and the derive trigger would mirror it back as a second
+// event. No actor string is invented — the durable actor is a uid, said as
+// "you" only when it is the person looking.
+function _lifecycleTimelineRows(property) {
+  try {
+    const PL = window.PropertyLeaseholds;
+    if (!PL || !property || !property.id || typeof PL.get !== 'function') return [];
+    const built = PL.get(property.id);
+    const ep = (built && built.propertyId === property.id) ? built.episode : null;
+    if (!ep || !ep.acquired) return [];
+    const me = (window.AuthService && AuthService.getCurrentUser && AuthService.getCurrentUser()) || null;
+    const by = (ep.acquired.by && me && me.id === ep.acquired.by) ? 'you' : (ep.acquired.byEmail || null);
+    const c = ep.acquired.counts;
+    return [{
+      id: 'lifecycle:acquired:' + (ep.acquired.eventId || ep.review.id),
+      derived: true, timestamp: ep.acquired.at, type: 'property_acquired', severity: 'success',
+      propertyId: property.id, tenantId: null, actor: null, source: ep.acquired.source,
+      title: 'Property acquired' + (by ? ' by ' + by : ''),
+      description: (c && c.leaseholds != null)
+        ? `${c.leaseholds} leasehold${c.leaseholds === 1 ? '' : 's'} became ${c.leaseholds === 1 ? 'a space' : 'spaces'} of this property` + (c.invoices ? ` · ${c.invoices} invoice${c.invoices === 1 ? '' : 's'} carried over` : '') + '. The acquisition record is in History.'
+        : 'The acquisition review was converted; the property became part of the portfolio. The acquisition record is in History.',
+      metadata: { source: ep.acquired.source === 'property_events' ? 'property_events (acquire_property)' : 'acquisition_reviews.converted_at' },
+      manual: false, attachments: [], relatedEvidenceIds: [], relatedDisputeIds: [], relatedInvoiceIds: [],
+      subject: { type: 'property', id: property.id, label: null },
+    }];
+  } catch (_e) { return []; }
+}
+
 function renderPropertyActivity(property) {
   const slot = document.getElementById('propertyActivitySlot');
   if (!slot) return;
   const _ptlAddBtn = `<button class="tl-add-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openAddEntry(currentProperty());}">&#x2b;&nbsp;Add</button>`;
   const _ptlToggle = "document.getElementById('paBody').classList.toggle('ap-body--open');this.querySelector('.ap-chevron').classList.toggle('ap-chevron--open')";
   // Clean chronological view: newest first by event timestamp (so backdated
-  // manual entries sort correctly, not by insertion order).
-  const tlAll = Array.isArray(property.timeline)
-    ? property.timeline.slice().sort((a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0))
-    : [];
+  // manual entries sort correctly, not by insertion order). P5-5: the
+  // property's lifecycle rows are concatenated for DISPLAY — property.timeline
+  // itself is not touched.
+  const tlAll = (Array.isArray(property.timeline) ? property.timeline.slice() : [])
+    .concat(_lifecycleTimelineRows(property))
+    .sort((a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0));
   if (!tlAll.length) {
     slot.innerHTML = `<div class="ap-panel" id="propertyActivityPanel">
       <div class="ap-header" onclick="${_ptlToggle}">
@@ -25311,6 +25347,7 @@ function renderPropertyActivity(property) {
     review_confirmed: 'Review', invoice_imported: 'Invoice', dispute_created: 'Dispute',
     dispute_resolved: 'Dispute', sync_restored: 'Sync', merge_recovered: 'Merge',
     export_generated: 'Export', derived_metrics_rebuilt: 'Metrics',
+    property_acquired: 'Lifecycle',   // P5-5: derived from property_events, never stored in the blob
   };
   const filterChipsHtml = ['all', 'leases', 'cam', 'disputes', 'system'].map(g =>
     `<button class="tl-filter-chip${_propertyActivityFilter === g ? ' tl-filter-chip--active' : ''}" onclick="event.stopPropagation();filterPropertyActivity('${g}')">${esc(_ACTIVITY_FILTER_LABELS[g])}</button>`
@@ -25324,9 +25361,12 @@ function renderPropertyActivity(property) {
   const _RESP_LABEL = { landlord: 'Landlord', tenant: 'Tenant', shared: 'Shared' };
   // Registry-driven label/icon when the Property Timeline module is present;
   // falls back to the built-in type map so existing auto-events keep rendering.
-  const _describe = ev => (window.PropertyTimeline && typeof PropertyTimeline.describe === 'function')
-    ? PropertyTimeline.describe(ev)
-    : { label: (_TYPE_LABEL[ev.type] || ev.category || ev.type), icon: null };
+  const _describe = ev => ev.derived
+    // P5-5: a lifecycle row is not in the timeline registry; it says what it is.
+    ? { label: _TYPE_LABEL[ev.type] || 'Lifecycle', icon: '\u{1F3E2}' }
+    : (window.PropertyTimeline && typeof PropertyTimeline.describe === 'function')
+      ? PropertyTimeline.describe(ev)
+      : { label: (_TYPE_LABEL[ev.type] || ev.category || ev.type), icon: null };
   const _visible = tl.slice(0, 50);
   let _lastDay = null;
   const rows = _visible.map((ev, idx) => {
@@ -25362,7 +25402,7 @@ function renderPropertyActivity(property) {
     let _divider = '';
     const _dk = _dayKey(ev.timestamp);
     if (_dk !== _lastDay) { _divider = `<div class="tl-day-divider">${esc(_dayLabel(ev.timestamp))}</div>`; _lastDay = _dk; }
-    return _divider + `<div class="tl-item">
+    return _divider + `<div class="tl-item${ev.derived ? ' tl-item--derived' : ''}"${ev.derived ? ' data-derived="1" data-source="' + esc(ev.source || '') + '"' : ''}>
       <div class="tl-track"><div class="tl-dot ${dotCls}"></div>${idx < _visible.length - 1 ? '<div class="tl-line"></div>' : ''}</div>
       <div class="tl-content">
         <div class="tl-top">
@@ -25378,9 +25418,12 @@ function renderPropertyActivity(property) {
           <span class="tl-ts">${fmtTs(ev.timestamp)}</span>
           ${ev.actor && ev.actor !== 'System' ? `<span class="tl-actor">${esc(ev.actor)}</span>` : ''}
           ${tenantHtml}
-          ${(window.DocViewer && DocViewer.evidenceFor && DocViewer.evidenceFor(ev, property)) ? `<button class="tl-view-btn tl-view-btn--ev" onclick="event.stopPropagation(); openTimelineEvidence('${ev.id}')">&#x1F4C4;&nbsp;Evidence</button>` : ''}
-          ${(window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
-          ${ev.manual ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
+          ${(!ev.derived && window.DocViewer && DocViewer.evidenceFor && DocViewer.evidenceFor(ev, property)) ? `<button class="tl-view-btn tl-view-btn--ev" onclick="event.stopPropagation(); openTimelineEvidence('${ev.id}')">&#x1F4C4;&nbsp;Evidence</button>` : ''}
+          ${ev.derived
+            // P5-5: the lifecycle row's one control is the doorway to the acquisition section of History.
+            ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyCabinetView){PropertyCabinetView.openDrawer('history');}">History&nbsp;&#x2192;</button>`
+            : (window.PropertyTimeline && PropertyTimeline.navFor && PropertyTimeline.navFor(ev)) ? `<button class="tl-view-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.viewSource('${ev.id}');}">View&nbsp;&#x2192;</button>` : ''}
+          ${(ev.manual && !ev.derived) ? `<button class="tl-edit-btn" onclick="event.stopPropagation(); if(window.PropertyTimeline){PropertyTimeline.openEditEntry('${ev.id}');}">&#x270E;&nbsp;Edit</button>` : ''}
         </div>
         ${expand}
       </div>
@@ -29046,23 +29089,28 @@ async function loadPropertyLeaseholds(propertyId, currentUid) {
   if (!PL || !propertyId) return null;
   PL.clear(propertyId);
   const rows = (r) => (r && Array.isArray(r.data)) ? r.data : [];
-  let fams = [], docs = [], decs = [], revs = [];
+  let fams = [], docs = [], decs = [], revs = [], evs = [];
   try {
     // P5-4: the fourth read is the converted review — and of its data, ONLY
     // the analysis's canonical block (PL.SELECT.reviews), which records each
     // term's state as acquired. Never the review's raw upload rows.
-    const [fr, dr, xr, rr] = await Promise.all([
+    // P5-5: the fifth is the property's lifecycle events — stage_changed rows
+    // only, under the table's own member RLS. The projection keeps the ONE
+    // direct row acquire_property wrote; rows the derive trigger mirrored
+    // from the blob are never lifecycle history. Read, never written.
+    const [fr, dr, xr, rr, er] = await Promise.all([
       db.from('acquisition_document_families').select(PL.SELECT.families).eq('property_id', propertyId).order('created_at', { ascending: true }),
       db.from('acquisition_documents').select(PL.SELECT.documents).eq('property_id', propertyId).order('created_at', { ascending: true }),
       db.from('acquisition_term_decisions').select(PL.SELECT.decisions).eq('property_id', propertyId).order('decided_at', { ascending: true }),
       db.from('acquisition_reviews').select(PL.SELECT.reviews).eq('property_id', propertyId).eq('status', 'converted'),
+      db.from('property_events').select(PL.SELECT.events).eq('property_id', propertyId).eq('action', 'stage_changed').order('created_at', { ascending: true }),
     ]);
-    [fr, dr, xr, rr].forEach(r => { if (r && r.error) console.warn('[PropertyLeaseholds] read failed:', r.error.message); });
-    fams = rows(fr); docs = rows(dr); decs = rows(xr); revs = rows(rr);
+    [fr, dr, xr, rr, er].forEach(r => { if (r && r.error) console.warn('[PropertyLeaseholds] read failed:', r.error.message); });
+    fams = rows(fr); docs = rows(dr); decs = rows(xr); revs = rows(rr); evs = rows(er);
   } catch (e) {
     console.warn('[PropertyLeaseholds] load failed — the property renders without its acquisition record:', e && e.message);
   }
-  const built = PL.build({ propertyId, families: fams, documents: docs, decisions: decs, reviews: revs, currentUid: currentUid || null });
+  const built = PL.build({ propertyId, families: fams, documents: docs, decisions: decs, reviews: revs, events: evs, currentUid: currentUid || null });
   PL.set(propertyId, built);
   console.log('[PropertyLeaseholds]', { propertyId, leaseholds: built.familyCount, documents: built.documentCount, decisions: built.decisionCount });
   return built;
