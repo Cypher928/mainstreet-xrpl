@@ -560,6 +560,7 @@ const SUITES = [
   { label: 'Migration 037 leasehold lifecycle',              cmd: 'node tools/verify-migration-037.js' },
   { label: 'Migration 038 leasehold protection',             cmd: 'node tools/verify-migration-038.js' },
   { label: 'Leasehold protection: client side of 038',       cmd: 'node test-leasehold-protection.js' },
+  { label: 'Migration 043 leasehold absorption (Step B1)',   cmd: 'node tools/verify-migration-043.js' },
   { label: 'Migration 039 register leasehold link',          cmd: 'node tools/verify-migration-039.js' },
   { label: 'Migration 042 register relink (53 rows)',        cmd: 'node tools/verify-migration-042.js' },
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },

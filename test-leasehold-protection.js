@@ -21,6 +21,11 @@
  *      verifier is registered in the regression, and migrations/APPLIED.md
  *      records 038 as applied to Pilot with this file's md5
  *
+ * 043 (Step B1, absorbed leaseholds) extends 038, and this suite follows it:
+ * B6 the 043 resync still writes the browser's column set; C5/C6 nothing in
+ * the product calls the new functions or writes the new columns before B2/B3;
+ * D7–D11 043's files exist and its verifier is registered.
+ *
  * The database behaviour itself is proved by tools/verify-migration-038.js on
  * a throwaway cluster.
  */
@@ -91,6 +96,14 @@ section('B. The resync payload is the RPC\'s column set, and carries no lifecycl
     !/\.delete\s*\(/.test(stripComments(direct)) && !/leasehold_status|ended_at|ended_reason/.test(stripComments(direct)));
   t('B5 the client never reads the resync\'s deleted count as a signal',
     !/\.deleted\b|\[['"]deleted['"]\]/.test(stripComments(fnSource(SCRIPT, 'resyncTenantsToTable') + fnSource(SCRIPT, '_doResyncTenantsToTable'))));
+  // 043 replaces the resync; the column set it writes must still be the one the browser sends.
+  const M043 = read('migrations/043_leasehold_absorption.sql');
+  const b = M043.indexOf('create or replace function public.resync_property_tenants(');
+  const ins43 = M043.slice(M043.indexOf('insert into public.tenants (', b), M043.indexOf(') values (', b));
+  const cols43 = ins43.replace('insert into public.tenants (', '').split(',').map(s => s.trim()).filter(c => c !== 'id' && c !== 'property_id');
+  t('B6 the 043 resync writes exactly the columns the browser sends — and no lifecycle or absorption column',
+    JSON.stringify(cols43.slice().sort()) === JSON.stringify(cols.slice().sort())
+    && !/leasehold_status|ended_at|ended_reason|absorbed_into|absorbed_reason|absorbed_at/.test(ins43), 'rpc 043 ' + cols43.join(','));
 }
 
 // ── C ────────────────────────────────────────────────────────────────────────
@@ -106,6 +119,10 @@ section('C. Remove and Clear All leave the leasehold on record');
   t('C3 Clear All clears the upload list and deletes no tenants row', !/from\(\s*['"`]tenants['"`]\s*\)/.test(clear));
   t('C4 nothing in the product calls end / reactivate / discard yet (Step B, separately approved)',
     !productFiles.some(f => /['"`](end_leasehold|reactivate_leasehold|discard_leasehold)['"`]/.test(stripComments(read(f)))));
+  t('C5 nothing in the product calls absorb / restore / the preflight yet (B3, separately approved)',
+    !productFiles.some(f => /['"`](absorb_leasehold|restore_absorbed_leasehold|absorb_leasehold_preflight)['"`]/.test(stripComments(read(f)))));
+  t('C6 nothing in the product writes an absorption column or data_revision (only the database does)',
+    !productFiles.some(f => /\b(absorbed_into|absorbed_reason|absorbed_at|data_revision)\s*:/.test(stripComments(read(f)))));
 }
 
 // ── D ────────────────────────────────────────────────────────────────────────
@@ -127,6 +144,11 @@ section('D. The migration ships with its rollback, verifier and mutation harness
     /applied 20\d\d-\d\d-\d\d/.test(row) && row.includes('`migrations/038_leasehold_protection.sql`')
     && row.includes('md5 `' + fileMd5.slice(0, 8)) && /\| identical \|$/.test(row),
     row ? 'md5 ' + fileMd5.slice(0, 8) + ' | ' + row.slice(0, 120) : 'no 038 row in migrations/APPLIED.md');
+  // 043 (Step B1) extends 038: same shape — migration, rollback, verifier, mutation harness, registered.
+  ['migrations/043_leasehold_absorption.sql', 'migrations/043_leasehold_absorption_rollback.sql',
+   'tools/verify-migration-043.js', 'tools/leasehold-absorption-mutation.js'].forEach((f, i) =>
+    t('D' + (7 + i) + ' ' + f + ' exists', fs.existsSync(path.join(ROOT, f))));
+  t('D11 the 043 verifier is registered in the regression', /node tools\/verify-migration-043\.js/.test(REG));
 }
 
 console.log('\n' + '─'.repeat(58));
