@@ -10206,7 +10206,9 @@ async function removeBulkTenant(i) {
   if (prop?.tenants) prop.tenants = [...tenantData];
   renderBulkResults();
   checkSqftValidation();
-  // Full re-sync: delete all rows for this property then re-insert what remains
+  // Re-sync what remains. Since 038 the resync never deletes: the removed
+  // leasehold stays on record, active, and is reported as absent from the
+  // roster (ending or discarding it is a person's decision, never this list's).
   {
     const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
     if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
