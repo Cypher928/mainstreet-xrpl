@@ -197,12 +197,13 @@ sec('E. Period and current-state rules inside script.js');
   let err = null; try { noLS.getValidTenants(); } catch (e) { err = e; }
   is(err && /LeaseholdStatus is not loaded/.test(err.message), 'E3 without the module it throws — the CAM roster is never guessed');
 
-  const fm = run(['findTenantMatch'], { window: W,
-    _normalizeSuite: (s) => String(s || '').trim().toLowerCase(), _normalizeTenantName: (s) => String(s || '').trim().toLowerCase() });
-  eq(fm.findTenantMatch([ENDED], { suite: '2' }, -1), null, 'E4 D7: an upload never matches an ended leasehold by suite');
-  eq(fm.findTenantMatch([ENDED], { tenant_name: 'Gone Co' }, -1), null, 'E5 nor by name');
-  eq(fm.findTenantMatch([Object.assign({}, ENDED, { leasehold_status: 'active' })], { suite: '2' }, -1), { index: 0, basis: 'suite' },
-     'E6 the same row, active, still matches exactly as before (A-2 changes that, not A-1)');
+  // Step A-2 replaced findTenantMatch with LeaseUploadIdentity.candidates —
+  // every match is a proposal a person confirms. D7 holds there unchanged.
+  const LUI = require('./lease-upload-identity.js');
+  eq(LUI.candidates([ENDED], { suite: '2' }).map(c => c.id), [], 'E4 D7: an upload never proposes an ended leasehold by suite');
+  eq(LUI.candidates([ENDED], { tenant_name: 'Gone Co' }).map(c => c.id), [], 'E5 nor by name');
+  eq(LUI.candidates([Object.assign({}, ENDED, { leasehold_status: 'active', ended_at: null, ended_reason: null })], { suite: '2' }).map(c => [c.id, c.basis]),
+     [['t-ended', 'suite']], 'E6 the same row, active, is a candidate by suite — a proposal, never an automatic match (A-2)');
 
   const fp = run(['camInputsFingerprint'], { window: W, parseSqft: (v) => Number(v), parseMoney: (v) => Number(v), _camInputExclusions: () => [] });
   const base = fp.camInputsFingerprint([ACTIVE], []);

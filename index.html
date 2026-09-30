@@ -4325,6 +4325,39 @@
     }
     .bulk-cam-review strong { color: var(--c-93c5fd, #93c5fd); }
 
+    /* Step A-2: an upload held for a leasehold decision. Amber like the
+       blocked note — it waits on the manager — but a card of its own, with
+       the choices inside it: nothing is attached until a person chooses. */
+    .held-uploads { margin: 0 0 14px; }
+    .held-uploads-head {
+      font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 600;
+      color: var(--c-fbbf24); margin: 0 0 8px;
+    }
+    .held-upload {
+      font-family: 'DM Sans', sans-serif; font-size: 0.8rem; line-height: 1.5;
+      color: var(--text-2); background: rgba(245,158,11,0.06);
+      border: 1px solid rgba(245,158,11,0.32); border-left-width: 3px;
+      border-radius: 0 8px 8px 0; padding: 11px 13px; margin: 0 0 10px;
+      overflow-wrap: anywhere;
+    }
+    .held-upload-title { font-weight: 600; color: var(--text-1, inherit); }
+    .held-upload-sub { font-size: 0.76rem; opacity: 0.85; margin: 2px 0 8px; }
+    .held-upload fieldset { border: 0; padding: 0; margin: 8px 0 0; min-width: 0; }
+    .held-upload legend { font-weight: 600; font-size: 0.76rem; padding: 0; margin: 0 0 4px; }
+    .held-upload label { display: flex; gap: 7px; align-items: flex-start; padding: 3px 0; cursor: pointer; }
+    .held-upload label input { margin-top: 3px; flex: none; }
+    .held-upload-hint { font-size: 0.74rem; opacity: 0.8; }
+    .held-upload-plan { margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.76rem; }
+    .held-upload-plan li { padding: 2px 0; }
+    .held-upload-conflict { border-top: 1px dashed rgba(245,158,11,0.35); padding-top: 6px; margin-top: 6px; }
+    .held-upload-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .held-upload-actions button {
+      font: inherit; font-size: 0.78rem; border-radius: 6px; padding: 6px 11px; cursor: pointer;
+      border: 1px solid rgba(148,163,184,0.4); background: transparent; color: inherit;
+    }
+    .held-upload-actions button.primary { background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.55); }
+    .held-upload-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+
     /* The canonical billing state, shown on the reconciliation panel head with
        the same two words every other surface uses. */
     .rcs-readiness-badge {
@@ -8915,6 +8948,10 @@
 <script src="dispute-status.js"></script>
 <script src="property-area.js"></script>
 <script src="field-provenance.js"></script>
+<!-- Step A-2: which leasehold an uploaded lease belongs to. Every candidate is
+     a proposal a person confirms; nothing is attached automatically. Reads
+     leasehold-status.js and field-provenance.js; must precede script.js. -->
+<script src="lease-upload-identity.js"></script>
 <script src="review-engine.js"></script>
 <script src="reconciliation-engine.js"></script>
 <script src="audit-exposure.js"></script>

@@ -77,8 +77,10 @@ const MUTANTS = [
   // ── script.js ──
   { id: 'L26', file: 'script.js', why: 'the CAM roster ignores the lifecycle',
     from: '    LS.inPeriodRoster(t, period) &&\n', to: '' },
-  { id: 'L27', file: 'script.js', why: 'an upload can match an ended leasehold (D7)',
-    from: ' &&\n      window.LeaseholdStatus.isCurrent(t));', to: ');' },
+  // Step A-2 moved D7 from script.js's findTenantMatch into the one rule every
+  // upload consults, LeaseUploadIdentity.isEligibleTarget.
+  { id: 'L27', file: 'lease-upload-identity.js', why: 'an upload can be proposed for an ended leasehold (D7)',
+    from: "    if (!_LS().isCurrent(t)) return false;                      // ENDED is never a candidate\n", to: '' },
   { id: 'L28', file: 'script.js', why: 'Clear All deletes leaseholds again',
     from: "  document.getElementById('bulkLeaseInput').value = '';\n  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }\n  await savePropertyData();\n}",
     to:   "  document.getElementById('bulkLeaseInput').value = '';\n  if (prop?.id) await db.from('tenants').delete().eq('property_id', prop.id);\n  if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }\n  await savePropertyData();\n}" },

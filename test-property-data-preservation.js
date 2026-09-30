@@ -69,7 +69,8 @@ const REAL = [
   'normalizePropertyState', '_isUsableRecordId', 'mintTenantIdentity', '_lsSave', '_lsLoad', '_lsMarkUnsynced',
   'selectProperty', 'backToPortfolio', 'appendPropertyTimelineEvent', 'appendPropertyTimelineEventOnce', '_appendSyncRestored',
   '_isLifecycleColumnMissing', '_tenantRowToRecord', '_overlayLeaseholdLifecycle',
-].map(n => fnSource(SCRIPT, n)).join('\n');
+  '_mergeHeldLeaseUploads', '_heldUploadSettled',
+].map(n => fnSource(SCRIPT, n)).join('\n') + '\nconst _resolvedHeldUploads = new Set();\n';
 
 const U = '011df998-bad2-464e-bbcb-28e2d0fee821';
 const P = '3dc8a7b8-170c-4a51-b90d-dde831c56ca9';
@@ -185,7 +186,7 @@ function world(opts) {
 const listRow = (id, name) => ({ id: id || P, name: name || 'Maple plaza', totalSqft: 77500, lifecycle_stage: 'acquired',
   tenants: [{ id: F1, tenant_name: 'Luxe Nails', leased_sqft: 3000 }, { id: F2, tenant_name: 'Maple Coffee Co.', leased_sqft: 3000 }] });
 const dbRow = (blob, id, name) => ({ id: id || P, user_id: U, name: name || 'Maple plaza', sqft: 77500, data: blob || rpcBlob() });
-const KEYS = ['invoices', 'disputes', 'camYear', 'results', 'camReconciliation', 'camRefusal', 'settlement', 'aiDrafts', '_demoVersion', '_demoV', 'activityLog', 'timeline', 'tenants', 'escrowReserves', 'drawRequests', 'info'];
+const KEYS = ['invoices', 'disputes', 'camYear', 'results', 'camReconciliation', 'camRefusal', 'settlement', 'aiDrafts', '_demoVersion', '_demoV', 'activityLog', 'timeline', 'tenants', 'escrowReserves', 'drawRequests', 'info', 'pendingLeaseUploads'];
 const WIRE = KEYS.filter(k => k !== '_demoVersion' && k !== '_demoV');
 const open = async (W, id) => { await W.sb.selectProperty(id || P); await sleep(1300); };
 
@@ -345,6 +346,31 @@ const open = async (W, id) => { await W.sb.selectProperty(id || P); await sleep(
   eq(H.sb._serverOwnedDataKeys([1, 2]), {}, 'H3 an array → {}');
   eq(H.sb._serverOwnedDataKeys('x'), {}, 'H4 a string → {}');
   eq(H.sb._serverOwnedDataKeys({}), {}, 'H5 an empty blob → {}');
+
+  // ── P ────────────────────────────────────────────────────────────────────
+  sec('P  held lease uploads (Step A-2) travel with the property, never as tenants');
+  {
+    const HELD = { id: 'held-1', jobId: 'held-1', propertyId: P, documentId: 'aaaaaaaa-2222-4333-8444-555555555555', fileName: 'amend.pdf',
+      extracted: { id: 'held-1', tenant_name: 'Luxe Nails', cap: '6' }, candidates: [{ id: F1, basis: 'name' }], vacancies: [], decision: null };
+    const W = world({ row: dbRow(Object.assign(rpcBlob(), { pendingLeaseUploads: [HELD] })), props: [listRow()] });
+    await open(W);
+    const live = W.sb.state().props[0];
+    t('P1 opening the property brings its held upload back onto the record', Array.isArray(live.pendingLeaseUploads) && live.pendingLeaseUploads.length === 1 && live.pendingLeaseUploads[0].documentId === HELD.documentId,
+      JSON.stringify(live.pendingLeaseUploads));
+    t('P2 …and it is not a tenant: not in the roster, not in the live buffer', !(live.tenants || []).some(x => x && x.id === 'held-1') && !W.sb.state().tenantData.some(x => x && x.id === 'held-1'));
+    W.sb.savePropertyData(); await sleep(1100);
+    const wd = W.rec.upserts[0] ? W.rec.upserts[0].data : {};
+    t('P3 the next save writes it back under pendingLeaseUploads, and tenants still without it',
+      Array.isArray(wd.pendingLeaseUploads) && wd.pendingLeaseUploads.length === 1 && wd.pendingLeaseUploads[0].id === 'held-1' && !wd.tenants.some(x => x.id === 'held-1'), JSON.stringify(wd.pendingLeaseUploads));
+    // A local copy that never reached the database adds the held uploads the database does not have.
+    const lsBlob = { [P]: Object.assign({ id: P, name: 'Maple plaza' }, rpcBlob(), { pendingLeaseUploads: [HELD, Object.assign({}, HELD, { id: 'held-2' })], _unsynced: true }) };
+    const W2 = world({ row: dbRow(Object.assign(rpcBlob(), { pendingLeaseUploads: [HELD] })), props: [listRow()], ls: lsBlob });
+    const merged = await W2.sb.loadPropertyData(P);
+    t('P4 an unsynced local copy contributes its held upload the database lacks — by id, once', merged && merged.pendingLeaseUploads.map(h => h.id).sort().join() === 'held-1,held-2', JSON.stringify(merged && merged.pendingLeaseUploads));
+    const W3 = world({ row: dbRow(Object.assign(rpcBlob(), { pendingLeaseUploads: [HELD] })), props: [listRow()], ls: { [P]: Object.assign({}, lsBlob[P], { _unsynced: undefined }) } });
+    const m3 = await W3.sb.loadPropertyData(P);
+    t('P5 …a synced local copy contributes nothing', m3 && m3.pendingLeaseUploads.map(h => h.id).join() === 'held-1', JSON.stringify(m3 && m3.pendingLeaseUploads));
+  }
 
   console.log(`\n${'─'.repeat(58)}\nRESULT: ${pass} passed, ${fail} failed`);
   if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); process.exit(1); }

@@ -12,14 +12,16 @@
  * uploads through the Documents panel's bulk input:
  *
  *   1  a lease for a tenant the property already has with no lease on file
- *      (a rent-roll row) — the pipeline matches it, so the register row must
- *      carry THAT tenant's existing id, not the new job's;
+ *      (a rent-roll row). Since Step A-2 a match is a PROPOSAL: the upload is
+ *      held, its register row is written at arrival UNLINKED under its own
+ *      document id, and only a person's decision (attach, as the Original
+ *      Lease Copy) links that same document id to THAT tenant's existing id;
  *   2  a lease for a new tenant — the register row must carry the new tenant
  *      row's id (the job id), the same id the roster RPC wrote.
  *
- * For both: the register POST is sent only after the batch's roster RPC has
- * completed, and its tenantId is an id the RPC actually wrote. Before this
- * change the bulk path sent norm.id — an id no tenant row ever had.
+ * A register POST that names a tenant is sent only after the batch's roster
+ * RPC has completed, and its tenantId is an id a tenant row has. Before 039
+ * the bulk path sent norm.id — an id no tenant row ever had.
  */
 let pw;
 try { pw = require('playwright'); }
@@ -196,22 +198,29 @@ CAM charges shall not increase more than 4% per annum.
       return { post: registerPosts.slice(before), rpc, rows };
     }
 
-    section('1 · a lease for a tenant the property already has (no lease on file)');
+    section('1 · a lease for a tenant the property already has (no lease on file) — held, then attached by a person');
     {
       const r = await upload('Cascade Hardware Co', 1200, 'cascade-hardware-lease.txt');
       const p = r.post[0];
-      assert(r.post.length === 1, '1a exactly one register row is written', String(r.post.length));
-      assert(r.rpc.length >= 1, '1b the batch wrote its roster (resync_property_tenants)', JSON.stringify(r.rpc));
-      assert(p && r.rpc.length && p.sentAt >= r.rpc[r.rpc.length - 1].doneAt,
-        '1c the register row is sent AFTER the roster write completed',
-        p && r.rpc.length ? (p.sentAt - r.rpc[r.rpc.length - 1].doneAt) + ' ms' : 'no timing');
-      assert(p && p.body.tenantId === RR_ID, '1d tenantId = the EXISTING tenant\'s id (the upload was matched to it)',
-        p && p.body.tenantId);
-      assert(r.rpc.some(x => x.ids.includes(p && p.body.tenantId)), '1e …an id the roster write actually wrote');
-      assert(r.rows.length === 1 && r.rows[0].id === RR_ID && r.rows[0].jobId && r.rows[0].jobId !== RR_ID,
-        '1f the tenant row kept its id; the job id is recorded, not substituted', JSON.stringify(r.rows));
+      assert(r.post.length === 1, '1a exactly one register row is written at arrival', String(r.post.length));
+      assert(p && !p.body.tenantId && /^[0-9a-f-]{36}$/.test(p.body.documentId || ''), '1b …UNLINKED, under the document\'s own id (the match is only a proposal)',
+        JSON.stringify(p && { tenantId: p.body.tenantId, documentId: p.body.documentId }));
       assert(p && p.body.fileName === 'cascade-hardware-lease.txt' && /LEASE AGREEMENT/.test(p.body.extractedText || ''),
-        '1g the same document fields as before (file name, extracted text)');
+        '1c the same document fields as before (file name, extracted text)');
+      const held = await page.evaluate(() => (currentProperty().pendingLeaseUploads || []).map(h => ({ id: h.id, documentId: h.documentId, cands: (h.candidates || []).map(c => c.id) })));
+      assert(held.length === 1 && held[0].cands.join() === RR_ID && held[0].documentId === (p && p.body.documentId),
+        '1d the upload is held with the existing tenant as its candidate, and the same document id', JSON.stringify(held));
+      assert(r.rows.length === 1 && r.rows[0].id === RR_ID && !r.rows[0].jobId, '1e the existing tenant row is untouched: its id, no job stamped on it, no second row', JSON.stringify(r.rows));
+      // A person decides: this is the lease of the rent-roll row that had none.
+      const before = registerPosts.length;
+      const res = await page.evaluate(async (a) => resolveHeldLeaseUpload(a.id, { action: 'attach', targetId: a.target, kind: 'original_lease' }), { id: held[0] && held[0].id, target: RR_ID });
+      await page.waitForTimeout(300);
+      const link = registerPosts.slice(before)[0];
+      assert(res && res.ok && res.leaseholdId === RR_ID, '1f attach keeps the existing leasehold id', JSON.stringify(res));
+      assert(link && link.body.documentId === p.body.documentId && link.body.tenantId === RR_ID && link.body.docType === 'original_lease',
+        '1g …and links the SAME document id to it, with the kind the person confirmed', JSON.stringify(link && link.body));
+      const after = await page.evaluate((id) => { const t = (tenantData || []).find(x => x && x.id === id); return t && { id: t.id, leaseUrl: !!t.leaseUrl, docId: t.leaseDocumentId }; }, RR_ID);
+      assert(after && after.leaseUrl && after.docId === p.body.documentId, '1h the leasehold now has its lease on file, by the document id', JSON.stringify(after));
     }
 
     section('2 · a lease for a new tenant');
@@ -232,8 +241,9 @@ CAM charges shall not increase more than 4% per annum.
     section('3 · every register id is a real tenant id');
     {
       const tenantIds = await page.evaluate(() => (window.__e2eStore.tenants || []).map(t => t.id));
-      assert(registerPosts.length === 2 && registerPosts.every(p => tenantIds.includes(p.body.tenantId)),
-        '3a no register row names an id that no tenant row has', JSON.stringify(registerPosts.map(p => p.body.tenantId)));
+      const named = registerPosts.filter(p => p.body.tenantId);
+      assert(registerPosts.length === 3 && named.length === 2 && named.every(p => tenantIds.includes(p.body.tenantId)),
+        '3a no register row names an id that no tenant row has (the held arrival names none)', JSON.stringify(registerPosts.map(p => p.body.tenantId || null)));
     }
 
     section('4 · console');

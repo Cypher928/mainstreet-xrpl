@@ -49,7 +49,13 @@ for (const [fn, label] of callers) {
   /TenantSpace\.renderList/.test(after)
     ? ok(`${label} (${fn}) refreshes the Spaces list after the pipeline`)
     : bad(`${label} (${fn}) does not refresh the list`, 'its buttons would keep stale ids');
-  /property\.tenants = \[\.\.\.tenantData\]|prop\.tenants = \[\.\.\.tenantData\]/.test(after)
+  // Step A-2: the pipeline writes its row only through _putLeaseJobRow /
+  // _dropLeaseJobRow, which keep the job property's record in step with the
+  // live buffer (r.prop.tenants = [...tenantData]) at the moment of the write.
+  const _put  = SRC.slice(SRC.indexOf('function _putLeaseJobRow('), SRC.indexOf('function _dropLeaseJobRow('));
+  const _pipe = SRC.slice(SRC.indexOf('async function _runLeaseJobPipeline('), SRC.indexOf('// ─── Bulk Lease Upload'));
+  (/property\.tenants = \[\.\.\.tenantData\]|prop\.tenants = \[\.\.\.tenantData\]/.test(after)
+    || (/r\.prop\.tenants = \[\.\.\.tenantData\]/.test(_put) && /_putLeaseJobRow\(/.test(_pipe) && !/tenantData\[[^\]]*\]\s*=/.test(_pipe)))
     ? ok(`${label} re-syncs the tenant array before refreshing`)
     : bad(`${label} refreshes without re-syncing`, 'the list would render stale records');
 }

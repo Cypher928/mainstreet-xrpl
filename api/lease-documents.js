@@ -67,6 +67,17 @@ function _isLeaseholdLinkRefused(json) {
     && /lease_documents_leasehold_fk/.test(String(obj.message || '') + ' ' + String(obj.details || ''));
 }
 
+function _isDuplicateKey(json) {
+  if (!json) return false;
+  const obj = Array.isArray(json) ? (json[0] || {}) : json;
+  return obj.code === '23505';
+}
+
+// Step A-2: the kinds a person may confirm for an uploaded lease document —
+// lease_documents.doc_type values the register already allows (025).
+const LEASE_DOC_KINDS = ['original_lease', 'amendment', 'renewal_extension', 'assignment'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function sbFetch(path, options = {}) {
   const k = key();
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -95,60 +106,123 @@ export default async function handler(req, res) {
     if (!_rl.ok) return sendRateLimited(res, _rl);
   }
 
-  // POST — upsert a lease document record.
-  // If a record with the same property_id + file_name already exists, update it.
+  // POST — record a lease document in the register.
+  //
+  // Step A-2: a document's identity is its OWN id, never (property_id,
+  // file_name). Two leaseholds may each have a "Lease.pdf"; a second upload
+  // with the same name used to find the first row by name and PATCH it —
+  // re-pointing, or with tenant_id null unlinking, another leasehold's lease.
+  //
+  //   · documentId given  → that row is created or updated, and only that row.
+  //     A row already linked to a leasehold is never re-pointed to another one
+  //     and never unlinked (409 document_linked_elsewhere); an unlinked row may
+  //     be linked. Replaying the same write is harmless.
+  //   · no documentId      → legacy callers. A same-named row is updated only
+  //     when it already belongs to the SAME leasehold this write names; in
+  //     every other case a new row is inserted. A write never unlinks.
+  //
+  // docType, when given, is the kind a PERSON confirmed (Amendment, Renewal /
+  // Extension, Assignment, Original Lease Copy), so it is recorded as
+  // classified_by 'user'. Nothing here guesses a type.
   if (method === 'POST') {
-    const { propertyId, fileName, fileUrl, extractedText, parsingStatus, tenantId, tenantName, extractionModel, usedPdfDirect } = req.body || {};
-    if (!propertyId || !fileName) {
+    const { propertyId, documentId, fileName, fileUrl, extractedText, parsingStatus, tenantId, tenantName, extractionModel, usedPdfDirect, docType } = req.body || {};
+    if (!propertyId || (!fileName && !documentId)) {
       return res.status(400).json({ error: 'Missing propertyId or fileName', keySource: KEY_SOURCE });
+    }
+    if (documentId != null && !UUID_RE.test(String(documentId))) {
+      return res.status(400).json({ error: 'documentId must be a uuid', keySource: KEY_SOURCE });
+    }
+    if (docType != null && !LEASE_DOC_KINDS.includes(docType)) {
+      return res.status(400).json({ error: 'docType must be one of ' + LEASE_DOC_KINDS.join(', '), keySource: KEY_SOURCE });
     }
     if (!await _ownsProperty(propertyId, user.id)) {
       return res.status(403).json({ error: 'Forbidden', keySource: KEY_SOURCE });
     }
 
-    // Check if a record exists for this property+file_name to decide insert vs update
-    const existing = await sbFetch(
-      `/lease_documents?property_id=eq.${encodeURIComponent(propertyId)}&file_name=eq.${encodeURIComponent(fileName)}&select=id`,
-      { method: 'GET', headers: { 'Prefer': '' } }
-    );
+    const _migrationMissing = () => res.status(503).json({
+      error:     'lease_documents table not found — run migrations/004_lease_intelligence.sql in Supabase SQL Editor',
+      code:      'migration_missing',
+      keySource: KEY_SOURCE,
+    });
 
-    if (existing.status >= 300) {
-      if (_isMigrationMissing(existing.json)) {
-        console.error('[lease-documents] migration_missing — run migrations/004_lease_intelligence.sql');
-        return res.status(503).json({
-          error:     'lease_documents table not found — run migrations/004_lease_intelligence.sql in Supabase SQL Editor',
-          code:      'migration_missing',
-          keySource: KEY_SOURCE,
-        });
+    // The document's content fields: only what this write actually carries, so
+    // a link-only write (documentId + tenantId + docType) never blanks the text.
+    const content = {};
+    if (tenantName      !== undefined) content.tenant_name      = tenantName || null;
+    if (fileName        !== undefined) content.file_name        = fileName;
+    if (fileUrl         !== undefined) content.file_url         = fileUrl || null;
+    if (extractedText   !== undefined) content.extracted_text   = extractedText || null;
+    if (parsingStatus   !== undefined) content.parsing_status   = parsingStatus || 'pending';
+    if (extractionModel !== undefined) content.extraction_model = extractionModel || null;
+    if (usedPdfDirect   !== undefined) content.used_pdf_direct  = usedPdfDirect === true;
+    if (docType) Object.assign(content, { doc_type: docType, category: 'leases', classified_by: 'user' });
+    const wantTenant = tenantId || null;
+
+    // Find the row this write is about, and whether it may take the link.
+    let target = null;          // { id, tenant_id } of an existing row to PATCH
+    let insertId = null;        // the id a new row is inserted with (documentId path)
+    if (documentId) {
+      const found = await sbFetch(
+        `/lease_documents?id=eq.${encodeURIComponent(documentId)}&select=id,property_id,tenant_id`,
+        { method: 'GET', headers: { 'Prefer': '' } }
+      );
+      if (found.status >= 300) {
+        if (_isMigrationMissing(found.json)) return _migrationMissing();
+        return res.status(502).json({ error: 'Supabase lookup failed', detail: found.json, keySource: KEY_SOURCE });
       }
-      return res.status(502).json({ error: 'Supabase lookup failed', detail: existing.json, keySource: KEY_SOURCE });
+      const row = (Array.isArray(found.json) ? found.json : [])[0] || null;
+      if (row && String(row.property_id) !== String(propertyId)) {
+        return res.status(409).json({ error: 'Document belongs to another property', code: 'document_in_other_property', keySource: KEY_SOURCE });
+      }
+      if (row && row.tenant_id && wantTenant && String(row.tenant_id) !== String(wantTenant)) {
+        console.warn('[lease-documents] refused: document', documentId, 'is linked to another leasehold');
+        return res.status(409).json({ error: 'Document is linked to another leasehold', code: 'document_linked_elsewhere', keySource: KEY_SOURCE });
+      }
+      if (row) target = { id: row.id, tenant_id: row.tenant_id || null };
+      else {
+        if (!fileName) return res.status(400).json({ error: 'Missing fileName for a new document', keySource: KEY_SOURCE });
+        insertId = String(documentId);
+      }
+    } else {
+      const existing = await sbFetch(
+        `/lease_documents?property_id=eq.${encodeURIComponent(propertyId)}&file_name=eq.${encodeURIComponent(fileName)}&select=id,tenant_id`,
+        { method: 'GET', headers: { 'Prefer': '' } }
+      );
+      if (existing.status >= 300) {
+        if (_isMigrationMissing(existing.json)) {
+          console.error('[lease-documents] migration_missing — run migrations/004_lease_intelligence.sql');
+          return _migrationMissing();
+        }
+        return res.status(502).json({ error: 'Supabase lookup failed', detail: existing.json, keySource: KEY_SOURCE });
+      }
+      const rows = Array.isArray(existing.json) ? existing.json : [];
+      // Only the same leasehold's own same-named row is updated. An unlinked
+      // row, or another leasehold's row, is never taken over by name.
+      const own = wantTenant ? rows.find(r => r.tenant_id && String(r.tenant_id) === String(wantTenant)) : null;
+      if (own) target = { id: own.id, tenant_id: own.tenant_id };
     }
 
-    const existingRows = Array.isArray(existing.json) ? existing.json : [];
-    const payload = {
-      property_id:      propertyId,
-      tenant_id:        tenantId   || null,
-      tenant_name:      tenantName || null,
-      file_name:        fileName,
-      file_url:         fileUrl    || null,
-      extracted_text:   extractedText || null,
-      parsing_status:   parsingStatus || 'pending',
-      extraction_model: extractionModel || null,
-      used_pdf_direct:  usedPdfDirect  === true,
-    };
-
-    const existingId = existingRows.length > 0 ? existingRows[0].id : null;
-    const write = async (p) => {
-      if (existingId) {
-        // Update existing record
+    const write = async (linkTenant) => {
+      if (target) {
+        // A linked row keeps its link (the only tenant this path could name is
+        // the one it already has); an unlinked row may be linked now.
+        const p = { ...content };
+        if (!target.tenant_id && linkTenant) p.tenant_id = linkTenant;
+        if (Object.keys(p).length === 0) {
+          // Nothing to change (a replayed link to the leasehold it already has).
+          return sbFetch(`/lease_documents?id=eq.${encodeURIComponent(target.id)}&select=*`,
+            { method: 'GET', headers: { 'Prefer': '' } });
+        }
         const r = await sbFetch(
-          `/lease_documents?id=eq.${encodeURIComponent(existingId)}`,
+          `/lease_documents?id=eq.${encodeURIComponent(target.id)}&property_id=eq.${encodeURIComponent(propertyId)}`,
           { method: 'PATCH', body: JSON.stringify(p) }
         );
-        console.log('[lease-documents] PATCH', r.status, existingId);
+        console.log('[lease-documents] PATCH', r.status, target.id);
         return r;
       }
-      // Insert new record
+      const p = { ...content, property_id: propertyId, tenant_id: linkTenant || null };
+      if (insertId) p.id = insertId;
+      if (p.parsing_status === undefined) p.parsing_status = 'pending';
       const r = await sbFetch('/lease_documents', {
         method: 'POST',
         body:   JSON.stringify(p),
@@ -157,17 +231,34 @@ export default async function handler(req, res) {
       return r;
     };
 
-    let result = await write(payload);
-    let linked = !!payload.tenant_id;
+    let result = await write(wantTenant);
+    let linked = !!wantTenant;
+    // Two writes for one new documentId raced (a replayed upload): the row now
+    // exists, so this write is an update of it — the same rules, once.
+    if (result.status >= 300 && insertId && _isDuplicateKey(result.json)) {
+      const again = await sbFetch(
+        `/lease_documents?id=eq.${encodeURIComponent(insertId)}&property_id=eq.${encodeURIComponent(propertyId)}&select=id,tenant_id`,
+        { method: 'GET', headers: { 'Prefer': '' } }
+      );
+      const row = (Array.isArray(again.json) ? again.json : [])[0] || null;
+      if (!row) return res.status(409).json({ error: 'Document belongs to another property', code: 'document_in_other_property', keySource: KEY_SOURCE });
+      if (row.tenant_id && wantTenant && String(row.tenant_id) !== String(wantTenant)) {
+        return res.status(409).json({ error: 'Document is linked to another leasehold', code: 'document_linked_elsewhere', keySource: KEY_SOURCE });
+      }
+      target = { id: row.id, tenant_id: row.tenant_id || null };
+      insertId = null;
+      result = await write(wantTenant);
+    }
     // A document is never lost because its leasehold is not persisted yet (a
     // tenant held for review, a failed save): the same write is made once more
-    // with tenant_id null — the document is kept, unfiled — and the response
-    // says linked:false. Only the leasehold-link refusal is retried.
-    if (result.status >= 300 && payload.tenant_id && _isLeaseholdLinkRefused(result.json)) {
+    // without the link — the document is kept, unfiled — and the response says
+    // linked:false. Only the leasehold-link refusal is retried.
+    if (result.status >= 300 && wantTenant && _isLeaseholdLinkRefused(result.json)) {
       console.warn('[lease-documents] leasehold link refused (no such tenant in this property) — saving unlinked');
-      result = await write({ ...payload, tenant_id: null });
+      result = await write(null);
       linked = false;
     }
+    if (target && target.tenant_id) linked = true;
 
     if (result.status >= 300) {
       if (_isMigrationMissing(result.json)) {

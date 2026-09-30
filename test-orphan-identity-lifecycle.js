@@ -106,9 +106,13 @@ sec('B′. normalizeTenant mints an identity for any record that lacks one');
      /normalizeTenant\(_tenantRowToRecord\(t\)\)/.test(CODE),
      'B11 the tenants-table load path passes the stored id back in',
      'that path is the one that does NOT re-mint');
-  is(/tenantId:\s*normalized\.id\s*\|\|\s*null/.test(CODE)
-     || /tenantId:\s*norm\?\.id\s*\|\|\s*null/.test(CODE),
-     'B12 the lease-document writer sends the extraction object id, whatever it is');
+  // Step A-2: the writer sends the id of the ROW the upload became (the job
+  // id), or none while the upload is held for a leasehold decision — never an
+  // id minted on the extraction object and then discarded.
+  is(/const _linkedTenantId = _held \? null : finalEntry\.id;/.test(CODE)
+     && /tenantId:\s*_linkedTenantId\s*\|\|\s*null/.test(CODE)
+     && !/tenantId:\s*norm\?\.id\s*\|\|\s*null/.test(CODE),
+     'B12 the lease-document writer sends the tenant row\'s id (none while held), never the extraction object\'s');
 }
 
 // ── C. PREVENTION — the paths are still open ───────────────────────────────

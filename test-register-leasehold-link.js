@@ -12,7 +12,8 @@
  *      leaves the process): a link the constraint accepts is written once
  *      and reported linked:true; a link the constraint refuses is written once
  *      more with tenant_id null and reported linked:false, every other field
- *      identical, on the INSERT and the PATCH path; any OTHER error is not
+ *      identical, on the INSERT path; the PATCH path (Step A-2: only the SAME
+ *      leasehold's same-named row) never names or drops a link; any OTHER error is not
  *      retried; no tenantId means one write; auth and ownership still refuse
  *      before any write
  *   B  the bulk pipeline writes the tenant row's real id (never norm.id), the
@@ -117,12 +118,15 @@ const writesOf = (sc) => sc.calls.filter(c => c.u.includes('/rest/v1/lease_docum
       JSON.stringify(a) === JSON.stringify(b) && ws[1].method === 'POST');
   }
   {
-    const sc = scenario({ existing: [{ id: 'doc-existing' }], writes: [{ status: 409, json: FK_REFUSAL }] });
+    // Step A-2: a same-named row is updated only when it is ALREADY this
+    // leasehold's; the PATCH carries no tenant_id, so it can neither re-point
+    // nor unlink, and there is nothing for the constraint to refuse.
+    const sc = scenario({ existing: [{ id: 'doc-existing', tenant_id: 'tenant-real' }] });
     const r = await call(sc, POST_BODY);
     const ws = writesOf(sc);
-    ok('A4 the PATCH path (same property + file name) falls back the same way, on the same row',
-      r.body && r.body.linked === false && ws.length === 2 && ws.every(w => w.method === 'PATCH' && /id=eq\.doc-existing/.test(w.u))
-      && ws[1].body.tenant_id === null, JSON.stringify({ b: r.body, ws: ws.map(w => w.method + ' ' + w.u) }));
+    ok('A4 the PATCH path (the same leasehold\'s own same-named row) updates that row in place and never touches its link',
+      r.body && r.body.linked === true && ws.length === 1 && ws[0].method === 'PATCH' && /id=eq\.doc-existing/.test(ws[0].u)
+      && !('tenant_id' in ws[0].body), JSON.stringify({ b: r.body, ws: ws.map(w => w.method + ' ' + w.u) }));
   }
   {
     const sc = scenario({ writes: [{ status: 409, json: OTHER_FK }] });
@@ -164,23 +168,23 @@ const writesOf = (sc) => sc.calls.filter(c => c.u.includes('/rest/v1/lease_docum
   const pipe = stripComments(fnSource(SRC, '_runLeaseJobPipeline'));
   ok('B1 the discarded norm.id is no longer written anywhere', !/tenantId:\s*norm\?\.id/.test(SRC));
   ok('B2 the register write uses the linked tenant id', /tenantId:\s*_linkedTenantId\s*\|\|\s*null/.test(pipe));
-  ok('B3 …defined once: the matched tenant\'s id, else this job\'s (finalEntry.id)',
-    /const _linkedTenantId = \(_match && _match\.index != null\)\s*\?\s*\(tenantData\[_match\.index\] && tenantData\[_match\.index\]\.id\)\s*:\s*finalEntry\.id;/.test(pipe)
+  ok('B3 …defined once: none while the upload is held for a leasehold decision, else this job\'s (finalEntry.id)',
+    /const _linkedTenantId = _held \? null : finalEntry\.id;/.test(pipe)
     && (pipe.match(/const _linkedTenantId\b/g) || []).length === 1);
   ok('B4 …and the extraction evidence uses the SAME id (one rule, two writes)',
     /_persistExtractedEvidence\(propertyId, _linkedTenantId,/.test(pipe));
   ok('B5 finalEntry still takes id: jobId (the tenant row id is unchanged)', /id:\s+jobId,/.test(pipe));
-  ok('B6 queued when the caller passes a queue, immediate otherwise',
-    /if \(Array\.isArray\(registerQueue\)\) registerQueue\.push\(_registerWrite\);\s*else _saveLeaseRegisterWrite\(_registerWrite\);/.test(pipe));
+  ok('B6 queued when the caller passes a queue (and the row names a tenant), immediate otherwise',
+    /if \(Array\.isArray\(registerQueue\) && !_held\) registerQueue\.push\(_registerWrite\);\s*else _saveLeaseRegisterWrite\(_registerWrite\);/.test(pipe));
   const bulk = stripComments(fnSource(SRC, 'handleBulkLeases'));
-  ok('B7 handleBulkLeases passes its queue to the pipeline', /_runLeaseJobPipeline\(jobId, placeholderIdx, _registerQueue\)/.test(bulk));
-  const iResync = bulk.indexOf('await resyncTenantsToTable(property.id');
+  ok('B7 handleBulkLeases passes its queue to the pipeline', /_runLeaseJobPipeline\(jobId, _registerQueue\)/.test(bulk));
+  const iResync = bulk.indexOf('await resyncTenantsToTable(propertyId');
   const iFlush  = bulk.indexOf('await _flushLeaseRegisterWrites(_registerQueue)');
   ok('B8 …and flushes it AFTER the batch\'s tenant resync', iResync > 0 && iFlush > iResync);
   ok('B9 …in a finally, so a failed save never drops a document',
-    /try\s*\{[^]*?await saveProperty\(property\);[^]*?await resyncTenantsToTable\([^]*?\}\s*finally\s*\{\s*await _flushLeaseRegisterWrites\(_registerQueue\);\s*\}/.test(bulk));
+    /try\s*\{[^]*?await saveProperty\(target\);[^]*?await resyncTenantsToTable\([^]*?\}\s*finally\s*\{\s*await _flushLeaseRegisterWrites\(_registerQueue\);\s*\}/.test(bulk));
   ok('B10 the single-file retry keeps calling the pipeline without a queue (immediate write)',
-    /await _runLeaseJobPipeline\(jobId, i\);/.test(SRC));
+    /await _runLeaseJobPipeline\(jobId\);/.test(SRC));
   ok('B11 the pipeline is called from exactly the two places it was', (SRC.match(/await _runLeaseJobPipeline\(/g) || []).length === 2);
 
   // ── C · the queue helpers, executed ────────────────────────────────────────

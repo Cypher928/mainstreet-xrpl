@@ -6,7 +6,7 @@
  * property and MainStreet accepted it without any warning. Verifies the
  * PROPERTY_NAME_MISMATCH edge case (lease-intelligence.js) fires on both the
  * bulk drag-drop upload path (handleBulkLeases → _runLeaseJobPipeline) and the
- * single-tenant-slot upload path (handleLease), and that the mismatch warning
+ * "Add One Tenant" path (handleLease — since Step A-2 the same job pipeline), and that the mismatch warning
  * reaches the user — via the always-visible review-status pill (bulk) and the
  * AI Review Notes block (both paths) — without requiring the row to be expanded.
  *
@@ -294,32 +294,55 @@ CAM charges shall not increase more than 4% per annum.
     assert(!/different property/.test(afterNewRow),
       'STEP 3: 🔍 matching property name produces NO mismatch warning on the new row', afterNewRow.slice(0, 200));
 
-    section('STEP 4: Single-tenant-slot upload path also catches the mismatch');
+    // Step A-2: "Add One Tenant" no longer runs its own extraction into its slot
+    // (the slot index was being used as a roster index). One file is a batch of
+    // one through the same job pipeline — so the mismatch detection is the
+    // pipeline's, the result is listed with every other upload, and a lease for
+    // a leasehold that already exists is HELD for a person, never added twice.
+    section('STEP 4: Add One Tenant goes through the same pipeline — mismatch caught, duplicates held');
     await page.evaluate(() => { if (typeof switchLeaseTab === 'function') switchLeaseTab('single'); });
     await page.waitForSelector('#tb-0', { timeout: 5000 });
 
     await page.unroute('**/api/claude');
     await page.route('**/api/claude', route => {
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_CLAUDE_MISMATCH) });
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_CLAUDE_MISMATCH, tenant_name: 'Lakeview Orthodontics' }) });
     });
-
     await page.setInputFiles('#tb-0 input[type="file"]', {
       name: 'lakeview-plaza-lease-single.txt',
       mimeType: 'text/plain',
+      buffer: Buffer.from(LEASE_TEXT_MISMATCH.replace(/Lakeview Dental Group/g, 'Lakeview Orthodontics'), 'utf-8'),
+    });
+    await page.waitForFunction(() => document.getElementById('bulkResults').innerText.includes('Lakeview Orthodontics'), null, { timeout: 45000 }).catch(() => {});
+    await page.waitForTimeout(800);
+
+    const singleHtml = await page.$eval('#bulkResults', el => el.innerHTML).catch(() => '');
+    assert(singleHtml.includes('Lakeview Orthodontics'), 'STEP 4: the Add One Tenant upload was extracted and listed with the other uploads', singleHtml.length + ' chars');
+    const afterSingle = singleHtml.split('Lakeview Orthodontics').pop();
+    assert(/Confirm this lease belongs to the current property|different property/.test(afterSingle),
+      'STEP 4: the Add One Tenant upload surfaces the property-mismatch warning (same pipeline as bulk)');
+    const slotHtml = await page.$eval('#tb-0', el => el.innerHTML).catch(() => '');
+    assert(!slotHtml.includes('Lakeview') && /type="file"/.test(slotHtml), 'STEP 4: the slot is only an upload control — nothing is written into it, or into the roster at its index');
+
+    // The same lease again, for the leasehold that now exists: a proposal, not a duplicate.
+    await page.unroute('**/api/claude');
+    await page.route('**/api/claude', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_CLAUDE_MISMATCH) });
+    });
+    await page.evaluate(() => { if (typeof switchLeaseTab === 'function') switchLeaseTab('single'); });
+    await page.waitForSelector('#tb-0 input[type="file"]', { timeout: 5000 });
+    await page.setInputFiles('#tb-0 input[type="file"]', {
+      name: 'lakeview-plaza-lease-again.txt',
+      mimeType: 'text/plain',
       buffer: Buffer.from(LEASE_TEXT_MISMATCH, 'utf-8'),
     });
-
-    await page.waitForFunction(() => {
-      const el = document.getElementById('tb-0');
-      return el && el.innerText.includes('Lakeview Dental');
-    }, null, { timeout: 45000 }).catch(() => {});
-    await page.waitForTimeout(500);
-
-    const singleSlotHtml = await page.$eval('#tb-0', el => el.innerHTML).catch(() => '');
-    assert(singleSlotHtml.includes('Lakeview Dental'), 'STEP 4: single-slot upload extracted the mismatched lease', singleSlotHtml.length + ' chars');
-    assert(singleSlotHtml.includes('AI Review Notes'), 'STEP 4: single-slot path now renders the AI Review Notes block (previously absent)');
-    assert(singleSlotHtml.includes('Confirm this lease belongs to the current property') || singleSlotHtml.includes('different property'),
-      'STEP 4: single-slot upload surfaces the property-mismatch warning');
+    await page.waitForFunction(() => { const h = document.getElementById('heldLeaseUploads'); return !!h && h.innerText.includes('Lakeview Dental Group'); }, null, { timeout: 45000 }).catch(() => {});
+    const held = await page.evaluate(() => ({
+      card:  (document.getElementById('heldLeaseUploads') || {}).innerText || '',
+      dupes: (currentProperty()?.tenants || []).filter(t => t && t.tenant_name === 'Lakeview Dental Group').length,
+      held:  (currentProperty()?.pendingLeaseUploads || []).length,
+    }));
+    assert(/needs? a leasehold decision/.test(held.card) && held.held === 1, 'STEP 4: a second lease for Lakeview Dental Group is HELD for a leasehold decision', JSON.stringify(held).slice(0, 200));
+    assert(held.dupes === 1, 'STEP 4: …and the roster still has exactly one Lakeview Dental Group', String(held.dupes));
 
     section('STEP 5: Mismatched tenant is excluded from CAM allocation and rollups');
     // At this point currentProperty().tenants holds: "Lakeview Dental Group" (mismatch,

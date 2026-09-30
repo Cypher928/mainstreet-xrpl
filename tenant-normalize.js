@@ -191,6 +191,11 @@
       base_rent:           d.base_rent           ?? null,
       security_deposit:    d.security_deposit    ?? null,
       amendments:          Array.isArray(d.amendments) ? d.amendments : [],
+      // ALLOW-LIST (Step A-2). The register row of the lease this leasehold was
+      // created from — the document's own durable id, which is how a later
+      // confirmation links it (never by file name). Dropped on load, it could
+      // never be linked after a reload.
+      leaseDocumentId:     d.leaseDocumentId     ?? null,
       // ALLOW-LIST, SAME REASON AGAIN. A vacant space is a row on this array
       // with `vacant: true` — it keeps its suite and area so the space exists
       // whether or not anyone occupies it (Property Workspace V2, decision 4:

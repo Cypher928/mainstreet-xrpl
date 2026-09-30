@@ -3442,105 +3442,29 @@ function renderTenantUploadZone(i) {
   body.appendChild(zone);
 }
 
+// "Add One Tenant" (Step A-2). This used to run its own extraction and write
+// `tenantData[i]` — but `i` is the upload SLOT (0, 1 or 2 on the tab), and
+// tenantData is the property's whole roster: the first three rows ARE its
+// first three leaseholds. Uploading into "Tenant 1" nulled and then replaced
+// whichever leasehold sat at index 0, and the save that followed wrote the
+// roster without it. It also matched nobody, so a lease for an existing
+// leasehold became a second one, and it wrote into whatever property was on
+// screen when the extraction returned.
+//
+// One file is a batch of one. It goes through the same job pipeline as the
+// bulk upload — scoped to its own property, located by its job id, and held
+// for a person's decision when it may belong to a leasehold that exists — and
+// the slot index touches nothing but the slot's own spinner.
 async function handleLease(i, file) {
   console.log('[handleLease] dropped:', file.name, `(${(file.size/1024).toFixed(1)} KB)`);
-  const body = document.getElementById(`tb-${i}`);
-  body.innerHTML = `<div class="spinner-wrap">
-    <div class="spinner"></div>
-    <div class="spinner-label">AI reading lease…</div>
-  </div>`;
-
   const property = currentProperty();
   if (!property) { renderTenantError(i, 'No property selected'); return; }
-
-  // Only clear this slot — preserve other tenants already uploaded
-  tenantData[i] = null;
-
+  // The slot goes back to its upload zone; the result is shown where every
+  // lease upload's result is — the intake list on the bulk tab.
+  try { renderTenantUploadZone(i); } catch (_) {}
+  try { switchLeaseTab('bulk'); } catch (_) {}
   try {
-    // Ensure property has a DB id so the storage path is valid
-    if (!property.id) await saveProperty(property);
-
-    // Upload to storage and extract text in parallel — neither depends on the other
-    const [leaseUrl, leaseText] = await Promise.all([
-      uploadLeaseToStorage(file, property.id),
-      extractLeaseText(file),
-    ]);
-
-    // Digital PDF: text layer extracted — send text to Claude
-    // Scanned PDF: leaseText is null/short — send PDF bytes directly (vision)
-    let extracted;
-    let _visionTextPromise = null;
-    const _usedPdfDirect = !(leaseText && leaseText.length >= 50);
-    if (!_usedPdfDirect) {
-      // Telemetry: the text path — the majority case we want to confirm.
-      const _tt = window.LeaseIngest ? window.LeaseIngest.begin(file.size) : null;
-      if (_tt) window.LeaseIngest.mark(_tt, { path: window.LeaseIngest.PATHS.TEXT, payloadBytes: leaseText.length });
-      try {
-        extracted = await callClaudeForLease(leaseText, file.name);
-        if (_tt) { window.LeaseIngest.end(_tt, 'success'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
-      } catch (e) {
-        if (_tt) { window.LeaseIngest.end(_tt, 'failure', 'text-extraction-failed'); _recordIngestTelemetry(window.LeaseIngest.summary(_tt)); }
-        throw e;
-      }
-    } else {
-      // Start text extraction concurrently with field extraction — both need the
-      // same file but neither depends on the other's result.
-      _visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
-        console.warn('[extractTextFromPdfDirect:single] failed:', e?.message);
-        return null;
-      });
-      extracted = await callClaudeWithPdfDirect(file);
-    }
-
-    if (!extracted) throw new Error('Could not extract lease fields');
-    // A fresh extraction is where a tenant becomes new, so this is one of the
-    // few places allowed to create an identity. See mintTenantIdentity().
-    const normalized = mintTenantIdentity(normalizeTenant(extracted));
-    if (!isValidTenant(normalized)) throw new Error('Extracted tenant has no usable fields');
-
-    // Phase 19: edge case detection — mirrors the bulk upload pipeline (_runLeaseJobPipeline)
-    // so single-lease uploads also catch property-name mismatches and other extraction risks.
-    if (window.LeaseIntelligence) {
-      const _liCtx = {
-        ocrChars: (!_usedPdfDirect && leaseText) ? leaseText.length : 0,
-        usedPdfDirect: _usedPdfDirect,
-        ocrText: (!_usedPdfDirect && leaseText) ? leaseText.slice(0, 500) : null,
-        currentPropertyName: property.name || null,
-      };
-      normalized._edgeCases = window.LeaseIntelligence.detectLeaseEdgeCases(normalized, _liCtx);
-      normalized._explainability = window.LeaseIntelligence.generateLeaseExplainability(normalized);
-    }
-
-    tenantData[i] = { ...normalized, leaseFile: file, leaseExpected: true, fileName: file.name, leaseUrl };
-    storeLeaseFile(normalized.id, file);
-    renderTenantFields(i);
-    checkSqftValidation();
-
-    const deduped = dedupeTenants(tenantData.filter(t => t !== null));
-    property.tenants = deduped;
-
-    await saveProperty(property);
-    // Full resync ONCE after save — replaces any stale rows for this property
-    await resyncTenantsToTable(property.id, deduped);
-
-    // Phase 22A/22C: persist lease document record.
-    // For vision-path leases, await the text extraction promise started earlier.
-    // UI is already updated (renderTenantFields ran above) so this wait is invisible.
-    const _extractedText = _usedPdfDirect
-      ? (await _visionTextPromise)
-      : leaseText;
-    saveLeaseDocument({
-      propertyId:      property.id,
-      tenantId:        normalized.id || null,
-      tenantName:      normalized.tenant_name || null,
-      fileName:        file.name,
-      fileUrl:         leaseUrl,
-      extractedText:   _extractedText,
-      parsingStatus:   'success',
-      // The model that ran, not a literal. See normalizeExtractedTenant().
-      extractionModel: normalized._extractionModel ?? null,
-      usedPdfDirect:   _usedPdfDirect,
-    }).catch(e => console.warn('[saveLeaseDocument:single] failed:', e?.message));
+    await handleBulkLeases([file]);
   } catch (err) {
     renderTenantError(i, err.message);
   }
@@ -4917,12 +4841,18 @@ function mergeTenantsDedup(existing, incoming) {
 }
 
 function dedupeTenants(arr) {
-  // Key: fileName wins — same physical file uploaded twice = one entry.
+  // Key: the leasehold's id (Step A-2). This keyed on fileName first — "the
+  // same physical file uploaded twice = one entry" — but a file name is not an
+  // identity: two leaseholds whose leases are both "Lease.pdf" collapsed into
+  // one, and the second leasehold was dropped from the roster the batch saved.
+  // Every row carries an id (the job id, or the leasehold's own), and a second
+  // upload of the same lease is now a held proposal against the first, so the
+  // id is the only key that cannot merge two leaseholds.
   // Different files with the same tenant name = KEPT SEPARATE (e.g. two ShopRite spaces).
-  // Entries with no name or file fall back to their stable id.
+  // Entries with no id fall back to their file, then their name.
   const map = new Map();
   for (const t of arr) {
-    const key = t.fileName || t.id || (t.tenant_name || '').toLowerCase().trim() || String(map.size);
+    const key = t.id || t.fileName || (t.tenant_name || '').toLowerCase().trim() || String(map.size);
     if (!map.has(key)) {
       map.set(key, t);
     } else {
@@ -5153,11 +5083,15 @@ function failLeaseJob(jobId, err, stage) {
 }
 
 // Returns true if the tenant row requires manual review before Supabase persistence.
-function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId }) {
+// `hold` (Step A-2): the upload is held for a leasehold decision, so the job is
+// not complete whatever its confidence — review_required / manual_review until
+// a person decides (resolveHeldLeaseUpload closes it).
+function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId, hold }) {
   const needsReview = conf.level === 'low' || conf.level === 'failed';
+  const waits = needsReview || hold === true;
   updateLeaseJob(jobId, {
-    status:                  needsReview ? 'review_required' : 'completed',
-    stage:                   needsReview ? 'manual_review'   : 'completed',
+    status:                  waits ? 'review_required' : 'completed',
+    stage:                   waits ? 'manual_review'   : 'completed',
     progress:                100,
     tenant_id:               tenantId,
     confidence_level:        conf.level,
@@ -5192,12 +5126,16 @@ async function retryLeaseJob(jobId) {
   const job = _leaseJobs.get(jobId);
   if (!job?._file) {
     console.warn('[retryLeaseJob] file not in memory for job:', jobId, '— falling back to file picker');
-    const i = tenantData.findIndex(t => t.id === jobId);
+    const i = tenantData.findIndex(t => t && t.id === jobId);
     if (i !== -1) retryUploadForSlot(i);
     return;
   }
-  const i = tenantData.findIndex(t => t.id === jobId);
-  if (i === -1) { console.warn('[retryLeaseJob] tenantData entry not found for job:', jobId); return; }
+  // Step A-2: the retry belongs to the job's own property, and its row is
+  // found by the job's id — there is no index to go stale.
+  const propertyId = job.property_id;
+  const _r = _leaseJobRoster(propertyId);
+  const i = _leaseJobRowIndex(_r.rows, jobId);
+  if (i === -1) { console.warn('[retryLeaseJob] roster entry not found for job:', jobId); return; }
 
   updateLeaseJob(jobId, {
     status:                  'processing',
@@ -5213,8 +5151,8 @@ async function retryLeaseJob(jobId) {
   });
   job._startMs = Date.now();
 
-  tenantData[i] = {
-    ...tenantData[i],
+  _putLeaseJobRow(propertyId, jobId, {
+    ..._r.rows[i],
     status:             'pending',
     extractionFailed:   false,
     _showRetry:         false,
@@ -5226,25 +5164,32 @@ async function retryLeaseJob(jobId) {
     _pendingJobReview:  false,
     id:                 jobId,
     _jobId:             jobId,
-  };
+  });
+  if (activePropId === propertyId) renderBulkResults();
 
-  const prop = currentProperty();
-  if (prop) prop.tenants = [...tenantData];
-  renderBulkResults();
+  await _runLeaseJobPipeline(jobId);
 
-  await _runLeaseJobPipeline(jobId, i);
-
-  if (prop) prop.tenants = [...tenantData];
-  renderBulkResults();
-  // Same reason as handleBulkLeases: a retry runs the pipeline, which can change
-  // which tenant ids exist, and the Spaces buttons carry those ids.
-  try {
-    if (prop && window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
-  } catch (e) { console.warn('[retryLeaseJob] spaces list refresh skipped:', e && e.message); }
+  const prop = _leaseJobProperty(propertyId);
+  // A retry that ends HELD (the re-read found a candidate leasehold) has left
+  // the roster for property.pendingLeaseUploads — saved now, so the decision
+  // it waits for survives a reload.
+  if (prop && _heldLeaseUploads(prop).some(h => h && h.id === jobId)) {
+    if (activePropId === propertyId) prop.tenants = tenantData.filter(t => t !== null);
+    try { await saveProperty(prop); } catch (e) { console.warn('[retryLeaseJob] save failed:', e && e.message); }
+  }
+  if (activePropId === propertyId) {
+    renderBulkResults();
+    // Same reason as handleBulkLeases: a retry runs the pipeline, which can change
+    // which tenant ids exist, and the Spaces buttons carry those ids.
+    try {
+      if (prop && window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop);
+    } catch (e) { console.warn('[retryLeaseJob] spaces list refresh skipped:', e && e.message); }
+  }
 }
 
 // Core extraction pipeline — extracted from processFile so retryLeaseJob can also call it.
-// Writes tenantData[placeholderIdx] on completion (success or failure).
+// Writes the job's own row (found by its id, in its own property) on completion,
+// or holds the upload for a leasehold decision (Step A-2).
 // Ghost-row protection: sets _pendingJobReview=true for low/failed confidence.
 
 
@@ -5252,91 +5197,39 @@ async function retryLeaseJob(jobId) {
 // normalized evidence table. Fail-silent and non-blocking: evidence is
 // supporting material, and losing it must never fail an upload. The JSON blob
 // remains the fallback the Evidence Viewer reads from in-session.
-function _persistExtractedEvidence(propId, tenantId, fieldEvidence) {
+// `lineage` (Step A-2, columns from migration 027): the register row the quote
+// was read from (sourceDocumentId), the upload it came in on (extractionId,
+// when the snapshot has none) and, for a document attached to an existing
+// leasehold, the amendment record it produced (amendmentId).
+function _persistExtractedEvidence(propId, tenantId, fieldEvidence, lineage) {
   if (!propId || !tenantId || !fieldEvidence) return 0;
   var written = 0;
+  var lin = lineage || {};
   Object.keys(fieldEvidence).forEach(function (fieldKey) {
     var snaps = fieldEvidence[fieldKey] && fieldEvidence[fieldKey].snapshots;
     if (!Array.isArray(snaps) || !snaps.length) return;
     var latest = snaps[snaps.length - 1];
     if (!latest || (!latest.quote && latest.page == null)) return;  // nothing citable
-    try { _writeTenantFieldEvidence(propId, tenantId, fieldKey, latest); written++; }
+    var snap = latest;
+    if (lin.sourceDocumentId || lin.amendmentId || lin.extractionId) {
+      snap = Object.assign({}, latest);
+      if (lin.sourceDocumentId) snap.sourceDocumentId = lin.sourceDocumentId;
+      if (lin.amendmentId)      snap.amendmentId      = lin.amendmentId;
+      if (lin.extractionId && snap.extractionId == null) snap.extractionId = lin.extractionId;
+    }
+    try { _writeTenantFieldEvidence(propId, tenantId, fieldKey, snap); written++; }
     catch (e) { console.warn('[evidence] ' + fieldKey + ' not written:', e && e.message); }
   });
   if (written) console.log('[evidence] persisted ' + written + ' extracted snapshot(s) — pending review');
   return written;
 }
 
-// ─── Tenant matching for lease uploads ───────────────────────────────────────
-// An upload used to append a new tenant unconditionally, so re-uploading a
-// lease for an existing tenant produced a duplicate — the lease landed on a
-// record nothing else pointed at, and surfaces keyed to the original tenant
-// reported no lease on file.
-//
-// Order is deliberate. A suite holds one tenant at a time, which makes it the
-// strongest signal in commercial property; a legal name ("Whole Health Market,
-// Inc") routinely differs from the display name ("Whole Health Market"), so it
-// is the fallback. Anything ambiguous is never merged automatically: a wrong
-// merge silently corrupts CAM allocation across two real tenants and is far
-// worse than a visible duplicate.
-
-const _TENANT_SUFFIXES = /\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|lp|llp|plc|gmbh|pllc)\b/g;
-
-function _normalizeTenantName(name) {
-  return String(name || '')
-    .toLowerCase()
-    // Periods are dropped, not spaced: "L.L.C." must become "llc" so the suffix
-    // pattern can see it. Spacing them yields "l l c", which matches nothing.
-    .replace(/\./g, '')
-    .replace(/[,'’`"()]/g, ' ')
-    .replace(/&/g, ' and ')
-    .replace(_TENANT_SUFFIXES, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function _normalizeSuite(suite) {
-  return String(suite || '')
-    .toLowerCase()
-    .replace(/\b(suite|ste|unit|space|no|#)\b/g, ' ')
-    .replace(/[^a-z0-9]/g, '')
-    .trim();
-}
-
-/**
- * Finds the existing tenant an uploaded lease belongs to.
- * Returns { index, basis } for a confident match, { ambiguous, candidates } when
- * more than one tenant fits, or null when it is genuinely a new tenant.
- * `skipIdx` is the upload's own placeholder, which must never match itself.
- */
-function findTenantMatch(tenants, incoming, skipIdx) {
-  // D7 (Step A-1, migration 037): an ENDED leasehold is never matched by an
-  // upload. It is history; a new document for the same suite or name belongs to
-  // a current leasehold or a new one, never silently to the one that ended.
-  const list = (tenants || []).map((t, i) => ({ t, i }))
-    .filter(({ t, i }) => t && i !== skipIdx && !t.leaseExpected && (t.tenant_name || t.unitNumber || t.suite) &&
-      window.LeaseholdStatus.isCurrent(t));
-  if (!list.length) return null;
-
-  // 1 — suite/unit within the property.
-  const suite = _normalizeSuite(incoming?.suite || incoming?.unitNumber);
-  if (suite) {
-    const hits = list.filter(({ t }) => _normalizeSuite(t.suite || t.unitNumber) === suite);
-    if (hits.length === 1) return { index: hits[0].i, basis: 'suite' };
-    if (hits.length > 1)   return { ambiguous: true, basis: 'suite', candidates: hits.map(h => h.i) };
-  }
-
-  // 2 — normalized tenant name.
-  const name = _normalizeTenantName(incoming?.tenant_name);
-  if (name) {
-    const hits = list.filter(({ t }) => _normalizeTenantName(t.tenant_name) === name);
-    if (hits.length === 1) return { index: hits[0].i, basis: 'name' };
-    if (hits.length > 1)   return { ambiguous: true, basis: 'name', candidates: hits.map(h => h.i) };
-  }
-
-  return null;
-}
+// ─── Which leasehold an upload is for ────────────────────────────────────────
+// findTenantMatch lived here. It merged a unique suite or name match straight
+// into the existing tenant and returned; the decision is now a person's, and
+// the rule that finds the candidates is lease-upload-identity.js
+// (LeaseUploadIdentity.candidates), which _runLeaseJobPipeline consults. Its
+// normalisation of suites and names is the same, moved there whole.
 
 // ─── The register row a lease upload produced, written after its tenant ──────
 //
@@ -5366,6 +5259,7 @@ async function _saveLeaseRegisterWrite(w) {
   try { extractedText = await w.extractedText; } catch (_) { extractedText = null; }
   return saveLeaseDocument({
     propertyId:      w.propertyId,
+    documentId:      w.documentId,
     tenantId:        w.tenantId,
     tenantName:      w.tenantName,
     fileName:        w.fileName,
@@ -5383,13 +5277,160 @@ async function _flushLeaseRegisterWrites(queue) {
   return pending.length;
 }
 
-async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
+// ─── Step A-2: a lease job writes to its own property, by its own id ─────────
+//
+// A lease job belongs to the property it was created for (job.property_id).
+// Every write it makes lands there — never in "whatever property is on screen
+// when the extraction returns". And a job's row is found by the job's id,
+// never by an index remembered from before an await: with two files in flight,
+// one row moving (the old matcher spliced its placeholder out) shifted the
+// other's index, so the second file overwrote a neighbour; and after the user
+// opened another property, the pipeline wrote into THAT property's buffer and
+// handleBulkLeases then saved it as the first property's tenants.
+
+function _leaseJobProperty(propertyId, fallback) {
+  return (typeof _props !== 'undefined' ? _props : []).find(p => p && p.id === propertyId) || fallback || null;
+}
+
+/**
+ * The roster a job writes to. The live working buffer (tenantData) when the
+ * job's property is the one on screen — kept in step with the record — and the
+ * property record itself otherwise.
+ */
+function _leaseJobRoster(propertyId, fallback) {
+  const prop = _leaseJobProperty(propertyId, fallback);
+  if (propertyId && activePropId === propertyId) return { prop, rows: tenantData, live: true };
+  if (prop && !Array.isArray(prop.tenants)) prop.tenants = [];
+  return { prop, rows: prop ? prop.tenants : [], live: false };
+}
+
+function _leaseJobRowIndex(rows, jobId) {
+  return (rows || []).findIndex(t => t && t.id === jobId);
+}
+
+/** Put the job's row in its own property's roster — replacing the job's row, never another. */
+function _putLeaseJobRow(propertyId, jobId, row, fallback) {
+  const r = _leaseJobRoster(propertyId, fallback);
+  const i = _leaseJobRowIndex(r.rows, jobId);
+  if (i === -1) r.rows.push(row); else r.rows[i] = row;
+  if (r.live && r.prop) r.prop.tenants = [...tenantData];
+  return r;
+}
+
+function _dropLeaseJobRow(propertyId, jobId, fallback) {
+  const r = _leaseJobRoster(propertyId, fallback);
+  const i = _leaseJobRowIndex(r.rows, jobId);
+  if (i !== -1) r.rows.splice(i, 1);
+  if (r.live && r.prop) r.prop.tenants = [...tenantData];
+  return r;
+}
+
+// ─── Held lease uploads (Step A-2) ───────────────────────────────────────────
+//
+// An upload that MAY belong to an existing leasehold waits here for a person:
+// property.pendingLeaseUploads, persisted in properties.data beside tenants[]
+// and never inside it. Nothing that reads a roster — CAM, occupancy, the
+// Spaces list, resyncTenantsToTable — reads this list, so a held upload is in
+// no roster until someone decides. It survives a reload because it is saved
+// with the property; the decision (resolveHeldLeaseUpload) removes it.
+//
+// Ids decided in this session are remembered so an older copy loaded later (a
+// local snapshot, a load racing the decision's save) cannot bring one back.
+const _resolvedHeldUploads = new Set();
+
+function _heldLeaseUploads(prop) {
+  if (!prop) return [];
+  if (!Array.isArray(prop.pendingLeaseUploads)) prop.pendingLeaseUploads = [];
+  return prop.pendingLeaseUploads;
+}
+
+/** Has this held upload already been decided in the record itself? (a replayed decision, an older copy) */
+function _heldUploadSettled(prop, heldId) {
+  if (!heldId) return false;
+  if (_resolvedHeldUploads.has(heldId)) return true;
+  return ((prop && prop.tenants) || []).some(t => t && (t.id === heldId ||
+    (Array.isArray(t.amendments) && t.amendments.some(a => a && a.amendmentId === heldId))));
+}
+
+/** Union of two held lists by id, the live copy first, without anything already decided. */
+function _mergeHeldLeaseUploads(live, loaded, prop) {
+  const out = [], seen = new Set();
+  [...(Array.isArray(live) ? live : []), ...(Array.isArray(loaded) ? loaded : [])].forEach(h => {
+    if (!h || !h.id || seen.has(h.id) || _heldUploadSettled(prop, h.id)) return;
+    seen.add(h.id); out.push(h);
+  });
+  return out;
+}
+
+function _holdLeaseUpload(propertyId, held) {
+  const prop = _leaseJobProperty(propertyId);
+  if (!prop) {
+    // Never silently: the document is in the register (unlinked) and the job
+    // stays review_required, but there is no record to hold the decision on.
+    logError('lease_upload_hold', new Error('property not loaded — held upload not recorded'), { propId: propertyId, jobId: held && held.jobId });
+    return null;
+  }
+  const list = _heldLeaseUploads(prop);
+  const i = list.findIndex(h => h && h.id === held.id);
+  if (i === -1) list.push(held); else list[i] = held;
+  return held;
+}
+
+/** The extraction a held upload carries: the row it would become, minus what cannot be stored. */
+function _heldExtract(entry) {
+  const out = { ...(entry || {}) };
+  delete out.leaseFile;
+  delete out.rawText;
+  return out;
+}
+
+/**
+ * D2 — a vacancy row is a space, not a leasehold identity. When a genuinely new
+ * lease is recorded for a suite the property holds as vacant, the new leasehold
+ * keeps its own new id and the vacancy row is retired from the roster (it would
+ * otherwise count the same area as vacant and leased at once). The retirement
+ * is written to the property timeline with the suite and area it held.
+ */
+function _retireVacanciesFor(propertyId, entry, newId) {
+  // Only a leasehold retires a vacancy: a failed extraction (no tenant read)
+  // is not persisted and may be discarded, and must not take the space with it.
+  if (!entry || entry.extractionFailed || !entry.tenant_name) return [];
+  const LUI = window.LeaseUploadIdentity;
+  const r = _leaseJobRoster(propertyId);
+  const ids = LUI ? LUI.vacanciesFor(r.rows, entry) : [];
+  if (!ids.length) return [];
+  const retired = [];
+  ids.forEach(id => {
+    const i = r.rows.findIndex(t => t && t.id === id && t.vacant === true);
+    if (i === -1) return;
+    retired.push(r.rows[i]);
+    r.rows.splice(i, 1);
+  });
+  if (r.live && r.prop) r.prop.tenants = [...tenantData];
+  if (r.prop && retired.length) {
+    retired.forEach(v => {
+      try {
+        appendPropertyTimelineEventOnce(r.prop, 'vacancy-filled:' + v.id + ':' + newId, {
+          type: 'vacancy_filled', severity: 'info', actor: 'User',
+          title: `Suite ${v.suite || v.unitNumber || ''} — vacancy filled by a new lease`,
+          description: `The vacancy record (${v.leased_sqft || '—'} sqft) was replaced by the new leasehold for ${entry.tenant_name || 'the uploaded lease'}.`,
+          metadata: { vacancyId: v.id, leaseholdId: newId, suite: v.suite || v.unitNumber || null, sqft: v.leased_sqft ?? null },
+        });
+      } catch (_) {}
+    });
+  }
+  return retired.map(v => v.id);
+}
+
+// The job's row is found by the job's id in the job's own property
+// (job.property_id) — there is no placeholder index. See _leaseJobRoster.
+async function _runLeaseJobPipeline(jobId, registerQueue) {
   const job = _leaseJobs.get(jobId);
   if (!job) { console.error('[_runLeaseJobPipeline] job not found:', jobId); return; }
   const file       = job._file;
   const propertyId = job.property_id;
   const _startMs   = job._startMs || Date.now();
-  console.warn('[PIPELINE:diag] entry | file:', file instanceof File, '| name:', file?.name, '| size:', file?.size, '| retry_count:', job.retry_count ?? 0, '| placeholderIdx:', placeholderIdx);
+  console.warn('[PIPELINE:diag] entry | file:', file instanceof File, '| name:', file?.name, '| size:', file?.size, '| retry_count:', job.retry_count ?? 0, '| property:', propertyId);
 
   updateLeaseJob(jobId, {
     status:                'processing',
@@ -5609,35 +5650,59 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
       _modelRouting:        norm?._modelRouting       ?? null,
     };
 
-    // Link to an existing tenant rather than appending a duplicate. The existing
-    // record's id is preserved so everything already pointing at it — spaces,
-    // timeline events, disputes, reconciliation results — stays attached.
-    const _match = findTenantMatch(tenantData, finalEntry, placeholderIdx);
-    if (_match && _match.index != null) {
-      const _existing = tenantData[_match.index];
-      tenantData[_match.index] = {
-        ...(_existing || {}), ...finalEntry,
-        id:     _existing?.id     || finalEntry.id,
-        _jobId: finalEntry._jobId,
-        _linkedBy: _match.basis,
-      };
-      tenantData.splice(placeholderIdx, 1);   // drop the placeholder
-      console.log(`[tenantMatch] linked "${finalEntry.tenant_name}" to existing tenant by ${_match.basis}`);
-    } else if (_match && _match.ambiguous) {
-      // Two or more tenants fit. Never guess — keep it separate and flag it.
-      finalEntry._needsTenantConfirm = { basis: _match.basis, candidates: _match.candidates };
-      tenantData[placeholderIdx] = finalEntry;
-      console.warn(`[tenantMatch] ambiguous by ${_match.basis} — left unlinked for confirmation`);
+    // ── Stage: Identity (Step A-2) ───────────────────────────────────────────
+    // WHICH LEASEHOLD IS THIS DOCUMENT FOR? Only a person may say it belongs to
+    // one that exists. This used to merge a unique suite or name match straight
+    // into the existing tenant — `{ ...existing, ...upload }`, the upload's
+    // nulls and its own lease URL over the leasehold's — and it matched a
+    // vacancy row by suite and kept the vacancy's id. Now:
+    //   · any eligible candidate (LeaseUploadIdentity.candidates — unique or
+    //     not, with a lease or without, never an ENDED leasehold, never a
+    //     vacancy) → the upload is HELD. It is not a roster row; its evidence
+    //     is not written against anyone; its register row exists, unlinked,
+    //     under its own document id; a person decides (resolveHeldLeaseUpload).
+    //   · no candidate → a genuinely new leasehold with this job's id, through
+    //     the existing review gate, exactly as before. A vacancy on its suite
+    //     is retired: it was a space, not a leasehold, and never lends its id.
+    const _LUI = window.LeaseUploadIdentity;
+    if (!_LUI) throw new Error('LeaseUploadIdentity is not loaded (lease-upload-identity.js must load before script.js)');
+    // The document's own durable id — the one identity the register row, the
+    // held decision and every later link use. Kept on the job, so a retry of
+    // the same upload writes the same row rather than a second one.
+    const documentId = job._documentId || (job._documentId = crypto.randomUUID());
+    finalEntry.leaseDocumentId = documentId;
+
+    const _roster     = _leaseJobRoster(propertyId);
+    const _candidates = _LUI.candidates(_roster.rows, finalEntry, { excludeId: jobId });
+    const _held       = _candidates.length > 0;
+
+    if (_held) {
+      _dropLeaseJobRow(propertyId, jobId);
+      _holdLeaseUpload(propertyId, {
+        id:         jobId,
+        jobId:      jobId,
+        propertyId: propertyId,
+        documentId: documentId,
+        fileName:   file.name,
+        leaseUrl:   leaseUrl || null,
+        createdAt:  new Date().toISOString(),
+        extracted:  _heldExtract(finalEntry),
+        candidates: _candidates.map(c => {
+          const t = _roster.rows.find(r => r && r.id === c.id);
+          return { ...c, proposedKind: _LUI.proposeKind(t, finalEntry) };
+        }),
+        vacancies:  _LUI.vacanciesFor(_roster.rows, finalEntry),
+        decision:   null,
+      });
+      console.log(`[leaseIdentity] "${finalEntry.tenant_name}" held for a leasehold decision — ${_candidates.length} candidate(s): ${_candidates.map(c => c.basis).join(', ')}`);
     } else {
-      tenantData[placeholderIdx] = finalEntry;
+      _putLeaseJobRow(propertyId, jobId, finalEntry);
+      _retireVacanciesFor(propertyId, finalEntry, jobId);
     }
 
-    // The id the tenant row for this upload actually has: the existing tenant's
-    // when the upload was matched to one, otherwise this job's (finalEntry.id).
-    // The evidence below and the register row are both written against it.
-    const _linkedTenantId = (_match && _match.index != null)
-      ? (tenantData[_match.index] && tenantData[_match.index].id)
-      : finalEntry.id;
+    // The id the tenant row for this upload has — this job's own — or none
+    // while the upload is held. The evidence and the register link follow it.
+    const _linkedTenantId = _held ? null : finalEntry.id;
 
     // Persist the evidence the extraction produced. The normalizer already
     // builds complete snapshots from the model's `quotes` — verbatim clause,
@@ -5649,9 +5714,19 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
     // These are deliberately NOT approved. A citation becomes available
     // immediately, carrying its own pending-review state, so the viewer can show
     // the clause while making clear no one has confirmed it yet.
-    try {
-      _persistExtractedEvidence(propertyId, _linkedTenantId, finalEntry.fieldEvidence);
-    } catch (e) { console.warn('[evidence] extraction snapshots not persisted:', e && e.message); }
+    //
+    // A HELD upload writes none: evidence against a leasehold before a person
+    // said the document is that leasehold's would be the silent attach this
+    // stage exists to stop. It travels on the held record and is written when
+    // the decision is made, against the leasehold the person chose.
+    if (!_held) {
+      try {
+        // No source_document_id here: the register row is written after the
+        // batch (it names the tenant row, which must exist first), and the
+        // lineage column is a foreign key to it.
+        _persistExtractedEvidence(propertyId, _linkedTenantId, finalEntry.fieldEvidence);
+      } catch (e) { console.warn('[evidence] extraction snapshots not persisted:', e && e.message); }
+    }
     storeLeaseFile(jobId, file);
 
     _leaseDebug.set(jobId, {
@@ -5672,15 +5747,19 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
     if (status === 'failed') {
       failLeaseJob(jobId, { message: finalEntry._error || 'Extraction failed' }, 'extraction');
     } else {
-      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: null });
+      finalizeLeaseJob(jobId, { norm, conf: _conf, meta: _meta, tenantId: null, hold: _held });
     }
 
-    // Phase 22A/22C: persist lease document record — against the tenant row's
-    // REAL id (see _saveLeaseRegisterWrite), and, when the caller queues it,
-    // only after the batch has written its tenant rows. For vision-path leases
-    // the text is the promise started earlier; it is awaited at write time.
+    // Phase 22A/22C: persist lease document record — under the document's own
+    // id, against the tenant row's REAL id (see _saveLeaseRegisterWrite), and,
+    // when the caller queues it, only after the batch has written its tenant
+    // rows. For vision-path leases the text is the promise started earlier; it
+    // is awaited at write time. A held upload's row is written now, UNLINKED:
+    // the document exists in the register from the moment it arrives, and the
+    // person's decision links it by this id.
     const _registerWrite = {
       propertyId:      propertyId,
+      documentId:      documentId,
       tenantId:        _linkedTenantId || null,
       tenantName:      finalEntry.tenant_name || null,
       fileName:        file.name,
@@ -5693,12 +5772,16 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
       extractionModel: norm?._extractionModel ?? null,
       usedPdfDirect:   usedPdfDirect,
     };
-    if (Array.isArray(registerQueue)) registerQueue.push(_registerWrite);
+    // A held row names no tenant, so it waits for nothing: written now.
+    if (Array.isArray(registerQueue) && !_held) registerQueue.push(_registerWrite);
     else _saveLeaseRegisterWrite(_registerWrite);
 
   } catch (err) {
     logError('lease_processFile', err, { propId: propertyId, fileName: file.name, jobId });
-    tenantData[placeholderIdx] = {
+    // Found by the job's id in the job's own property — never by an index
+    // remembered from before the await, and never in whichever property is on
+    // screen now.
+    _putLeaseJobRow(propertyId, jobId, {
       tenant_name:       null,
       leased_sqft:       null,
       start_date:        null,
@@ -5714,7 +5797,7 @@ async function _runLeaseJobPipeline(jobId, placeholderIdx, registerQueue) {
       _error:            err.message || 'Processing error',
       id:                jobId,
       _jobId:            jobId,
-    };
+    });
     failLeaseJob(jobId, err, 'processFile');
     _leaseDebug.set(jobId, {
       tenantId:        jobId,
@@ -5753,7 +5836,12 @@ async function handleBulkLeases(fileList) {
   document.getElementById('bulkLeaseInput').value = '';
 
   let completed = 0;
+  // Step A-2: the batch belongs to THIS property. The user may open another
+  // one while it runs; the progress bar and the result panels then belong to
+  // that other property and are left alone.
+  const _onScreen = () => !!property.id && activePropId === property.id;
   const _progUpdate = () => {
+    if (!_onScreen()) return;
     const pct = Math.round((completed / total) * 100);
     prog.innerHTML = `
       <div class="bulk-progress-wrap">
@@ -5770,65 +5858,77 @@ async function handleBulkLeases(fileList) {
   // batches so we don't hit DB / OCR rate limits.
   // Ensure property has a DB id once before processing any files
   if (!property.id) await saveProperty(property);
+  const propertyId = property.id;
+  // The record this batch saves: the one in _props under this id when it is
+  // still there (a portfolio reload replaces the objects), else the one we had.
+  const _jobProp = () => _leaseJobProperty(propertyId, property);
 
   const BATCH_SIZE = 2;
   // Register rows are written after this batch's tenant rows (see
   // _saveLeaseRegisterWrite), so each file's write waits here until then.
   const _registerQueue = [];
+  const _batchJobs = new Set();
   const processFile = async (file) => {
     // jobId IS the tenantId — single UUID shared by both systems, preventing duplicates.
-    const jobId = createLeaseJob(file, property.id);
+    const jobId = createLeaseJob(file, propertyId);
+    _batchJobs.add(jobId);
 
-    const placeholderIdx = tenantData.length;
-    tenantData.push({ id: jobId, _jobId: jobId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false });
-    property.tenants = [...tenantData];
-    renderBulkResults();
+    // The placeholder is found later by this id, never by its position: the
+    // other file in the batch may add or remove rows while this one runs.
+    _putLeaseJobRow(propertyId, jobId, { id: jobId, _jobId: jobId, fileName: file.name, status: 'pending', tenant_name: null, leaseExpected: true, _showRetry: false, _needsReview: false, extractionFailed: false }, property);
+    if (_onScreen()) renderBulkResults();
 
-    await _runLeaseJobPipeline(jobId, placeholderIdx, _registerQueue);
+    await _runLeaseJobPipeline(jobId, _registerQueue);
 
     completed++;
     _progUpdate();
-    property.tenants = [...tenantData];
-    renderBulkResults();
-    // The Spaces cards bake tenant ids into their "Open space" buttons, and the
-    // pipeline can change which ids exist: a matched upload writes onto the
-    // existing tenant's id and splices the placeholder out. Without this the
-    // buttons keep pointing at the placeholder id, openSpace() finds nothing,
-    // and the modal reports "No lease on file" for a space whose card is
-    // showing the very terms it claims are missing. renderBulkResults() only
-    // refreshes the upload panel, not this list.
-    try {
-      if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(property);
-    } catch (e) { console.warn('[bulkLeases] spaces list refresh skipped:', e && e.message); }
+    if (_onScreen()) {
+      renderBulkResults();
+      // The Spaces cards bake tenant ids into their "Open space" buttons, and
+      // the pipeline changes which rows exist: a held upload leaves the roster,
+      // a vacancy it fills is retired. renderBulkResults() only refreshes the
+      // upload panel, not this list.
+      try {
+        if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(_jobProp());
+      } catch (e) { console.warn('[bulkLeases] spaces list refresh skipped:', e && e.message); }
+    }
   };
 
   for (let i = 0; i < files.length; i += BATCH_SIZE) {
     await Promise.all(files.slice(i, i + BATCH_SIZE).map(processFile));
   }
 
-  prog.innerHTML = `
+  const target = _jobProp();
+  const heldCount = _heldLeaseUploads(target).filter(h => h && _batchJobs.has(h.jobId)).length;
+
+  if (_onScreen()) {
+    prog.innerHTML = `
     <div class="bulk-progress-wrap">
-      <div class="bulk-progress-label">&#x2713; ${total} lease${total !== 1 ? 's' : ''} processed — review and edit below</div>
+      <div class="bulk-progress-label">&#x2713; ${total} lease${total !== 1 ? 's' : ''} processed — review and edit below${heldCount ? ` · ${heldCount} need${heldCount === 1 ? 's' : ''} a leasehold decision` : ''}</div>
       <div class="bulk-progress-track">
         <div class="bulk-progress-fill" style="width:100%"></div>
       </div>
     </div>`;
-
+  }
 
   // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
   // Filter nulls first — dedupeTenants cannot handle null entries (crashes on null.fileName).
-  property.tenants = dedupeTenants(tenantData.filter(t => t !== null));
+  // Step A-2: from THIS property's roster — the live buffer only while it is
+  // still this property's (see _leaseJobRoster), never another property's.
+  target.tenants = dedupeTenants(_leaseJobRoster(propertyId, target).rows.filter(t => t !== null));
 
-  renderBulkResults();
-  checkSqftValidation();
+  if (_onScreen()) {
+    renderBulkResults();
+    checkSqftValidation();
+  }
 
   // Save property row, then resync tenants ONCE after all files are done.
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
-  captureCheckpoint(activePropId, 'Before lease upload');
+  captureCheckpoint(propertyId, 'Before lease upload');
   try {
-    await saveProperty(property);
+    await saveProperty(target);
     // Exclude failed extractions — only persist tenants with at minimum a real name
-    await resyncTenantsToTable(property.id, property.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+    await resyncTenantsToTable(propertyId, target.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
   } finally {
     // The register rows, now that the tenant rows they name exist. In a
     // finally so a failed save never drops a document: an unpersisted tenant
@@ -5836,17 +5936,19 @@ async function handleBulkLeases(fileList) {
     await _flushLeaseRegisterWrites(_registerQueue);
   }
   {
-    const successCount = tenantData.filter(t => t && t.status === 'success').length;
-    logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
+    const successCount = (target.tenants || []).filter(t => t && t.status === 'success').length;
+    // The activity log is the working buffer of the property on screen.
+    if (_onScreen()) logActivity('lease_uploaded', `${total} lease${total !== 1 ? 's' : ''} uploaded`, {
       severity:      'info',
       actor:         'User',
-      relatedEntity: property.name || '',
+      relatedEntity: target.name || '',
       detail:        `${successCount} of ${total} extracted successfully`,
     });
-    appendPropertyTimelineEvent(property, { type: 'lease_uploaded', severity: 'info',
+    appendPropertyTimelineEvent(target, { type: 'lease_uploaded', severity: 'info',
       actor: 'User', title: `${total} lease${total !== 1 ? 's' : ''} uploaded`,
-      description: `${successCount} of ${total} extracted successfully`,
-      metadata: { total, successCount } });
+      description: `${successCount} of ${total} extracted successfully`
+        + (heldCount ? ` · ${heldCount} held for a leasehold decision` : ''),
+      metadata: { total, successCount, held: heldCount } });
 
     // Show the manager what was extracted.
     //
@@ -5858,8 +5960,9 @@ async function handleBulkLeases(fileList) {
     // successful extraction.
     //
     // No new UI. The rows already exist and are already correct; this just puts
-    // the user in front of them.
-    _revealExtractedLeases(successCount, total);
+    // the user in front of them. Only on this property — never on another the
+    // user has since opened.
+    if (_onScreen()) _revealExtractedLeases(successCount, total, heldCount);
   }
 }
 
@@ -5869,7 +5972,7 @@ async function handleBulkLeases(fileList) {
  * Navigates only when the results are NOT already visible — if the user is
  * looking at them, moving the page under them is its own kind of rude.
  */
-function _revealExtractedLeases(successCount, total) {
+function _revealExtractedLeases(successCount, total, heldCount) {
   try {
     const results = document.getElementById('bulkResults');
     const alreadyVisible = !!(results && results.getBoundingClientRect().height > 2);
@@ -5884,7 +5987,12 @@ function _revealExtractedLeases(successCount, total) {
         r.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
       if (typeof showToast === 'function') {
-        showToast(successCount === total
+        // Step A-2: an upload held for a leasehold decision is said first — it
+        // is the one thing below that waits on the manager and on nothing else.
+        const held = Number(heldCount) || 0;
+        showToast(held
+          ? `${held} upload${held !== 1 ? 's' : ''} need${held === 1 ? 's' : ''} a leasehold decision — choose below which lease ${held === 1 ? 'it belongs' : 'each belongs'} to.`
+          : successCount === total
           ? `✓ ${successCount} lease${successCount !== 1 ? 's' : ''} extracted — review the fields below before approving.`
           : `${successCount} of ${total} lease${total !== 1 ? 's' : ''} extracted. The rest need attention below.`,
           { duration: 7000 });
@@ -7245,6 +7353,11 @@ async function _writeTenantFieldEvidence(propId, tenantId, fieldKey, snapshot) {
     // Nullable, so every pre-019 row stays valid reading null.
     quote:                    snapshot.quote != null ? String(snapshot.quote).slice(0, 200) : null,
   };
+  // Evidence lineage (migration 027), sent only when known so every existing
+  // write keeps its exact shape: the register row the quote was read from, and
+  // the amendment record an attached document produced (Step A-2).
+  if (snapshot.sourceDocumentId) payload.source_document_id = snapshot.sourceDocumentId;
+  if (snapshot.amendmentId)      payload.amendment_id       = snapshot.amendmentId;
   const ts = new Date().toISOString();
   console.groupCollapsed('[DualWrite:tfe] INSERT tenant_field_evidence @ ' + ts);
   console.log('payload:', JSON.stringify(payload));
@@ -8659,11 +8772,18 @@ async function handleAmendmentUpload(tenantId, file) {
 //   - updates the tenant's live field value
 //   - records the override in tenant.amendments[]
 // Original snapshots are never mutated.
-function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMeta) {
-  const idx = tenantData.findIndex(t => t && t.id === tenantId);
-  if (idx === -1) return;
-  const t = tenantData[idx];
-
+// The merge an amendment makes onto a tenant, with no side effects: for each
+// comparable field that is non-empty in the document and differs from the
+// tenant, the value is taken, an evidence snapshot tagged with the amendment id
+// is appended, and one entry is added to tenant.amendments[]. Returns the new
+// tenant object and the fields it changed; writes nothing.
+//
+// Shared by the per-leasehold amendment upload (applyAmendmentOverrides, all
+// differing fields — its behaviour unchanged) and a held upload a person
+// attached to a leasehold (Step A-2), which passes `only`: the fields the
+// person's decision allows to change (LeaseUploadIdentity.plan), and `extra`:
+// the confirmed document kind and where the upload came from.
+function _amendmentMerge(t, amNorm, amendmentId, fileName, docMeta, only, extra) {
   const COMPARABLE_FIELDS = [
     'tenant_name', 'leased_sqft', 'start_date', 'end_date', 'lease_type', 'cap',
     'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct', 'expense_stop', 'audit_rights',
@@ -8675,6 +8795,7 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMet
   const now = new Date().toISOString();
 
   for (const fk of COMPARABLE_FIELDS) {
+    if (only && !only.includes(fk)) continue;
     const amVal = amNorm[fk] ?? null;
     if (amVal === null || amVal === '') continue;
 
@@ -8745,12 +8866,23 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMet
       return acc;
     }, {}),
     overriddenFields,
+    ...(extra || {}),
   };
 
   updatedTenant = {
     ...updatedTenant,
     amendments: [...(Array.isArray(t.amendments) ? t.amendments : []), amendmentEntry],
   };
+
+  return { updatedTenant, overriddenFields, amendmentEntry };
+}
+
+function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMeta) {
+  const idx = tenantData.findIndex(t => t && t.id === tenantId);
+  if (idx === -1) return;
+  const t = tenantData[idx];
+
+  const { updatedTenant, overriddenFields } = _amendmentMerge(t, amNorm, amendmentId, fileName, docMeta);
 
   tenantData[idx] = updatedTenant;
 
@@ -8779,6 +8911,278 @@ function applyAmendmentOverrides(tenantId, amNorm, amendmentId, fileName, docMet
     : '✓ Amendment uploaded — no field differences detected';
   showToast(msg, { color: '#14532d', textColor: '#86efac', duration: 4000 });
 }
+
+// ─── Deciding a held lease upload (Step A-2) ─────────────────────────────────
+//
+// AI proposes, a person decides. A held upload (property.pendingLeaseUploads)
+// is resolved in exactly one of three ways, each by a person:
+//
+//   attach  — the document belongs to an EXISTING current leasehold, which
+//             keeps its id. The person names the leasehold (one of the upload's
+//             candidates) and confirms what the document is: Amendment,
+//             Renewal / Extension, Assignment or Original Lease Copy. None of
+//             these creates a leasehold. The merge is the per-leasehold
+//             amendment merge (_amendmentMerge), restricted by
+//             LeaseUploadIdentity.plan: a value a person confirmed is never
+//             changed unless the person, shown both values, chose the incoming
+//             one; until every such conflict is decided nothing is attached.
+//   create  — a genuinely new lease: a NEW leasehold with the upload's own id,
+//             through the normal review gate. A vacancy on its suite is retired
+//             (a vacancy row never lends its id).
+//   remove  — the upload is discarded from the intake list. Its document stays
+//             in the register, unlinked; no leasehold is touched.
+//
+// The document is linked by its OWN id (lease_documents.id), never by file
+// name. Evidence is written against the chosen leasehold only now, carrying
+// the document it was read from. Every step is idempotent: a decision already
+// made (the held record gone, the leasehold id or the amendment entry present)
+// is not made twice, so a double click or a replay adds no second leasehold,
+// no second amendment, no second evidence set and no second register row.
+const _heldInFlight = new Set();
+
+function _findHeldLeaseUpload(heldId) {
+  for (const p of (typeof _props !== 'undefined' ? _props : [])) {
+    const list = (p && Array.isArray(p.pendingLeaseUploads)) ? p.pendingLeaseUploads : [];
+    const h = list.find(x => x && x.id === heldId);
+    if (h) return { prop: p, held: h };
+  }
+  return { prop: null, held: null };
+}
+
+function _removeHeldLeaseUpload(prop, heldId) {
+  _resolvedHeldUploads.add(heldId);
+  if (prop && Array.isArray(prop.pendingLeaseUploads)) {
+    prop.pendingLeaseUploads = prop.pendingLeaseUploads.filter(h => h && h.id !== heldId);
+  }
+}
+
+// The rows resyncTenantsToTable may persist — the same gate every upload path uses.
+function _persistableTenantRows(rows) {
+  return (rows || []).filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
+}
+
+async function _saveAfterHeldDecision(prop, propertyId) {
+  if (activePropId === propertyId) prop.tenants = tenantData.filter(t => t !== null);
+  clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null;
+  await saveProperty(prop);
+  const rows = _persistableTenantRows(prop.tenants);
+  if (_tenantsBelongTo(propertyId, rows)) await resyncTenantsToTable(propertyId, rows);
+}
+
+function _repaintAfterHeldDecision(prop, propertyId) {
+  if (activePropId !== propertyId) return;
+  try { renderBulkResults(); } catch (_) {}
+  try { if (window.TenantSpace && window.TenantSpace.renderList) window.TenantSpace.renderList(prop); } catch (_) {}
+  try { if (typeof _refreshAdvisorSurfaces === 'function') _refreshAdvisorSurfaces(prop); } catch (_) {}
+}
+
+/**
+ * Resolve a held upload. `opts`:
+ *   { action: 'attach', targetId, kind, conflictChoices }   kind ∈ LeaseUploadIdentity.KIND_KEYS
+ *   { action: 'create' }
+ *   { action: 'remove' }
+ * Returns { ok, error?, needsConfirmation?, conflicts?, unresolved?, already?, leaseholdId? }.
+ * Never throws.
+ */
+async function resolveHeldLeaseUpload(heldId, opts) {
+  const o = opts || {};
+  const LUI = window.LeaseUploadIdentity;
+  if (!LUI) return { ok: false, error: 'LeaseUploadIdentity is not loaded' };
+  const { prop, held } = _findHeldLeaseUpload(heldId);
+  if (!held || !prop) return { ok: true, already: true };          // decided already (or never held)
+  if (_heldInFlight.has(heldId)) return { ok: false, error: 'in_progress' };
+  const propertyId = held.propertyId || prop.id;
+  if (prop.id !== propertyId) return { ok: false, error: 'wrong_property' };
+  if (_heldUploadSettled(prop, heldId)) {                           // an older copy of a decided upload
+    _removeHeldLeaseUpload(prop, heldId);
+    try { await _saveAfterHeldDecision(prop, propertyId); } catch (_) {}
+    _repaintAfterHeldDecision(prop, propertyId);
+    return { ok: true, already: true };
+  }
+
+  const inc = held.extracted || {};
+  const roster = _leaseJobRoster(propertyId, prop);
+  const now = new Date().toISOString();
+  const user = window.AuthService?.getCurrentUser?.() || null;
+  const live = activePropId === propertyId;
+
+  if (o.action === 'remove') {
+    _heldInFlight.add(heldId);
+    try {
+      held.decision = { action: 'remove', at: now, by: user?.email || null };
+      _removeHeldLeaseUpload(prop, heldId);
+      try { deleteLeaseFile(held.jobId || heldId); } catch (_) {}
+      appendPropertyTimelineEvent(prop, { type: 'lease_upload_removed', severity: 'info', actor: 'User',
+        title: `Lease upload removed — ${held.fileName || 'document'}`,
+        description: 'Removed from the intake list before any leasehold was chosen. The document stays in the register, unlinked; no leasehold was changed.',
+        metadata: { heldUploadId: heldId, documentId: held.documentId || null, fileName: held.fileName || null } });
+      updateLeaseJob(held.jobId || heldId, { status: 'failed', stage: 'manual_review',
+        error_message: 'Removed by a person before a leasehold decision — the document stays in the register, unlinked.',
+        processing_completed_at: now }, { terminal: true });
+      await _saveAfterHeldDecision(prop, propertyId);
+      _repaintAfterHeldDecision(prop, propertyId);
+      return { ok: true };
+    } catch (e) {
+      logError('resolveHeldLeaseUpload:remove', e, { propId: propertyId, heldId });
+      return { ok: false, error: e?.message || 'remove failed' };
+    } finally { _heldInFlight.delete(heldId); }
+  }
+
+  if (o.action === 'create') {
+    _heldInFlight.add(heldId);
+    try {
+      held.decision = { action: 'create', at: now, by: user?.email || null };
+      // A genuinely new lease: a NEW leasehold with the upload's own id. If the
+      // row is already there (a replay), it is not written again.
+      let row = roster.rows.find(t => t && t.id === heldId) || null;
+      if (!row) {
+        row = { ...inc, id: heldId, _jobId: held.jobId || heldId, leaseDocumentId: held.documentId || null,
+                leaseUrl: inc.leaseUrl || held.leaseUrl || null, fileName: inc.fileName || held.fileName || '' };
+        _putLeaseJobRow(propertyId, heldId, row, prop);
+        _retireVacanciesFor(propertyId, row, heldId);
+      }
+      _removeHeldLeaseUpload(prop, heldId);
+      appendPropertyTimelineEvent(prop, { type: 'leasehold_created_from_upload', severity: 'info', actor: 'User',
+        tenantId: heldId,
+        title: `New leasehold — ${row.tenant_name || held.fileName || 'uploaded lease'}`,
+        description: 'A person confirmed the upload is a new lease, not a document of an existing leasehold.',
+        metadata: { heldUploadId: heldId, documentId: held.documentId || null, fileName: held.fileName || null,
+                    candidatesDeclined: (held.candidates || []).map(c => c.id).join(',') } });
+      await _saveAfterHeldDecision(prop, propertyId);
+      // The register row, by its own id — linked when the new leasehold is a
+      // persisted row; otherwise it stays unlinked until Confirm & Save links it.
+      const persisted = _persistableTenantRows([row]).length === 1;
+      let docOk = false;
+      if (held.documentId) {
+        const r = await saveLeaseDocument({ propertyId, documentId: held.documentId,
+          tenantId: persisted ? heldId : undefined, tenantName: row.tenant_name || null,
+          fileName: held.fileName || undefined, fileUrl: held.leaseUrl || undefined,
+          docType: persisted ? 'original_lease' : undefined }).catch(() => null);
+        docOk = !!(r && r.ok);
+      }
+      _persistExtractedEvidence(propertyId, heldId, inc.fieldEvidence,
+        { sourceDocumentId: docOk ? held.documentId : null, extractionId: held.jobId || heldId });
+      if (!row._pendingJobReview && row.status !== 'failed') {
+        updateLeaseJob(held.jobId || heldId, { status: 'completed', stage: 'completed', processing_completed_at: now }, { terminal: true });
+      }
+      if (live && lastResults.length > 0) { _resultsStale = true; try { _updateStaleResultsBanner(); } catch (_) {} }
+      _repaintAfterHeldDecision(prop, propertyId);
+      return { ok: true, leaseholdId: heldId };
+    } catch (e) {
+      logError('resolveHeldLeaseUpload:create', e, { propId: propertyId, heldId });
+      return { ok: false, error: e?.message || 'create failed' };
+    } finally { _heldInFlight.delete(heldId); }
+  }
+
+  if (o.action !== 'attach') return { ok: false, error: 'unknown_action' };
+
+  // ── attach ────────────────────────────────────────────────────────────────
+  const target = roster.rows.find(t => t && t.id === o.targetId) || null;
+  // Only a leasehold the upload is a candidate for — current, not ended, not a
+  // vacancy, persisted — and only as of now, not as of when it was held.
+  const nowCandidates = LUI.candidates(roster.rows, inc, { excludeId: heldId });
+  if (!target || !LUI.isEligibleTarget(target) || !nowCandidates.some(c => c.id === target.id)) {
+    return { ok: false, error: 'target_not_eligible' };
+  }
+  if (!LUI.isKind(o.kind)) return { ok: false, error: 'kind_required' };
+  const choices = o.conflictChoices || {};
+  const plan = LUI.plan(target, inc, o.kind, choices);
+  if (plan.unresolved.length) {
+    return { ok: false, needsConfirmation: true, conflicts: plan.conflicts, unresolved: plan.unresolved };
+  }
+
+  _heldInFlight.add(heldId);
+  try {
+    // 1. The register row, linked to the chosen leasehold by the document's own
+    //    id. A row already linked to ANOTHER leasehold is refused by the API
+    //    (409) — then nothing is attached: the document is not this one's.
+    let docOk = false;
+    if (held.documentId) {
+      const r = await saveLeaseDocument({ propertyId, documentId: held.documentId, tenantId: target.id,
+        tenantName: target.tenant_name || null, fileName: held.fileName || undefined,
+        fileUrl: held.leaseUrl || undefined, docType: o.kind }).catch(() => null);
+      if (r && !r.ok && (r.code === 'document_linked_elsewhere' || r.code === 'document_in_other_property')) {
+        return { ok: false, error: r.code };
+      }
+      docOk = !!(r && r.ok && r.linked !== false);
+    }
+
+    // 2. The merge, onto the SAME leasehold id.
+    const fields = plan.changes.map(c => c.field);
+    const noLeaseOnFile = !(target.leaseUrl || target.lease_url);
+    const becomesLease = o.kind === 'original_lease' && noLeaseOnFile;
+    const docMeta = { fileUrl: becomesLease ? null : (held.leaseUrl || null), leaseDocumentId: held.documentId || null };
+    const { updatedTenant } = _amendmentMerge(target, inc, heldId, held.fileName, docMeta, fields,
+      { docType: o.kind, heldUploadId: heldId, decidedBy: user?.email || null, decidedAt: now,
+        keptFields: plan.kept.slice() });
+    const next = { ...updatedTenant, id: target.id };
+    if (becomesLease) {
+      // The leasehold had no lease on file; this is it.
+      next.leaseUrl = held.leaseUrl || next.leaseUrl || null;
+      next.fileName = held.fileName || next.fileName || '';
+      next.leaseExpected = true;
+      next.leaseDocumentId = held.documentId || null;
+    }
+    // A confirmed value the person chose to replace is a human decision, and is
+    // recorded as one — so the new value is manually confirmed, not demoted to
+    // an unreviewed extraction.
+    const confirmedChanges = plan.changes.filter(c => c.confirmed);
+    if (confirmedChanges.length) {
+      const ovAt = new Date().toISOString();
+      const prevOv = next.reviewOverrides || {};
+      const ov = { ...prevOv };
+      confirmedChanges.forEach(c => {
+        ov[c.field] = { original: prevOv[c.field]?.original ?? (c.from ?? null), override: c.to,
+          reviewerConfirmed: true, reviewedAt: ovAt, overrideSource: 'document_decision',
+          documentId: held.documentId || null, heldUploadId: heldId };
+      });
+      next.reviewOverrides = ov;
+    }
+    const i = roster.rows.findIndex(t => t && t.id === target.id);
+    if (i !== -1) roster.rows[i] = next;
+    if (roster.live && roster.prop) roster.prop.tenants = [...tenantData];
+
+    held.decision = { action: 'attach', targetId: target.id, kind: o.kind, at: now, by: user?.email || null,
+                      changed: fields, kept: plan.kept.slice(), conflictChoices: choices };
+    _removeHeldLeaseUpload(prop, heldId);
+
+    // 3. Evidence — only now, only against the chosen leasehold, only for the
+    //    fields this decision changed (a newer unreviewed reading of a field
+    //    the person kept must not displace their confirmation).
+    const ev = {};
+    fields.forEach(fk => { if (inc.fieldEvidence && inc.fieldEvidence[fk]) ev[fk] = inc.fieldEvidence[fk]; });
+    _persistExtractedEvidence(propertyId, target.id, ev,
+      { sourceDocumentId: docOk ? held.documentId : null, amendmentId: heldId, extractionId: held.jobId || heldId });
+
+    // 4. Record it.
+    const kindLabel = (LUI.KINDS.find(k => k.key === o.kind) || {}).label || o.kind;
+    if (live) {
+      appendReviewAuditEntry({ tenantId: target.id, tenantName: next.tenant_name || target.id,
+        action: 'lease_document_attached', severity: 'info',
+        label: `${kindLabel} attached — ${fields.length} field${fields.length !== 1 ? 's' : ''} updated`,
+        detail: JSON.stringify({ heldUploadId: heldId, documentId: held.documentId || null, kind: o.kind,
+                                 changed: fields, kept: plan.kept, fileName: held.fileName }) });
+    }
+    appendPropertyTimelineEvent(prop, { type: 'lease_document_attached', severity: 'info', actor: 'User',
+      tenantId: target.id,
+      title: `${kindLabel} attached to ${next.tenant_name || 'leasehold'} — ${held.fileName || 'document'}`,
+      description: `A person confirmed this document belongs to the existing leasehold. ${fields.length} field${fields.length !== 1 ? 's' : ''} updated`
+        + (plan.kept.length ? `; kept confirmed ${plan.kept.join(', ')}` : '') + '.',
+      metadata: { heldUploadId: heldId, documentId: held.documentId || null, kind: o.kind,
+                  changed: fields.join(','), kept: plan.kept.join(','), fileName: held.fileName || null },
+      attachments: held.leaseUrl ? [{ name: held.fileName || 'document', url: held.leaseUrl, kind: 'pdf' }] : [] });
+    updateLeaseJob(held.jobId || heldId, { status: 'completed', stage: 'completed', processing_completed_at: now }, { terminal: true });
+
+    await _saveAfterHeldDecision(prop, propertyId);
+    if (live && lastResults.length > 0 && fields.length) { _resultsStale = true; try { _updateStaleResultsBanner(); } catch (_) {} }
+    _repaintAfterHeldDecision(prop, propertyId);
+    return { ok: true, leaseholdId: target.id, changed: fields, kept: plan.kept };
+  } catch (e) {
+    logError('resolveHeldLeaseUpload:attach', e, { propId: propertyId, heldId });
+    return { ok: false, error: e?.message || 'attach failed' };
+  } finally { _heldInFlight.delete(heldId); }
+}
+window.resolveHeldLeaseUpload = resolveHeldLeaseUpload;
 
 // Enter key commits the active inline edit — registered once at module load.
 document.addEventListener('keydown', (e) => {
@@ -9020,6 +9424,147 @@ function _filterBulkTenants(pairs) {
   });
 }
 
+// ─── Held uploads in the intake list (Step A-2) ──────────────────────────────
+//
+// One card per upload that may belong to an existing leasehold. The person
+// picks the leasehold (nothing is preselected — MainStreet's reading is shown
+// as the match basis, never as a default), confirms what the document is
+// (MainStreet's suggestion is a hint beside the choices, not a selection),
+// decides every confirmed value the document disagrees with, and only then
+// can attach. Or says it is a new lease, or removes the upload.
+const _heldChoices = {};   // heldId → { targetId, kind, conflicts: { field: 'keep' | 'incoming' } }
+
+const _HELD_FIELD_LABELS = {
+  tenant_name: 'Tenant name', leased_sqft: 'Leased sqft', start_date: 'Start date', end_date: 'End date',
+  lease_type: 'Lease type', cap: 'CAM cap', admin_fee_pct: 'Admin fee %', admin_fee_basis: 'Admin fee basis',
+  gross_up_pct: 'Gross-up %', expense_stop: 'Expense stop', audit_rights: 'Audit rights',
+  pro_rata_method: 'Pro-rata method', renewal_options: 'Renewal options',
+};
+
+function _heldVal(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'object') { try { return JSON.stringify(v); } catch (_) { return String(v); } }
+  return String(v);
+}
+
+function _heldLeaseUploadsHtml() {
+  const prop = (typeof currentProperty === 'function') ? currentProperty() : null;
+  const list = prop ? _heldLeaseUploads(prop).filter(h => h && h.id && !_heldUploadSettled(prop, h.id)) : [];
+  const LUI = window.LeaseUploadIdentity;
+  if (!list.length || !LUI) return '';
+  const rows = tenantData.filter(t => t !== null);
+  const cards = list.map(h => {
+    const inc = h.extracted || {};
+    const ch  = _heldChoices[h.id] || {};
+    const cands = LUI.candidates(rows, inc, { excludeId: h.id });
+    const hid = esc(h.id);
+    const facts = [inc.suite || inc.unitNumber ? `Suite ${inc.suite || inc.unitNumber}` : null,
+                   inc.leased_sqft ? `${inc.leased_sqft} sqft` : null,
+                   (inc.start_date || inc.end_date) ? `${inc.start_date || '—'} → ${inc.end_date || '—'}` : null]
+                  .filter(Boolean).join(' · ');
+    const target = ch.targetId ? rows.find(t => t && t.id === ch.targetId) : null;
+    const targetOk = !!(target && cands.some(c => c.id === target.id));
+
+    const candHtml = cands.length ? `
+      <fieldset>
+        <legend>Which existing leasehold is this document for?</legend>
+        ${cands.map(c => `<label>
+          <input type="radio" name="held-t-${hid}" value="${esc(c.id)}" data-held="${hid}" data-key="targetId"
+            ${ch.targetId === c.id ? 'checked' : ''} onchange="_heldUploadSet(this)">
+          <span>${esc(c.tenantName || '(unnamed)')}${c.suite ? ` · Suite ${esc(c.suite)}` : ''}
+            · ${c.hasLease ? 'lease on file' : 'no lease on file'}${(c.startDate || c.endDate) ? ` · ${esc(c.startDate || '—')} → ${esc(c.endDate || '—')}` : ''}
+            <span class="held-upload-hint">— matched by ${esc(c.basis === 'suite+name' ? 'suite and name' : c.basis)}</span></span>
+        </label>`).join('')}
+      </fieldset>`
+      : `<div class="held-upload-sub">No current leasehold matches this upload any more. It can be recorded as a new lease, or removed.</div>`;
+
+    let kindHtml = '', planHtml = '', ready = false;
+    if (targetOk) {
+      const suggested = LUI.proposeKind(target, inc);
+      const sugLabel = (LUI.KINDS.find(k => k.key === suggested) || {}).label || suggested;
+      kindHtml = `
+      <fieldset>
+        <legend>What is this document? <span class="held-upload-hint">MainStreet suggests: ${esc(sugLabel)} — please confirm.</span></legend>
+        ${LUI.KINDS.map(k => `<label>
+          <input type="radio" name="held-k-${hid}" value="${esc(k.key)}" data-held="${hid}" data-key="kind"
+            ${ch.kind === k.key ? 'checked' : ''} onchange="_heldUploadSet(this)">
+          <span>${esc(k.label)}</span></label>`).join('')}
+        <div class="held-upload-hint">None of these creates a new leasehold — ${esc(target.tenant_name || 'the leasehold')} keeps its record and history.</div>
+      </fieldset>`;
+      if (LUI.isKind(ch.kind)) {
+        const plan = LUI.plan(target, inc, ch.kind, ch.conflicts || {});
+        const lbl = f => esc(_HELD_FIELD_LABELS[f] || f);
+        const changeLis = plan.changes.filter(c => !c.confirmed)
+          .map(c => `<li>${lbl(c.field)}: ${esc(_heldVal(c.from))} → <strong>${esc(_heldVal(c.to))}</strong></li>`).join('');
+        const conflictHtml = plan.conflicts.map(c => `<div class="held-upload-conflict">
+          <div><strong>${lbl(c.field)}</strong> was confirmed by a person as <strong>${esc(_heldVal(c.current))}</strong>; this document says <strong>${esc(_heldVal(c.incoming))}</strong>.</div>
+          <label><input type="radio" name="held-c-${hid}-${esc(c.field)}" value="keep" data-held="${hid}" data-key="conflict" data-field="${esc(c.field)}"
+            ${(ch.conflicts || {})[c.field] === 'keep' ? 'checked' : ''} onchange="_heldUploadSet(this)"><span>Keep the confirmed value</span></label>
+          <label><input type="radio" name="held-c-${hid}-${esc(c.field)}" value="incoming" data-held="${hid}" data-key="conflict" data-field="${esc(c.field)}"
+            ${(ch.conflicts || {})[c.field] === 'incoming' ? 'checked' : ''} onchange="_heldUploadSet(this)"><span>Use the document's value</span></label>
+        </div>`).join('');
+        planHtml = `<ul class="held-upload-plan">${changeLis || '<li>No unconfirmed field changes.</li>'}</ul>${conflictHtml}`;
+        ready = plan.unresolved.length === 0;
+      }
+    }
+
+    return `<div class="held-upload" data-held-upload="${hid}">
+      <div class="held-upload-title">${esc(inc.tenant_name || h.fileName || 'Uploaded lease')} — needs a leasehold decision</div>
+      <div class="held-upload-sub">${esc(h.fileName || '')}${facts ? ' · ' + esc(facts) : ''}. This upload may belong to a leasehold you already have, so nothing has been attached and it is not in the rent roll or CAM yet.</div>
+      ${candHtml}${kindHtml}${planHtml}
+      <div class="held-upload-actions">
+        ${cands.length ? `<button class="primary" data-held="${hid}" onclick="_heldUploadAct(this,'attach')" ${ready ? '' : 'disabled'}>Attach to this leasehold</button>` : ''}
+        <button data-held="${hid}" onclick="_heldUploadAct(this,'create')">It's a new lease — create a new leasehold</button>
+        <button data-held="${hid}" onclick="_heldUploadAct(this,'remove')">Remove upload</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="held-uploads" id="heldLeaseUploads">
+    <div class="held-uploads-head">${list.length} upload${list.length === 1 ? '' : 's'} need${list.length === 1 ? 's' : ''} a leasehold decision</div>
+    ${cards}
+  </div>`;
+}
+
+function _heldUploadSet(input) {
+  const id = input && input.dataset && input.dataset.held;
+  if (!id) return;
+  const ch = _heldChoices[id] || (_heldChoices[id] = {});
+  const key = input.dataset.key;
+  if (key === 'targetId') { ch.targetId = input.value; ch.kind = null; ch.conflicts = {}; }
+  else if (key === 'kind') { ch.kind = input.value; ch.conflicts = {}; }
+  else if (key === 'conflict') { ch.conflicts = { ...(ch.conflicts || {}), [input.dataset.field]: input.value }; }
+  renderBulkResults();
+}
+
+async function _heldUploadAct(btn, action) {
+  const id = btn && btn.dataset && btn.dataset.held;
+  if (!id) return;
+  const ch = _heldChoices[id] || {};
+  if (action === 'create' && !confirm('Record this upload as a NEW lease — a new leasehold? Use this only if it is not a document of an existing leasehold.')) return;
+  if (action === 'remove' && !confirm('Remove this upload from the intake list? The document stays in the register, unlinked. No leasehold is changed.')) return;
+  btn.disabled = true;
+  const r = await resolveHeldLeaseUpload(id, action === 'attach'
+    ? { action, targetId: ch.targetId, kind: ch.kind, conflictChoices: ch.conflicts || {} }
+    : { action });
+  if (r && r.ok) {
+    delete _heldChoices[id];
+    showToast(action === 'attach' ? '✓ Attached to the existing leasehold.'
+      : action === 'create' ? '✓ Recorded as a new leasehold — review it below.'
+      : 'Upload removed. The document stays in the register, unlinked.', { duration: 5000 });
+  } else {
+    btn.disabled = false;
+    const why = r && r.needsConfirmation ? 'Decide each confirmed value the document disagrees with first.'
+      : r && r.error === 'document_linked_elsewhere' ? 'This document is already linked to a different leasehold — it was not attached.'
+      : r && r.error === 'target_not_eligible' ? 'That leasehold can no longer take this document (it has ended or changed). Choose again.'
+      : r && r.error === 'kind_required' ? 'Choose what the document is first.'
+      : 'The decision could not be saved' + (r && r.error ? ` (${r.error})` : '') + '.';
+    showToast(why, { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+  }
+  renderBulkResults();
+}
+window._heldUploadSet = _heldUploadSet;
+window._heldUploadAct = _heldUploadAct;
+
 function renderBulkResults() {
   const el = document.getElementById('bulkResults');
   el.innerHTML = '';
@@ -9036,7 +9581,10 @@ function renderBulkResults() {
     .filter(({ d }) => d && typeof d === 'object' && d.vacant !== true);
   const tenants = tenantPairs.map(p => p.d); // plain array for dup-detection below
   const _debugMode = !!(window.DEBUG_LEASES || localStorage.getItem(_lsUserId ? 'ms_debug_leases_' + _lsUserId : 'ms_debug_leases') === '1');
+  // Step A-2: uploads waiting for a leasehold decision, above everything else.
+  const _heldHtml = _heldLeaseUploadsHtml();
 
+  if (!tenants.length && _heldHtml) { el.innerHTML = _heldHtml; return; }
   if (!tenants.length) {
     el.innerHTML = _workspaceEmptyStateHtml('&#x1F4C4;',
       'No lease documents have been uploaded yet.',
@@ -9352,6 +9900,7 @@ function renderBulkResults() {
       <h3>Leases from your uploads (${tenants.length})</h3>
       <button class="bulk-clear-btn" onclick="clearBulkResults()">&#x2715; Clear All</button>
     </div>
+    ${_heldHtml}
     ${_buildPreReconSummary(tenants)}
     ${filterBarHtml}
     ${rows || '<div class="bulk-filter-empty">No tenants match your filter.</div>'}`;
@@ -9484,11 +10033,15 @@ async function saveBulkTenant(i) {
   // extractionFailed so the resync guard lets it through to Supabase.
   // This is the only code path that sets _userConfirmed — it cannot happen
   // automatically; the user must click "Confirm & Save" with a name present.
+  let _linkDocAfterSave = null;
   if (d && d.tenant_name && d.tenant_name.trim()) {
     d._userConfirmed = true;
     // Clear the job review gate — this tenant is now explicitly confirmed by the user
     if (d._pendingJobReview) {
       d._pendingJobReview = false;
+      // Its lease was registered unlinked (the row did not exist yet); once
+      // the row is saved below, it is linked by the document's own id.
+      if (d.leaseDocumentId && d.id) _linkDocAfterSave = { documentId: d.leaseDocumentId, tenantId: d.id, tenantName: d.tenant_name };
       if (d._jobId) updateLeaseJob(d._jobId, { status: 'completed', stage: 'completed' });
     }
     if (d.extractionFailed) {
@@ -9548,6 +10101,10 @@ async function saveBulkTenant(i) {
     await savePropertyData();
     const _rows = tenantData.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview);
     if (prop?.id && _tenantsBelongTo(prop.id, _rows)) await resyncTenantsToTable(prop.id, _rows);
+    if (prop?.id && _linkDocAfterSave) {
+      saveLeaseDocument({ propertyId: prop.id, ..._linkDocAfterSave })
+        .catch(e => console.warn('[saveBulkTenant] lease document not linked:', e && e.message));
+    }
   } catch (e) {
     logError('saveBulkTenant', e, { tenant: d?.tenant_name, propId: prop?.id });
     if (_doneBtn) { _doneBtn.disabled = false; _doneBtn.textContent = 'Done \u2713'; }
@@ -26691,6 +27248,11 @@ async function selectProperty(id) {
     // this, the settlement flow renders "pending" because property.settlement stays undefined.
     property.settlement        = data.settlement ?? property.settlement ?? null;
     property.aiDrafts          = data.aiDrafts?.length ? data.aiDrafts : (property.aiDrafts || []);
+    // Step A-2: lease uploads held for a leasehold decision. UNION, the live
+    // side first: an upload can be held between the instant render and this
+    // callback, and a copy loaded from storage must not bring back one a
+    // person already decided (_mergeHeldLeaseUploads drops those).
+    property.pendingLeaseUploads = _mergeHeldLeaseUploads(property.pendingLeaseUploads, data.pendingLeaseUploads, property);
 
     // THE PROPERTY'S HISTORY, PUT BACK.
     //
@@ -27827,18 +28389,35 @@ async function resyncTenantsToTable(propertyId, tenants) {
   }
   if (state.running) {
     state.pending = tenants; // last caller wins; earlier pending calls are superseded
-    return;
+    // Step A-2: a parked caller waits for the run that carries its rows. It
+    // used to return at once, so `await resyncTenantsToTable(...)` did not mean
+    // "my rows are written" — and the bulk upload's register flush, which runs
+    // after that await precisely so the document can link to its leasehold,
+    // went out before the row existed and was saved unlinked. Every waiter
+    // parked before a run starts is released when that run ends (its rows are
+    // the latest, so they include theirs).
+    if (!state.waiters) state.waiters = [];
+    return new Promise(resolve => state.waiters.push(resolve));
   }
   state.running = true;
   try {
     await _doResyncTenantsToTable(propertyId, tenants);
     while (state.pending !== null) {
       const next = state.pending;
+      const waiters = state.waiters || [];
       state.pending = null;
-      await _doResyncTenantsToTable(propertyId, next);
+      state.waiters = [];
+      try { await _doResyncTenantsToTable(propertyId, next); }
+      finally { waiters.forEach(w => w()); }
     }
   } finally {
     state.running = false;
+    // A run that threw leaves the parked rows unwritten — exactly as before —
+    // but never leaves their callers waiting forever.
+    const left = state.waiters || [];
+    state.waiters = [];
+    state.pending = null;
+    left.forEach(w => w());
   }
 }
 
@@ -28406,13 +28985,18 @@ window.ms_loadCamHistory = loadCamHistory;
 
 // ─── Phase 22A: Lease Document Persistence ───────────────────────────────────
 
-async function saveLeaseDocument({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }) {
-  if (!propertyId || !fileName) return { ok: false, reason: 'missing propertyId or fileName' };
+// Step A-2: `documentId` is the document's own durable id. With it, the register
+// row is created or updated by that id and only that id — a same-named upload
+// can never re-point or unlink another leasehold's document. A field left
+// undefined is not sent, so a link-only write (documentId + tenantId + docType)
+// leaves the document's text alone. `docType` is the kind a person confirmed.
+async function saveLeaseDocument({ propertyId, documentId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect, docType }) {
+  if (!propertyId || (!fileName && !documentId)) return { ok: false, reason: 'missing propertyId or fileName' };
   try {
     const resp = await fetch('/api/lease-documents', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...(await _authHeaders()) },
-      body:    JSON.stringify({ propertyId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect }),
+      body:    JSON.stringify({ propertyId, documentId, tenantId, tenantName, fileName, fileUrl, extractedText, parsingStatus, extractionModel, usedPdfDirect, docType }),
     });
     const result = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -28778,6 +29362,10 @@ async function saveProperty(property) {
       // payload since the field was introduced, so every save rewrote
       // properties.data without it and the facts could only ever be the demo's.
       info:              (stripped.info && typeof stripped.info === 'object') ? stripped.info : null,
+      // Step A-2: lease uploads held for a leasehold decision. Beside tenants,
+      // never inside it — no roster reads this key — and saved so a held
+      // upload survives a reload until a person decides.
+      pendingLeaseUploads: Array.isArray(stripped.pendingLeaseUploads) ? stripped.pendingLeaseUploads : [],
     };
 
     console.groupCollapsed('[PIPELINE:3] saveProperty post-strip');
@@ -28900,7 +29488,7 @@ const STATE_SCHEMA_VERSION = 1;
 const PROPERTY_DATA_CLIENT_KEYS = Object.freeze([
   'invoices', 'disputes', 'camYear', 'results', 'camReconciliation', 'camRefusal',
   'settlement', 'aiDrafts', '_demoVersion', '_demoV', 'activityLog', 'timeline',
-  'tenants', 'escrowReserves', 'drawRequests', 'info',
+  'tenants', 'escrowReserves', 'drawRequests', 'info', 'pendingLeaseUploads',
 ]);
 
 /** The server-owned part of a properties.data blob: every top-level key the client does not write. */
@@ -29296,6 +29884,8 @@ async function loadPropertyData(id) {
         escrowReserves:    d.escrowReserves    || [],
         drawRequests:      d.drawRequests      || [],
         info:              (d.info && typeof d.info === 'object') ? d.info : null,
+        // Step A-2: lease uploads held for a leasehold decision (see saveProperty).
+        pendingLeaseUploads: Array.isArray(d.pendingLeaseUploads) ? d.pendingLeaseUploads : [],
         // The demo's seed version — see demoPropFull in ensureDemoProperty.
         _demoV:            d._demoV        ?? null,
         _demoVersion:      d._demoVersion  ?? null,
@@ -29451,6 +30041,13 @@ async function loadPropertyData(id) {
   const _lsOnlyInvoices = _lsUnsynced
     ? (lsData.invoices || []).filter(i => { const k = _invKey(i); return k && !_dbInvKeys.has(k); })
     : [];
+  // Held lease uploads (Step A-2): the same rule as tenants — a flagged local
+  // copy adds the held uploads the database does not have, by id; an
+  // unflagged one adds nothing.
+  const _dbHeldIds = new Set((dbData.pendingLeaseUploads || []).map(h => h && h.id).filter(Boolean));
+  const _lsOnlyHeld = _lsUnsynced
+    ? (lsData.pendingLeaseUploads || []).filter(h => h && h.id && !_dbHeldIds.has(h.id))
+    : [];
 
   // Disputes: DB is authoritative (tenant may have submitted from another device/session
   // since the landlord's last visit). Also include any LS-only entries that haven't
@@ -29486,6 +30083,7 @@ async function loadPropertyData(id) {
     ...base,
     tenants:           [...(dbData.tenants || []), ..._lsOnlyTenants],
     invoices:          [...(dbData.invoices || []), ..._lsOnlyInvoices],
+    pendingLeaseUploads: [...(dbData.pendingLeaseUploads || []), ..._lsOnlyHeld],
     disputes:          _mergedDisps,
     timeline:          _mergedTl,
     results:           dbData.results           ?? base.results           ?? null,
@@ -29563,10 +30161,10 @@ function renderProperty(property, opts = {}) {
 
   // ── Tenants ───────────────────────────────────────────────────────────
   try {
-    // While a pipeline is running, placeholderIdx references inside processFile /
-    // _runLeaseJobPipeline are live. Splicing tenantData would shift or wipe those
-    // indices, leaving the placeholder at the wrong slot and creating ghost cards.
-    // Just re-render the current state and let the pipeline own the array.
+    // While a pipeline is running its placeholder rows are live (the pipeline
+    // finds them by job id — see _leaseJobRoster). Splicing tenantData would
+    // wipe them mid-run and leave ghost cards. Just re-render the current state
+    // and let the pipeline own the array.
     const hasPending = tenantData.some(t => t?.status === 'pending');
 
     if (hasPending) {

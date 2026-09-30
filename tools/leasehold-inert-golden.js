@@ -121,7 +121,12 @@ function stable(v, seen = new WeakSet()) {
   Object.keys(v).sort().forEach(k => { o[k] = stable(v[k], seen); });
   return o;
 }
-const withoutLifecycle = (t) => { const c = Object.assign({}, t); LIFECYCLE_KEYS.forEach(k => delete c[k]); return c; };
+// Step A-2 adds one allow-list key, leaseDocumentId (the register row a
+// leasehold was created from). It is null for every tenant here — checked
+// below — and set aside from the comparison exactly as the lifecycle keys are,
+// so the recorded pre-A-1 golden stays the evidence it was recorded as.
+const A2_KEYS = ['leaseDocumentId'];
+const withoutLifecycle = (t) => { const c = Object.assign({}, t); LIFECYCLE_KEYS.concat(A2_KEYS).forEach(k => delete c[k]); return c; };
 const md5 = (s) => crypto.createHash('md5').update(String(s)).digest('hex');
 const safe = (fn) => { try { return fn(); } catch (e) { return { threw: String(e && e.message || e) }; } };
 
@@ -168,6 +173,7 @@ const now = measure();
 const lc = [...PROPS.flatMap(p => p.tenants), ...TABLE_ROWS].map(t => TN.normalizeTenant(clone(t)));
 const lifecycleOk = lc.every(t => !('leasehold_status' in t) ||
   (t.leasehold_status === 'active' && t.ended_at === null && t.ended_reason === null));
+const a2Ok = lc.every(t => !('leaseDocumentId' in t) || t.leaseDocumentId === null);
 
 if (RECORD) {
   fs.mkdirSync(path.dirname(GOLDEN), { recursive: true });
@@ -189,5 +195,6 @@ for (const k of Object.keys(golden)) {
   check(`${k}: identical to the pre-A-1 golden`, a === b, where);
 }
 check('every tenant\'s lifecycle reads active / null / null', lifecycleOk);
+check('every tenant\'s leaseDocumentId (Step A-2) reads null — nothing here was created from a held upload', a2Ok);
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

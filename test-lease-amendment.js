@@ -68,7 +68,7 @@ function runOverrides(tenant, amNorm, docMeta, opts) {
   box._refreshLfcExpansion       = () => {};
   box._updateStaleResultsBanner  = () => {};
   vm.createContext(box);
-  vm.runInContext(fn('applyAmendmentOverrides')
+  vm.runInContext(fn('_amendmentMerge') + '\n' + fn('applyAmendmentOverrides')
     + `\nthis.__r = applyAmendmentOverrides('t1', ${JSON.stringify(amNorm)}, 'amd-1', ${JSON.stringify((opts && opts.fileName) || 'Amendment 1.pdf')}, ${JSON.stringify(docMeta)});`,
     box);
   return { tenant: box.tenantData[0], box };

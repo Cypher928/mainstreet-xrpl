@@ -183,8 +183,12 @@ sec('provenance records the model that actually ran');
   assert('no hard-coded model name is written as provenance', literals.length === 0, literals.join(', '));
   assert('the real model is carried out of the normalizer',
     /normalized\._extractionModel\s*=\s*_extractionModel/.test(s));
-  assert('the single-file save site records it',
-    /extractionModel:\s*normalized\._extractionModel\s*\?\?\s*null/.test(s));
+  // Step A-2: the single-file path ("Add One Tenant") has no save site of its
+  // own any more — it is a batch of one through the bulk pipeline, whose save
+  // site is asserted next. What must hold is that it has not grown one back.
+  const _hl = s.slice(s.indexOf('async function handleLease('), s.indexOf('// ─── Sqft Validation'));
+  assert('the single-file path saves through the bulk pipeline (no literal model of its own)',
+    /await handleBulkLeases\(\[file\]\)/.test(_hl) && !/extractionModel/.test(_hl));
   assert('the bulk save site records it',
     /extractionModel:\s*norm\?\._extractionModel\s*\?\?\s*null/.test(s));
   // Absent must resolve to null, never to a guess — the AI-1 rule.

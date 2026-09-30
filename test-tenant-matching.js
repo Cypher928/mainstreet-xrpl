@@ -1,16 +1,16 @@
 'use strict';
 /**
- * Tenant matching for lease uploads.
+ * Tenant matching for lease uploads — as PROPOSALS (Step A-2).
  *
- * An upload appended a new tenant unconditionally (placeholderIdx =
- * tenantData.length, no lookup), so re-uploading a lease for an existing tenant
- * produced a duplicate: "Whole Health Market" and "Whole Health Market, Inc".
- * The lease landed on the new record, and surfaces keyed to the original
- * reported no lease on file.
+ * An upload appended a new tenant unconditionally, so re-uploading a lease for
+ * an existing tenant produced a duplicate: "Whole Health Market" and "Whole
+ * Health Market, Inc". The first fix merged a unique suite or name match
+ * straight into the existing tenant. Step A-2 keeps the matching and removes
+ * the merge: every match — unique or ambiguous, by suite or by name — is a
+ * CANDIDATE a person confirms (LeaseUploadIdentity.candidates). No auto-attach.
  *
- * Match order is suite, then normalized name, then nothing. Ambiguity is never
- * merged — a wrong merge silently corrupts CAM allocation across two real
- * tenants, which is worse than a visible duplicate.
+ * Matching order and normalisation are unchanged: suite, then normalized name;
+ * never fuzzy. Runs in the served page, against the module the app loads.
  */
 let pw; try { pw = require('playwright'); }
 catch (_) { pw = require('/opt/node22/lib/node_modules/playwright'); }
@@ -55,10 +55,16 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   await page.waitForSelector('#appContent', { state: 'visible', timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(1500);
 
-  const match = (tenants, incoming, skipIdx = -1) =>
-    page.evaluate(({ tenants, incoming, skipIdx }) => findTenantMatch(tenants, incoming, skipIdx),
-                  { tenants, incoming, skipIdx });
-  const norm = name => page.evaluate(n => _normalizeTenantName(n), name);
+  const cands = (tenants, incoming, excludeId = null) =>
+    page.evaluate(({ tenants, incoming, excludeId }) => window.LeaseUploadIdentity.candidates(tenants, incoming, { excludeId }),
+                  { tenants, incoming, excludeId });
+  const norm = name => page.evaluate(n => window.LeaseUploadIdentity.normalizeName(n), name);
+
+  console.log('\n── No automatic matcher is left in the app ──');
+  (await page.evaluate(() => typeof window.findTenantMatch === 'undefined' && typeof findTenantMatch === 'undefined'
+    && !!window.LeaseUploadIdentity && typeof window.resolveHeldLeaseUpload === 'function'))
+    ? ok('findTenantMatch is gone; LeaseUploadIdentity proposes and resolveHeldLeaseUpload decides')
+    : bad('an automatic matcher is still reachable, or the identity module is not loaded');
 
   const EXISTING = [
     { id: 'a', tenant_name: 'Whole Health Market',       unitNumber: '100' },
@@ -66,65 +72,64 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   ];
 
   console.log('\n── The reported case ──');
-  let r = await match(EXISTING, { tenant_name: 'Whole Health Market, Inc', suite: 'Suite 100' });
-  (r && r.index === 0 && r.basis === 'suite')
-    ? ok('"Whole Health Market, Inc" in Suite 100 links to the existing tenant by suite')
-    : bad('did not link', JSON.stringify(r));
+  let r = await cands(EXISTING, { tenant_name: 'Whole Health Market, Inc', suite: 'Suite 100' });
+  (r.length === 1 && r[0].id === 'a' && r[0].basis === 'suite+name')
+    ? ok('"Whole Health Market, Inc" in Suite 100 is PROPOSED for the existing tenant (suite and name)')
+    : bad('not proposed', JSON.stringify(r));
 
-  console.log('\n── Suite wins, and beats the name ──');
-  r = await match(EXISTING, { tenant_name: 'Something Entirely Different', suite: '210' });
-  (r && r.index === 1 && r.basis === 'suite')
-    ? ok('a renamed tenant in a known suite still links (suite is the stronger signal)')
-    : bad('suite match failed', JSON.stringify(r));
+  console.log('\n── Suite is a signal on its own ──');
+  r = await cands(EXISTING, { tenant_name: 'Something Entirely Different', suite: '210' });
+  (r.length === 1 && r[0].id === 'b' && r[0].basis === 'suite')
+    ? ok('a renamed tenant in a known suite is proposed by suite')
+    : bad('suite proposal failed', JSON.stringify(r));
   for (const form of ['Suite 100', 'Ste. 100', 'Unit 100', '#100', '100']) {
-    r = await match(EXISTING, { tenant_name: 'X', suite: form });
-    (r && r.index === 0) ? ok(`suite form "${form}" normalizes and matches`) : bad(`suite form "${form}" missed`);
+    r = await cands(EXISTING, { tenant_name: 'X', suite: form });
+    (r.length === 1 && r[0].id === 'a') ? ok(`suite form "${form}" normalizes and is proposed`) : bad(`suite form "${form}" missed`, JSON.stringify(r));
   }
 
-  console.log('\n── Name fallback when there is no suite ──');
-  r = await match(EXISTING, { tenant_name: 'WHOLE HEALTH MARKET, L.L.C.' });
-  (r && r.index === 0 && r.basis === 'name')
+  console.log('\n── Name when there is no suite ──');
+  r = await cands(EXISTING, { tenant_name: 'WHOLE HEALTH MARKET, L.L.C.' });
+  (r.length === 1 && r[0].id === 'a' && r[0].basis === 'name')
     ? ok('case, punctuation and legal suffix are all normalized away')
-    : bad('name fallback failed', JSON.stringify(r));
+    : bad('name proposal failed', JSON.stringify(r));
   (await norm('Whole Health Market, Inc.')) === (await norm('whole health market'))
     ? ok('"Whole Health Market, Inc." and "whole health market" normalize identically')
     : bad('normalizer inconsistent');
 
-  console.log('\n── Genuinely different tenants are not merged ──');
-  r = await match(EXISTING, { tenant_name: 'Summit Coffee Roasters', suite: '999' });
-  (r === null) ? ok('"Summit Coffee Roasters" is not merged into "Summit Coffee & Provisions"')
-               : bad('merged two distinct tenants', JSON.stringify(r));
-  r = await match(EXISTING, { tenant_name: 'Brand New Tenant' });
-  (r === null) ? ok('an unknown tenant creates a new record, as it should') : bad('false match', JSON.stringify(r));
+  console.log('\n── Genuinely different tenants are not proposed (no fuzzy matching) ──');
+  r = await cands(EXISTING, { tenant_name: 'Summit Coffee Roasters', suite: '999' });
+  (r.length === 0) ? ok('"Summit Coffee Roasters" is not proposed for "Summit Coffee & Provisions"')
+                   : bad('proposed a near miss', JSON.stringify(r));
+  r = await cands(EXISTING, { tenant_name: 'Brand New Tenant' });
+  (r.length === 0) ? ok('an unknown tenant has no candidates — a genuinely new leasehold') : bad('false candidate', JSON.stringify(r));
 
-  console.log('\n── Ambiguity is surfaced, never guessed ──');
+  console.log('\n── Ambiguity is listed, never resolved ──');
   const DUPES = [
     { id: 'a', tenant_name: 'Acme Holdings', unitNumber: '300' },
     { id: 'b', tenant_name: 'Acme Holdings LLC', unitNumber: '400' },
   ];
-  r = await match(DUPES, { tenant_name: 'Acme Holdings, Inc.' });
-  (r && r.ambiguous && r.candidates.length === 2)
-    ? ok('two tenants with the same normalized name are flagged, not merged')
-    : bad('ambiguous name not flagged', JSON.stringify(r));
+  r = await cands(DUPES, { tenant_name: 'Acme Holdings, Inc.' });
+  (r.length === 2) ? ok('two tenants with the same normalized name are both candidates')
+                   : bad('ambiguous name not listed', JSON.stringify(r));
   const SAME_SUITE = [
     { id: 'a', tenant_name: 'Old Tenant', unitNumber: '500' },
     { id: 'b', tenant_name: 'New Tenant', unitNumber: 'Suite 500' },
   ];
-  r = await match(SAME_SUITE, { tenant_name: 'Whoever', suite: '500' });
-  (r && r.ambiguous && r.basis === 'suite')
-    ? ok('two tenants in one suite are flagged, not merged')
-    : bad('ambiguous suite not flagged', JSON.stringify(r));
+  r = await cands(SAME_SUITE, { tenant_name: 'Whoever', suite: '500' });
+  (r.length === 2 && r.every(c => c.basis === 'suite'))
+    ? ok('two tenants in one suite are both candidates')
+    : bad('ambiguous suite not listed', JSON.stringify(r));
 
   console.log('\n── An upload never matches its own placeholder ──');
   const WITH_PLACEHOLDER = [
     { id: 'a', tenant_name: 'Whole Health Market', unitNumber: '100' },
-    { id: 'job-1', tenant_name: null, leaseExpected: true, fileName: 'x.pdf' },
+    { id: 'job-1', tenant_name: null, leaseExpected: true, fileName: 'x.pdf', status: 'pending' },
   ];
-  r = await match(WITH_PLACEHOLDER, { tenant_name: 'Whole Health Market', suite: '100' }, 1);
-  (r && r.index === 0) ? ok('the in-flight placeholder is skipped and the real tenant matched')
-                       : bad('placeholder interfered', JSON.stringify(r));
-  r = await match([{ id: 'p', tenant_name: null, leaseExpected: true }], { tenant_name: 'Anything' }, -1);
-  (r === null) ? ok('a pending placeholder is never a match target') : bad('matched a placeholder', JSON.stringify(r));
+  r = await cands(WITH_PLACEHOLDER, { tenant_name: 'Whole Health Market', suite: '100' }, 'job-1');
+  (r.length === 1 && r[0].id === 'a') ? ok('the in-flight placeholder is skipped and the real tenant proposed')
+                                      : bad('placeholder interfered', JSON.stringify(r));
+  r = await cands([{ id: 'p', tenant_name: 'Anything', leaseExpected: true, status: 'pending' }], { tenant_name: 'Anything' });
+  (r.length === 0) ? ok('a pending placeholder is never a candidate') : bad('proposed a placeholder', JSON.stringify(r));
 
   console.log('\n' + (fail ? '\x1b[31m' : '\x1b[32m') + `RESULT: ${pass} passed, ${fail} failed\x1b[0m`);
   await b.close(); srv.close(); process.exit(fail ? 1 : 0);

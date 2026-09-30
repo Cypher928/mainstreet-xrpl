@@ -231,7 +231,10 @@ t('[source] every call site passes a filename', () => {
   const calls = scriptSrc.match(/callClaudeForLease\((?!text,)[^)]*\)/g) || [];
   const bare  = calls.filter(c => !/,/.test(c));
   eq(bare.length, 0, `call sites still passing only text: ${JSON.stringify(bare)}`);
-  ok(calls.length >= 5, `expected >= 5 call sites, found ${calls.length}`);
+  // Step A-2: "Add One Tenant" (handleLease) no longer runs its own
+  // extraction — one file is a batch of one through the job pipeline — so its
+  // call site is gone and four remain (pipeline, amendment, retry, acquisition).
+  ok(calls.length >= 4, `expected >= 4 call sites, found ${calls.length}`);
 });
 
 console.log('\n── Suite integrity ──');
