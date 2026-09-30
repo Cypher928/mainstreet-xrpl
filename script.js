@@ -27158,7 +27158,13 @@ async function selectProperty(id) {
   // ⚡ INSTANT: render with whatever is already in the _props cache.
   // Do NOT wipe property.tenants/invoices — that would erase data the user
   // just uploaded if they navigate away and back within the same session.
+  //
+  // When what is cached holds the portfolio list's placeholder rows, what they
+  // painted into the live buffer is remembered, so the saved roster can
+  // replace them below (_listRosterRows).
+  const _placeholderIds = _listRosterIds(property.tenants);
   renderProperty(property);
+  const _rosterBase = _placeholderIds ? _snapshotRoster(tenantData, _placeholderIds) : null;
 
   // Load from DB/localStorage in the background and update if richer data arrives.
   setTimeout(async () => {
@@ -27279,14 +27285,27 @@ async function selectProperty(id) {
 
     // Tenant/invoice data: only overwrite when loaded data is at least as rich,
     // preventing a stale DB record from erasing a fresh in-session upload.
+    //
+    // Over the list's placeholder roster the saved roster always wins: counting
+    // placeholder rows would let a tenants table holding more rows than the
+    // saved roster keep the placeholder, and none of them is a session's work.
+    // Only an empty load does not replace it.
     const inMemCount  = (property.tenants || []).length;
     const loadedCount = (data.tenants     || []).length;
-    if (loadedCount >= inMemCount) {
+    const adopt = _rosterBase ? (loadedCount > 0 || inMemCount === 0) : loadedCount >= inMemCount;
+    if (adopt) {
       property.tenants  = data.tenants  || [];
       property.invoices = data.invoices || [];
       property.disputes = data.disputes || [];
       if (data.name)      property.name      = data.name;
       if (data.totalSqft) property.totalSqft = data.totalSqft;
+      // The live buffer still holds the placeholder, and renderProperty keeps a
+      // live buffer over property.tenants — so the saved roster goes into the
+      // buffer too, merged with anything done since the placeholder was painted.
+      if (_rosterBase) {
+        tenantData.splice(0, tenantData.length,
+          ..._reconcileProvisionalRoster(_rosterBase, tenantData, property.tenants));
+      }
     }
 
     // Always re-render so the restored reconciliation snapshot appears even when
@@ -27680,7 +27699,14 @@ async function restoreLeaseFiles() {
     const file = await getLeaseFile(t.id);
     if (file instanceof File) {
       console.warn('[PIPELINE:diag] restoreLeaseFiles OVERWRITE | idx:', idx, '| t.status:', t?.status, '| existing tenantData[idx].status:', tenantData[idx]?.status, '| pipeline still pending?', tenantData[idx]?.status === 'pending');
-      tenantData[idx] = { ...t, leaseFile: file };
+      // The file goes onto the row as it is NOW, found by id. The read is
+      // async: the row captured before it may since have been replaced — by the
+      // saved roster arriving (selectProperty) — and writing that copy back
+      // would restore the replaced row along with the file.
+      const at  = tenantData.findIndex(x => x && x.id === t.id);
+      const cur = at >= 0 ? tenantData[at] : null;
+      if (!cur || cur.status === 'pending' || cur.leaseFile instanceof File) return;
+      tenantData[at] = { ...cur, leaseFile: file };
       changed = true;
     }
   }));
@@ -28142,10 +28168,11 @@ async function loadProperties(opts) {
 
   const allTenants = tenantRows || [];
   properties.forEach(p => {
-    // Map DB column names back to the field names the app expects
+    // Map DB column names back to the field names the app expects. Marked as
+    // the list's placeholder roster — see _listRosterRows.
     p.tenants = allTenants
       .filter(t => t.property_id === p.id)
-      .map(t => normalizeTenant(_tenantRowToRecord(t)));
+      .map(t => { const r = normalizeTenant(_tenantRowToRecord(t)); _listRosterRows.add(r); return r; });
   });
 
   return properties;
@@ -28181,6 +28208,88 @@ function _tenantRowToRecord(t) {
     ended_at:         t.ended_at,
     ended_reason:     t.ended_reason,
   };
+}
+
+// ── The portfolio list's roster is a placeholder ────────────────────────────
+// loadProperties builds each property's roster from the tenants TABLE, which
+// holds a leasehold's columns and nothing else: no review state, no overrides,
+// no cap base, no amendments, no document link. It exists so the portfolio can
+// count and the workspace can paint at once. The property's own roster — the
+// saved one, properties.data.tenants — arrives a moment later from
+// loadPropertyData, and it is the record.
+//
+// selectProperty painted the placeholder into tenantData, adopted the saved
+// roster into property.tenants and rendered again — and renderProperty, finding
+// named rows in tenantData, kept them and wrote them back over property.tenants.
+// The next save persisted the placeholder, erasing every saved-only field of
+// every tenant: cap base, amendments, review overrides, the lease document
+// link. Only when the tenants table had rows for the property, which is every
+// real property and none of the suites that started from an empty table.
+//
+// Recognised by identity: only loadProperties puts a row in this set, and any
+// real record — a load, an edit, a normalisation — is a different object.
+const _listRosterRows = new WeakSet();
+
+// The ids of the placeholder rows a roster holds, or null when it holds none.
+// A roster can hold both: a lease job that finishes for a property after the
+// portfolio was re-read adds its real row to the list's roster.
+function _listRosterIds(tenants) {
+  const ids = new Set();
+  (tenants || []).forEach(t => {
+    if (t && typeof t === 'object' && t.id != null && _listRosterRows.has(t)) ids.add(String(t.id));
+  });
+  return ids.size ? ids : null;
+}
+
+// The placeholder rows as they were painted into the live buffer, by tenant id,
+// each field as JSON: the base of the merge below. A field still equal to it
+// was not touched since.
+function _snapshotRoster(rows, ids) {
+  const base = new Map();
+  (rows || []).forEach(t => {
+    if (!t || typeof t !== 'object' || t.id == null || !ids.has(String(t.id))) return;
+    const sig = {};
+    Object.keys(t).forEach(k => { sig[k] = JSON.stringify(t[k]); });
+    base.set(String(t.id), sig);
+  });
+  return base;
+}
+
+// The saved roster replaces the placeholder, and nothing done in this session
+// is lost to it. Per row, three ways — base: the placeholder as painted; live:
+// the buffer now; saved: the loaded roster.
+//   · a live row the placeholder never held (an upload, a pipeline row, a new
+//     tenant) is kept exactly as it is;
+//   · a placeholder row becomes the saved row, carrying only the fields changed
+//     in this session since it was painted;
+//   · a placeholder row the saved roster does not hold is dropped, unless it
+//     was changed in this session;
+//   · a saved row the buffer does not hold is appended.
+// Live order is kept, so a row keeps its place under whatever is running.
+function _reconcileProvisionalRoster(base, live, saved) {
+  const savedById = new Map();
+  (saved || []).forEach(t => { if (t && t.id != null) savedById.set(String(t.id), t); });
+  const placed = new Set();
+  const out = [];
+  (live || []).forEach(t => {
+    if (!t || typeof t !== 'object') return;
+    const key = t.id != null ? String(t.id) : null;
+    const was = key != null ? base.get(key) : undefined;
+    if (key != null) placed.add(key);
+    if (!was) { out.push(t); return; }
+    const changed = Object.keys(t).filter(k => JSON.stringify(t[k]) !== was[k]);
+    const s = savedById.get(key);
+    if (!s) { if (changed.length) out.push(t); return; }
+    const merged = { ...s };
+    changed.forEach(k => { merged[k] = t[k]; });
+    out.push(merged);
+  });
+  (saved || []).forEach(t => {
+    if (!t) return;
+    if (t.id != null && placed.has(String(t.id))) return;
+    out.push(t);
+  });
+  return out;
 }
 
 // The table is the authority on a leasehold's lifecycle; the property blob is

@@ -687,6 +687,7 @@ const SUITES = [
   { label: 'Server-side acquisition memory (P5-6B)',                       cmd: 'node test-p5-6b-acquisition-memory.js' },
   { label: 'Register leasehold link (039 client + API)',                   cmd: 'node test-register-leasehold-link.js' },
   { label: 'Bulk upload writes the real leasehold id (e2e)',               cmd: 'node test-e2e-register-leasehold-link.js' },
+  { label: 'Saved roster survives reload over tenants-table rows (e2e)',  cmd: 'node test-e2e-roster-reload-preservation.js' },
   { label: 'Acquired property remembers its leases (e2e, P5-2)',           cmd: 'node test-e2e-property-leaseholds.js' },
   { label: 'Space activity',                            cmd: 'node test-space-activity.js' },
   { label: 'Space lease chip (no Invalid Date)',        cmd: 'node test-space-lease-chip.js' },

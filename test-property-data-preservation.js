@@ -70,7 +70,10 @@ const REAL = [
   'selectProperty', 'backToPortfolio', 'appendPropertyTimelineEvent', 'appendPropertyTimelineEventOnce', '_appendSyncRestored',
   '_isLifecycleColumnMissing', '_tenantRowToRecord', '_overlayLeaseholdLifecycle',
   '_mergeHeldLeaseUploads', '_heldUploadSettled',
-].map(n => fnSource(SCRIPT, n)).join('\n') + '\nconst _resolvedHeldUploads = new Set();\n';
+  // selectProperty's placeholder-roster merge (test-e2e-roster-reload-preservation.js
+  // covers it; here the list rows are plain objects, so it stays out of the way).
+  '_listRosterIds', '_snapshotRoster', '_reconcileProvisionalRoster',
+].map(n => fnSource(SCRIPT, n)).join('\n') + '\nconst _resolvedHeldUploads = new Set();\nconst _listRosterRows = new WeakSet();\n';
 
 const U = '011df998-bad2-464e-bbcb-28e2d0fee821';
 const P = '3dc8a7b8-170c-4a51-b90d-dde831c56ca9';
