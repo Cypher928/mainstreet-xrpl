@@ -79,6 +79,9 @@
 const _t   = require('./_pilot-target');
 const DEPS = require('./_server-deps');
 const TN   = require('../tenant-normalize.js');
+// Step A-1 — the one lifecycle rule (migration 037). The tenants table is the
+// authority for whether a leasehold has ENDED; the blob does not decide it.
+const LeaseholdStatus = require('../leasehold-status.js');
 const PropertyRecord = require('../property-record.js');
 // P3 — the shared, pure lifecycle rule. A PropertyRecord is a MANAGED
 // property's record; a prospect or passed deal is refused by name, not
@@ -93,6 +96,20 @@ const PropertyLeaseholds = require('../property-leaseholds.js');
 
 const SUPABASE_URL      = _t.url;
 const SUPABASE_ANON_KEY = _t.anonKey;
+
+// The tenants columns the hydrator reads. Same lists as script.js
+// (TENANT_ROW_COLUMNS*); the pre-037 list is the retry for a database the
+// lifecycle migration has not reached, so a missing column is never an outage.
+const TENANT_ROW_COLUMNS_PRE_037 = 'id,property_id,name,sqft,cap,start_date,end_date,lease_url,lease_type';
+const TENANT_ROW_COLUMNS         = TENANT_ROW_COLUMNS_PRE_037 + ',leasehold_status,ended_at,ended_reason';
+const TENANT_LIFECYCLE_COLUMNS   = 'id,leasehold_status,ended_at,ended_reason';
+/** A PostgREST error body that says only "the 037 lifecycle columns are not there". */
+function _isLifecycleColumnMissing(body) {
+  if (!body || typeof body !== 'object') return false;
+  const msg = String(body.message || '') + ' ' + String(body.details || '') + ' ' + String(body.hint || '');
+  return (body.code === '42703' || body.code === 'PGRST204' || /column .* does not exist|could not find/i.test(msg)) &&
+         /leasehold_status|ended_at|ended_reason/.test(msg);
+}
 
 /** Transport credential. Service role when configured, exactly as api/ does. */
 function _key() { return _t.serviceRoleKey || SUPABASE_ANON_KEY; }
@@ -406,13 +423,36 @@ async function hydrate(opts) {
   // ── 2. Tenants. The blob wins whenever it has any, because the table has no
   //      review, reviewOverrides or capBaseAmount. The table is a fallback for
   //      legacy rows, exactly as in loadPropertyData. ────────────────────────
+  //
+  //      Step A-1 (migration 037): the leasehold lifecycle — leasehold_status,
+  //      ended_at, ended_reason — lives on the tenants TABLE, which is its
+  //      authority. When the blob supplies the roster, the lifecycle columns are
+  //      read by id and laid over it, table wins, exactly as loadPropertyData
+  //      does in the browser. A database without the 037 columns is not a
+  //      degradation (every leasehold is active there); a failed read is, because
+  //      an ended leasehold would then read as current.
   if (Array.isArray(d.tenants) && d.tenants.length) {
     property.tenants = d.tenants.map(TN.normalizeTenant);
-  } else {
-    const tRes = await sb(
+    const lRes = await sb(
       `/tenants?property_id=eq.${encodeURIComponent(propertyId)}` +
-      `&select=id,property_id,name,sqft,cap,start_date,end_date,lease_url,lease_type`,
+      `&select=${TENANT_LIFECYCLE_COLUMNS}`,
       { method: 'GET' });
+    if (lRes.status >= 300) {
+      if (!_isLifecycleColumnMissing(lRes.json)) degraded.push('tenants.lifecycle_read_failed');
+    } else {
+      const byId = new Map();
+      (Array.isArray(lRes.json) ? lRes.json : []).forEach(r => { if (r && r.id != null) byId.set(String(r.id), r); });
+      property.tenants.forEach(t => {
+        const r = t && t.id != null ? byId.get(String(t.id)) : null;
+        if (r) Object.assign(t, LeaseholdStatus.lifecycleFrom(r));
+      });
+    }
+  } else {
+    const tPath = (cols) => `/tenants?property_id=eq.${encodeURIComponent(propertyId)}&select=${cols}`;
+    let tRes = await sb(tPath(TENANT_ROW_COLUMNS), { method: 'GET' });
+    if (tRes.status >= 300 && _isLifecycleColumnMissing(tRes.json)) {
+      tRes = await sb(tPath(TENANT_ROW_COLUMNS_PRE_037), { method: 'GET' });
+    }
     if (tRes.status >= 300) {
       property.tenants = [];
       degraded.push('tenants.read_failed');
@@ -427,6 +467,9 @@ async function hydrate(opts) {
         end_date:    t.end_date,
         lease_url:   t.lease_url,
         lease_type:  t.lease_type,
+        leasehold_status: t.leasehold_status,
+        ended_at:         t.ended_at,
+        ended_reason:     t.ended_reason,
       }));
       if (tRows.length) degraded.push('tenants.from_table_no_review_state');
     }
@@ -544,4 +587,6 @@ module.exports = {
   // P5-6B. The caller transport and the acquisition reads, exported so a test
   // can assert the key and bearer it sends, and the paths it issues.
   _defaultUserFetch, _readAcquisition, ACQ_ROW_LIMIT,
+  // Step A-1. The lifecycle columns and the missing-column rule, for the tests.
+  TENANT_ROW_COLUMNS, TENANT_ROW_COLUMNS_PRE_037, TENANT_LIFECYCLE_COLUMNS, _isLifecycleColumnMissing,
 };

@@ -71,6 +71,18 @@
     return { iso, unreadable: (raw !== '' && iso === '') ? raw : null };
   }
 
+  // The leasehold lifecycle triple (037). Same rule as LeaseholdStatus.lifecycleFrom.
+  var _ENDED_REASONS = ['lease_expired', 'terminated_early', 'surrendered', 'evicted', 'other'];
+  function _lifecycle(d) {
+    const ended = d.leasehold_status === 'ended';
+    const iso = (v) => { if (v == null) return null; const s = String(v).trim().slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
+    return {
+      leasehold_status: ended ? 'ended' : 'active',
+      ended_at:         ended ? iso(d.ended_at) : null,
+      ended_reason:     (ended && _ENDED_REASONS.indexOf(d.ended_reason) >= 0) ? d.ended_reason : null,
+    };
+  }
+
   function normalizeTenant(d) {
     if (!d) return d;
     const fallback = extractDatesFromText(d.rawText || '');
@@ -187,6 +199,14 @@
       // the vacancy silently becomes a tenant called whatever the row was
       // named. Strictly boolean: anything but `true` is not vacant.
       vacant:              d.vacant === true,
+      // ALLOW-LIST, and the leasehold lifecycle (migration 037). Without these
+      // three lines an ended leasehold would be read back as current on the next
+      // load. Consistent by construction, exactly as LeaseholdStatus.lifecycleFrom
+      // (test-leasehold-status.js pins the two together): 'ended' only when the
+      // record says exactly 'ended'; an active leasehold carries no end fields.
+      // ended_at is the CONFIRMED end and is never taken from end_date. This is
+      // not the extraction `status` field, which is not on this list at all.
+      ..._lifecycle(d),
       property_name:       (() => {
         const v = d.property_name ?? d.propertyName ?? null;
         return (typeof v === 'string' && v.trim()) ? v.trim() : null;

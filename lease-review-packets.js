@@ -18,6 +18,15 @@ window.LeaseReviewPackets = (() => {
    * dispute under resolved history. A packet is something a landlord forwards
    * to a lender or a tenant, so both readings travel.
    */
+  // The one lifecycle rule, resolved at call time. No fallback: missing is a
+  // loading error, never "treat as current".
+  const _LS = () => {
+    const r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+              (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null);   // eslint-disable-line no-undef
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before lease-review-packets.js)');
+    return r;
+  };
+
   const _isOpenDispute = (d) => {
     const DS = (typeof window !== 'undefined') && window.DisputeStatus;
     if (DS && typeof DS.isOpen === 'function') return DS.isOpen(d);
@@ -856,7 +865,10 @@ window.LeaseReviewPackets = (() => {
 
     // ── Core computations ─────────────────────────────────────────────────────
 
-    const activeTenants = tenants.filter(t => !t.extractionFailed && !t._error);
+    // Step A-1 — a leasehold recorded as ENDED (leasehold-status.js, migration
+    // 037) is history: not occupancy, not concentration, not a rollover. For an
+    // all-active roster this is the filter it always was.
+    const activeTenants = tenants.filter(t => !t.extractionFailed && !t._error && _LS().isCurrent(t));
 
     // Occupancy
     const occupiedSqft  = activeTenants.reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);

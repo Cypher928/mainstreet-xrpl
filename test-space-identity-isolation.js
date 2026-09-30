@@ -63,7 +63,8 @@ function loadModules() {
     querySelectorAll: () => [],
   };
   vm.createContext(sandbox);
-  for (const f of ['property-area.js', 'dispute-status.js', 'tenant-space.js', 'property-record.js']) {
+  // leasehold-status.js first, as index.html loads it (Step A-1).
+  for (const f of ['leasehold-status.js', 'property-area.js', 'dispute-status.js', 'tenant-space.js', 'property-record.js']) {
     const p = path.join(__dirname, f);
     if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), sandbox, { filename: f });
   }

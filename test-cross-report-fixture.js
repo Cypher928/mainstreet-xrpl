@@ -147,7 +147,7 @@ function engine() {
   // The real lease-period module, loaded rather than stubbed: the engine now
   // reads its interval classification instead of re-deriving a date rule, and a
   // stub here would let this sandbox agree with an engine that had drifted.
-  const box = { window: { LeasePeriod: require('./lease-period.js') }, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
+  const box = { window: { LeasePeriod: require('./lease-period.js'), LeaseholdStatus: require('./leasehold-status.js') }, console, module: {}, Date, Math, Number, String, Array, JSON, isFinite, parseFloat };
   box.globalThis = box;
   vm.createContext(box);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'reconciliation-engine.js'), 'utf8'), box,
@@ -165,7 +165,8 @@ function baseSandbox() {
     // stubbed, so these reports run against the same definitions production
     // uses — CamPool in particular decides what is in the CAM pool, and a stub
     // of it would let this fixture agree with a script.js that had drifted.
-    window: { CamPool: require('./cam-pool.js') },
+    // LeaseholdStatus: the lifecycle predicate the page loads first (Step A-1).
+    window: { CamPool: require('./cam-pool.js'), LeaseholdStatus: require('./leasehold-status.js') },
     parseFloat, parseInt, isNaN, isFinite, Number, Math, Date, JSON, Set, Map,
     Array, Object, String, Boolean, RegExp,
     fmt, esc,
@@ -271,7 +272,7 @@ function propertyMetrics(property) {
   // page resolves them against window when each file arrives in its own <script>
   // tag. Publish them there once.
   if (!global.Selectors) {
-    const sel = {};
+    const sel = { LeaseholdStatus: require('./leasehold-status.js') };   // loaded first on the page (Step A-1)
     ['lease-intelligence.js', 'review-engine.js', 'selectors.js'].forEach(f => {
       new Function('window', fs.readFileSync(path.join(ROOT, f), 'utf8'))
         .call({ window: sel }, sel);
@@ -410,6 +411,7 @@ function riskAndDisputes() {
 // lease-review-packets.js is a browser module that publishes onto `window`.
 global.window = global.window || {};
 global.window.AuditExposure = global.window.AuditExposure || AX;
+global.window.LeaseholdStatus = global.window.LeaseholdStatus || require('./leasehold-status.js');   // loaded first on the page (Step A-1)
 require('./lease-review-packets.js');
 const LRP = global.window.LeaseReviewPackets;
 

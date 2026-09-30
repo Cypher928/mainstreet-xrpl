@@ -69,12 +69,15 @@ const MUTANTS = [
   { id: 'L20', file: S, why: 'property delete goes back to deleting tenants first',
     from: "    const { error } = await db.from('properties').delete().eq('id', propId);",
     to:   "    await db.from('tenants').delete().eq('property_id', propId);\n    const { error } = await db.from('properties').delete().eq('id', propId);" },
-  { id: 'L21', file: S, why: 'Clear All deletes tenants documents are linked to',
-    from: "      if (keep.length) del = del.not('id', 'in', `(${keep.join(',')})`);", to: '' },
-  { id: 'L22', file: S, why: 'Clear All deletes even when the linked set could not be read',
-    from: '    if (linkErr) {\n      console.error', to: '    if (false) {\n      console.error' },
-  { id: 'L23', file: S, why: 'the direct-write resync fallback forgets lease_documents',
-    from: '      ...(docRefs || []).map(r => String(r.tenant_id)),\n', to: '' },
+  // Step A-1 moved these onto the stronger rule: nothing deletes a leasehold for leaving a list.
+  { id: 'L21', file: S, why: 'Clear All deletes tenants rows again',
+    from: "  document.getElementById('bulkLeaseInput').value = '';\n  if (lastResults.length > 0)",
+    to:   "  document.getElementById('bulkLeaseInput').value = '';\n  if (prop?.id) await db.from('tenants').delete().eq('property_id', prop.id);\n  if (lastResults.length > 0)" },
+  { id: 'L22', file: S, why: 'Clear All goes back to warning that records are removed',
+    from: "'saved for this property are not deleted.'", to: "'saved for this property are removed and cannot be recovered.'" },
+  { id: 'L23', file: S, why: 'the direct-write resync fallback prunes absentees again',
+    from: "  console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length,",
+    to:   "  await db.from('tenants').delete().in('id', []);\n  console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length," },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reglink-mut-'));

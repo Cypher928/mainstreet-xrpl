@@ -97,6 +97,8 @@
     return { ok: r.ok && body.ok === true, error: body.error };
   }
 
+  var SPACE_COLUMNS = 'id, name, sqft, lease_type, start_date, end_date';
+
   async function loadSpace() {
     // Two reads, both RLS-scoped. No property id, no landlord table, no filter
     // supplied by this client that the database is trusting.
@@ -114,8 +116,15 @@
 
     if (!active.length) { show('pViewEmpty'); return; }
 
+    // Step A-1: the leasehold lifecycle (migration 037) is read with the space so
+    // it is on hand; nothing here displays it yet. A database the 037 migration
+    // has not reached answers "column does not exist", and the portal retries
+    // with the pre-037 list rather than telling a tenant their space is missing.
     var sp = await db.from('tenants')
-      .select('id, name, sqft, lease_type, start_date, end_date');
+      .select(SPACE_COLUMNS + ', leasehold_status, ended_at, ended_reason');
+    if (sp.error && /leasehold_status|ended_at|ended_reason/.test(String(sp.error.message || ''))) {
+      sp = await db.from('tenants').select(SPACE_COLUMNS);
+    }
     if (sp.error) { status('Could not load your space.', 'error'); return; }
 
     var rows = sp.data || [];

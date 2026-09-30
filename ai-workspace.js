@@ -170,6 +170,18 @@ window.AIWorkspace = (() => {
    * to TELL the user something is missing should ask _unavailable() rather than
    * silently accepting this fallback.
    */
+  // Step A-1 — "is this leasehold current?" is leasehold-status.js's answer
+  // (migration 037). The record's `spaces` is already the current roster; the
+  // legacy branch below applies the same rule so it cannot answer differently.
+  // Lookups by name and evidence searches still see ended leaseholds: they are
+  // history, and a question about one deserves its record.
+  function _LS() {
+    const r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+              (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null);   // eslint-disable-line no-undef
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before ai-workspace.js)');
+    return r;
+  }
+
   function _spacesOf(rec, p) {
     const tenants = (p && p.tenants || []).filter(Boolean);
     if (rec && Array.isArray(rec.spaces)) {
@@ -180,7 +192,7 @@ window.AIWorkspace = (() => {
                  space: sp.space || null, noIdentity: !!sp.noIdentity, tenant: t };
       });
     }
-    return tenants.map(function (t) {
+    return tenants.filter(function (t) { return _LS().isCurrent(t); }).map(function (t) {
       return { tenantId: t.id, name: t.tenant_name || null,
                lease: { type: t.lease_type || null, sqft: t.leased_sqft || t.sqft || null,
                         start: t.start_date || null, end: t.end_date || null,
@@ -1441,7 +1453,7 @@ window.AIWorkspace = (() => {
       const rec = record ? record(p) : null;
       const occ = (rec && rec.identity && rec.identity.occupancy != null)
         ? rec.identity.occupancy : null;
-      const tenantCount = (rec && Array.isArray(rec.spaces)) ? rec.spaces.length : (p.tenants || []).length;
+      const tenantCount = (rec && Array.isArray(rec.spaces)) ? rec.spaces.length : (p.tenants || []).filter(t => !t || _LS().isCurrent(t)).length;
       // Attention was invisible to the AI entirely (Phase G). It is a ranked list
       // the product already computes; the summary now names its top item.
       const attn = (rec && Array.isArray(rec.attention)) ? rec.attention : null;

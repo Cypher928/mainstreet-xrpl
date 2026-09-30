@@ -552,7 +552,8 @@ sec('F. A coherence phase, not a capability phase');
 
   // The shim grew by exactly one reviewed name.
   DEPS.load();
-  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea',
+  // Step A-1 added LeaseholdStatus under the same review (see api/_server-deps.js).
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea',
                        'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'F7 the shim holds the reviewed set, and DisputeStatus is actually IN it');
   // shimKeys() reports what is IN the shim; SHIM_KEYS is what the allow-list
@@ -560,7 +561,7 @@ sec('F. A coherence phase, not a capability phase');
   // not show up in the first list until something tried to write the name — so
   // the declaration is pinned as well.
   eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'F8 the declared allow-list permits exactly the reviewed names');
   is(DEPS.SHIM_KEYS.indexOf('Selectors') === -1,
      'F8a Selectors is not permitted, so the prune still removes it and the seal still refuses it');

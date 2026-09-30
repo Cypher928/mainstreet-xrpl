@@ -214,8 +214,8 @@ sec('C. Three implementations, one answer, on every input');
   is(DEPS.shimKeys().indexOf('PropertyArea') !== -1,
      'C3 PropertyArea is IN the shim, so tenant-space.js reaches the canonical rule');
   eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference',
-      'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference',
+      'PropertyWorkspace', 'TenantSpace'],   // LeaseholdStatus: Step A-1, same review
      'C3a and the declared allow-list holds exactly the reviewed names');
   is(DEPS.SHIM_KEYS.indexOf('Selectors') === -1, 'C3b Selectors is still excluded');
   const cls = INV.CLASSIFICATION.PropertyArea;
@@ -321,8 +321,9 @@ sec('F. What an agent actually reads');
 
   // M8c added no capability and no read.
   eq(MCP.TOOLS.length, 9, 'F6 still nine capabilities');
-  is(Array.isArray(sp.provenance.reads) && sp.provenance.reads.length === 3,
-     'F7 and still the same three reads');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  is(Array.isArray(sp.provenance.reads) && sp.provenance.reads.length === 4,
+     'F7 and still the same reads (three, plus the A-1 lifecycle overlay)');
 }
 
 console.log('\n\x1b[1mRESULT: ' + pass + ' passed, ' + fail + ' failed\x1b[0m');

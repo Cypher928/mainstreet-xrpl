@@ -481,7 +481,8 @@ sec('F. The snapshot is named as the snapshot');
   // The three approved reads and nothing else. M6 adds no database read.
   const f = db();
   await MCP.call('get_cam_status', { propertyId: PROP }, ctx({ sbFetch: f }));
-  eq(f.calls.map(c => c.method), ['GET', 'GET', 'GET'], 'F6 three reads, all GET');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay.
+  eq(f.calls.map(c => c.method), ['GET', 'GET', 'GET', 'GET'], 'F6 four reads (three, plus the A-1 lifecycle overlay), all GET');
   is(!f.calls.some(c => /cam_reconciliations/.test(c.path)),
      'F7 and none of them touches cam_reconciliations');
   const g = db();
@@ -619,7 +620,7 @@ sec('J. The same envelope as every capability before it');
        'J4.' + name + ' and it says it has no browser-local state');
     eq(r.provenance.ownership, 'properties.user_id = authenticated user',
        'J5.' + name + ' with the ownership rule stated');
-    is(Array.isArray(r.provenance.reads) && r.provenance.reads.length === 3,
+    is(Array.isArray(r.provenance.reads) && r.provenance.reads.length === 4,   // + A-1 lifecycle overlay
        'J6.' + name + ' and the exact reads it performed');
     is(Array.isArray(r.caveats), 'J7.' + name + ' caveats is always a list');
 

@@ -243,7 +243,11 @@ sec('D. loadProperties: what the portfolio is made of');
     const sandbox = { db, PropertyLifecycle: PL, normalizeTenant: (x) => x, console: { warn: () => {}, error: () => {} },
                       _prospectProps: ['stale'], Promise, Error, Array, Object, String, Number, JSON, RegExp };
     vm.createContext(sandbox);
-    vm.runInContext(src + '\nthis.loadProperties = loadProperties;', sandbox);
+    // Step A-1: loadProperties selects and maps tenants rows through the shared
+    // column list and mapper declared beside it in script.js — run those too.
+    const rowSrc = SCRIPT.slice(SCRIPT.indexOf('const TENANT_ROW_COLUMNS_PRE_037'),
+                                SCRIPT.indexOf('// The table is the authority on a leasehold'));
+    vm.runInContext(rowSrc + '\n' + src + '\nthis.loadProperties = loadProperties;', sandbox);
     const out = await sandbox.loadProperties(opts);
     return { out, prospects: sandbox._prospectProps, calls: db.calls };
   }

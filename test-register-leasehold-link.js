@@ -224,15 +224,16 @@ const writesOf = (sc) => sc.calls.filter(c => c.u.includes('/rest/v1/lease_docum
   const del = stripComments(fnSource(SRC, 'confirmDeleteProperty'));
   ok('D1 confirmDeleteProperty no longer deletes tenants first', !/from\('tenants'\)\.delete\(\)/.test(del));
   ok('D2 …it deletes the property (one statement; the cascade does the rest)', /db\.from\('properties'\)\.delete\(\)\.eq\('id', propId\)/.test(del));
+  // Step A-1 (D6) made both of these stronger than 039 did: they no longer
+  // delete a leasehold at all, linked or not. A leasehold is not deleted for
+  // leaving a list; test-lifecycle-plumbing.js runs both against a fake database.
   const clr = stripComments(fnSource(SRC, 'clearBulkResults'));
-  const iLink = clr.indexOf(".from('lease_documents')"), iDel = clr.indexOf(".from('tenants').delete()");
-  ok('D3 Clear All reads the linked tenant ids first', iLink > 0 && iDel > iLink);
-  ok('D4 …and excludes them from the delete', /del\.not\('id', 'in', `\(\$\{keep\.join\(','\)\}\)`\)/.test(clr));
-  ok('D5 …and deletes nothing if that read fails', /if \(linkErr\) \{[^}]*\} else \{/.test(clr));
+  ok('D3 Clear All deletes no tenants row — linked or not', !/from\('tenants'\)/.test(clr));
+  ok('D4 …so it no longer needs the linked-document read at all', !/from\('lease_documents'\)/.test(clr));
+  ok('D5 …and its confirmation says leaseholds are kept', /saved for this property are not deleted/.test(clr) && !/cannot be undone/.test(clr));
   const fb = stripComments(fnSource(SRC, '_doResyncTenantsDirectly'));
-  ok('D6 the direct-write resync fallback counts lease_documents as a reference',
-    /from\('lease_documents'\)\.select\('tenant_id'\)\.in\('tenant_id', absent\)/.test(fb) && /\.\.\.\(docRefs \|\| \[\]\)/.test(fb));
-  ok('D7 …and still refuses to prune if any reference read fails', /if \(camErr \|\| evErr \|\| docErr\) throw/.test(fb));
+  ok('D6 the direct-write resync fallback upserts on id', /from\('tenants'\)\.upsert\(insertRows, \{ onConflict: 'id' \}\)/.test(fb));
+  ok('D7 …and prunes nothing, so no absentee is deleted', !/\.delete\(\)/.test(fb));
 
   console.log('\n' + '─'.repeat(64));
   console.log(`RESULT: ${pass} passed, ${fail} failed`);

@@ -197,6 +197,34 @@
     };
   }
 
+  // Step A-1 — the leasehold lifecycle (migration 037), decided by
+  // leasehold-status.js and nowhere here. `spaces` is the CURRENT roster: an
+  // ENDED leasehold is not a space anyone occupies, so it is not listed there.
+  // It is not forgotten either: `fields` still carries its provenance (keyed by
+  // its permanent id), its events stay its own in `timeline.byTenant` rather
+  // than falling through to the property, and `endedLeaseholds` names it, so a
+  // reader can tell history from the present. For an all-active roster every
+  // section is unchanged and `endedLeaseholds` is absent. No fallback: a
+  // missing module is a loading error.
+  function _LS() {
+    const r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+              (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+              (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before property-record.js)');
+    return r;
+  }
+
+  function _endedLeaseholds(property) {
+    return _arr(property && property.tenants)
+      .filter(function (t) { return t && _LS().isEnded(t); })
+      .map(function (t) {
+        const lc = _LS().lifecycleFrom(t);
+        return { tenantId: t.id != null ? t.id : null,
+                 tenantName: t.tenant_name != null ? t.tenant_name : null,
+                 endedAt: lc.ended_at, endedReason: lc.ended_reason };
+      });
+  }
+
   function _spaces(property, deps) {
     const TS = _dep(deps, 'TenantSpace');
     if (!TS || typeof TS.assemble !== 'function') return null;
@@ -439,7 +467,13 @@
 
   function assemble(property, deps) {
     const p = property || null;
-    const spaces    = _spaces(p, deps);
+    // Every leasehold's space, ended ones included — the timeline scopes events
+    // against the whole roster — and the current ones, which is what `spaces` is.
+    const roster    = _spaces(p, deps);
+    const _tenants  = _arr(p && p.tenants);
+    const spaces    = roster === null ? null
+      : roster.filter(function (s, i) { return !(_tenants[i] && _LS().isEnded(_tenants[i])); });
+    const ended     = _endedLeaseholds(p);
     const documents = _documents(p, deps);
     const PW        = _dep(deps, 'PropertyWorkspace');
     const attention = (PW && typeof PW.collectAttention === 'function')
@@ -454,12 +488,12 @@
     if (!_dep(deps, 'VarianceBreakdown')) unavailable.push('cam.unallocated');
     if (!_dep(deps, 'TimelineMerge'))     unavailable.push('timeline.scoping');
 
-    return {
+    const record = {
       identity:  _identity(p, deps),
       spaces:    spaces,
       fields:    _fields(p, deps),
       cam:       _cam(p, deps),
-      timeline:  _timeline(p, spaces, deps),
+      timeline:  _timeline(p, roster, deps),
       disputes:  _arr(p && p.disputes).slice(),
       attention: attention,
       documents: documents,
@@ -473,6 +507,8 @@
       // a reader must not collapse that into "this property has no spaces".
       meta: { unavailable: unavailable },
     };
+    if (ended.length) record.endedLeaseholds = ended;
+    return record;
   }
 
   const api = { assemble: assemble };

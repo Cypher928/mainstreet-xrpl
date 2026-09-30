@@ -95,6 +95,7 @@ function loadTenantSpace(property, toasts) {
     clearTimeout: () => {},
   };
   sandbox.window = sandbox;
+  sandbox.LeaseholdStatus = require('./leasehold-status.js');   // loaded first on the page (Step A-1)
   sandbox.currentProperty = () => property;
   sandbox.showToast = (msg, opts) => { toasts.push({ msg, opts }); };
   vm.createContext(sandbox);
@@ -275,6 +276,7 @@ sec('B. openSpace refuses an empty identity out loud');
     const doc = makeDom();
     const sb = { document: doc, console, setTimeout: (f) => f && 0, clearTimeout: () => {} };
     sb.window = sb;
+    sb.LeaseholdStatus = require('./leasehold-status.js');
     sb.currentProperty = () => null;
     sb.showToast = (msg) => toasts.push({ msg });
     vm.createContext(sb);

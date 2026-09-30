@@ -458,7 +458,8 @@ sec('D. Every database operation stays read-only');
   eq(writes, [], 'D1 no capability issued a non-GET through the transport ('
      + all.length + ' reads)');
   const tables = [...new Set(all.map(s => (s.match(/^GET \/([a-z_]+)/) || [])[1]))].sort();
-  eq(tables, ['properties', 'tenant_field_evidence'], 'D2 and touched only two tables');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(tables, ['properties', 'tenant_field_evidence', 'tenants'], 'D2 and touched only the three approved tables');
 
   let refused = false;
   try { await HYD._readOnly(async () => ({}))('/properties', { method: 'POST' }); }
@@ -804,7 +805,8 @@ sec('J. Evidence honesty, and the two narrowing decisions');
   // PROVENANCE POLICY — reads are summarised, not deleted and not raw.
   const pr = env(await call('get_property', { propertyId: PROP })).provenance;
   is(!Array.isArray(pr.reads), 'J13 raw query strings do not travel');
-  eq(pr.reads.tables, ['properties', 'tenant_field_evidence'],
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(pr.reads.tables, ['properties', 'tenant_field_evidence', 'tenants'],
      'J14 the tables consulted are still reported');
   is(typeof pr.reads.readCount === 'number', 'J15 with how many reads were made',
      String(pr.reads.readCount));

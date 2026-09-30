@@ -55,8 +55,24 @@
   // Accepts both managed-property shape (end_date) and acquisition shape (lease_end).
   function _isActiveLease(t) {
     if (!t || t.extractionFailed) return false;
+    if (!_isCurrent(t)) return false;
     return !!(t.end_date || t.lease_end);
   }
+
+  // Step A-1 — "is this leasehold current?" is answered by leasehold-status.js
+  // (migration 037) and nowhere else. An ENDED leasehold stays on prop.tenants
+  // as history: it has no expiry to alert on, no rent to forecast, no renewal
+  // to pipeline and no area it occupies. Vacancy rows are treated exactly as
+  // before (this is isCurrent, not isCurrentLease), so an all-active roster
+  // computes what it always did. No fallback: missing is a loading error.
+  function _LS() {
+    var r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+            (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+            (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before acquisition-engine.js)');
+    return r;
+  }
+  function _isCurrent(t) { return _LS().isCurrent(t); }
 
   // ─── Tenant Matching ──────────────────────────────────────────────────────
   // Matches an invoice to the best-fitting tenant using unit number and name.
@@ -960,7 +976,7 @@
 
       for (var j = 0; j < tenants.length; j++) {
         var t = tenants[j];
-        if (!t) continue;
+        if (!t || !_isCurrent(t)) continue;
         allTenants.push(t);
         var br = t.base_rent != null ? parseFloat(t.base_rent) : NaN;
         if (!isNaN(br) && br > 0) totalAnnualRent += br;
@@ -992,7 +1008,7 @@
 
       for (var m = 0; m < pts.length; m++) {
         var pt = pts[m];
-        if (!pt) continue;
+        if (!pt || !_isCurrent(pt)) continue;
         var pls = parseFloat(pt.leased_sqft) || 0;
         var pbr = pt.base_rent != null ? parseFloat(pt.base_rent) : 0;
         pOccSqft += pls;
@@ -1070,7 +1086,7 @@
       var tenants = Array.isArray(prop.tenants) ? prop.tenants : [];
       for (var j = 0; j < tenants.length; j++) {
         var t = tenants[j];
-        if (!t || t.extractionFailed) continue;
+        if (!t || t.extractionFailed || !_isCurrent(t)) continue;
         var rent = t.base_rent != null ? parseFloat(t.base_rent) : NaN;
         if (isNaN(rent) || rent <= 0) continue;
         currentAnnualRent += rent;
@@ -1257,7 +1273,7 @@
       var leasedSqft = 0;
       var vtens = Array.isArray(vp.tenants) ? vp.tenants : [];
       for (var vj = 0; vj < vtens.length; vj++) {
-        if (vtens[vj] && !vtens[vj].extractionFailed) leasedSqft += parseFloat(vtens[vj].leased_sqft) || 0;
+        if (vtens[vj] && !vtens[vj].extractionFailed && _isCurrent(vtens[vj])) leasedSqft += parseFloat(vtens[vj].leased_sqft) || 0;
       }
       var vSqft = vp.totalSqft - leasedSqft;
       if (vSqft < 500) continue;

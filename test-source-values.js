@@ -139,8 +139,9 @@ t('an unreadable area is excluded AND warned about', () => {
 console.log('\n── Ownership: the predicates are gone from their old homes ──');
 
 t('[source] getValidTenants no longer has a private opinion about the value', () => {
-  const i = scriptCode.indexOf('function getValidTenants');
-  const body = scriptCode.slice(i, i + 500);
+  // The whole function, not a character window: Step A-1 added the period-roster
+  // guard at its top, which pushed a 500-character slice past the lines it checks.
+  const body = require('./test-support/fn-source.js').fnSource(scriptCode, 'getValidTenants');
   ok(!/Number\(t\.leased_sqft\)\s*>\s*0/.test(body),
      'the NaN-on-"50,000" predicate is back in the eligibility gate');
   ok(/SourceValues\.readArea\(t\.leased_sqft\)\.usable/.test(body),
@@ -150,8 +151,9 @@ t('[source] getValidTenants no longer has a private opinion about the value', ()
 t('[source] getValidTenants still OWNS the eligibility decision', () => {
   // The reader interprets; this function decides. Moving the decision itself
   // into the reader would just relocate the problem.
-  const i = scriptCode.indexOf('function getValidTenants');
-  const body = scriptCode.slice(i, i + 500);
+  // The whole function, not a character window: Step A-1 added the period-roster
+  // guard at its top, which pushed a 500-character slice past the lines it checks.
+  const body = require('./test-support/fn-source.js').fnSource(scriptCode, 'getValidTenants');
   ok(/t\.tenant_name/.test(body) && /extractionFailed/.test(body)
      && /_propertyMismatchBlockReason/.test(body),
      'the other eligibility conditions left getValidTenants');

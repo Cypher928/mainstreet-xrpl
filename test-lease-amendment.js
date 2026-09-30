@@ -321,6 +321,7 @@ sec('D · the Space file lists the amendment beside the lease it amended');
   const box = { window: {}, document: { getElementById: () => null }, console, Date, JSON, Math,
                 Number, String, Array, Object, Boolean, isFinite, parseFloat, setTimeout };
   box.window.currentProperty = () => null;
+  box.window.LeaseholdStatus = require('./leasehold-status.js');   // loaded first on the page (Step A-1)
   vm.createContext(box);
   vm.runInContext(tsSrc, box, { filename: 'tenant-space.js' });
   const TS = box.window.TenantSpace;

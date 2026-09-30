@@ -287,14 +287,17 @@ sec('6. No entry point can bypass the ownership guard');
                         CODE.indexOf('function _tenantsBelongTo('));
   is(!/db\.from\('tenants'\)\.delete\(\)\.eq\('property_id'/.test(fb),
      '6d the fallback no longer deletes every tenant for the property');
-  is(fb.indexOf(".upsert(insertRows") < fb.indexOf(".delete()"),
-     '6e it upserts before it prunes, so a failure loses nothing');
-  is(/cam_reconciliations'\)\.select\('tenant_id'\)/.test(fb)
-     && /tenant_field_evidence'\)\.select\('tenant_id'\)/.test(fb),
-     '6f and it checks both reference tables before pruning anything');
-  is(/pruning skipped/.test(SRC.slice(SRC.indexOf('async function _doResyncTenantsDirectly('),
-                                      SRC.indexOf('function _tenantsBelongTo('))),
-     '6g if the reference check fails it keeps stale rows rather than guessing');
+  // Step A-1: the fallback no longer prunes at all — an absentee is a leasehold
+  // missing from a list, which is never a reason to delete it. The three old
+  // guards (upsert first, reference check, skip on failure) guarded a prune
+  // that no longer exists; these pin its absence instead.
+  is(/\.upsert\(insertRows, \{ onConflict: 'id' \}\)/.test(fb),
+     '6e it upserts on id');
+  is(!/\.delete\(\)/.test(fb),
+     '6f and deletes nothing — no prune of absentees, referenced or not');
+  is(/absentees are kept, never pruned/.test(SRC.slice(SRC.indexOf('async function _doResyncTenantsDirectly('),
+                                                       SRC.indexOf('function _tenantsBelongTo('))),
+     '6g and says so in its own log line');
 
   // Promoting the guard to gate every resync creates a new failure mode: a
   // refusal now means a legitimate save did not happen. Both refusal paths must

@@ -83,9 +83,21 @@ window.CommandCenter = (() => {
     ? String(v)
     : `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
+  // Step A-1 — the CURRENT roster (leasehold-status.js, migration 037). An ENDED
+  // leasehold stays on p.tenants as history; it is not an expired lease to chase,
+  // a cap to confirm, occupied area or an upcoming expiration. For an all-active
+  // roster this is exactly p.tenants without its empty slots, as every site read
+  // it before. No fallback: a missing module is a loading error.
+  function _curTenants(p) {
+    const LS = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+               (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null);   // eslint-disable-line no-undef
+    if (!LS) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before command-center.js)');
+    return (Array.isArray(p && p.tenants) ? p.tenants : []).filter(t => t && LS.isCurrent(t));
+  }
+
   function _recsForProperty(p, meta, readiness, deps) {
     const recs    = [];
-    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];
+    const tenants = _curTenants(p);
     const recon   = _recon(p);
     const today   = deps.now.toISOString().slice(0, 10);
     const openJs  = `ccOpenProperty('${p.id}')`;
@@ -434,9 +446,9 @@ window.CommandCenter = (() => {
 
   function _nextExpiration(p, now) {
     const today = now.toISOString().slice(0, 10);
-    const future = (p.tenants || []).filter(t => t && t.end_date && t.end_date >= today)
+    const future = _curTenants(p).filter(t => t && t.end_date && t.end_date >= today)
       .sort((a, b) => a.end_date.localeCompare(b.end_date))[0];
-    const past = (p.tenants || []).filter(t => t && t.end_date && t.end_date < today)
+    const past = _curTenants(p).filter(t => t && t.end_date && t.end_date < today)
       .sort((a, b) => b.end_date.localeCompare(a.end_date))[0];
     if (past)   return { tenant: past.tenant_name, date: past.end_date, expired: true };
     if (future) return { tenant: future.tenant_name, date: future.end_date, expired: false };
@@ -616,7 +628,7 @@ window.CommandCenter = (() => {
     const health = perProp.map(({ p, meta, readiness }) => {
       const h = _healthFor(p, meta, readiness);
       const rrProp = (rr.byProperty || []).find(bp => bp.id === p.id);
-      const occupied = (p.tenants || []).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
+      const occupied = _curTenants(p).reduce((s, t) => s + _num(t && t.leased_sqft), 0);
       return {
         propertyId: p.id, propertyName: p.name, ...h,
         opportunity: (rrProp?.total || 0),
@@ -632,7 +644,7 @@ window.CommandCenter = (() => {
     const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
     const totals = {
       properties: safeProps.length,
-      leases:     safeProps.reduce((s, p) => s + ((p.tenants || []).filter(Boolean).length), 0),
+      leases:     safeProps.reduce((s, p) => s + _curTenants(p).length, 0),
       invoices:   safeProps.reduce((s, p) => {
         const recon = _recon(p);
         return s + ((recon?.invoicesFull?.length ? recon.invoicesFull : null) || recon?.invoices || p.invoices || []).length;
@@ -643,7 +655,7 @@ window.CommandCenter = (() => {
     // Lease expirations inside the next 60 days (real end dates, portfolio-wide)
     const in60 = new Date(d.now); in60.setDate(in60.getDate() + 60);
     const today60 = d.now.toISOString().slice(0, 10), cutoff60 = in60.toISOString().slice(0, 10);
-    const expiring60 = safeProps.reduce((s, p) => s + (p.tenants || []).filter(t =>
+    const expiring60 = safeProps.reduce((s, p) => s + _curTenants(p).filter(t =>
       t && t.end_date && t.end_date >= today60 && t.end_date <= cutoff60).length, 0);
 
     const settlements = safeProps.map(_settlementFor).filter(Boolean);

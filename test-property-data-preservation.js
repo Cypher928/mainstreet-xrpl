@@ -56,6 +56,8 @@ const TN     = fs.readFileSync(path.join(ROOT, 'tenant-normalize.js'), 'utf8');
 
 const CONST_KEYS   = (SCRIPT.match(/const PROPERTY_DATA_CLIENT_KEYS = Object\.freeze\(\[[\s\S]*?\]\);\n/) || [''])[0];
 const CONST_SCHEMA = (SCRIPT.match(/const STATE_SCHEMA_VERSION = \d+;\n/) || [''])[0];
+// Step A-1: loadPropertyData reads tenants rows through these shared columns and helpers.
+const CONST_TENANT_ROWS = SCRIPT.slice(SCRIPT.indexOf('const TENANT_ROW_COLUMNS_PRE_037'), SCRIPT.indexOf('function _isLifecycleColumnMissing('));
 const posLifted = POS.replace(/\n  function (ensureInvoiceIds|_isLegacyIndexKey)\(/g, '\nfunction $1(');
 const ENSURE_IDS = fnSource(posLifted, 'ensureInvoiceIds') + '\n' + fnSource(posLifted, '_isLegacyIndexKey') + '\n';
 // The one line of PropertyOS.renderPropertyPage that touches data on this path,
@@ -66,6 +68,7 @@ const REAL = [
   '_serverOwnedDataKeys', '_stripBlobs', 'saveProperty', 'savePropertyData', 'loadPropertyData',
   'normalizePropertyState', '_isUsableRecordId', 'mintTenantIdentity', '_lsSave', '_lsLoad', '_lsMarkUnsynced',
   'selectProperty', 'backToPortfolio', 'appendPropertyTimelineEvent', 'appendPropertyTimelineEventOnce', '_appendSyncRestored',
+  '_isLifecycleColumnMissing', '_tenantRowToRecord', '_overlayLeaseholdLifecycle',
 ].map(n => fnSource(SCRIPT, n)).join('\n');
 
 const U = '011df998-bad2-464e-bbcb-28e2d0fee821';
@@ -133,7 +136,7 @@ function world(opts) {
     const tenantData = [null, null, null]; const invoiceData = []; const disputes = []; const activityLog = []; const camRuns = [];
     let lastResults = [], lastInvoices = [], lastTenants = [], lastPropName = '', lastTotal = 0, lastInvoicesFull = [];
     const DEMO_PROPERTY_ID = null, NORTHGATE_PROPERTY_ID = null;
-    ${CONST_SCHEMA}${CONST_KEYS}
+    ${CONST_SCHEMA}${CONST_KEYS}${CONST_TENANT_ROWS}
     function normalizeTenant(d) { return window.TenantNormalize.normalizeTenant(d); }
     function resetWorkflow() { clearTimeout(_saveDebounceTimer); _saveDebounceTimer = null; tenantData.splice(0, tenantData.length, null, null, null); invoiceData.length = 0; activityLog.length = 0; disputes.length = 0; }
     // renderProperty, reduced to what it does to the data on this path (tenants →
@@ -166,7 +169,7 @@ function world(opts) {
   `;
   const sandbox = {
     __rec: rec, __ls: ls,
-    window: { ms_useNormalizedEvidence: false, ms_useNormalizedAudit: false, TimelineMerge: undefined, scrollTo() {} },
+    window: { LeaseholdStatus: require('./leasehold-status.js'), ms_useNormalizedEvidence: false, ms_useNormalizedAudit: false, TimelineMerge: undefined, scrollTo() {} },
     localStorage: { getItem: (k) => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, v), removeItem: (k) => ls.delete(k) },
     document: { getElementById: () => ({ value: '', style: {}, textContent: '', innerHTML: '', remove() {}, classList: { remove() {}, add() {} } }), createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {}, classList: { remove() {}, add() {} } }, activeElement: null, querySelector: () => null },
     db: { auth: { getUser: async () => ({ data: { user: { id: U } } }) }, from: (table) => q(table) },

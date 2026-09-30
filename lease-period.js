@@ -48,6 +48,18 @@
 
   var ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+  // The one lifecycle rule (leasehold-status.js, migration 037), resolved lazily
+  // and never re-derived here. Missing is a loading error, not "treat as
+  // current": a silent fallback is how an ended leasehold would come to be
+  // billed for a period it did not occupy.
+  function _LS() {
+    var r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+            (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+            (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before lease-period.js)');
+    return r;
+  }
+
   /**
    * ONE reading of a lease date, shaped like SourceValues.readArea/readMoney:
    * a value or NULL, never a silently-wrong value.
@@ -156,7 +168,7 @@
     var useCam = camStart.status === 'ok' || camStart.status === 'unreadable';
 
     var startReading = useCam ? camStart : leaseStart;
-    return {
+    var out = {
       start:            startReading.value,
       end:              end.value,
       startStatus:      startReading.status,
@@ -171,6 +183,32 @@
       startRaw:         startReading.raw || null,
       endRaw:           end.raw || null,
     };
+    // THE LEASEHOLD LIFECYCLE (migration 037). While a leasehold is active its
+    // term is exactly what it was before 037: the contractual end_date, with the
+    // holdover reasoning below — and none of the keys added here appear, so an
+    // active term is byte-for-byte what it always was. Once a person has ENDED
+    // the leasehold, the CONFIRMED actual end (ended_at) is the end of the
+    // obligation: it may be before end_date (terminated early, surrendered,
+    // evicted) or after it (a holdover that has since left). end_date is still
+    // reported as contractEnd, but it no longer decides anything.
+    //
+    // An ended leasehold with no readable ended_at cannot happen through the
+    // database (tenants_ended_consistency_chk), but a blob can carry anything.
+    // Its end is then UNKNOWN — not end_date, not open-ended — and classify()
+    // fails closed on it.
+    if (_LS().isEnded(t)) {
+      var endedAt = _LS().endedAt(t);
+      out.lifecycle     = 'ended';
+      out.endedAt       = endedAt;
+      out.contractEnd   = end.value;
+      out.endSource     = 'ended_at';
+      out.endConfirmed  = !!endedAt;
+      out.end           = endedAt;
+      out.endStatus     = endedAt ? 'ok' : 'absent';
+      out.endNormalised = false;
+      out.endRaw        = endedAt;
+    }
+    return out;
   }
 
   /**
@@ -318,6 +356,8 @@
     commences_within: 'Begins inside the CAM period',
     expires_within:   'Ends inside the CAM period',
     within_period:    'Begins and ends inside the CAM period',
+    ended_confirmed_before: 'Leasehold ended (confirmed) before the CAM period began',
+    ended_unknown_end:      'Leasehold is ended but its actual end date is not on file',
     ended_before:     'Ended before the CAM period began',
     begins_after:     'Does not begin until after the CAM period ends',
     unknown_end:      'No end date on file',
@@ -367,6 +407,29 @@
     };
 
     if (!p) { out.case = 'no_period'; out.label = CASES.no_period; return out; }
+
+    // AN ENDED LEASEHOLD (migration 037). Added only when ended, so an active
+    // leasehold's classification carries exactly the keys it always did.
+    var ended = ot.lifecycle === 'ended';
+    if (ended) {
+      out.lifecycle = 'ended'; out.endedAt = ot.endedAt; out.endConfirmed = ot.endConfirmed;
+      out.contractEnd = ot.contractEnd; out.endSource = ot.endSource;
+      if (!ot.endConfirmed) {
+        // Ended, and nobody recorded when. Not end_date and not "still running":
+        // the one thing known is that the file cannot say, so confirm.
+        out.case = 'ended_unknown_end'; out.label = CASES.ended_unknown_end;
+        out.needsOccupancyConfirmation = true;
+        return out;
+      }
+      if (ot.endedAt < p.start) {
+        // CONFIRMED gone before the period began. Unlike `ended_before` (a
+        // contractual date in the past, which may be a holdover and so must be
+        // asked about), this is a person's recorded fact: the leasehold is not
+        // in this period's roster and there is nothing to confirm.
+        out.case = 'ended_confirmed_before'; out.label = CASES.ended_confirmed_before;
+        return out;
+      }
+    }
 
     if (s.status === 'unreadable' || e.status === 'unreadable') {
       out.case = 'unreadable'; out.label = CASES.unreadable;
@@ -459,7 +522,14 @@
     // name, because the fact that matters is "the commencement is unknown", and
     // that is true of unknown_start, of no_term, and of a lease whose end is
     // documented inside the period while its start is not.
-    out.needsOccupancyConfirmation = !out.coversWholePeriod || out.assumedStart;
+    //
+    // A CONFIRMED END IS NOT A QUESTION. For an ended leasehold the end inside
+    // the period is ended_at, a fact a person recorded, so an early end alone no
+    // longer asks for confirmation; a late or unknown start still does. For an
+    // active leasehold endConfirmed is never true, and this is exactly
+    // !coversWholePeriod || assumedStart.
+    var endConfirmed = ended && ot.endConfirmed;
+    out.needsOccupancyConfirmation = lateStart || (earlyEnd && !endConfirmed) || out.assumedStart;
     return out;
   }
 
@@ -515,6 +585,14 @@
 
     if (!c.periodStart || !c.periodEnd) { out.unresolved = true; return out; }
     out.periodDays = _span(c.periodStart, c.periodEnd);
+
+    // A leasehold ENDED (confirmed) before the period: resolved, and excluded.
+    // Not unresolved — nothing is left to ask — and not a factor of 0 applied to
+    // money: it is simply not in this period's roster. `excluded` exists only on
+    // an ended leasehold, so an active one's occupancy is unchanged.
+    if (c.lifecycle === 'ended') { out.lifecycle = 'ended'; out.endedAt = c.endedAt; out.endConfirmed = c.endConfirmed; }
+    if (c.case === 'ended_confirmed_before') { out.excluded = true; return out; }
+    if (c.case === 'ended_unknown_end')      { out.unresolved = true; return out; }
 
     // Unreadable dates, a holdover, or a term that begins after the period: no
     // factor is computed and none is applied. A holdover must NEVER fall through

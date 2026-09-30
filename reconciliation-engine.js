@@ -112,7 +112,44 @@ window.ReconciliationEngine = (() => {
       const t = tenants.find(t => t.id === r.tenantId);
       if (!t || !(r.totalAllocated > 0) || !LP || !period) return;
       const c = LP.classify(t, period);
+      // ── An ENDED leasehold (migration 037) with money allocated to it. Neither
+      // case can arise for an active leasehold, so nothing above changes for one.
+      //
+      // Confirmed gone before the period began: the period roster excludes it
+      // (LeaseholdStatus.inPeriodRoster), so an allocation here means something
+      // bypassed the roster. That is not a question to ask, it is a charge with
+      // no basis, and it says so.
+      if (c.case === 'ended_confirmed_before') {
+        flags.push({
+          severity: 'red',
+          blocksBilling: true,
+          source:   'Leasehold lifecycle (ended_at) vs the CAM period being billed',
+          title:    `${r.name} is allocated ${camYear} CAM but the leasehold ended ${c.endedAt}`,
+          detail:   `This reconciliation allocates ${_fmt(r.totalAllocated)} of ${camYear} CAM to ${r.name}, whose leasehold is recorded as ended on ${c.endedAt} — before ${period.start}, the start of the period being billed. An ended leasehold is not part of this period's roster. Remove the allocation, or reactivate the leasehold if it was ended in error, and re-run.`,
+          impact:   { amount: r.totalAllocated, kind: 'at_risk',
+                      basis: `Full ${camYear} allocation to a leasehold ended ${c.endedAt}` },
+          actions:  ['Remove allocation', 'Reactivate the leasehold', 'Re-run the reconciliation'],
+          conditions: [`Tenant: ${r.name}`, `CAM period billed: ${period.start} to ${period.end}`,
+                       `Leasehold ended: ${c.endedAt}`, `Allocated amount: ${_fmt(r.totalAllocated)}`],
+        });
+        return;
+      }
       if (!c.needsOccupancyConfirmation) return;
+      // Recorded as ended, with no actual end date on file. Not end_date and not
+      // "still running": the file cannot say, so billing waits for the date.
+      if (c.case === 'ended_unknown_end') {
+        flags.push({
+          severity: 'yellow',
+          blocksBilling: true,
+          source:   'Leasehold lifecycle (ended_at) vs the CAM period being billed',
+          title:    `Confirm when ${r.name}'s leasehold ended — it is marked ended with no end date`,
+          detail:   `${r.name} is allocated ${_fmt(r.totalAllocated)} of ${camYear} CAM, but the leasehold is recorded as ended without the date it actually ended, so this reconciliation cannot tell how much of ${period.start} to ${period.end} it occupied. Record the actual end date and re-run.`,
+          actions:  ['Record the actual end date', 'Re-run the reconciliation'],
+          conditions: [`Tenant: ${r.name}`, `CAM period billed: ${period.start} to ${period.end}`,
+                       `Leasehold status: ended (no end date on file)`, `Allocated amount: ${_fmt(r.totalAllocated)}`],
+        });
+        return;
+      }
 
       // Remedies differ by case, and offering the wrong one is its own defect.
       // "Remove allocation" is a real answer for a tenant who vacated before the

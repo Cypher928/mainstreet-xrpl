@@ -8885,6 +8885,11 @@
      called an ordinary mid-period expiry "a lease that ended" and said
      nothing at all about a lease that commenced mid-period. Must precede
      reconciliation-engine.js, which reads it and never re-derives it. -->
+<!-- The ONE answer to "is this leasehold current?" (037). An ended leasehold
+     stays on the roster; everything that means current asks here, and
+     LeasePeriod reads a confirmed ended_at through it. Must precede
+     lease-period.js, selectors.js, acquisition-engine.js and script.js. -->
+<script src="leasehold-status.js"></script>
 <script src="lease-period.js"></script>
 <!-- Reuniting a property's history with itself. The timeline was written to
      properties.data on every save and never read back, so selectProperty

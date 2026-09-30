@@ -38,10 +38,11 @@ const S = 'script.js', E = 'reconciliation-engine.js', T = 'tenant-space.js', V 
 
 const MUTANTS = [
   { id: 'V01', file: S, why: 'the allocation set stops excluding vacant rows',
-    from: "    t &&\n    t.vacant !== true &&\n    t.tenant_name &&", to: "    t &&\n    t.tenant_name &&" },
+    // Step A-1 put the period-roster guard between these two lines.
+    from: "    t &&\n    t.vacant !== true &&\n    LS.inPeriodRoster(t, period) &&", to: "    t &&\n    LS.inPeriodRoster(t, period) &&" },
   { id: 'V02', file: S, why: 'the Prepare roster counts vacant rows as leases',
-    from: "  const tenants   = tenantData.filter(t => t && t.vacant !== true && tName(t) && parseSqft(tSqft(t)) > 0);",
-    to:   "  const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0);" },
+    from: "  const tenants   = tenantData.filter(t => t && t.vacant !== true && tName(t) && parseSqft(tSqft(t)) > 0 &&",
+    to:   "  const tenants   = tenantData.filter(t => t && tName(t) && parseSqft(tSqft(t)) > 0 &&" },
   { id: 'V03', file: S, why: 'a vacancy renders as a Lease Intake card',
     from: "    .filter(({ d }) => d && typeof d === 'object' && d.vacant !== true);",
     to:   "    .filter(({ d }) => d && typeof d === 'object');" },
@@ -82,8 +83,8 @@ const MUTANTS = [
     from: "        '<button type=\"button\" class=\"tsl-vacant-btn\" id=\"tslVacantBtn\" onclick=\"TenantSpace.openVacantForm()\"' + (_list.vacantForm ? ' disabled' : '') + '>Mark space vacant</button>' +",
     to:   "" },
   { id: 'V16', file: T, why: 'the uncovered note counts recorded vacancy as still uncovered',
-    from: "      if (!_isVacantRow(t) && !t.tenant_name) return;\n      covered += (_numish(t.leased_sqft) || 0);",
-    to:   "      if (_isVacantRow(t) || !t.tenant_name) return;\n      covered += (_numish(t.leased_sqft) || 0);" },
+    from: "      if (!_isVacantRow(t) && !t.tenant_name) return;\n      // An ended leasehold",
+    to:   "      if (_isVacantRow(t) || !t.tenant_name) return;\n      // An ended leasehold" },
   { id: 'V17', file: S, why: 'the summary banner never says who bears the recorded vacant share',
     from: "      if (bk.vacantResolved && _vacPct > 0) {",
     to:   "      if (false) {" },
@@ -94,8 +95,10 @@ const MUTANTS = [
     from: "      _list.vacantError = (res && res.error) || 'The vacancy could not be recorded.';",
     to:   "      _list.vacantError = '';" },
   { id: 'V20', file: SEL, why: 'the property readiness selector counts a vacancy as a lease',
-    from: "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => t && t.vacant !== true) : [];\n    const snap    = p.camReconciliation ?? null;",
-    to:   "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(Boolean) : [];\n    const snap    = p.camReconciliation ?? null;" },
+    // Step A-1: the filter is now the shared current-lease rule; the mutant keeps
+    // "current" but drops the vacancy half of it.
+    from: "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(_isCurrentLease) : [];\n    const snap    = p.camReconciliation ?? null;",
+    to:   "    const tenants = Array.isArray(p.tenants) ? p.tenants.filter(t => !!t && _LS().isCurrent(t)) : [];\n    const snap    = p.camReconciliation ?? null;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vacmut-'));

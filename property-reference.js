@@ -157,7 +157,13 @@
     if (!property) return null;
     var total = Number(property.totalSqft || property.sqft) || 0;
     if (!total) return null;
+    // Step A-1: an ENDED leasehold (migration 037) occupies nothing. The rule is
+    // leasehold-status.js's; an all-active roster sums exactly as before.
+    var LS = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+             (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!LS) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before property-reference.js)');
     var leased = (property.tenants || []).reduce(function (s, t) {
+      if (t && !LS.isCurrent(t)) return s;
       return s + (Number(t && (t.leased_sqft || t.sqft)) || 0);
     }, 0);
     if (!leased) return null;

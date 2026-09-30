@@ -227,6 +227,7 @@ function refuse(reason, message, extra) {
 const DEGRADED_SECTIONS = {
   'tenants.from_table_no_review_state': ['spaces'],
   'tenants.read_failed':                ['spaces'],
+  'tenants.lifecycle_read_failed':      ['spaces'],
   'evidence.read_failed':               ['fields'],
   'attention.without_selectors_readiness': ['attention'],
   'property.no_stored_record':          ['spaces', 'disputes', 'timeline', 'documents', 'cam'],
@@ -268,6 +269,10 @@ const CAVEAT_TEXT = {
     'so review status and cap-base figures are absent rather than zero.',
   'tenants.read_failed':
     'The tenant roster could not be read. Spaces are not empty — they are unknown.',
+  // Step A-1 (migration 037).
+  'tenants.lifecycle_read_failed':
+    'Whether each leasehold is current or ended could not be read, so a leasehold ' +
+    'that has ended may be listed among the spaces as if it were current.',
   'evidence.read_failed':
     'Field evidence could not be read, so provenance is UNKNOWN and is reported ' +
     'as null rather than guessed. Without it every field would read as an ' +
@@ -351,7 +356,7 @@ const UNITS = {
   'properties.totalSqft':        { unit: 'square_feet', guarantee: 'convention',
                                    note: 'The property row\'s own total area, by the same rule get_property applies to identity.totalSqft: absent, blank or unparseable is null, never 0.' },
   'identity.leasedSqft':         { unit: 'square_feet', guarantee: 'convention',
-                                   note: 'Sum of leased_sqft over every tenant, present ONLY when every tenant has one — no `|| 0`, no "active" filter, no substitution at this layer. The guarantee is `convention` rather than `enforced` for one measured reason: tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, so a tenant whose demised area was never recorded may arrive here carrying its rentable sqft under the leased name. That substitution happens upstream of this rule and is not something this layer can see or undo.' },
+                                   note: 'Sum of leased_sqft over every current leasehold, present ONLY when every one has one — no `|| 0`, no extraction-status filter, no substitution at this layer. A leasehold recorded as ended (leasehold_status, migration 037) is history, not leased area, and is not in the sum; nothing else is excluded. The guarantee is `convention` rather than `enforced` for one measured reason: tenant-normalize.js resolves leased_sqft as `leased_sqft ?? leasedSqft ?? sqft`, so a tenant whose demised area was never recorded may arrive here carrying its rentable sqft under the leased name. That substitution happens upstream of this rule and is not something this layer can see or undo.' },
   'identity.occupancy':          { unit: 'percent', guarantee: 'convention',
                                    note: 'leasedSqft / totalSqft, from the SAME numerator, so the two cannot contradict each other. Not clamped: leased > total yields null, not 100. Inherits the leasedSqft caveat above.' },
   // M8d rewrote this note. It said "TenantSpace reads leased_sqft and falls back
@@ -810,6 +815,15 @@ async function getProperty(args, ctx) {
     // property state above. Null when unavailable, never an empty memory.
     acquisition: sectionValue(status.acquisition, rec.acquisition),
   };
+  // Step A-1 — leaseholds recorded as ENDED (migration 037). `spaces` is the
+  // current roster; these are history, named so a caller can tell the two apart
+  // (their field provenance stays in `fields`, keyed by the same permanent id).
+  // Present only when there is at least one, so an all-active property's
+  // response is unchanged.
+  if (Array.isArray(rec.endedLeaseholds) && rec.endedLeaseholds.length &&
+      status.spaces !== STATUS.UNAVAILABLE) {
+    data.endedLeaseholds = rec.endedLeaseholds.map(e => Object.assign({}, e));
+  }
 
   return envelope({
     data,

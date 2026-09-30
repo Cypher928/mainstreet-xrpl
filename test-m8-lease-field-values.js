@@ -364,8 +364,9 @@ sec('F. No new read, no write, no capability, no extraction change');
   const f = db();
   await MCP.call('get_lease_evidence', { propertyId: PROP, tenantId: T1 },
                  ctx({ sbFetch: f }));
-  eq(f.calls.map(c => c.method), ['GET', 'GET', 'GET'], 'F1 three reads, all GET');
-  eq(f.calls.length, 3, 'F2 the same three M1b approved — M8 added none');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(f.calls.map(c => c.method), ['GET', 'GET', 'GET', 'GET'], 'F1 four reads, all GET');
+  eq(f.calls.length, 4, 'F2 the three M1b approved plus the A-1 lifecycle overlay — M8 added none');
   is(!f.calls.some(c => /lease_documents|cam_reconciliations/.test(c.path)),
      'F3 and no new table is touched');
 

@@ -387,8 +387,9 @@ sec('F. The record, and one tenant inside it');
   is(r.data.identity && r.data.identity.totalSqft === 1000, 'F4 and its identity');
   is(!!r.data.fields[T1], 'F5 and per-tenant provenance');
   eq(r.provenance.hydrated, true, 'F6 provenance says it was hydrated');
-  is(Array.isArray(r.provenance.reads) && r.provenance.reads.length === 3,
-     'F7 over the three approved reads', String((r.provenance.reads || []).length));
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  is(Array.isArray(r.provenance.reads) && r.provenance.reads.length === 4,
+     'F7 over the four approved reads', String((r.provenance.reads || []).length));
 
   // One data model. get_property must not invent a second shape.
   eq(Object.keys(r.data).sort(),
@@ -675,7 +676,8 @@ sec('I. No writes, no RPC, and only the reads M1b approved');
      Array.from(new Set(d.calls.map(c => c.method))).join(','));
 
   const tables = Array.from(new Set(d.calls.map(c => c.path.split('?')[0]))).sort();
-  eq(tables, ['/properties', '/tenant_field_evidence'],
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(tables, ['/properties', '/tenant_field_evidence', '/tenants'],
      'I2 and only the approved tables were touched');
 
   const guarded = MCP._readOnly(async () => ({ status: 200, json: [] }));
@@ -735,7 +737,7 @@ sec('J. No browser API, no localStorage, no second hydration');
   // would make every later phase edit this line and learn nothing; pinning
   // the ABSENCE of anything M4 could have wanted still catches the thing
   // it was written to catch.
-  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
+  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
      'J11 the shim allow-list holds no name beyond the reviewed set — M4 added none');
 }
 

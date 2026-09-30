@@ -26,6 +26,7 @@
  *   I  the window shim is contained, and holds no session state
  *   J  meta.unavailable keeps its meaning and is not widened
  *   K  the server-origin metadata is structured and additive
+ *   L  the leasehold lifecycle (037) is read from the table, and wins (Step A-1)
  *
  * The single most valuable assertion in the file is E2: it removes the evidence
  * read and shows the record changes. A read whose absence changes nothing is a
@@ -88,7 +89,8 @@ const EV_ROW = {
 function transport(opt) {
   const o = Object.assign({ owns: true, blobTenants: [BLOB_TENANT], tableTenants: [],
                             evidence: [], propStatus: 200, evStatus: 200,
-                            tenantStatus: 200 }, opt || {});
+                            tenantStatus: 200, lifecycleRows: [], lifecycleMissing: false,
+                            lifecycleStatus: 200 }, opt || {});
   const calls = [];
   const fn = async (p, options) => {
     calls.push({ path: p, method: (options && options.method) || 'GET' });
@@ -103,6 +105,15 @@ function transport(opt) {
       }] };
     }
     if (/^\/tenants\?/.test(p)) {
+      // A database the 037 migration has not reached: PostgREST names the column.
+      if (o.lifecycleMissing && /leasehold_status/.test(p)) {
+        return { status: 400, json: { code: '42703', message: 'column tenants.leasehold_status does not exist' } };
+      }
+      // The lifecycle overlay read (id + the three lifecycle columns only).
+      if (/select=id,leasehold_status,ended_at,ended_reason$/.test(p)) {
+        if (o.lifecycleStatus >= 300) return { status: o.lifecycleStatus, json: { message: 'nope' } };
+        return { status: 200, json: o.lifecycleRows };
+      }
       if (o.tenantStatus >= 300) return { status: o.tenantStatus, json: { message: 'nope' } };
       return { status: 200, json: o.tableTenants };
     }
@@ -196,9 +207,13 @@ sec('C. Three tables, and the two that are deliberately absent');
 {
   const t = transport({ evidence: [EV_ROW] });
   const r = await H.hydrate({ propertyId: PROP, userId: USER, sbFetch: t });
-  eq(tablesTouched(r.reads), ['/properties', '/tenant_field_evidence'],
-     'C1 with tenants in the blob, only properties and tenant_field_evidence are read');
-  eq(r.reads.length, 3, 'C2 in three requests: the ownership probe, the property, the evidence');
+  // Step A-1: with tenants in the blob, the tenants table is read for the
+  // leasehold lifecycle columns only (see section L) — never for the roster.
+  eq(tablesTouched(r.reads), ['/properties', '/tenants', '/tenant_field_evidence'],
+     'C1 with tenants in the blob: properties, the tenants lifecycle columns, and tenant_field_evidence');
+  eq(r.reads.length, 4, 'C2 in four requests: the ownership probe, the property, the lifecycle overlay, the evidence');
+  is(r.reads.filter(p => p.startsWith('/tenants?')).every(p => /&select=id,leasehold_status,ended_at,ended_reason$/.test(p)),
+     'C2b and the one tenants read selects only id and the three lifecycle columns');
 
   const t2 = transport({ blobTenants: [], tableTenants: [
     { id: TID, property_id: PROP, name: 'Acme Coffee LLC', sqft: 500, cap: 0.05,
@@ -297,8 +312,8 @@ sec('F. The blob wins, and the table is a fallback — as in loadPropertyData');
   is(r.record.spaces[0].tenantName === 'Acme Coffee LLC',
      'F2 from the blob, because the table has no review, reviewOverrides or capBaseAmount',
      r.record.spaces[0].tenantName);
-  is(!r.reads.some(p => p.startsWith('/tenants?')),
-     'F3 and the tenants table is not even read when the blob has rows');
+  is(!r.reads.some(p => p.startsWith('/tenants?') && /select=[^&]*\bname\b/.test(p)),
+     'F3 and the tenants roster is not read when the blob has rows (only the lifecycle overlay is)');
 
   const t2 = transport({ blobTenants: [], tableTenants: [
     { id: TID, property_id: PROP, name: 'Fallback Tenant', sqft: 400, cap: null,
@@ -368,7 +383,7 @@ sec('I. The shim exists only inside the call, and holds no session state');
   eq(DEPS.missing(deps), [], 'I2 every declared dependency loads');
   eq(DEPS.leakedWindow(), false, 'I3 and loading them leaves no window behind');
 
-  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'I4 the shim holds exactly the allow-listed names');
   eq(DEPS.SHIM_KEYS.slice().sort(), DEPS.shimKeys(),
      'I5 and what the shim HOLDS matches what it DECLARES — a declared name that\n      never gets placed would leave its consumers on a silent fallback');
@@ -403,7 +418,7 @@ sec('I. The shim exists only inside the call, and holds no session state');
   is(DEPS.blockedWrites().includes('MoneyCents'),
      'I11a a call-time attempt to attach MoneyCents was refused, not absorbed',
      DEPS.blockedWrites().join(','));
-  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(DEPS.shimKeys(), ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'I11b so the shim still holds exactly the allow-listed names after a full hydration');
   DEPS.withWindow(() => { global.window.somethingNew = 1; global.window.Selectors = {}; });
   is(DEPS.shimKeys().length === DEPS.SHIM_KEYS.length && DEPS.blockedWrites().includes('Selectors'),
@@ -476,6 +491,76 @@ sec('K. Server-origin metadata is structured, additive, and not parsed');
      'K5 no logic branches on the note text');
   is(!/includesBrowserLocalState\s*:\s*true/.test(HCODE),
      'K6 there is no code path that claims the server record includes browser state');
+}
+
+// ── L. The leasehold lifecycle (Step A-1, migration 037) ───────────────────
+sec('L. The lifecycle is read from the tenants table, which wins over the blob');
+{
+  const ENDED = { id: TID, leasehold_status: 'ended', ended_at: '2026-03-31', ended_reason: 'surrendered' };
+  // L1–L3: the blob roster, the table's lifecycle laid over it by id.
+  const r = await H.hydrate({ propertyId: PROP, userId: USER,
+    sbFetch: transport({ blobTenants: [Object.assign({}, BLOB_TENANT, { leasehold_status: 'active' })],
+                         lifecycleRows: [ENDED] }) });
+  is(r.ok, 'L1 hydrates');
+  // spaces is the CURRENT roster; the ended leasehold is named, not dropped.
+  is(r.record.spaces.length === 0 && Array.isArray(r.record.endedLeaseholds) &&
+     r.record.endedLeaseholds.length === 1 && r.record.endedLeaseholds[0].tenantId === TID,
+     'L2 the ended leasehold leaves the current spaces and is named in endedLeaseholds', JSON.stringify(r.record.endedLeaseholds));
+  const H_T = await (async () => {
+    // Read the property the hydrator built, via the record's own spaces is not
+    // enough — assert on the normalised tenant the record was assembled from.
+    let seen = null;
+    const orig = PR.assemble;
+    PR.assemble = function (prop, deps) { seen = prop; return orig.apply(this, arguments); };
+    try { await H.hydrate({ propertyId: PROP, userId: USER,
+      sbFetch: transport({ blobTenants: [BLOB_TENANT], lifecycleRows: [ENDED] }) }); }
+    finally { PR.assemble = orig; }
+    return seen && seen.tenants[0];
+  })();
+  eq(H_T && [H_T.leasehold_status, H_T.ended_at, H_T.ended_reason], ['ended', '2026-03-31', 'surrendered'],
+     'L3 the table\'s lifecycle wins over the blob (table: ended; blob: active or absent)');
+  is(!r.degraded.some(d => /lifecycle/.test(d)), 'L4 and a successful overlay is not a degradation');
+
+  // L5: a table row whose id is not on the blob roster does not add a tenant.
+  const r5 = await H.hydrate({ propertyId: PROP, userId: USER,
+    sbFetch: transport({ lifecycleRows: [{ id: 'not-on-roster', leasehold_status: 'ended', ended_at: '2020-01-01', ended_reason: 'other' }] }) });
+  eq(r5.record.spaces.length, 1, 'L5 the overlay only annotates; it never adds a leasehold to the roster');
+
+  // L6: a database without the 037 columns — every leasehold is active there.
+  const r6 = await H.hydrate({ propertyId: PROP, userId: USER, sbFetch: transport({ lifecycleMissing: true }) });
+  is(r6.ok && !r6.degraded.some(d => /lifecycle/.test(d)),
+     'L6 missing 037 columns are not a degradation (pre-037 databases are all-active)', JSON.stringify(r6.degraded));
+
+  // L7: a failed overlay read IS a degradation: an ended leasehold would read current.
+  const r7 = await H.hydrate({ propertyId: PROP, userId: USER, sbFetch: transport({ lifecycleStatus: 500 }) });
+  is(r7.ok && r7.degraded.includes('tenants.lifecycle_read_failed'),
+     'L7 a failed lifecycle read is reported, not silent', JSON.stringify(r7.degraded));
+
+  // L8–L10: the table fallback selects the lifecycle columns and maps them.
+  const t8 = transport({ blobTenants: [], tableTenants: [
+    { id: TID, property_id: PROP, name: 'Fallback Tenant', sqft: 400, cap: null, start_date: '2020-01-01',
+      end_date: '2025-12-31', lease_url: null, lease_type: 'NNN',
+      leasehold_status: 'ended', ended_at: '2026-02-28', ended_reason: 'lease_expired' } ] });
+  let seen8 = null;
+  const orig = PR.assemble;
+  PR.assemble = function (prop) { seen8 = prop; return orig.apply(this, arguments); };
+  try { await H.hydrate({ propertyId: PROP, userId: USER, sbFetch: t8 }); } finally { PR.assemble = orig; }
+  is(t8.calls.some(c => /^\/tenants\?.*select=id,property_id,name,.*,leasehold_status,ended_at,ended_reason$/.test(c.path)),
+     'L8 the fallback selects the three lifecycle columns');
+  eq(seen8 && [seen8.tenants[0].leasehold_status, seen8.tenants[0].ended_at, seen8.tenants[0].ended_reason],
+     ['ended', '2026-02-28', 'lease_expired'], 'L9 and carries them through normalizeTenant');
+  const t10 = transport({ blobTenants: [], lifecycleMissing: true, tableTenants: [
+    { id: TID, property_id: PROP, name: 'Pre-037 Tenant', sqft: 400, lease_type: 'NNN' } ] });
+  const r10 = await H.hydrate({ propertyId: PROP, userId: USER, sbFetch: t10 });
+  is(r10.ok && r10.record.spaces.length === 1 && !r10.degraded.includes('tenants.read_failed') &&
+     t10.calls.some(c => /select=id,property_id,name,sqft,cap,start_date,end_date,lease_url,lease_type$/.test(c.path)),
+     'L10 a pre-037 database: the fallback retries with the pre-037 column list');
+
+  // L11: the rule is required, not re-derived.
+  is(/require\(['"]\.\.\/leasehold-status\.js['"]\)/.test(HCODE) && /LeaseholdStatus\.lifecycleFrom\(/.test(HCODE),
+     'L11 the overlay uses LeaseholdStatus.lifecycleFrom (a string-literal require)');
+  is(!/leasehold_status\s*===\s*['"]ended['"]/.test(HCODE),
+     'L12 and never compares leasehold_status itself');
 }
 
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}RESULT: ${pass} passed, ${fail} failed\x1b[0m`);

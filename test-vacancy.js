@@ -152,7 +152,8 @@ t('B8 a negative or junk vacantPct reads as none', () => {
 
 console.log('\n── C · selectors: a vacancy is not a lease ──');
 const sel = {};
-['source-values.js', 'lease-intelligence.js', 'review-engine.js', 'selectors.js'].forEach(f => {
+// leasehold-status.js first, as index.html loads it (Step A-1): Selectors asks it.
+['source-values.js', 'leasehold-status.js', 'lease-intelligence.js', 'review-engine.js', 'selectors.js'].forEach(f => {
   new Function('window', fs.readFileSync(path.join(ROOT, f), 'utf8')).call({ window: sel }, sel);
 });
 global.SourceValues = sel.SourceValues; global.LeaseIntelligence = sel.LeaseIntelligence; global.ReviewEngine = sel.ReviewEngine;

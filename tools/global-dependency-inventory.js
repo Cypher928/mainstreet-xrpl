@@ -102,6 +102,7 @@ const CLASSIFICATION = {
   PropertyReference: { kind: 'shimmed', why: 'pure; supplied by the allow-list, and read at call time by property-workspace.js:86 with no fallback' },
   DisputeStatus:     { kind: 'shimmed', why: 'M7; pure classifier over a fixed transition table, read at call time by property-workspace.js and tenant-space.js so both count open disputes the same way as get_disputes' },
   PropertyArea:      { kind: 'shimmed', why: 'M8c; pure arithmetic over its argument, read at call time by tenant-space.js so a space\'s leased area uses the same definition as identity.leasedSqft' },
+  LeaseholdStatus:   { kind: 'shimmed', why: 'Step A-1; the pure leasehold lifecycle predicate (migration 037), read at call time by tenant-space.js, property-workspace.js, property-cabinet.js and property-record.js so every surface answers "is this leasehold current?" the same way' },
 
   // ── explicit module dependencies (dual-resolution, require wins here) ──
   CamPool:      { kind: 'module', require: './cam-pool.js',

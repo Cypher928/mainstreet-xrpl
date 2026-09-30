@@ -326,7 +326,8 @@ sec('D. The hydrator: read as the caller, only after the checks');
     eq(h.record.acquisition.status, 'ok', 'D2 with an ok acquisition section');
     eq(h.record.acquisition.memory.unresolvedAtAcquisition, { leaseholds: 5, contested: 2, unclear: 3, read: 32, missing: 92, noDocument: 1 },
        'D3 carrying Maple\'s memory');
-    eq(sb.calls.map(c => c.path.split('?')[0]), ['/properties', '/properties', '/tenant_field_evidence'], 'D4 the service transport read what it always read, and nothing more');
+    // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+    eq(sb.calls.map(c => c.path.split('?')[0]), ['/properties', '/properties', '/tenants', '/tenant_field_evidence'], 'D4 the service transport read what it always read, and nothing more');
     is(sb.calls.every(c => !/acquisition_|property_events/.test(c.path)), 'D5 the service transport NEVER reads an acquisition table');
     eq(ub.calls.map(c => c.path.split('?')[0]).sort(), ['/acquisition_document_families', '/acquisition_documents', '/acquisition_reviews', '/acquisition_term_decisions', '/property_events'],
        'D6 the caller transport read exactly the five acquisition tables');
@@ -344,7 +345,7 @@ sec('D. The hydrator: read as the caller, only after the checks');
     const all = JSON.stringify(h);
     is(all.indexOf(TOKEN_OWNER) < 0 && all.indexOf('SECRET-P56B') < 0, 'D13 the token appears nowhere in the result — record, reads, degraded');
     is(!PL.has(P), 'D14 the page map was never written on the server');
-    is(h.reads.length === 8, 'D15 reads records all eight requests (three service, five as the caller)', String(h.reads.length));
+    is(h.reads.length === 9, 'D15 reads records all nine requests (four service, five as the caller)', String(h.reads.length));
     const again = await HYD.hydrate({ propertyId: P, userId: U, sbFetch: serviceDb(), userFetch: callerDb(), userToken: TOKEN_OWNER });
     eq(JSON.stringify(again.record.acquisition), JSON.stringify(h.record.acquisition), 'D16 a second request builds the same memory, independently');
   }

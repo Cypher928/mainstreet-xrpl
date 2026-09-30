@@ -3665,12 +3665,24 @@ function _propertyMismatchBlockReason(t) {
 }
 
 function getValidTenants() {
+  // THE CAM PERIOD'S ROSTER (Step A-1, migration 037). An ENDED leasehold stays
+  // on property.tenants as history; it is in this period's roster only while its
+  // CONFIRMED end (ended_at) falls on or after the period's first day — then it
+  // owes the part it occupied, and LeasePeriod apportions it by ended_at. The
+  // rule is leasehold-status.js's. No fallback: a missing module is a loading
+  // error, never "every leasehold is current". An active leasehold is always in
+  // the roster, so an all-active property is exactly as before.
+  const LS = window.LeaseholdStatus;
+  if (!LS) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before script.js)');
+  const period = (typeof getCamYear === 'function' && window.LeasePeriod)
+    ? window.LeasePeriod.periodForYear(getCamYear()) : null;
   // A VACANT SPACE IS NEVER A TENANT. A row with `vacant: true` keeps a suite
   // and an area so the space exists; it must not enter the allocation even if
   // it carries a name (fixtures label such rows "Vacant") and an area.
   return (currentProperty()?.tenants || []).filter(t =>
     t &&
     t.vacant !== true &&
+    LS.inPeriodRoster(t, period) &&
     t.tenant_name &&
     // WAS Number(t.leased_sqft) > 0, which is NaN for "50,000" — so a lease with
     // a formatted area was dropped from CAM while every warning surface, which
@@ -3723,7 +3735,10 @@ function recordVacantSpace(suite, sqft) {
   if (!s)               return { ok: false, error: 'Enter the suite or unit number of the vacant space.' };
   if (!(n > 0))         return { ok: false, error: 'Enter the vacant area in square feet (a number above 0).' };
   const sameSuite = t => t && String(t.suite || t.unitNumber || '').trim().toLowerCase() === s.toLowerCase();
-  const leased = (prop.tenants || []).find(t => sameSuite(t) && t.vacant !== true && t.tenant_name);
+  // An ENDED leasehold on the suite (migration 037) is history, not the space's
+  // current occupant, so it does not stop the space being recorded vacant.
+  const leased = (prop.tenants || []).find(t => sameSuite(t) && t.vacant !== true && t.tenant_name &&
+    window.LeaseholdStatus.isCurrent(t));
   if (leased) return { ok: false, error: `Suite ${s} is under a loaded lease (${leased.tenant_name}). Edit or remove that lease instead of marking the space vacant.` };
 
   const existing = (prop.tenants || []).find(t => sameSuite(t) && t.vacant === true);
@@ -4194,7 +4209,8 @@ function renderPropertyKpiHeader(property) {
   const slot = document.getElementById('propertyKpiHeader');
   if (!slot || !property) return;
 
-  const tenants = (property.tenants || []).filter(t => t && t.tenant_name);
+  // Current leaseholds only: an ENDED one (037) occupies nothing and is not a space in use.
+  const tenants = (property.tenants || []).filter(t => t && t.tenant_name && window.LeaseholdStatus.isCurrent(t));
   const totalSqft = Number(property.totalSqft) || 0;
   const occSqft = tenants.reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
   const occupancyPct = totalSqft > 0 ? Math.round((occSqft / totalSqft) * 100) : null;
@@ -5295,8 +5311,12 @@ function _normalizeSuite(suite) {
  * `skipIdx` is the upload's own placeholder, which must never match itself.
  */
 function findTenantMatch(tenants, incoming, skipIdx) {
+  // D7 (Step A-1, migration 037): an ENDED leasehold is never matched by an
+  // upload. It is history; a new document for the same suite or name belongs to
+  // a current leasehold or a new one, never silently to the one that ended.
   const list = (tenants || []).map((t, i) => ({ t, i }))
-    .filter(({ t, i }) => t && i !== skipIdx && !t.leaseExpected && (t.tenant_name || t.unitNumber || t.suite));
+    .filter(({ t, i }) => t && i !== skipIdx && !t.leaseExpected && (t.tenant_name || t.unitNumber || t.suite) &&
+      window.LeaseholdStatus.isCurrent(t));
   if (!list.length) return null;
 
   // 1 — suite/unit within the property.
@@ -6010,7 +6030,12 @@ function camInputsFingerprint(tenants, invoices) {
       String(x.cap ?? ''),
       String(x.capBaseAmount ?? ''),
       (_camInputExclusions(x) || []).slice().sort().join('+'),
-    ].join('|'))
+    ].join('|') +
+      // Step A-1: ENDING a leasehold (037) changes what the calculation bills —
+      // the period roster and the apportionment end — so a saved run must read
+      // stale afterwards. Appended only for an ended leasehold, so every active
+      // fingerprint, and every reconciliation saved before 037, is unchanged.
+      (window.LeaseholdStatus.isEnded(x) ? '|ended:' + (window.LeaseholdStatus.endedAt(x) || '?') : ''))
     .sort();
   const i = (invoices || [])
     .filter(x => x && x.vendorName)
@@ -6334,6 +6359,18 @@ function deriveTenantReviewState(t) {
   rv.camBlocking = rv.warnings
     .filter(function(w) { return _RQ_CAM_BLOCKING_TYPES.has(w.type); })
     .map(function(w) { return _RQ_CAM_BLOCKER_REASON[w.type] || w.label; });
+  // Step A-1 — the same promise for the lifecycle (migration 037). A leasehold
+  // ENDED before this CAM period began is out of getValidTenants()' roster, so a
+  // surface reading an empty camBlocking would say it "will reconcile" when it
+  // will not. Only ever added for an ended leasehold; an active one is untouched.
+  if (t && window.LeaseholdStatus.isEnded(t)) {
+    const _p = (typeof getCamYear === 'function' && window.LeasePeriod)
+      ? window.LeasePeriod.periodForYear(getCamYear()) : null;
+    if (!window.LeaseholdStatus.inPeriodRoster(t, _p)) {
+      rv.camBlocking.push('This leasehold ended ' + window.LeaseholdStatus.endedAt(t) +
+        ', before the ' + String(_p.start).slice(0, 4) + ' CAM period began, so it is not part of this reconciliation.');
+    }
+  }
   // reviewItems — real gaps a human should close, none of which prevent a number
   // being produced. Disjoint from camBlocking by construction, which is the one
   // invariant the two sets owe each other.
@@ -9378,7 +9415,9 @@ function _renderExtractionNextStep(prop) {
   if (old) old.remove();
   const host = document.getElementById('bulkResults');
   if (!host || !prop) return;
-  const tenants = (prop.tenants || []).filter(t => t && t.vacant !== true);   // a recorded vacancy is not a lease to review
+  // A recorded vacancy is not a lease to review, and an ENDED leasehold (037) is
+  // history — the same current-lease rule the review queue uses.
+  const tenants = (prop.tenants || []).filter(t => window.LeaseholdStatus.isCurrentLease(t));
   if (!tenants.length) return;
 
   const items = (typeof getReviewQueueItems === 'function' ? getReviewQueueItems([prop]) : [])
@@ -9574,13 +9613,16 @@ function refreshBulkSummary(i) {
     const isWeakName  = d.tenant_name ? !isStrongName(d.tenant_name) : false;
 
     // Recompute duplicate badge from current tenantData
+    // An ENDED leasehold (037) sharing a name with a current one is history, not
+    // a duplicate — a tenant who leaves and later signs again is two leaseholds.
     const _nc = new Map();
     tenantData.forEach(t => {
-      if (!t?.tenant_name) return;
+      if (!t?.tenant_name || !window.LeaseholdStatus.isCurrent(t)) return;
       const k = t.tenant_name.trim().toLowerCase();
       _nc.set(k, (_nc.get(k) || 0) + 1);
     });
-    const isDup = d.tenant_name ? (_nc.get(d.tenant_name.trim().toLowerCase()) || 0) > 1 : false;
+    const isDup = (d.tenant_name && window.LeaseholdStatus.isCurrent(d))
+      ? (_nc.get(d.tenant_name.trim().toLowerCase()) || 0) > 1 : false;
     const dupBadge = isDup
       ? `<span style="font-size:0.72rem;background:#78350f40;border:1px solid #f59e0b;color:var(--c-fbbf24);border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap;">⚠ Duplicate name — add unit # or remove one</span>`
       : '';
@@ -9767,7 +9809,15 @@ async function retryExtractionWithFile(index, file) {
 }
 
 async function clearBulkResults() {
-  if (!confirm('Clear all extracted tenants for this property?\n\nThis also removes the tenant records from the database and cannot be undone.')) return;
+  // D6 (Step A-1): Clear All clears the UPLOAD LIST, and only that. It used to
+  // delete this property's tenants rows as well — every leasehold without a
+  // linked document — which is a leasehold deleted because it left a list, the
+  // one thing a leasehold must never be deleted for. The rows stay: an empty
+  // roster is a no-op for resyncTenantsToTable, so nothing below reaches the
+  // table. Ending or discarding a leasehold is its own, deliberate act.
+  if (!confirm('Clear the lease upload list for this property?\n\n' +
+               'This empties the list of extracted leases on this screen. Leaseholds already ' +
+               'saved for this property are not deleted.')) return;
   _bulkFilter = { query: '', status: 'all' };
   const prop = currentProperty();
   tenantData.splice(0, tenantData.length);
@@ -9775,26 +9825,6 @@ async function clearBulkResults() {
   document.getElementById('bulkResults').innerHTML = '';
   document.getElementById('bulkProgress').style.display = 'none';
   document.getElementById('bulkLeaseInput').value = '';
-  // Delete this property's tenant rows from Supabase — except any a document is
-  // linked to. Since migration 039 lease_documents.tenant_id is a foreign key
-  // (ON DELETE NO ACTION): a leasehold with a filed document is history and is
-  // not removed by clearing the upload list, and including it would make the
-  // whole delete fail. If the linked set cannot be read, nothing is deleted —
-  // keeping a row is recoverable, orphaning a document is not.
-  if (prop?.id) {
-    const { data: linked, error: linkErr } = await db.from('lease_documents')
-      .select('tenant_id').eq('property_id', prop.id).not('tenant_id', 'is', null);
-    if (linkErr) {
-      console.error('[clearBulkResults] linked-document check failed — no tenant rows deleted:', linkErr.message);
-    } else {
-      const keep = [...new Set((linked || []).map(r => r && r.tenant_id).filter(Boolean))];
-      let del = db.from('tenants').delete().eq('property_id', prop.id);
-      if (keep.length) del = del.not('id', 'in', `(${keep.join(',')})`);
-      const { error } = await del;
-      if (error) console.error('[clearBulkResults] delete error:', error.message);
-      else if (keep.length) console.log('[clearBulkResults] kept', keep.length, 'tenant id(s) that documents are linked to');
-    }
-  }
   if (lastResults.length > 0) { _resultsStale = true; _updateStaleResultsBanner(); }
   await savePropertyData();
 }
@@ -11152,7 +11182,11 @@ function _camPrepState() {
   const totalSqft = parseFloat((document.getElementById('totalSqft') || {}).value);
   const tName = t => t && (t.tenant_name ?? t.tenantName);
   const tSqft = t => t && (t.leased_sqft ?? t.leasedSqft);
-  const tenants   = tenantData.filter(t => t && t.vacant !== true && tName(t) && parseSqft(tSqft(t)) > 0);
+  // The CAM period's roster, as getValidTenants reads it (Step A-1): a leasehold
+  // ENDED before the period began is not an input to this year's run.
+  const _prepPeriod = window.LeasePeriod ? window.LeasePeriod.periodForYear(getCamYear()) : null;
+  const tenants   = tenantData.filter(t => t && t.vacant !== true && tName(t) && parseSqft(tSqft(t)) > 0 &&
+    window.LeaseholdStatus.inPeriodRoster(t, _prepPeriod));
   const invoices  = invoiceData.filter(inv => inv && (inv.vendorName ?? inv.vendor) && parseFloat(inv.amount) > 0);
   const missing = [];
   if (!totalSqft || totalSqft <= 0) missing.push('the property\u2019s total square footage (Property tab)');
@@ -12317,7 +12351,11 @@ async function runAllocation() {
   _lastReconciledInvoices = _prop._reconciledInvoices || _lastEngineInvoices;
 
   // Sync matchedTenant tags back to invoiceData for badge display
-  const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name);
+  // The run year's roster (Step A-1): a leasehold ENDED before the period began
+  // is not a candidate for this period's invoices. Active leaseholds always are.
+  const _rosterPeriod = window.LeasePeriod ? window.LeasePeriod.periodForYear(_runYear) : null;
+  const activeTenants = (currentProperty()?.tenants || []).filter(t => t && t.tenant_name &&
+    window.LeaseholdStatus.inPeriodRoster(t, _rosterPeriod));
   console.log('[runAllocation] badge-sync matchInvoiceToTenant', {
     activeTenantCount: activeTenants.length,
     activeTenantNames: activeTenants.map(t => t.tenant_name),
@@ -21888,10 +21926,10 @@ async function cleanupLegacyDemos(userId) {
 
     console.log('[cleanupLegacyDemos] removing', legacyIds.length, 'legacy entry/entries:', legacyIds);
 
-    // Delete tenants first (FK), then the property rows
-    for (const id of legacyIds) {
-      await db.from('tenants').delete().eq('property_id', id);
-    }
+    // Delete the property rows. Their tenants go with them through
+    // tenants_property_id_fkey (ON DELETE CASCADE): deleting a property is the
+    // one intentional way a leasehold is removed (Step A-1), so the leaseholds
+    // are not deleted separately, ahead of it, as if they could go on their own.
     await db.from('properties').delete().in('id', legacyIds).eq('user_id', userId);
 
     // Remove from _props
@@ -22607,9 +22645,13 @@ async function ensureDemoProperty() {
     console.warn('[ensureDemoProperty] property upsert failed (demo will run in-memory):', propErr.message, propErr.code);
   }
 
-  // Tenants: delete existing rows then insert with stable IDs so they're
-  // always queryable by property_id even if the user has run the old demo.
-  await db.from('tenants').delete().eq('property_id', DEMO_PROPERTY_ID);
+  // Tenants: UPSERT on the stable ids, never delete (D11, Step A-1). A reseed
+  // used to delete every row first, which erased a leasehold because it left a
+  // seed — and the demo tenants are CAM-referenced, so the delete also broke the
+  // rows that pointed at them. Upserting keeps each leasehold's identity. The
+  // lifecycle columns (037) are not in the payload, so a demo leasehold a person
+  // has ended stays ended across a reseed. A row a later seed no longer lists
+  // stays as an absentee; that is harmless and is the price of never deleting.
   const tenantRows = demoTenants.map(t => ({
     id:          t.id,
     property_id: DEMO_PROPERTY_ID,
@@ -22621,8 +22663,8 @@ async function ensureDemoProperty() {
     lease_type:  t.lease_type  || null,
     lease_url:   null,
   }));
-  const { error: tenErr } = await db.from('tenants').insert(tenantRows).select('id');
-  if (tenErr) console.warn('[ensureDemoProperty] tenant insert warning:', tenErr.message);
+  const { error: tenErr } = await db.from('tenants').upsert(tenantRows, { onConflict: 'id' }).select('id');
+  if (tenErr) console.warn('[ensureDemoProperty] tenant upsert warning:', tenErr.message);
 
   // ── Update in-memory _props with full state ───────────────────────────────
   const demoPropFull = {
@@ -22862,14 +22904,17 @@ async function ensureNorthgateDemo() {
   // The denormalised tenants table mirrors LEASES. The vacant row is a space,
   // not a tenant, and writing it here would put a nameless row in a table every
   // other reader treats as the tenant roster.
-  await db.from('tenants').delete().eq('property_id', NORTHGATE_PROPERTY_ID);
-  const { error: tenErr } = await db.from('tenants').insert(ngTenants.map(t => ({
+  //
+  // UPSERT on the stable ids, never delete (D11, Step A-1) — the same reasoning
+  // as Cascade Commons above: a reseed must not erase a leasehold, and the
+  // lifecycle columns (037) are not in the payload, so an ended one stays ended.
+  const { error: tenErr } = await db.from('tenants').upsert(ngTenants.map(t => ({
     id: t.id, property_id: NORTHGATE_PROPERTY_ID, name: t.tenant_name,
     sqft: Number(t.leased_sqft) || null, cap: t.cap != null ? parseFloat(t.cap) : null,
     start_date: t.start_date || null, end_date: t.end_date || null,
     lease_type: t.lease_type || null, lease_url: t.leaseUrl || null,
-  }))).select('id');
-  if (tenErr) console.warn('[ensureNorthgateDemo] tenant insert warning:', tenErr.message);
+  })), { onConflict: 'id' }).select('id');
+  if (tenErr) console.warn('[ensureNorthgateDemo] tenant upsert warning:', tenErr.message);
 
   const ngFull = {
     id: NORTHGATE_PROPERTY_ID,
@@ -24838,7 +24883,7 @@ function exportPortfolioSummary() {
     <table>
       <thead><tr><th>Property</th><th>Tenants</th><th>Total Sqft</th><th>Annual Rent</th><th>Status</th></tr></thead>
       <tbody>${props.map(p => {
-        const tens = (p.tenants || []).filter(t => t && !t.extractionFailed);
+        const tens = (p.tenants || []).filter(t => t && !t.extractionFailed && window.LeaseholdStatus.isCurrent(t));
         const rent = tens.reduce((s, t) => s + (parseFloat(t.base_rent) || 0), 0);
         return `<tr>
           <td style="font-weight:600">${esc_(p.name || '(unnamed)')}</td>
@@ -25022,7 +25067,9 @@ function derivePropertyMetrics(p) {
   const resolvedDisputes = disputes_arr.filter(d => _disputeClass(d) === 'closed').length;
 
   // ── Review stats ──────────────────────────────────────────────────────────
-  const tenants_arr = Array.isArray(p.tenants) ? p.tenants : [];
+  // Current leaseholds only (Step A-1): an ENDED one (037) is history, not a lease
+  // awaiting review or evidence.
+  const tenants_arr = Array.isArray(p.tenants) ? p.tenants.filter(t => !t || window.LeaseholdStatus.isCurrent(t)) : [];
   const reviewStates = tenants_arr.map(t =>
     window.ReviewEngine ? window.ReviewEngine.deriveTenantReviewState(t, []) : { status: 'incomplete', warnings: [] }
   );
@@ -26351,13 +26398,15 @@ function renderPortfolio(props) {
     ? `<div class="ptf-empty-state"><div class="ptf-empty-icon">&#x1F50D;</div><div class="ptf-empty-title">No properties match "${esc(_portfolioQuery)}"</div></div>`
     : _demoInvite + _displayPairs.map(({ p, m }) => {
     const dm      = p._derivedMetrics || derivePropertyMetrics(p);
-    const tenants = Array.isArray(p.tenants) ? p.tenants.length : (Number(p.tenantCount) || 0);
+    // Current leaseholds (Step A-1): an ENDED one (037) is not a tenant today and occupies nothing.
+    const _cur    = Array.isArray(p.tenants) ? p.tenants.filter(t => !t || window.LeaseholdStatus.isCurrent(t)) : null;
+    const tenants = _cur ? _cur.length : (Number(p.tenantCount) || 0);
     const cam     = m.total || Number(p.totalCAM) || 0;
     const status  = p.status || 'in-progress';
 
     // Per-property occupancy
     const bsqft   = Number(p.totalSqft) || 0;
-    const occSqft = (Array.isArray(p.tenants) ? p.tenants : []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
+    const occSqft = (_cur || []).reduce((s, t) => s + (parseFloat(t.leased_sqft) || 0), 0);
     const occPct  = bsqft > 0 ? Math.round((occSqft / bsqft) * 100) : null;
 
     const trendHtml = (() => {
@@ -26427,7 +26476,7 @@ function renderPortfolio(props) {
         ${riskLabel ? `<div class="ptf-stat ${riskCls ? 'ptf-risk-stat ' + riskCls : ''}"><strong>${esc(riskLabel)}</strong></div>` : ''}
       </div>
       ${(() => {
-        const pts = Array.isArray(p.tenants) ? p.tenants.filter(t => t && typeof t === 'object') : [];
+        const pts = Array.isArray(p.tenants) ? p.tenants.filter(t => t && typeof t === 'object' && window.LeaseholdStatus.isCurrent(t)) : [];
         const failedN  = pts.filter(t => t.extractionFailed).length;
         const reviewN  = pts.filter(t => t._needsReview && !t.extractionFailed && t.status !== 'pending').length;
         const parts = [failedN ? `${failedN} failed` : '', reviewN ? `${reviewN} need review` : ''].filter(Boolean);
@@ -27511,10 +27560,21 @@ async function loadProperties(opts) {
   if (properties.length === 0) return properties;
 
   const propertyIds = properties.map(p => p.id);
-  const { data: tenantRows, error: tenantErr } = await db
+  // The leasehold lifecycle (037) travels with the row. Without the columns
+  // (037 rolled back) PostgREST rejects the whole select, which would empty
+  // every roster — so fall back to the pre-037 list, where every leasehold reads
+  // active, which is what the column's default says.
+  let { data: tenantRows, error: tenantErr } = await db
     .from('tenants')
-    .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
+    .select(TENANT_ROW_COLUMNS)
     .in('property_id', propertyIds);
+  if (_isLifecycleColumnMissing(tenantErr)) {
+    console.warn('[loadProperties] leasehold lifecycle columns missing — apply migrations/037_leasehold_lifecycle.sql. Treating every leasehold as active.');
+    ({ data: tenantRows, error: tenantErr } = await db
+      .from('tenants')
+      .select(TENANT_ROW_COLUMNS_PRE_037)
+      .in('property_id', propertyIds));
+  }
 
   if (tenantErr) console.error('[loadProperties] tenants error:', tenantErr.message);
 
@@ -27523,19 +27583,64 @@ async function loadProperties(opts) {
     // Map DB column names back to the field names the app expects
     p.tenants = allTenants
       .filter(t => t.property_id === p.id)
-      .map(t => normalizeTenant({
-        id:          t.id,
-        tenant_name: t.name,
-        leased_sqft: t.sqft,
-        cap:         t.cap,
-        start_date:  t.start_date,
-        end_date:    t.end_date,
-        lease_url:   t.lease_url,
-        lease_type:  t.lease_type,
-      }));
+      .map(t => normalizeTenant(_tenantRowToRecord(t)));
   });
 
   return properties;
+}
+
+// ── The tenants row, as every reader selects it ─────────────────────────────
+// One column list and one mapping, so the portfolio read, the workspace's table
+// fallback and the lifecycle overlay cannot drift apart. The lifecycle columns
+// (037) are the leasehold's, not the extraction `status` the client keeps on
+// its own tenant records.
+const TENANT_ROW_COLUMNS_PRE_037 = 'id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type';
+const TENANT_ROW_COLUMNS         = TENANT_ROW_COLUMNS_PRE_037 + ', leasehold_status, ended_at, ended_reason';
+const TENANT_LIFECYCLE_COLUMNS   = 'id, leasehold_status, ended_at, ended_reason';
+
+function _isLifecycleColumnMissing(error) {
+  if (!error) return false;
+  const msg = String(error.message || '') + ' ' + String(error.details || '') + ' ' + String(error.hint || '');
+  return (error.code === '42703' || error.code === 'PGRST204' || /column .* does not exist|could not find/i.test(msg))
+    && /leasehold_status|ended_at|ended_reason/.test(msg);
+}
+
+function _tenantRowToRecord(t) {
+  return {
+    id:               t.id,
+    tenant_name:      t.name,
+    leased_sqft:      t.sqft,
+    cap:              t.cap,
+    start_date:       t.start_date,
+    end_date:         t.end_date,
+    lease_url:        t.lease_url,
+    lease_type:       t.lease_type,
+    leasehold_status: t.leasehold_status,
+    ended_at:         t.ended_at,
+    ended_reason:     t.ended_reason,
+  };
+}
+
+// The table is the authority on a leasehold's lifecycle; the property blob is
+// the authority on everything else it holds (review state, overrides, evidence).
+// So the blob's tenants take their lifecycle from the table, by id, table wins.
+// A blob row the table does not hold keeps what the blob says (normalizeTenant
+// makes that active unless it says exactly 'ended'). A failed read changes
+// nothing — the blob's own values stand — and says so.
+async function _overlayLeaseholdLifecycle(propertyId, tenants) {
+  if (!propertyId || !Array.isArray(tenants) || !tenants.length) return tenants;
+  const { data: rows, error } = await db.from('tenants')
+    .select(TENANT_LIFECYCLE_COLUMNS).eq('property_id', propertyId);
+  if (error) {
+    if (!_isLifecycleColumnMissing(error)) console.warn('[lifecycle overlay] read failed — keeping the blob\'s lifecycle:', error.message);
+    return tenants;
+  }
+  const byId = new Map((rows || []).map(r => [String(r.id), r]));
+  tenants.forEach(t => {
+    const r = t && t.id != null ? byId.get(String(t.id)) : null;
+    if (r) Object.assign(t, window.LeaseholdStatus.lifecycleFrom(r));
+  });
+  return tenants;
 }
 
 // Per-property serialization: prevents concurrent delete+insert races.
@@ -27642,46 +27747,14 @@ async function _doResyncTenantsDirectly(propertyId, rows) {
     return;   // nothing was deleted, so nothing was lost
   }
 
-  // Prune absentees, but never one a reconciliation or a piece of evidence still
-  // names. Losing a stale row is tidiness; losing a referenced one is the defect
-  // this whole phase exists to prevent, so when the reference lookups fail we
-  // keep everything rather than guess.
-  try {
-    const keep = new Set(insertRows.map(r => String(r.id)));
-    const { data: existing, error: exErr } = await db
-      .from('tenants').select('id').eq('property_id', propertyId);
-    if (exErr) throw exErr;
-
-    const absent = (existing || []).map(t => String(t.id)).filter(id => !keep.has(id));
-    if (!absent.length) return;
-
-    // lease_documents too, as resync_property_tenants does since 039: a tenant a
-    // document is linked to is kept (and its delete would be refused anyway).
-    const [{ data: camRefs, error: camErr }, { data: evRefs, error: evErr }, { data: docRefs, error: docErr }] = await Promise.all([
-      db.from('cam_reconciliations').select('tenant_id').in('tenant_id', absent),
-      db.from('tenant_field_evidence').select('tenant_id').in('tenant_id', absent),
-      db.from('lease_documents').select('tenant_id').in('tenant_id', absent),
-    ]);
-    if (camErr || evErr || docErr) throw (camErr || evErr || docErr);
-
-    const referenced = new Set([
-      ...(camRefs || []).map(r => String(r.tenant_id)),
-      ...(evRefs  || []).map(r => String(r.tenant_id)),
-      ...(docRefs || []).map(r => String(r.tenant_id)),
-    ]);
-    const removable = absent.filter(id => !referenced.has(id));
-    const retained  = absent.length - removable.length;
-
-    if (removable.length) {
-      const { error: delErr } = await db.from('tenants').delete().in('id', removable);
-      if (delErr) console.error('[resyncTenantsDirectly] prune error:', delErr.message);
-    }
-    console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length,
-      'upserted,', removable.length, 'pruned,', retained, 'retained because still referenced');
-  } catch (e) {
-    console.warn('[resyncTenantsDirectly] reference check failed — pruning skipped, '
-      + 'stale rows kept rather than risk orphaning:', e?.message);
-  }
+  // NO PRUNE (Step A-1). This fallback used to delete every absentee no
+  // reconciliation, evidence row or document named — a leasehold deleted
+  // because it was missing from the list being saved, which is exactly what a
+  // leasehold must never be deleted for. An absentee now stays. It is harmless:
+  // the workspace reads the blob, and ending or discarding a leasehold is a
+  // deliberate act of its own (038 / Step B), never a side effect of a sync.
+  console.log('[resyncTenantsDirectly] fallback resync OK —', insertRows.length,
+    'upserted; absentees are kept, never pruned');
 }
 
 // Full replace: delete all rows for the property then insert the given list.
@@ -27769,34 +27842,10 @@ async function resyncTenantsToTable(propertyId, tenants) {
   }
 }
 
-async function syncTenantsToTable(propertyId, tenants) {
-  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 10) return;
-  const rows = (tenants || [])
-    .filter(t => t && t.tenant_name)
-    .map(t => ({
-      id:          t.id,
-      property_id: propertyId,
-      name:        t.tenant_name || null,
-      sqft:        Number(t.leased_sqft) || null,
-      cap:         t.cap ?? t.cam_cap ?? t.capPercentage ?? null,
-      start_date:  t.start_date || null,
-      end_date:    t.end_date   || null,
-      ...(t.leaseUrl ? { lease_url: t.leaseUrl } : {}),
-      lease_type:  t.lease_type || null,
-    }));
-  if (rows.length === 0) return;
-  const { error } = await db.from('tenants').upsert(rows, { onConflict: 'id' }).select('id');
-  if (error) { console.error('[syncTenantsToTable] upsert error:', error.message); return; }
-
-  // After upsert succeeds, delete orphaned rows
-  const currentIds = rows.map(r => r.id).filter(Boolean);
-  if (currentIds.length > 0) {
-    await db.from('tenants')
-      .delete()
-      .eq('property_id', propertyId)
-      .not('id', 'in', `(${currentIds.map(id => `'${id}'`).join(',')})`);
-  }
-}
+// syncTenantsToTable was removed in Step A-1. It had no caller, and its body
+// deleted every tenants row of the property the list it was given did not name
+// — a leasehold deleted for being absent from a list. Dead code that deletes is
+// a trap for the next caller; resyncTenantsToTable is the one writer.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 23 — CAM Validation Against Lease
@@ -28766,8 +28815,8 @@ async function saveProperty(property) {
       _lsSave(property);
     }
 
-    // Tenant sync is NOT done here — syncTenantsToTable is called explicitly
-    // at upload completion and on user actions (Done, Remove, Clear All) only.
+    // Tenant sync is NOT done here — resyncTenantsToTable is called explicitly
+    // at upload completion and on user actions (Done, Remove) only.
     // Calling it here caused duplicate inserts: saveProperty runs per file
     // processed, so 5 uploads × 5 cumulative rows = 15 DB rows from one session.
     if (gen !== _saveGeneration) return; // stale — a newer save already completed
@@ -29263,23 +29312,19 @@ async function loadPropertyData(id) {
       // is absent (legacy rows predating the full-state persistence introduced here).
       // When dbData.tenants is already populated from properties.data, skip this
       // query to avoid overwriting review/reviewOverrides/capBaseAmount fields.
-      const { data: tenantRows } = dbData.tenants
-        ? { data: null }
-        : await db
-            .from('tenants')
-            .select('id, property_id, name, sqft, cap, start_date, end_date, lease_url, lease_type')
-            .eq('property_id', id);
+      let tenantRows = null;
+      if (!dbData.tenants) {
+        let { data, error } = await db.from('tenants').select(TENANT_ROW_COLUMNS).eq('property_id', id);
+        if (_isLifecycleColumnMissing(error)) {
+          ({ data, error } = await db.from('tenants').select(TENANT_ROW_COLUMNS_PRE_037).eq('property_id', id));
+        }
+        tenantRows = data;
+      }
       if (tenantRows?.length) {
-        dbData.tenants = tenantRows.map(t => normalizeTenant({
-          id:          t.id,
-          tenant_name: t.name,
-          leased_sqft: t.sqft,
-          cap:         t.cap,
-          start_date:  t.start_date,
-          end_date:    t.end_date,
-          lease_url:   t.lease_url,
-          lease_type:  t.lease_type,
-        }));
+        dbData.tenants = tenantRows.map(t => normalizeTenant(_tenantRowToRecord(t)));
+      } else if (dbData.tenants?.length) {
+        // The blob's roster, with each leasehold's lifecycle taken from the table.
+        await _overlayLeaseholdLifecycle(id, dbData.tenants);
       }
     }
 

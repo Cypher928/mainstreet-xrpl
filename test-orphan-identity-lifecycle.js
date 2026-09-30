@@ -100,7 +100,10 @@ sec('B′. normalizeTenant mints an identity for any record that lacks one');
      'B10b it preserves d.id or leaves null, so a missing id stays visible');
   // The same function runs over ALREADY-normalized records on every load, which
   // is safe only because the id survives the round trip.
-  is(/normalizeTenant\(\{[\s\S]{0,200}?id:\s*t\.id/.test(CODE),
+  // Step A-1 moved the mapping into one helper, _tenantRowToRecord, which every
+  // tenants-table reader calls; the id must still be carried straight through.
+  is(/function _tenantRowToRecord\(t\) \{\s*return \{\s*id:\s*t\.id,/.test(CODE) &&
+     /normalizeTenant\(_tenantRowToRecord\(t\)\)/.test(CODE),
      'B11 the tenants-table load path passes the stored id back in',
      'that path is the one that does NOT re-mint');
   is(/tenantId:\s*normalized\.id\s*\|\|\s*null/.test(CODE)
@@ -116,8 +119,7 @@ sec('C. The current application can still produce this');
   // S6.2: the guard moved INSIDE the function, so the number of call sites that
   // remember to apply it stopped mattering. That is the only arrangement that
   // covers entry points nobody has written yet.
-  const body = CODE.slice(CODE.indexOf('async function resyncTenantsToTable('),
-                          CODE.indexOf('async function syncTenantsToTable('));
+  const body = require('./test-support/fn-source.js').fnSource(CODE, 'resyncTenantsToTable');   // Step A-1 deleted syncTenantsToTable, the old end anchor
   is(/if\s*\(!_tenantsBelongTo\(propertyId,\s*tenants\)\)\s*return;/.test(body),
      'C2 the ownership guard is applied INSIDE resyncTenantsToTable');
   is(body.indexOf('_tenantsBelongTo') < body.indexOf('_resyncQueues.get'),
@@ -151,8 +153,7 @@ sec('C″. An empty roster deletes everything and inserts nothing');
   // S6.2 closes it in both places: the app refuses before dispatching, and
   // migration 021 refuses again server-side. Either alone would do; both is
   // deliberate, because the RPC is reachable by an older deployed client.
-  const body = CODE.slice(CODE.indexOf('async function resyncTenantsToTable('),
-                          CODE.indexOf('async function syncTenantsToTable('));
+  const body = require('./test-support/fn-source.js').fnSource(CODE, 'resyncTenantsToTable');   // Step A-1 deleted syncTenantsToTable, the old end anchor
   is(/if\s*\(!_usable\.length\)\s*\{[\s\S]{0,300}?return;/.test(body),
      'C10 the app returns early on an empty roster and deletes nothing');
   // Comments stripped first. 021's header QUOTES the defective line it removes,

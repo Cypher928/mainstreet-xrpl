@@ -183,9 +183,22 @@
   // what CAM reads today.
   function isVacant(t) { return !!(t && t.vacant === true); }
 
+  // THE LEASEHOLD LIFECYCLE (migration 037) is decided in leasehold-status.js
+  // and only there. An ENDED leasehold stays on property.tenants as history; it
+  // is not a current lease, so it is not active, has no upcoming lease date, and
+  // its space reads as ended rather than occupied. Missing module = a loading
+  // error, never "treat as current".
+  function _LS() {
+    var r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+            (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+            (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before property-cabinet.js)');
+    return r;
+  }
+
   function activeTenants(property) {
     return ((property && property.tenants) || []).filter(function (t) {
-      return t && !isVacant(t) && (t.tenant_name || t.id);
+      return t && _LS().isCurrentLease(t) && (t.tenant_name || t.id);
     });
   }
 
@@ -202,7 +215,7 @@
       .filter(function (t) { return t && (t.tenant_name || t.id || t.suite || t.unitNumber); })
       .map(function (t) {
         var vacant = isVacant(t);
-        return {
+        var row = {
           id:       t.id != null ? t.id : null,
           suite:    (t.suite || t.unitNumber || '') || null,
           tenant:   vacant ? null : (t.tenant_name || null),
@@ -211,6 +224,16 @@
           vacant:   vacant,
           status:   vacant ? 'vacant' : 'occupied',
         };
+        // An ENDED leasehold keeps its row (history), but it does not occupy
+        // the space. The lifecycle keys exist only on an ended row, so an active
+        // row is exactly what it always was.
+        if (!vacant && _LS().isEnded(t)) {
+          row.status = 'ended';
+          row.ended = true;
+          row.endedAt = _LS().endedAt(t);
+          row.endedReason = _LS().lifecycleFrom(t).ended_reason;
+        }
+        return row;
       });
   }
 
@@ -507,7 +530,7 @@
     };
 
     ((property && property.tenants) || []).forEach(function (t) {
-      if (!t || isVacant(t) || !t.end_date) return;
+      if (!t || !_LS().isCurrentLease(t) || !t.end_date) return;
       push(t.end_date, 'lease_expiration',
            'Lease ends — ' + (t.tenant_name || t.suite || 'tenant'),
            { type: 'tenant', id: t.id != null ? String(t.id) : null, label: t.tenant_name || null }, null);

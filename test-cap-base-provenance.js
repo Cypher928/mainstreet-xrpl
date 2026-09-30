@@ -223,7 +223,8 @@ console.log('\n── H. PropertyRecord carries the field, through opts.value �
     Set, Map, Promise, setTimeout, module: { exports: {} }, require };
   sb.window = sb; sb.globalThis = sb;
   vm.createContext(sb);
-  for (const f of ['money-cents.js', 'source-values.js', 'review-engine.js', 'property-reference.js',
+  // leasehold-status.js first, as index.html loads it (Step A-1).
+  for (const f of ['leasehold-status.js', 'money-cents.js', 'source-values.js', 'review-engine.js', 'property-reference.js',
                    'field-provenance.js', 'cam-pool.js', 'variance-breakdown.js', 'timeline-merge.js',
                    'selectors.js', 'lease-intelligence.js', 'property-workspace.js',
                    'tenant-space.js', 'property-record.js']) {

@@ -220,7 +220,7 @@ sec('D. Nothing survives the call');
   }
   eq(R.normal.leakedWindowAfterLoad, false, 'D3 loading the dependencies alone leaves none either');
   eq(R.normal.shimKeysAfterLoad,
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'D4 the shim holds exactly the allow-listed names — measured in the deployment-shaped sandbox, not in this process');
   eq(R.normal.shimKeys, R.normal.shimKeysAfterLoad,
      'D5 and a full hydration does not grow it');
@@ -232,7 +232,7 @@ sec('D. Nothing survives the call');
   // that could let browser state into a server record, and a test that reads the
   // list it is checking would wave it through.
   eq(DEPS.SHIM_KEYS.slice().sort(),
-     ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+     ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'D7 the declared allow-list is exactly those names and no others');
   // M7 added DisputeStatus. Widening the pin without re-proving the property
   // the pin protects would turn this assertion into a rubber stamp, so the
@@ -304,14 +304,15 @@ sec('E. Every global the graph reaches for is one we have accounted for');
 sec('F. The declared dependency set is sufficient, and complete');
 {
   eq(R.normal.deps.missing, [], 'F1 nothing in the declared set failed to load in the sandbox');
-  eq(R.normal.deps.required.length, 10, 'F2 ten dependencies are declared');
+  // Step A-1 added LeaseholdStatus (the leasehold lifecycle predicate). Ten became eleven.
+  eq(R.normal.deps.required.length, 11, 'F2 eleven dependencies are declared');
   eq(R.normal.record.meta.unavailable, [],
      'F3 and assemble() reports no section it could not compose');
-  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 10,
+  eq(Object.keys(DEPS.CLEAN).length + Object.keys(DEPS.NEEDS_WINDOW).length, 11,
      'F4 the two maps together are that same set');
   // Sufficiency is only meaningful if a shortfall would be visible.
   const short = DEPS.missing({ FieldProvenance: {} });
-  is(short.length === 9, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
+  is(short.length === 10, 'F5 a shortfall IS detected — missing() is not blind', short.length + ' reported');
 }
 
 // ── G. Normal hydration ────────────────────────────────────────────────────
@@ -388,8 +389,11 @@ sec('J. The transport refuses writes, in the runtime as in the module');
 sec('K. The approved reads, and only those');
 {
   const tables = (reads) => Array.from(new Set(reads.map(r => r.split('?')[0]))).sort();
-  eq(tables(R.normal.reads), ['/properties', '/tenant_field_evidence'],
-     'K1 with tenants in the blob: properties and evidence only');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(tables(R.normal.reads), ['/properties', '/tenant_field_evidence', '/tenants'],
+     'K1 with tenants in the blob: properties, evidence, and the tenants lifecycle overlay');
+  is(R.normal.reads.filter(r => r.startsWith('/tenants?')).every(r => /select=id,leasehold_status,ended_at,ended_reason$/.test(r)),
+     'K1b and the blob-case tenants read selects only the lifecycle columns');
   eq(tables(R.degraded.reads), ['/properties', '/tenant_field_evidence', '/tenants'],
      'K2 with an empty blob the tenants fallback joins them');
 

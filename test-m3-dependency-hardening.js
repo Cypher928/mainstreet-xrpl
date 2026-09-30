@@ -167,7 +167,7 @@ sec('B. Each classification is verified against the source it describes');
   // shimmed ⇒ on the allow-list.
   const shimmed = Object.entries(INV.CLASSIFICATION)
     .filter(([, v]) => v.kind === 'shimmed').map(([k]) => k).sort();
-  eq(shimmed, ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
+  eq(shimmed, ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'],
      'B1 exactly the reviewed names are classified as intentionally shimmed');
   eq(shimmed, DEPS.SHIM_KEYS.slice().sort(),
      'B2 and that set IS the sealed allow-list — the two cannot drift apart');
@@ -252,7 +252,8 @@ sec('D. Eighteen window names and a bare FileReader, none of them reachable');
   // attachment branch, and would prove precisely nothing about them.
   eq(RICH.record.spaces, 2, 'D6 the rich fixture produced two spaces');
   is(RICH.record.attention >= 1, 'D7 and attention items', String(RICH.record.attention));
-  is(RICH.reads.length === 3, 'D8 over the same three requests', String(RICH.reads.length));
+  // Step A-1 (037): + the tenants lifecycle overlay read.
+  is(RICH.reads.length === 4, 'D8 over the same four requests (three, plus the A-1 lifecycle overlay)', String(RICH.reads.length));
   is(RICH.record.fieldTenants >= 1, 'D9 with provenance attached');
   is(RICH.record.disputes >= 2, 'D9a and the record really carries disputes',
      String(RICH.record.disputes));
@@ -388,7 +389,8 @@ sec('H. Ownership, read-only, evidence, provenance and unavailable are unchanged
   is((RICH.methods || []).every(m => m === 'GET'), 'H5 every request is still a GET',
      (RICH.methods || []).join(','));
   const tables = Array.from(new Set(RICH.reads.map(r => r.split('?')[0]))).sort();
-  eq(tables, ['/properties', '/tenant_field_evidence'],
+  // Step A-1 (037): + the tenants lifecycle overlay read.
+  eq(tables, ['/properties', '/tenant_field_evidence', '/tenants'],
      'H6 and the approved reads are unchanged even for the richest property');
 
   eq(RICH.record.meta.unavailable, [], 'H7 meta.unavailable keeps its meaning and stays empty');
@@ -415,7 +417,9 @@ sec('I. The bundle-trace proof from M2 is intact');
   // dual-resolves it, and its map is empty on a server). Eighteen became nineteen.
   // P5-3 added decision-standing.js (pure, dependency-free; property-leaseholds.js
   // requires it for the standing-decision rule). Nineteen became twenty.
-  is(RUN.bundle.files.length === 20, 'I4 twenty files in the bundle',
+  // Step A-1 added leasehold-status.js (pure; the leasehold lifecycle predicate
+  // the hydrator overlay and the consumers ask). Twenty became twenty-one.
+  is(RUN.bundle.files.length === 21, 'I4 twenty-one files in the bundle',
      String(RUN.bundle.files.length));
   is(RUN.bundle.files.indexOf('decision-standing.js') !== -1,
      'I4d decision-standing.js is one of them — reached by a require a bundler can see');

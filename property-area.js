@@ -78,9 +78,21 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  // Step A-1 — an ENDED leasehold (migration 037) stays on property.tenants as
+  // history, but it leases nothing now: its area is not in the numerator. The
+  // rule is leasehold-status.js's; for an all-active roster this is exactly the
+  // list it always was. No fallback: missing is a loading error.
+  function _LS() {
+    var r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+            (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+            (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before property-area.js)');
+    return r;
+  }
+
   function _tenants(property) {
     var t = property && property.tenants;
-    return Array.isArray(t) ? t.filter(Boolean) : [];
+    return Array.isArray(t) ? t.filter(function (x) { return !!x && _LS().isCurrent(x); }) : [];
   }
 
   /**

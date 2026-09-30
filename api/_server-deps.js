@@ -100,6 +100,7 @@ const REQUIRE = {
   '../variance-breakdown.js': () => require('../variance-breakdown.js'),
   '../dispute-status.js':     () => require('../dispute-status.js'),
   '../property-area.js':      () => require('../property-area.js'),
+  '../leasehold-status.js':   () => require('../leasehold-status.js'),
   '../lease-intelligence.js': () => require('../lease-intelligence.js'),
   '../tenant-space.js':       () => require('../tenant-space.js'),
   '../property-workspace.js': () => require('../property-workspace.js'),
@@ -126,6 +127,8 @@ const CLEAN = {
   // files with no DOM, no network, no storage and no session state.
   DisputeStatus:     '../dispute-status.js',
   PropertyArea:      '../property-area.js',
+  // Step A-1 — the leasehold lifecycle predicate (migration 037). Same bar.
+  LeaseholdStatus:   '../leasehold-status.js',
 };
 
 /** Browser-first: they assign to `window` and return nothing useful from require. */
@@ -172,7 +175,14 @@ const SHIM_KEYS = ['LeaseIntelligence', 'TenantSpace', 'PropertyWorkspace', 'Pro
                    // pure arithmetic over its argument: no DOM, no network, no
                    // storage, no session state, nothing a browser session could
                    // travel through. test-m8c asserts that emptiness.
-                   'PropertyArea'];
+                   'PropertyArea',
+                   // Step A-1. Same bar, same reasoning again. Every consumer of
+                   // "is this leasehold current?" — tenant-space.js and
+                   // property-workspace.js among them — asks leasehold-status.js,
+                   // and a browser-first file can only reach it by name at call
+                   // time. It is a pure predicate over its argument: no DOM, no
+                   // network, no storage, no clock, no session state.
+                   'LeaseholdStatus'];
 
 let _cached  = null;
 let _shim    = null;   // the raw backing object, writable during load
@@ -313,6 +323,8 @@ function load() {
   // tenant-space.js on its literal fallback and the single definition would not be
   // the one running. test-m1b I4 exists because that already happened once.
   _shim.PropertyArea = deps.PropertyArea;
+  // Step A-1, for the same reason: a CLEAN module has no window to attach to.
+  _shim.LeaseholdStatus = deps.LeaseholdStatus;
 
   // From here on the shim is closed: writes outside the allow-list are refused.
   _window = _seal(_shim);

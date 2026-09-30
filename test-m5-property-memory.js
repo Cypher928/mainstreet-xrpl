@@ -333,8 +333,9 @@ sec('E. Four capabilities, zero new reads');
   const d = db();
   for (const [name, args] of M5) await MCP.call(name, args, ctx({ sbFetch: d }));
   const tables = Array.from(new Set(d.calls.map(c => c.path.split('?')[0]))).sort();
-  eq(tables, ['/properties', '/tenant_field_evidence'],
-     'E1 only the tables M1b approved were touched');
+  // Step A-1 (037): + one tenants read, the leasehold lifecycle overlay (id + three lifecycle columns).
+  eq(tables, ['/properties', '/tenant_field_evidence', '/tenants'],
+     'E1 only the tables M1b approved (plus the A-1 lifecycle overlay) were touched');
   is(d.calls.every(c => c.method === 'GET'), 'E2 and every request was a GET',
      Array.from(new Set(d.calls.map(c => c.method))).join(','));
   is(!/tenant_review_audit|cam_reconciliations|\bpayments\b|lease_documents|tenant_users/.test(
@@ -345,8 +346,8 @@ sec('E. Four capabilities, zero new reads');
   for (const [name, args] of M5) {
     const one = db();
     const r = await MCP.call(name, args, ctx({ sbFetch: one }));
-    eq(one.calls.length, 3, 'E4.' + name + ' issues exactly three requests');
-    is((r.provenance.reads || []).length === 3, 'E5.' + name + ' and reports them');
+    eq(one.calls.length, 4, 'E4.' + name + ' issues exactly four requests (three, plus the A-1 lifecycle overlay)');
+    is((r.provenance.reads || []).length === 4, 'E5.' + name + ' and reports them');
     eq(r.provenance.hydrated, true, 'E6.' + name + ' through the accepted hydrator');
   }
 
@@ -688,7 +689,7 @@ sec('K. No browser API, no localStorage, no second hydration');
   // would make every later phase edit this line and learn nothing; pinning
   // the ABSENCE of anything M5 could have wanted still catches the thing
   // it was written to catch.
-  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
+  eq(DEPS.SHIM_KEYS.filter(k => ['DisputeStatus', 'LeaseIntelligence', 'LeaseholdStatus', 'PropertyArea', 'PropertyReference', 'PropertyWorkspace', 'TenantSpace'].indexOf(k) === -1), [],
      'K10 the shim allow-list holds no name beyond the reviewed set — M5 added none');
 }
 

@@ -324,8 +324,7 @@ window.TenantSpace = (function () {
       noIdentity: noIdentity,
       disputes: disputes,
       // V2: a vacant space is a space, not a tenant; the file says so.
-      space: { id: tenantId, name: t.tenant_name || 'Space',
-               suite: (t.suite || t.unitNumber || '') || null, vacant: t.vacant === true },
+      space: _spaceOf(t, tenantId),
       lease: lease, leaseDocs: leaseDocs, summary: summary,
       // P5-2: the canonical leasehold (family, documents, decisions) or null.
       leasehold: leasehold,
@@ -987,9 +986,34 @@ window.TenantSpace = (function () {
       if (!t) return;
       // A row with no name and no vacancy flag is an intake placeholder, not a space.
       if (!_isVacantRow(t) && !t.tenant_name) return;
+      // An ended leasehold no longer covers its space.
+      if (_isEndedRow(t)) return;
       covered += (_numish(t.leased_sqft) || 0);
     });
     return { total: total, covered: covered, remaining: Math.max(0, total - covered) };
+  }
+
+  // Step A-1 — "is this leasehold current?" is leasehold-status.js's answer
+  // (migration 037), never re-derived here. An ENDED leasehold keeps its row and
+  // its file (history), but it does not occupy the space and covers no area.
+  // No fallback: a missing module is a loading error, not "current".
+  function _LS() {
+    var r = (typeof window !== 'undefined' && window && window.LeaseholdStatus) ||
+            (typeof LeaseholdStatus !== 'undefined' ? LeaseholdStatus : null) ||    // eslint-disable-line no-undef
+            (typeof require === 'function' ? require('./leasehold-status.js') : null);
+    if (!r) throw new Error('LeaseholdStatus is not loaded (leasehold-status.js must load before tenant-space.js)');
+    return r;
+  }
+  // `vacant === true` directly, as space.vacant reads it: this runs inside
+  // assemble() on the server, where the shim deliberately has no PropertyCabinet.
+  function _isEndedRow(t) { return !!t && t.vacant !== true && _LS().isEnded(t); }
+  // The space header. The lifecycle keys exist only on an ended leasehold, so an
+  // active space is exactly what it always was.
+  function _spaceOf(t, tenantId) {
+    var sp = { id: tenantId, name: t.tenant_name || 'Space',
+               suite: (t.suite || t.unitNumber || '') || null, vacant: t.vacant === true };
+    if (_isEndedRow(t)) { sp.ended = true; sp.endedAt = _LS().endedAt(t); }
+    return sp;
   }
 
   function _isVacantRow(t) {
@@ -1019,7 +1043,7 @@ window.TenantSpace = (function () {
       .map(function (t) {
         var rec = assemble(property, t.id);
         var vacant = _isVacantRow(t);
-        return {
+        var row = {
           id: t.id != null ? t.id : null,
           suite: (t.suite || t.unitNumber || '') || null,
           tenant: vacant ? null : (t.tenant_name || null),
@@ -1031,6 +1055,9 @@ window.TenantSpace = (function () {
           noIdentity: !!rec.noIdentity,
           counts: rec.counts,
         };
+        // An ENDED leasehold stays listed (history) but is not occupying.
+        if (_isEndedRow(t)) { row.status = 'ended'; row.ended = true; row.endedAt = _LS().endedAt(t); }
+        return row;
       });
     if (q) {
       rows = rows.filter(function (r) {
@@ -1094,16 +1121,19 @@ window.TenantSpace = (function () {
       return;
     }
     var rows = listRows(property, _list);
-    var vacant = 0, leased = 0;
+    var vacant = 0, leased = 0, ended = 0;
     all.forEach(function (t) {
-      if (_isVacantRow(t)) vacant++; else leased += (_numish(t.leased_sqft) || 0);
+      if (_isVacantRow(t)) vacant++;
+      else if (_isEndedRow(t)) ended++;
+      else leased += (_numish(t.leased_sqft) || 0);
     });
     var th = function (key, label, cls) {
       var on = _list.sort === key;
       return '<th class="' + (cls || '') + '"><button type="button" class="tsl-sort' + (on ? ' tsl-sort--on' : '') + '" onclick="TenantSpace.sortList(\'' + key + '\')">' +
         _esc(label) + (on ? '<span class="tsl-sort-dir">' + (_list.dir === 1 ? '\u2191' : '\u2193') + '</span>' : '') + '</button></th>';
     };
-    var summary = all.length + ' space' + (all.length !== 1 ? 's' : '') + ' · ' + (all.length - vacant) + ' occupied · ' + vacant + ' vacant' +
+    var summary = all.length + ' space' + (all.length !== 1 ? 's' : '') + ' · ' + (all.length - vacant - ended) + ' occupied · ' + vacant + ' vacant' +
+      (ended ? ' · ' + ended + ' ended' : '') +
       (leased ? ' · ' + Math.round(leased).toLocaleString('en-US') + ' sq ft leased' : '');
 
     var body = rows.map(function (r) {
@@ -1118,7 +1148,7 @@ window.TenantSpace = (function () {
           : '<span class="tsl-name">' + _esc(r.tenant || 'Space') + '</span>' + (r.leaseType ? '<span class="tsl-type">' + _esc(r.leaseType) + '</span>' : '')) + '</td>' +
         '<td class="tsl-sqft">' + (r.sqft != null ? _esc(Math.round(r.sqft).toLocaleString('en-US')) : '<span class="tsl-dim">—</span>') + '</td>' +
         '<td class="tsl-end">' + (r.leaseEnd ? _esc(_fmtDate(r.leaseEnd)) : '<span class="tsl-dim">—</span>') + '</td>' +
-        '<td class="tsl-status"><span class="tsl-badge tsl-badge--' + r.status + '">' + (r.vacant ? 'Vacant' : 'Occupied') + '</span></td>' +
+        '<td class="tsl-status"><span class="tsl-badge tsl-badge--' + r.status + '">' + (r.vacant ? 'Vacant' : r.ended ? 'Ended' : 'Occupied') + '</span></td>' +
         '<td class="tsl-recs">' + (countsTxt ? '<span class="tsl-counts">' + _esc(countsTxt) + '</span>' : '<span class="tsl-counts tsl-counts--empty">No records yet</span>') + '</td>' +
         '<td class="tsl-act">' +
         // A BUTTON THAT CANNOT DO WHAT IT SAYS IS WORSE THAN NO BUTTON. The

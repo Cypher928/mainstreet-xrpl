@@ -337,7 +337,10 @@ window.PropertyOS = (function () {
     var bar = _d('posLeaseSummary');
     if (!bar) return;
 
-    var tenants = (property && Array.isArray(property.tenants)) ? property.tenants.filter(Boolean) : [];
+    // Current leaseholds only (Step A-1): an ENDED one (037) is history, not a
+    // lease awaiting a look. window.LeaseholdStatus loads before this file.
+    var tenants = (property && Array.isArray(property.tenants))
+      ? property.tenants.filter(function (t) { return t && window.LeaseholdStatus.isCurrent(t); }) : [];
     var snap = property && (property.camReconciliation || property.results);
     var st = leaseBlockState(tenants, { reconResults: (snap && snap.results) || [] });
 
