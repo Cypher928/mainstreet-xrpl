@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (40 rows as of 042, in applied order; 037, 038, 040 and 041 are unused)
+## Recorded history (41 rows as of 037, in applied order; 038, 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -70,8 +70,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260929090159` | `036_acquisition_episode_frozen` | `migrations/036_acquisition_episode_frozen.sql` @ `3bdd558d` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `02908aee…` on both sides) | identical |
 | `20260929220633` | `039_register_leasehold_link` | `migrations/039_register_leasehold_link.sql` @ `252b20ba` — applied 2026-09-29 through the Supabase MCP `apply_migration`, after the client/API change in the same commit was live on Pilot; the recorded text is the file verbatim (md5 `48016063…` on both sides) | identical |
 | `20260929231137` | `042_register_relink_deterministic` | `migrations/042_register_relink_deterministic.sql` @ `5b8ae787` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `528bdc61…` on both sides) | identical |
+| `20260930003001` | `037_leasehold_lifecycle` | `migrations/037_leasehold_lifecycle.sql` (committed on `pilot` together with this entry) — applied 2026-09-30 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `150d7cfe…` on both sides). Applied after 039 and 042: the number 037 was reserved for this layer | identical |
 
-Tally (40 rows as of 042): 30 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (41 rows as of 037): 31 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -274,6 +275,23 @@ These files were applied through the SQL editor or the bundle
    identical NOT VALID constraint in its transaction) and refuses once any of
    the 53 has moved on; 039's rollback refuses while `legacy_tenant_id` holds
    values, so 042 must be rolled back first.
+13. **Since 037, a leasehold carries a lifecycle, and every leasehold is
+   active.** `tenants.leasehold_status` (text, NOT NULL, default `active`),
+   `ended_at` (date) and `ended_reason` (text) exist, with
+   `tenants_leasehold_status_chk` (active | ended),
+   `tenants_ended_consistency_chk` (active ⇒ both null; ended ⇒ both set) and
+   `tenants_ended_reason_chk` (lease_expired | terminated_early | surrendered |
+   evicted | other — no `assigned`: an assignment does not end a leasehold).
+   The column is `leasehold_status`, not `status`, because the client's tenant
+   records already use `status` for extraction state. `ended_at` is the
+   confirmed actual end entered by a person and is never inferred from
+   `end_date`; it may be later than `end_date` (holdover). Nothing writes these
+   columns yet — ending, reactivating and discarding are 038, separately
+   approved. Applied 2026-09-30 with no data change: all 149 tenants read
+   active / null / null, their eleven existing columns and every other table,
+   storage, policy, grant (table and column), RLS flag, constraint, function,
+   index and trigger identical before and after. The rollback refuses while any
+   leasehold is ended or any function reads `leasehold_status`.
 
 ## Decisions this manifest does not make
 
