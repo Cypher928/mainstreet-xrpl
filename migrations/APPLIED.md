@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (41 rows as of 037, in applied order; 038, 040 and 041 are unused)
+## Recorded history (42 rows as of 038, in applied order; 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -71,8 +71,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260929220633` | `039_register_leasehold_link` | `migrations/039_register_leasehold_link.sql` @ `252b20ba` — applied 2026-09-29 through the Supabase MCP `apply_migration`, after the client/API change in the same commit was live on Pilot; the recorded text is the file verbatim (md5 `48016063…` on both sides) | identical |
 | `20260929231137` | `042_register_relink_deterministic` | `migrations/042_register_relink_deterministic.sql` @ `5b8ae787` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `528bdc61…` on both sides) | identical |
 | `20260930003001` | `037_leasehold_lifecycle` | `migrations/037_leasehold_lifecycle.sql` (committed on `pilot` together with this entry) — applied 2026-09-30 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `150d7cfe…` on both sides). Applied after 039 and 042: the number 037 was reserved for this layer | identical |
+| `20260930181412` | `038_leasehold_protection` | `migrations/038_leasehold_protection.sql` @ `b560762b` (commit `a7750cc`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, after `a7750cc` was live on Pilot; the recorded text is the file verbatim (md5 `00055957…` on both sides) | identical |
 
-Tally (41 rows as of 037): 31 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (42 rows as of 038): 32 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -292,6 +293,47 @@ These files were applied through the SQL editor or the bundle
    storage, policy, grant (table and column), RLS flag, constraint, function,
    index and trigger identical before and after. The rollback refuses while any
    leasehold is ended or any function reads `leasehold_status`.
+14. **Since 038, a leasehold is permanent: nothing deletes it for leaving a
+   list, and its lifecycle changes only by a person's decision.**
+   `resync_property_tenants` (prosrc md5 `52ab0f93…`; SECURITY DEFINER,
+   `search_path=public`, owner and ACL unchanged) never deletes: an active
+   leasehold missing from a roster is left as it is and reported in
+   `absent_active`; an ended leasehold in a roster is not written and is
+   reported in `ended_in_roster`; `deleted` is always 0. `tenants_delete_guard`
+   (BEFORE DELETE) refuses every direct delete for every role, table owner and
+   service role included; only a whole-property cascade
+   (`pg_trigger_depth() > 1`) or `discard_leasehold` (a transaction-local flag
+   naming exactly one row) passes. `tenants_lifecycle_guard` (BEFORE INSERT OR
+   UPDATE OF `leasehold_status`, `ended_at`, `ended_reason`) keeps new rows
+   active and lets the lifecycle change only through `end_leasehold` /
+   `reactivate_leasehold`; an update that names those columns without changing
+   them passes. `end_leasehold`, `reactivate_leasehold` and
+   `discard_leasehold` are owner-only (`properties.user_id = auth.uid()`),
+   SECURITY DEFINER with `search_path=public`, executable by `authenticated`
+   and `service_role` only, and each writes a `leasehold_*` property event;
+   `discard_leasehold` is refused while CAM, provisions, review audit,
+   payments, portal rows, history events or person-reviewed evidence exist
+   (`reviewed_at` alone is not a review), keeps the documents unlinked and
+   never touches `legacy_tenant_id`. The two trigger functions are executable
+   by no API role. Applied 2026-09-30 with no data change: every public table
+   hash, storage, policies, table and column grants, RLS flags, constraints,
+   columns and indexes identical before and after; functions 92 → 97,
+   triggers 32 → 34 and function comments 6 → 10, the pre-existing ones
+   identical; 149/149 leaseholds active. Verified live the same day in
+   rolled-back transactions only, with every table hash identical afterwards:
+   direct deletes refused for the table owner, the property's owner through the
+   API role and the service role, one row and all of a property's rows, and a
+   discard flag naming another row; direct lifecycle changes and an ended
+   insert refused for the same roles; the owner still reads the property and
+   its five leaseholds, a stranger reads none; a resync naming one of five
+   leaseholds returned `deleted: 0` with the other four in `absent_active`;
+   `end_leasehold`, `reactivate_leasehold` and `discard_leasehold` refused
+   without a user, for a stranger, for an unknown id, without an actual end
+   date, for `assigned`, on an active leasehold, on a CAM-referenced leasehold,
+   without a note, and for `anon`. No leasehold was ended, reactivated,
+   discarded or deleted. The rollback restores 039's resync byte for byte and
+   drops the two triggers and five functions; it does not undo an ending or a
+   discard, and after it the 039 resync prunes unreferenced absentees again.
 
 ## Decisions this manifest does not make
 
