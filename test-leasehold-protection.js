@@ -17,8 +17,9 @@
  *   B  the resync payload the browser sends is exactly the column set the 038
  *      RPC writes — and neither carries a lifecycle field
  *   C  Remove and Clear All rely on the resync only to WRITE, never to delete
- *   D  the migration, its rollback, verifier and mutation harness exist and the
- *      verifier is registered in the regression
+ *   D  the migration, its rollback, verifier and mutation harness exist, the
+ *      verifier is registered in the regression, and migrations/APPLIED.md
+ *      records 038 as applied to Pilot with this file's md5
  *
  * The database behaviour itself is proved by tools/verify-migration-038.js on
  * a throwaway cluster.
@@ -116,7 +117,16 @@ section('D. The migration ships with its rollback, verifier and mutation harness
   const REG = read('test-regression.js');
   t('D5 the verifier and this suite are registered in the regression',
     /node tools\/verify-migration-038\.js/.test(REG) && /node test-leasehold-protection\.js/.test(REG));
-  t('D6 038 is NOT recorded as applied (it has not been applied to Pilot)', !/\b038\b[^\n]*[Aa]pplied 20\d\d/.test(read('migrations/APPLIED.md')));
+  // 038 was applied to Pilot on 2026-09-30. The manifest's history row must
+  // name it, say the recorded text is the file verbatim, and cite the md5 of
+  // THIS file — so an edit to the migration after it was applied shows up here.
+  const row = (read('migrations/APPLIED.md').split('\n')
+    .find(l => /^\| `\d{14}` \| `038_leasehold_protection` \|/.test(l)) || '');
+  const fileMd5 = require('crypto').createHash('md5').update(read('migrations/038_leasehold_protection.sql')).digest('hex');
+  t('D6 038 is recorded as applied: its history row names it, the file verbatim, this file\'s md5, identical',
+    /applied 20\d\d-\d\d-\d\d/.test(row) && row.includes('`migrations/038_leasehold_protection.sql`')
+    && row.includes('md5 `' + fileMd5.slice(0, 8)) && /\| identical \|$/.test(row),
+    row ? 'md5 ' + fileMd5.slice(0, 8) + ' | ' + row.slice(0, 120) : 'no 038 row in migrations/APPLIED.md');
 }
 
 console.log('\n' + '─'.repeat(58));
