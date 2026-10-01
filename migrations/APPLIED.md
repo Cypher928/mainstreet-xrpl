@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (42 rows as of 038, in applied order; 040 and 041 are unused)
+## Recorded history (43 rows as of 043, in applied order; 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -72,8 +72,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260929231137` | `042_register_relink_deterministic` | `migrations/042_register_relink_deterministic.sql` @ `5b8ae787` — applied 2026-09-29 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `528bdc61…` on both sides) | identical |
 | `20260930003001` | `037_leasehold_lifecycle` | `migrations/037_leasehold_lifecycle.sql` (committed on `pilot` together with this entry) — applied 2026-09-30 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `150d7cfe…` on both sides). Applied after 039 and 042: the number 037 was reserved for this layer | identical |
 | `20260930181412` | `038_leasehold_protection` | `migrations/038_leasehold_protection.sql` @ `b560762b` (commit `a7750cc`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, after `a7750cc` was live on Pilot; the recorded text is the file verbatim (md5 `00055957…` on both sides) | identical |
+| `20260930235937` | `043_leasehold_absorption` | `migrations/043_leasehold_absorption.sql` @ `daea15ec` (commit `938db31`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, before `938db31` was pushed (043 changes no product file, so no client had to be live first); the recorded text is the file verbatim (md5 `f79fc081…` on both sides) | identical |
 
-Tally (42 rows as of 038): 32 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (43 rows as of 043): 33 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -334,6 +335,71 @@ These files were applied through the SQL editor or the bundle
    discarded or deleted. The rollback restores 039's resync byte for byte and
    drops the two triggers and five functions; it does not undo an ending or a
    discard, and after it the 039 resync prunes unreferenced absentees again.
+15. **Since 043, a duplicate or fragment leasehold can be absorbed into another
+   leasehold of the same property, and a discarded leasehold is not
+   re-created.** `tenants.absorbed_into` (uuid), `absorbed_reason` (text:
+   duplicate | document_of) and `absorbed_at` (timestamptz) exist;
+   `tenants_leasehold_status_chk` is active | ended | absorbed;
+   `tenants_lifecycle_consistency_chk` replaces 037's
+   `tenants_ended_consistency_chk` with a three-way rule;
+   `tenants_absorbed_into_fk` points `(absorbed_into, property_id)` at
+   `tenants(id, property_id)`, so only a leasehold of the same property, never
+   itself. `properties.data_revision` (bigint, NOT NULL, default 0) is kept by
+   the `properties_data_revision` trigger: +1 when name, sqft or data changes;
+   whatever a caller sends is ignored. The 043 bodies are
+   `resync_property_tenants` `de53ec60…`, `tenants_lifecycle_guard`
+   `d5e88f82…` and `discard_leasehold` `b49f5c09…`. The resync skips absorbed
+   and discarded ids in a stale roster and reports them in
+   `absorbed_in_roster` / `discarded_in_roster`. `tenants_absorbed_freeze`
+   keeps an absorbed row unchanged for every role. `tenants_tombstone_guard`
+   refuses to re-insert an id whose only tombstone is `discard_leasehold`'s
+   own `leasehold_discarded` event. `absorb_leasehold`,
+   `restore_absorbed_leasehold` and `absorb_leasehold_preflight` are
+   owner-only, SECURITY DEFINER with `search_path=public`, and executable by
+   `authenticated` and `service_role` only. `leasehold_history` /
+   `has_meaningful_history` and the other internal and trigger functions are
+   executable by no API role. Absorbing and restoring are bookkeeping, not
+   history: a leasehold absorbed and restored by mistake can still be
+   discarded. `tenants_delete_guard`, `end_leasehold` and
+   `reactivate_leasehold` are unchanged.
+   Applied 2026-09-30 with no data change:
+   - every public table hash (on its pre-043 columns), storage and auth users
+     identical before and after;
+   - policies, RLS flags, table grants, constraints outside `tenants`, columns
+     outside the four new ones, and the 95 functions 043 does not touch are
+     identical;
+   - columns 456 → 460, constraints 213 → 216, functions 98 → 109,
+     indexes 148 → 150, triggers 34 → 37;
+   - 0 leaseholds absorbed, `data_revision` 0 on all 48 properties.
+
+   Verified live the same day in rolled-back transactions only. Afterwards
+   there were no probe rows, documents or events, and every table hash was
+   unchanged.
+   - Direct writes of the absorption columns, and a leasehold inserted
+     absorbed, were refused for the table owner, the property's owner through
+     the API role and the service role.
+   - absorb / restore / preflight were refused for a stranger and for `anon`.
+   - These absorbs were refused: the demo leasehold, two leaseholds with
+     permanent history, and a cross-property target. Discarding a leasehold
+     with history was also refused.
+   - A full cycle on two probe leaseholds:
+     - refused for a stale revision, an unknown reason, an empty note, and a
+       linked document left behind;
+     - absorb moved the document, removed the roster entry and wrote both
+       events;
+     - the absorbed row was frozen, and could not be deleted, re-absorbed or
+       discarded;
+     - a stale resync reported it in `absorbed_in_roster` and left it
+       untouched;
+     - restore returned the row, document and roster entry;
+     - a discard then succeeded;
+     - a stale resync reported it in `discarded_in_roster` without
+       re-creating it;
+     - plain and upsert re-inserts were refused.
+
+   No real leasehold was absorbed, restored, ended or discarded. The rollback
+   restores 038's three bodies byte for byte and 037's two checks, and refuses
+   while any leasehold is absorbed.
 
 ## Decisions this manifest does not make
 
