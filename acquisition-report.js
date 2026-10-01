@@ -84,6 +84,9 @@
       'base_rent', 'security_deposit',
       'cap', 'cap_base_amount', 'admin_fee_pct', 'admin_fee_basis',
       'gross_up_pct', 'expense_stop', 'pro_rata_method', 'excluded_categories',
+      // The acquisition matrix's columns: how the rent grows, and how CAM,
+      // taxes and insurance — and any percentage rent — come back.
+      'rent_escalations', 'percentage_rent', 'cam_recovery', 'tax_recovery', 'insurance_recovery',
     ],
     // 3 · what follows the property to the buyer
     what_obligations: [

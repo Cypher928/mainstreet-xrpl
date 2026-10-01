@@ -115,7 +115,7 @@ const MUTANTS = [
     from: '      if (entry.value !== null) { valued++; if (entry.quote) evidenced++; }',
     to:   '      if (entry.value !== null) { valued++; evidenced++; }' },
   { id: 'T12', file: A, why: 'a quote is not bounded',
-    from: '    var quote = _str(o.quote, QUOTE_MAX);',
+    from: '    var quote = _str(o.quote, quoteMaxFor(field));',
     to:   '    var quote = _str(o.quote, 100000);' },
   { id: 'T13', file: A, why: 'a page of 0 is a page',
     from: '    return (Number.isInteger(n) && n > 0) ? n : null;',

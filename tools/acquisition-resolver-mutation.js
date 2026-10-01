@@ -64,6 +64,20 @@
  *     P01  the reasoner's answer is never cross-checked against the documents
  *     P02  superseded values are dropped, so lineage disappears
  *
+ *   F2 / F4: which disagreements are contradictions — acquisition-terms.js
+ *     N01  the reasoner's contradictions are passed through unfiltered (F2 undone)
+ *     N02  a disagreement in a superseded rank is a contradiction again
+ *     N03  dates that order two documents are ignored — a chain is contested
+ *     N04  an undated document is presumed the oldest again (F4 undone)
+ *     N05  case and spacing make two readings disagree again
+ *     N06  the filter invents a contradiction the reasoner did not see
+ *
+ *   The acquisition matrix's five — acquisition-terms.js
+ *     G01  "None" is taken at its word, whether or not its clause denies it
+ *     G02  a summary's figures are not checked against its clause
+ *     G03  "None" with no clause becomes the value None (silence as None)
+ *     G04  the schedule's quote is cut to 600 like the rest
+ *
  * A FAILING BASELINE IS NOT A PASS.
  */
 const fs = require('fs');
@@ -145,7 +159,7 @@ const MUTANTS = [
 
   // ── contradictions ───────────────────────────────────────────────────────
   { id: 'C01', file: A, why: 'contradictions are dropped from the term',
-    from: '        term.contradictions     = Array.isArray(fromReasoner.contradictions) ? fromReasoner.contradictions : [];',
+    from: '        term.contradictions     = (Array.isArray(fromReasoner.contradictions) && fromReasoner.contradictions.length)',
     to:   '        term.contradictions     = [];' },
   { id: 'C02', file: A, why: 'a contradiction is auto-resolved to the governing value',
     from: "      if (term.contradictions.length)        term.state = 'conflicting';",
@@ -209,6 +223,38 @@ const MUTANTS = [
   { id: 'P02', file: A, why: 'superseded values are dropped, so lineage disappears',
     from: '      term.supersededValues = superseded;',
     to:   '      term.supersededValues = [];' },
+  // ── F2 / F4 ──────────────────────────────────────────────────────────────
+  { id: 'N01', file: A, why: "the reasoner's contradictions are passed through unfiltered (F2 undone)",
+    from: '          ? acquisitionContradictions(valued, tierOf) : [];',
+    to:   '          ? fromReasoner.contradictions : [];' },
+  { id: 'N02', file: A, why: 'a disagreement in a superseded rank is a contradiction again',
+    from: '      if (rank(h) !== tier) return false;',
+    to:   '' },
+  { id: 'N03', file: A, why: 'dates that order two documents are ignored — a chain is contested',
+    from: '      return gd === null || hd === null || hd === gd;   // the dates cannot order them',
+    to:   '      return true;' },
+  { id: 'N04', file: A, why: 'an undated document is presumed the oldest again (F4 undone)',
+    from: '      return gd === null || hd === null || hd === gd;   // the dates cannot order them',
+    to:   '      return hd !== null && hd === gd;' },
+  { id: 'N05', file: A, why: 'case and spacing make two readings disagree again',
+    from: "    var n = function (v) { return String(v).trim().toLowerCase().replace(/\\s+/g, ' '); };",
+    to:   '    var n = function (v) { return String(v); };' },
+  { id: 'N06', file: A, why: 'the filter invents a contradiction the reasoner did not see',
+    from: '        term.contradictions     = (Array.isArray(fromReasoner.contradictions) && fromReasoner.contradictions.length)',
+    to:   '        term.contradictions     = (true)' },
+  // ── the acquisition matrix's five ────────────────────────────────────────
+  { id: 'G01', file: A, why: '"None" is taken at its word, whether or not its clause denies it',
+    from: "    if (meta.none && e.value === NONE_VALUE) return NEGATIVE_CLAUSE.test(e.quote) ? 'stated' : 'derived';",
+    to:   "    if (meta.none && e.value === NONE_VALUE) return 'stated';" },
+  { id: 'G02', file: A, why: "a summary's figures are not checked against its clause",
+    from: "    return _figuresIn(e.value).every(function (n) { return inQuote.indexOf(n) >= 0; }) ? 'stated' : 'derived';",
+    to:   "    return 'stated';" },
+  { id: 'G03', file: A, why: '"None" with no clause becomes the value None (silence as None)',
+    from: '.replace(/[.\\s]+$/, \'\'))) return hasQuote ? NONE_VALUE : null;',
+    to:   '.replace(/[.\\s]+$/, \'\'))) return NONE_VALUE;' },
+  { id: 'G04', file: A, why: "the schedule's quote is cut to 600 like the rest",
+    from: '    return (m && m.quoteMax) || QUOTE_MAX;',
+    to:   '    return QUOTE_MAX;' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-resolver-mut-'));

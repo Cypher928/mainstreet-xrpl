@@ -361,8 +361,8 @@ function abstractionFor(text) {
   check('with the model and the time it was read', !!lease && lease.abstraction_model === 'stub-abstraction-model' && /^\d{4}-/.test(String(lease.abstracted_at)),
         lease ? `${lease.abstraction_model} / ${lease.abstracted_at}` : '');
   const ev = lease && lease.abstracted_fields;
-  check('the evidence carries every one of the 27 fields and nothing else',
-        !!ev && ev.schemaVersion === 1 && ev.fields && Object.keys(ev.fields).length === 27 && !('not_a_field' in ev.fields),
+  check('the evidence carries every one of the 32 fields and nothing else',
+        !!ev && ev.schemaVersion === 1 && ev.fields && Object.keys(ev.fields).length === 32 && !('not_a_field' in ev.fields),
         ev ? `${Object.keys(ev.fields || {}).length} fields, schema ${ev.schemaVersion}` : 'no evidence');
   check('a term the lease states carries its value AND its verbatim clause',
         !!ev && ev.fields.cap.value === 4 && /not increase more than 4%/.test(ev.fields.cap.quote) && ev.fields.cap.confidence === 0.93,

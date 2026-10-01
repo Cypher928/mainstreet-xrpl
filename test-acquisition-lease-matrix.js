@@ -211,28 +211,29 @@ t('Needs attention reads in review order: Commencement, then Renewal options', (
 });
 t('Lease terms, grouped and ordered; a contested term reads "Contested", with no value', () => {
   const g = LM.termRows(SHOP_TERMS, OPTS);
-  deq(g.map(x => x.key), ['premises', 'rent', 'security', 'cam', 'obligations']);
-  deq(g.map(x => x.tier), ['core', 'core', 'core', 'other', 'other']);
+  deq(g.map(x => x.key), ['premises', 'rent', 'security', 'recoveries', 'cam', 'obligations']);
+  deq(g.map(x => x.tier), ['core', 'core', 'core', 'other', 'other', 'other']);
   deq(g[0].rows.map(r => r.field), ['tenant_name', 'suite', 'leased_sqft', 'start_date', 'end_date', 'lease_type']);
   const st = g[0].rows.find(r => r.field === 'start_date');
   eq(st.state, 'contested'); eq(st.text, 'Contested');
   eq(g[0].rows.find(r => r.field === 'leased_sqft').text, '67,000');
-  eq(g.reduce((n, x) => n + x.rows.length, 0), 27);
+  eq(g.reduce((n, x) => n + x.rows.length, 0), 32);
 });
-t('Lease terms split in two: the 10 core terms, then the 17 others — all 27, each once', () => {
+t('Lease terms split in two: the 10 core terms, then the 22 others — all 32, each once', () => {
   deq(LM.CORE_FIELDS, ['tenant_name', 'suite', 'leased_sqft', 'start_date', 'end_date', 'lease_type',
                        'base_rent', 'cap', 'security_deposit', 'renewal_options']);
   const S = LM.termSections(SHOP_TERMS, OPTS);
-  deq(S.map(x => [x.key, x.title, x.total]), [['core', 'Core lease terms', 10], ['other', 'Other lease terms', 17]]);
-  deq(S[1].groups.map(g => g.title), ['CAM details', 'Obligations & special terms']);
+  deq(S.map(x => [x.key, x.title, x.total]), [['core', 'Core lease terms', 10], ['other', 'Other lease terms', 22]]);
+  deq(S[1].groups.map(g => g.title), ['Rent & recoveries', 'CAM details', 'Obligations & special terms']);
+  deq(S[1].groups[0].rows.map(r => r.field), AT.FIELD_GROUPS.matrix);
   const all = S.reduce((a, x) => a.concat(...x.groups.map(g => g.rows.map(r => r.field))), []);
-  eq(all.length, 27); eq(new Set(all).size, 27);
+  eq(all.length, 32); eq(new Set(all).size, 32);
   deq(all, LM.detailOrder(AT.FIELDS), 'the tiers do not read in review order');
 });
 t('each tier says what is in it, so a folded tier hides nothing it does not count', () => {
   const S = LM.termSections(SHOP_TERMS, OPTS);
   eq(LM.sectionLine(S[0]), '10 terms · 4 verified by a person · 3 read by AI, not yet verified · 2 contested · 1 not established');
-  eq(LM.sectionLine(S[1]), '17 terms · 8 read by AI, not yet verified · 1 unclear · 8 not established');
+  eq(LM.sectionLine(S[1]), '22 terms · 8 read by AI, not yet verified · 1 unclear · 13 not established');
   eq(S[1].counts.contested, 0);
   eq(LM.sectionLine({ total: 1, counts: { contested: 1 } }), '1 term · 1 contested');
 });
@@ -292,8 +293,8 @@ t('the unverified values do not change a row\'s status — they are counted, not
 sec('5d · Needs attention: every state with its count');
 const RESOLVED = (fam) => AT.resolveFamilyTerms(F.documents.filter(d => d.family_id === F.FAM[fam]),
   F.decisions.filter(d => d.family_id === F.FAM[fam]), { reasoner: LI }).summary;
-t('ShopRite: 2 contested · 9 not established · 1 unclear · 11 values read by AI · not yet verified — in that order', () => {
-  deq(SHOP.attentionSummary.map(g => g.text), ['2 contested', '9 not established', '1 unclear', '11 values read by AI · not yet verified']);
+t('ShopRite: 2 contested · 14 not established · 1 unclear · 11 values read by AI · not yet verified — in that order', () => {
+  deq(SHOP.attentionSummary.map(g => g.text), ['2 contested', '14 not established', '1 unclear', '11 values read by AI · not yet verified']);
   deq(SHOP.attentionSummary.map(g => g.kind), ['contested', 'missing', 'unclear', 'unverified']);
   deq(SHOP.attentionSummary[0].terms.map(t => t.label), ['Commencement', 'Renewal options']);
   deq(SHOP.attentionSummary[2].terms.map(t => t.field), ['audit_rights']);
@@ -313,9 +314,9 @@ t('the counts are the resolver\'s own, for every leasehold — nothing re-counte
         [R.conflicting, R.missing, R.unclear, R.ai_extracted - (R.entered || 0)], fam);
     eq((c.contested || 0) + (c.missing || 0) + (c.unclear || 0) + (c.unverified || 0) + R.verified, R.total, fam + ' does not add up to every term');
   });
-  deq(LUXE.attentionSummary.map(g => g.text), ['23 not established', '4 values read by AI · not yet verified']);
-  deq(COFFEE.attentionSummary.map(g => g.text), ['18 not established', '1 unclear', '8 values read by AI · not yet verified']);
-  deq(PRIME.attentionSummary.map(g => g.text), ['17 not established', '1 unclear', '9 values read by AI · not yet verified']);
+  deq(LUXE.attentionSummary.map(g => g.text), ['28 not established', '4 values read by AI · not yet verified']);
+  deq(COFFEE.attentionSummary.map(g => g.text), ['23 not established', '1 unclear', '8 values read by AI · not yet verified']);
+  deq(PRIME.attentionSummary.map(g => g.text), ['22 not established', '1 unclear', '9 values read by AI · not yet verified']);
 });
 t('there is no "N items need attention" any more', () => {
   eq(LM.attentionHeading, undefined);
@@ -426,8 +427,43 @@ t('every value the matrix and the header print into HTML is escaped', () => {
   for (const name of ['_acqLmCellHtml', '_acqLhValueHtml', '_acqLeaseMatrixHtml', '_acqLeaseholdHeadHtml', '_acqUnfiledListHtml']) {
     const B = fnBody(S, name);
     const raw = (B.match(/\$\{(?!esc\()[^}]*\}/g) || [])
-      .filter(s => !/^\$\{(title|mark|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|x\.key \?|fams\.map|done\.length|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
+      .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|title|mark|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|x\.key \?|fams\.map|done\.length|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
     deq(raw, [], name + ' interpolates without esc()');
+  }
+});
+
+// ── F1 · an unclear term with no value says Unclear, never "—" ───────────────
+sec('F1 · Unclear with no value reads "Unclear", not "Not established"');
+t('cellFor: an unclear term with no value has the text "Unclear" and the unclear state', () => {
+  const r = ROW({ base_rent: 'unclear', end_date: 'missing' }, { base_rent: null });
+  const c = LM.cellFor(r, 'base_rent', OPTS);
+  eq(c.state, 'unclear'); eq(c.text, 'Unclear'); eq(c.value, null);
+  eq(LM.cellFor(r, 'end_date', OPTS).text, null, 'a missing term is still null (drawn as —)');
+});
+t('an unclear term WITH a value still shows its value', () => {
+  eq(LM.cellFor(ROW({ base_rent: 'unclear' }, { base_rent: 84000 }), 'base_rent', OPTS).text, '$84,000');
+});
+t('the headline says "unclear", not "not established"', () => {
+  const e = LM.leaseholdEntry(ROW({ leased_sqft: 'unclear', lease_type: 'missing', base_rent: 'ai_extracted' }, { base_rent: 1000 }), OPTS);
+  eq(LM.headline(e), 'Leased area unclear · Lease type not established · $1,000 base rent');
+});
+t('the Lease / CAM cell says "Lease type unclear" / "Cap unclear"', () => {
+  const st = LM.structureFor(ROW({ lease_type: 'unclear', cap: 'unclear' }, {}), OPTS);
+  deq(st.parts.map(p => [p.state, p.text]), [['unclear', 'Lease type unclear'], ['unclear', 'Cap unclear']]);
+  deq(LM.structureFor(ROW({ lease_type: 'missing', cap: 'missing' }, {}), OPTS).parts, []);
+});
+t('the record\'s term rows say "Unclear" for an unclear term with no value', () => {
+  const g = LM.termRows({ exclusive_use: { field: 'exclusive_use', state: 'unclear', value: null, quote: 'Landlord shall not lease…' },
+                          co_tenancy:    { field: 'co_tenancy',    state: 'missing', value: null } }, OPTS);
+  const rows = g.reduce((a, x) => a.concat(x.rows), []);
+  eq(rows.find(r => r.field === 'exclusive_use').text, 'Unclear');
+  eq(rows.find(r => r.field === 'co_tenancy').text, null);
+});
+t('the two renderers draw an unclear cell with no value as "Unclear", never the em dash', () => {
+  for (const name of ['_acqLmCellHtml', '_acqLhValueHtml']) {
+    const B = fnBody(S, name);
+    ok(/cell\.state === 'unclear' && cell\.text === null\) return `<span class="acq-lm-v unclear" data-state="unclear"[^`]*>Unclear<\/span>`/.test(B), name);
+    ok(B.indexOf("cell.state === 'unclear' && cell.text === null") < B.indexOf('if (cell.text === null)'), name + ': the unclear check must come first');
   }
 });
 

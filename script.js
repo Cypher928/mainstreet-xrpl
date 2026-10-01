@@ -31950,7 +31950,7 @@ async function _acqAbstractDocument(reviewId, docRow, text) {
   try {
     reading = await claudeFetch({
       task: 'acquisition_abstraction',
-      max_tokens: 6000,
+      max_tokens: 7500,
       messages: [{ role: 'user', content:
         // Context only. The prompt is told not to read terms from the name, and
         // the type is what the row says it is — a proposal reads the same way
@@ -32751,6 +32751,96 @@ async function acqReabstractDocument(docId) {
   _renderAcqDocuments();
 }
 
+// ── Read the new terms: MERGE-ONLY ────────────────────────────────────────────
+// A document read before the acquisition matrix's five fields existed was never
+// asked about them. This asks about THOSE keys only, from the stored text, and
+// adds the answers to the stored reading. Every entry already there — and so
+// every decision a person made on it — is left exactly as it is
+// (AcquisitionTerms.mergeUnreadFields). The reading's status, model and time
+// are the document's own and are not rewritten. A failure writes nothing.
+// A closed (converted) acquisition is never read again.
+async function _acqLoadOneEvidence(docId) {
+  try {
+    const { data: { user } } = await db.auth.getUser();
+    if (!user?.id) return null;
+    const { data, error } = await db
+      .from('acquisition_documents')
+      .select('id, abstracted_fields')
+      .eq('id', docId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.abstracted_fields || null;
+  } catch (e) {
+    console.warn('[acq] _acqLoadOneEvidence failed:', e && e.message);
+    return null;
+  }
+}
+
+// Whether a document can be read for the new terms: current, a lease-family
+// document already read, in an open acquisition, and missing some of them.
+function _acqCanReadNewTerms(reviewId, r) {
+  const AT = _AT();
+  if (!AT || !r || !reviewId || _acqFrozen(reviewId) || _acqAbstracting.has(r.id)) return false;
+  if (r.superseded_by_document_id || !AT.isAbstractable(r.doc_type)) return false;
+  if (r.abstraction_status !== 'success' && r.abstraction_status !== 'partial') return false;
+  const ev = _acqEvidence.get(r.id);
+  return !!ev && AT.unreadFields(ev).length > 0;
+}
+
+async function acqReadNewTerms(docId) {
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const AT = _AT();
+  const row = _acqDocRows(reviewId).find(r => r && r.id === docId);
+  if (!AT || !row || !_acqCanReadNewTerms(reviewId, row)) return;
+  // The reading as the database holds it NOW, not as this page cached it.
+  const existing = await _acqLoadOneEvidence(docId);
+  const want = AT.unreadFields(existing);
+  if (!want.length) {
+    if (existing) _acqEvidence.set(docId, existing);
+    _renderAcqDocuments();
+    return;
+  }
+  const text = String((await _acqLoadDocumentText(docId)) || '').trim();
+  if (text.length < 40) {
+    showToast('No stored text to read for ' + (row.file_name || 'this document') + ' — nothing was changed.');
+    return;
+  }
+  _acqAbstracting.add(docId);
+  _renderAcqDocuments();
+  let reading = null, failed = null;
+  try {
+    reading = await claudeFetch({
+      task: 'acquisition_abstraction',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content:
+        `Report ONLY these keys: ${want.join(', ')}. Every other key is already on file — omit it.\n` +
+        `File name (context only, do not read terms from it): ${row.file_name || 'unknown'}\n` +
+        `Document type (as classified): ${row.doc_type}\n\n` +
+        `Document text:\n${text.slice(0, 120000)}`
+      }],
+    }, { timeoutMs: 75000 });
+  } catch (e) {
+    failed = AT.abstractionErrorFor(e);
+    console.warn('[acq] new-terms reading failed:', row.file_name, failed, '·', e && e.message);
+  }
+  _acqAbstracting.delete(docId);
+  const m = failed ? null : AT.mergeUnreadFields(existing, reading, {
+    fields: want, model: reading && reading.__meta && reading.__meta.model, at: new Date().toISOString(),
+  });
+  if (!m || !m.ok) {
+    showToast('The new terms could not be read for ' + (row.file_name || 'this document') + ' — nothing was changed.');
+    _renderAcqDocuments();
+    return;
+  }
+  const saved = m.added.length
+    ? await _acqSaveDocument({ reviewId, intakeId: row.intake_id, fileName: row.file_name, abstractedFields: m.abstraction })
+    : row;
+  if (saved && saved.id) _acqEvidence.set(saved.id, m.abstraction);
+  _renderAcqDocuments();
+  if (_activeAcqId === reviewId) _renderAcqTerms();
+}
+
 // Put the original in the private `leases` bucket.
 //
 // /api/upload replaces every character outside [A-Za-z0-9._-] in the name it is
@@ -32907,7 +32997,9 @@ function _renderAcqDocuments() {
       ? ` · <span class="acq-doc-terms ${esc(abs.cls)}" data-abstraction="${esc(reading ? 'reading' : (r.abstraction_status || ''))}">${esc(abs.label)}</span>` : '';
     const readBtn = (!frozen && abstractable && current && !reading
                      && r.abstraction_status !== 'success' && r.abstraction_status !== 'partial')
-      ? `<button class="acq-doc-reabstract" data-doc-id="${esc(r.id)}" title="Read what this document says about the lease terms, from its stored text">Read terms</button>` : '';
+      ? `<button class="acq-doc-reabstract" data-doc-id="${esc(r.id)}" title="Read what this document says about the lease terms, from its stored text">Read terms</button>`
+      : (current && _acqCanReadNewTerms(_activeAcqId, r))
+      ? `<button class="acq-doc-read-new" data-doc-id="${esc(r.id)}" title="Read this document for the acquisition matrix's terms it was never asked about. Every term already read, and every decision on it, is left as it is.">Read the new terms</button>` : '';
 
     // WHERE IT BELONGS, when it does not (Issue B). A lease-family document
     // with no leasehold says WHY — the reason the module has always produced
@@ -33308,6 +33400,8 @@ function _acqLmCellHtml(cell) {
   if (!cell) return '<span class="acq-lm-v missing">—</span>';
   const title = cell.stateText ? ` title="${esc(cell.label + ': ' + cell.stateText)}"` : '';
   if (cell.state === 'contested') return `<span class="acq-lm-v contested" data-state="contested"${title}>Contested</span>`;
+  // F1: an unclear term with no value has a clause behind it — never "—".
+  if (cell.state === 'unclear' && cell.text === null) return `<span class="acq-lm-v unclear" data-state="unclear"${title}>Unclear</span>`;
   if (cell.text === null) return `<span class="acq-lm-v missing" data-state="missing"${title} aria-label="${esc(cell.label)}: not established">—</span>`;
   const mark = cell.state === 'verified' ? '<span class="acq-lm-mark" aria-hidden="true">✓</span>'
              : cell.state === 'entered'  ? '<span class="acq-lm-mark entered" aria-hidden="true">✎</span>' : '';
@@ -33376,6 +33470,7 @@ function _acqUnfiledListHtml(reviewId) {
 }
 
 function _acqLeaseMatrixHtml(reviewId) {
+  if (_acqMatrixView === 'acquisition') return _acqLeaseMatrix13Html(reviewId);
   const m = _acqMatrixFor(reviewId);
   if (!m) return '';
   const rows = m.leaseholds.map(e => `
@@ -33400,6 +33495,7 @@ function _acqLeaseMatrixHtml(reviewId) {
   const dueLine = LMx => (LMx ? LMx.documentsLine(due) : []).join(' · ');
   const dueText = dueLine(_LM());
   return `<div class="acq-lm" data-leaseholds="${n}" data-unfiled="${m.unfiled.length}">
+      ${_acqMatrixViewSwitchHtml()}
       <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · one record per tenant/leasehold. This is the reviewed record, built from your documents: open one for its terms, the evidence behind them, and what needs attention.</div>
       ${dueText ? `<button type="button" class="acq-lm-docs-due">${esc(dueText)} — review in Documents ↓</button>` : ''}
       <table class="acq-lm-table">
@@ -33417,6 +33513,165 @@ function _acqLeaseMatrixHtml(reviewId) {
     </div>${_acqUnfiledListHtml(reviewId)}`;
 }
 
+// ── The acquisition matrix: the buyer's thirteen columns ─────────────────────
+// A second view of the same record, beside the summary — never instead of it.
+// Every cell is the resolved term the summary and the record show (the same
+// rows, the same states); what it adds is the buyer's columns in the buyer's
+// order, and, on a click, where the cell came from: the governing document,
+// its clause, and every earlier reading it replaced.
+let _acqMatrixView = (() => {
+  try { return localStorage.getItem('acqMatrixView') === 'acquisition' ? 'acquisition' : 'summary'; }
+  catch (_) { return 'summary'; }
+})();
+let _acqM13Open = null;   // { reviewId, leaseholdId, field } — the cell whose sources are open
+
+function acqSetMatrixView(view) {
+  _acqMatrixView = view === 'acquisition' ? 'acquisition' : 'summary';
+  _acqM13Open = null;
+  try { localStorage.setItem('acqMatrixView', _acqMatrixView); } catch (_) {}
+  _renderAcqTerms();
+}
+
+function _acqMatrixViewSwitchHtml() {
+  const tab = (v, label) => `<button type="button" role="tab" class="acq-lm-view${_acqMatrixView === v ? ' active' : ''}" data-view="${v}" aria-selected="${_acqMatrixView === v}">${label}</button>`;
+  return `<div class="acq-lm-views" role="tablist" aria-label="Lease matrix view">${tab('summary', 'Summary')}${tab('acquisition', 'Acquisition matrix · 13 columns')}</div>`;
+}
+
+// The thirteen-column model for a review: the canonical rows, and each
+// leasehold's resolved terms for the sources behind every cell.
+function _acqMatrix13For(reviewId) {
+  const LM = _LM();
+  if (!LM || !reviewId || typeof LM.buildMatrix13 !== 'function') return null;
+  const rows = _acqCanonicalRows(reviewId).rows;
+  const terms = {};
+  rows.forEach(r => {
+    if (!r || r._source !== 'leasehold' || !r._leaseholdId) return;
+    const res = _acqFamilyTerms(r._leaseholdId);
+    terms[r._leaseholdId] = (res && res.terms) || {};
+  });
+  return LM.buildMatrix13(rows, terms, { terms: _AT() });
+}
+
+function _acqM13CellHtml(c) {
+  const sub = c.sub ? `<span class="acq-m13-sub">${esc(c.sub)}</span>` : '';
+  const none = c.noneStated ? ' data-none-stated="true"' : '';
+  return `<span class="acq-m13-clamp"${none}>${_acqLmCellHtml(c)}</span>${sub}`;
+}
+
+function _acqLeaseMatrix13Html(reviewId) {
+  const m = _acqMatrix13For(reviewId);
+  if (!m) return '';
+  const n = m.leaseholds.length;
+  const head = m.columns.map((c, i) => `<th scope="col"${i === 0 ? ' class="acq-m13-tenant"' : ''}>${esc(c.header)}</th>`).join('');
+  const body = m.leaseholds.map(l => `
+      <tr data-leasehold="${esc(l.leaseholdId)}">
+        <th scope="row" class="acq-m13-tenant"><button type="button" class="acq-m13-open" data-leasehold="${esc(l.leaseholdId)}"
+            title="${esc('Open the lease record: ' + l.tenant)}">${esc(l.tenant)}</button></th>
+        ${l.cells.slice(1).map(c => `<td data-col="${esc(c.column)}"><button type="button" class="acq-m13-cell" data-leasehold="${esc(l.leaseholdId)}"
+            data-field="${esc(c.field)}" data-state="${esc(c.state)}" aria-label="${esc(l.tenant + ' — ' + c.header + ': ' + (c.text === null ? 'not established' : c.text) + '. Show the source')}"
+            >${_acqM13CellHtml(c)}</button></td>`).join('')}
+      </tr>`).join('');
+  const due = _acqDocsToReview(reviewId);
+  const dueText = (_LM() ? _LM().documentsLine(due) : []).join(' · ');
+  const open = _acqM13Open && _acqM13Open.reviewId === reviewId ? _acqM13Open : null;
+  return `<div class="acq-lm acq-m13" data-view="acquisition" data-leaseholds="${n}" data-unfiled="${m.unfiled}">
+      ${_acqMatrixViewSwitchHtml()}
+      <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · the acquisition matrix's thirteen columns, from the same reviewed record. Click any cell for the document and clause behind it, and the readings it replaced.</div>
+      ${dueText ? `<button type="button" class="acq-lm-docs-due acq-m13-due">${esc(dueText)} — review in Documents ↓</button>` : ''}
+      <div class="acq-m13-actions">
+        <button type="button" class="acq-m13-csv">Download matrix (CSV)</button>
+        <button type="button" class="acq-m13-prov">Download sources (CSV)</button>
+      </div>
+      <div class="acq-m13-scroll" tabindex="0" role="region" aria-label="Acquisition matrix">
+        <table class="acq-m13-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+      </div>
+      ${open ? _acqM13DetailHtml(m, open) : ''}
+      <ul class="acq-lm-legend" aria-label="What the values mean">
+        <li><span class="acq-lm-v verified">value<span class="acq-lm-mark" aria-hidden="true">✓</span></span> Verified by a person</li>
+        <li><span class="acq-lm-v entered">value<span class="acq-lm-mark entered" aria-hidden="true">✎</span></span> Verified by a person — entered, no document on file</li>
+        <li><span class="acq-lm-v read">value</span> Read by AI · not yet verified</li>
+        <li><span class="acq-lm-v unclear">value</span> <em>italic</em> = Unclear; the word Unclear where no value could be read</li>
+        <li><span class="acq-lm-v contested">Contested</span></li>
+        <li><span class="acq-lm-v missing">—</span> Not established</li>
+        <li><span class="acq-lm-v read">None (stated)</span> The document says there is none, in the clause shown</li>
+      </ul>
+    </div>${_acqUnfiledListHtml(reviewId)}`;
+}
+
+// One cell's sources: the value in full, its state, the governing document
+// and clause, and every earlier reading — and, for a contested term, what
+// each document says.
+function _acqM13DetailHtml(m, open) {
+  const LM = _LM(), AD = _AD();
+  const l = m.leaseholds.find(x => x.leaseholdId === open.leaseholdId);
+  const c = l && l.cells.find(x => x.field === open.field);
+  if (!l || !c) return '';
+  const s = c.source || {};
+  const typeLabel = t => t ? (AD && AD.docTypeLabel ? AD.docTypeLabel(t) : t) : 'Unclassified';
+  const dated = d => d ? LM.usDate(d) : 'undated';
+  const state = c.noneStated ? 'Read by AI · the document states there is none'
+              : (c.state === 'verified' || c.state === 'entered') ? LM.STATE_TEXT[c.state] : LM.STATE_TEXT[c.state];
+  const value = c.state === 'contested' ? 'Contested — nothing has been chosen'
+              : c.text === null ? 'Not established' : c.text + (c.sub ? ' · ' + c.sub : '');
+  const gov = s.fileName
+    ? `<div class="acq-m13-d-gov"><span class="acq-m13-d-k">${c.state === 'contested' ? 'Ranked first (not chosen)' : 'Governing document'}</span>
+        ${esc(s.fileName)} · ${esc(typeLabel(s.docType))} · ${esc(dated(s.docDate))}${s.docStatus === 'proposed' ? ' · type not yet confirmed' : ''}
+        ${s.quote ? `<blockquote class="acq-m13-d-quote">${esc(s.quote)}</blockquote>` : '<div class="acq-m13-d-none">No clause is quoted for it.</div>'}
+        <div class="acq-m13-d-meta">${esc([s.page != null ? 'p. ' + s.page : null, s.confidence != null ? 'confidence ' + Math.round(s.confidence * 100) + '%' : null,
+          s.derived ? 'calculated — not stated in the clause' : null].filter(Boolean).join(' · '))}</div>
+      </div>`
+    : `<div class="acq-m13-d-gov"><span class="acq-m13-d-k">Governing document</span> ${c.state === 'entered' ? 'None — entered by a person, no document on file supports it.' : 'No document on file establishes this.'}</div>`;
+  const decided = s.decision ? `<div class="acq-m13-d-dec">${esc({ confirm: 'Confirmed', correct: 'Corrected', reject: 'Rejected', reopen: 'Reopened' }[s.decision.action] || s.decision.action)} by a person${s.decision.decidedAt ? ' on ' + esc(LM.usDate(String(s.decision.decidedAt).slice(0, 10))) : ''}</div>` : '';
+  const readings = (s.readings || []).length ? `<div class="acq-m13-d-sec"><div class="acq-m13-d-k">What each document says</div><ul>${s.readings.map(r =>
+      `<li><strong>${esc(r.fileName || 'A document')}</strong> · ${esc(typeLabel(r.docType))}: ${esc(r.value == null ? '—' : String(r.value))}${r.quote ? `<blockquote class="acq-m13-d-quote">${esc(r.quote)}</blockquote>` : ''}</li>`).join('')}</ul></div>` : '';
+  const prior = (s.prior || []);
+  const priorHtml = c.column === 'tenant' ? '' : `<div class="acq-m13-d-sec"><div class="acq-m13-d-k">Earlier readings (${prior.length})</div>${prior.length
+      ? `<ul>${prior.map(p => `<li>${esc(p.fileName || 'A document')} · ${esc(typeLabel(p.docType))} · ${esc(dated(p.docDate))}: <strong>${esc(p.value == null ? '—' : String(p.value))}</strong>${p.quote ? `<blockquote class="acq-m13-d-quote">${esc(p.quote)}</blockquote>` : ''}</li>`).join('')}</ul>`
+      : '<div class="acq-m13-d-none">No other document speaks to this term.</div>'}</div>`;
+  return `<div class="acq-m13-detail" role="dialog" aria-label="${esc(l.tenant + ' — ' + c.header)}" data-leasehold="${esc(l.leaseholdId)}" data-field="${esc(c.field)}">
+      <div class="acq-m13-d-head"><span class="acq-m13-d-title">${esc(l.tenant)} — ${esc(c.header)}</span>
+        <button type="button" class="acq-m13-close" aria-label="Close">×</button></div>
+      <div class="acq-m13-d-value" data-state="${esc(c.state)}">${esc(value)}</div>
+      <div class="acq-m13-d-state">${esc(state)}</div>
+      ${s.note && c.state !== 'missing' ? `<div class="acq-m13-d-note">${esc(s.note)}</div>` : ''}
+      ${gov}${decided}${readings}${priorHtml}
+      <button type="button" class="acq-m13-record" data-leasehold="${esc(l.leaseholdId)}" data-field="${esc(c.field)}">Open the lease record — confirm, correct or enter it there</button>
+    </div>`;
+}
+
+function acqOpenMatrixCell(leaseholdId, field) {
+  _acqM13Open = { reviewId: _activeAcqId, leaseholdId, field };
+  _renderAcqTerms();
+  const d = document.querySelector('#acqTermsList .acq-m13-detail');
+  const x = d && d.querySelector('.acq-m13-close');
+  if (x && x.focus) x.focus({ preventScroll: true });
+  if (d && d.scrollIntoView) d.scrollIntoView({ block: 'nearest' });
+}
+function acqCloseMatrixCell() {
+  const from = _acqM13Open;
+  _acqM13Open = null;
+  _renderAcqTerms();
+  const b = from ? document.querySelector(`#acqTermsList .acq-m13-cell[data-leasehold="${CSS.escape(from.leaseholdId)}"][data-field="${CSS.escape(from.field)}"]`) : null;
+  if (b && b.focus) b.focus({ preventScroll: true });
+}
+
+function _acqDownloadCsv(text, name) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function acqExportMatrix13Csv(which) {
+  const LM = _LM();
+  const m = _acqMatrix13For(_activeAcqId);
+  if (!LM || !m) return;
+  const review = _acqReviews.find(r => r.id === _activeAcqId);
+  const base = (review && review.name ? review.name.replace(/[^a-z0-9_\-]/gi, '_') + '-' : '') + 'lease-matrix';
+  if (which === 'sources') _acqDownloadCsv(LM.matrix13ProvenanceCsv(m), base + '-provenance.csv');
+  else _acqDownloadCsv(LM.matrix13Csv(m), base + '.csv');
+}
+
 // The top of one leasehold's record, in layers (§4m): the lease overview, what
 // needs attention, the lease terms at a glance, the documents behind them —
 // and then the Evidence & decisions below (the Lease Terms rows, unchanged),
@@ -33426,6 +33681,7 @@ const _ACQ_LH_OVERVIEW = ['suite', 'leased_sqft', 'start_date', 'end_date', 'lea
 function _acqLhValueHtml(cell) {
   if (!cell) return '<span class="acq-lm-v missing">—</span>';
   if (cell.state === 'contested') return '<span class="acq-lm-v contested" data-state="contested">Contested</span>';
+  if (cell.state === 'unclear' && cell.text === null) return `<span class="acq-lm-v unclear" data-state="unclear" title="${esc(cell.label)}: unclear">Unclear</span>`;
   if (cell.text === null) return `<span class="acq-lm-v missing" data-state="missing" title="${esc(cell.label)}: not established">—</span>`;
   const mark = cell.state === 'verified' ? '<span class="acq-lm-mark" aria-hidden="true">✓</span>'
              : cell.state === 'entered'  ? '<span class="acq-lm-mark entered" aria-hidden="true">✎</span>' : '';
@@ -33541,6 +33797,23 @@ function _acqBindLeaseMatrixControls(el) {
     const t = ev.target;
     const row = t.closest && t.closest('.acq-lm-row');
     if (row) { ev.preventDefault(); acqOpenLeasehold(row.getAttribute('data-leasehold')); return; }
+    // The acquisition matrix (13 columns).
+    const view = t.closest && t.closest('.acq-lm-view');
+    if (view) { ev.preventDefault(); acqSetMatrixView(view.getAttribute('data-view')); return; }
+    const m13 = t.closest && t.closest('.acq-m13-cell');
+    if (m13) { ev.preventDefault(); acqOpenMatrixCell(m13.getAttribute('data-leasehold'), m13.getAttribute('data-field')); return; }
+    if (t.closest && t.closest('.acq-m13-close')) { ev.preventDefault(); acqCloseMatrixCell(); return; }
+    const rec = t.closest && (t.closest('.acq-m13-open') || t.closest('.acq-m13-record'));
+    if (rec) {
+      ev.preventDefault();
+      const field = rec.getAttribute('data-field');
+      _acqM13Open = null;
+      acqOpenLeasehold(rec.getAttribute('data-leasehold'));
+      if (field) _acqRevealTerm(field);
+      return;
+    }
+    if (t.closest && t.closest('.acq-m13-csv'))  { ev.preventDefault(); acqExportMatrix13Csv('matrix'); return; }
+    if (t.closest && t.closest('.acq-m13-prov')) { ev.preventDefault(); acqExportMatrix13Csv('sources'); return; }
     if (t.closest && t.closest('.acq-lh-back')) { ev.preventDefault(); acqBackToLeaseMatrix(); return; }
     const item = t.closest && (t.closest('.acq-lh-attn-item') || t.closest('.acq-lh-term'));
     if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); return; }
@@ -33570,6 +33843,7 @@ function _acqBindLeaseMatrixControls(el) {
     acqResolveExtraction(sel.getAttribute('data-row'), _AL().RESOLUTION.MATCHED, sel.value);
   });
   el.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && _acqM13Open) { ev.preventDefault(); acqCloseMatrixCell(); return; }
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
     const row = ev.target && ev.target.closest && ev.target.closest('.acq-lm-row');
     if (!row) return;
@@ -33873,6 +34147,8 @@ function _acqBindDocControls(el) {
     if (btn) { ev.preventDefault(); acqConfirmDocType(btn.getAttribute('data-doc-id')); }
     const rd = ev.target.closest && ev.target.closest('.acq-doc-reabstract');
     if (rd) { ev.preventDefault(); acqReabstractDocument(rd.getAttribute('data-doc-id')); }
+    const rn = ev.target.closest && ev.target.closest('.acq-doc-read-new');
+    if (rn) { ev.preventDefault(); acqReadNewTerms(rn.getAttribute('data-doc-id')); }
     const bl = ev.target.closest && ev.target.closest('.acq-doc-begin');
     if (bl) { ev.preventDefault(); acqBeginLeasehold(bl.getAttribute('data-doc-id')); }
     const cf = ev.target.closest && ev.target.closest('.acq-doc-confirm-family');

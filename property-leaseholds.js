@@ -250,6 +250,8 @@
     guarantor_name: 'Guarantor', guaranty_limit: 'Guaranty limit', termination_rights: 'Termination rights',
     expansion_rights: 'Expansion / ROFR', assignment_consent: 'Assignment consent',
     exclusive_use: 'Exclusive use', co_tenancy: 'Co-tenancy',
+    rent_escalations: 'Rent increases', cam_recovery: 'CAM recovery', tax_recovery: 'Tax recovery',
+    insurance_recovery: 'Insurance recovery', percentage_rent: 'Percentage rent',
   };
   // The fields FIELD_META types as number, money or percent: compared as
   // quantities ('67,000' is 67000); every other field as trimmed text.

@@ -105,7 +105,7 @@ Each is small, separately approved, and verified before the next starts.
 | P1-5 | Financial Intake — **the GL is the primary financial source; seller invoices are optional** (§7) — rent roll and GL, contractual vs rent roll vs GL side by side, sources kept | planned |
 | P1-6 | Needs Attention — ranked, evidence-pointed, gates completion; **missing information is reported as missing, never as none** (§7) | planned |
 | P1-7 | Acquisition Report v2 — **the five buyer questions** (§7); verified vs assumption vs issue vs missing. **Replaces the CAM-recovery framing of today's Decision Report** | planned |
-| P1-8 | The 13-column lease matrix + CSV, every cell carrying provenance | planned — columns undefined (§6) |
+| P1-8 | The 13-column lease matrix + CSV, every cell carrying provenance | built — §7c (awaiting review) |
 | P1-9 | Lease Q&A over acquisition documents (single document; optionally one family) — same refusal contract | planned |
 | P1-10 | Completion — the deliberate transition to an acquired property, carrying documents and evidence | planned |
 
@@ -2052,7 +2052,7 @@ Each belongs to the increment that needs it; none is decided here.
 
 | # | Decision | Needed by |
 |---|---|---|
-| D-2 | **The 13 columns of the lease matrix.** Today's Rent Roll tab shows 8 (Tenant · Suite · Sq Ft · Lease Term · Base Rent/yr · Renewal · Deposit · CAM Structure). The 13 must be supplied. | P1-8 |
+| ~~D-2~~ | **RESOLVED** — the buyer's hand-built matrix: Tenant · Lease Exp. · Sq. Ft. · Base Rent · Rent Inc. · CAM · Taxes · Ins. · % Rent · Options · Exclusive · Co-Ten · Termination Right, in that order (§7c). | P1-8 · done |
 | ~~D-3~~ | **RESOLVED** — acquisition documents live in their own `acquisition_documents` table (migration 023), isolated from `lease_documents`. The object store is shared (the existing private `leases` bucket, `acq_<reviewId>_` naming), so no bucket or storage policy changed. | P1-2 · done |
 | D-4 | **Team activity / multi-user.** `acquisition_reviews` RLS is owner-only; team access is named in the IA and not implemented. P1-1 records activity for the owner. Sharing and roles are out of scope unless authorized. | later |
 | D-5 | **Lifecycle representation.** Done in P1-1 as `data.stage` in jsonb; the `status` column and its constraint are unchanged so Command Center and portfolio actions keep working. Whether `status` should grow is not proposed. | — |
@@ -2321,3 +2321,74 @@ wrap; the walk checks no report table scrolls sideways.
 
 Question 5 (R-4), assumption display beyond what questions 1–3 already show
 (R-4), and the closing validation (R-5). No financial intake was simulated.
+
+## 7c. P1-8 — the acquisition matrix: the buyer's thirteen columns (built; awaiting review)
+
+A second view of MainStreet's Record, beside the summary matrix (which stays
+the default): **Tenant · Lease Exp. · Sq. Ft. · Base Rent · Rent Inc. · CAM ·
+Taxes · Ins. · % Rent · Options · Exclusive · Co-Ten · Termination Right**,
+exactly as the buyer's hand-built matrix orders them.
+
+### Decisions it carries
+
+1. **"None (stated)"** appears only when a document explicitly establishes
+   that the provision does not exist: the value `None`, with the denying
+   clause as its quote, read from a document (or confirmed by a person). A
+   silent document is **Not established**; an unclear reading is **Unclear**;
+   a value a person typed with no document is shown as typed, marked entered.
+2. **F1** — an unclear term with no value reads **Unclear** everywhere (matrix,
+   record, headline, Lease / CAM), never "—".
+3. **F2 / F4** (acquisition-only, `acquisition-terms.js`; the shared reasoner
+   in `lease-intelligence.js` is untouched). A contradiction is kept only when
+   it is (a) in the governing rank, (b) between documents their dates cannot
+   order — the same date, or one undated — and (c) between readings that still
+   differ once case and spacing are set aside. Dated documents of one rank are
+   a chain: the newest governs. *On Pilot today* (read-only check) the only
+   leasehold with more than one read document is Maple Plaza's ShopRite, whose
+   renewal is undated — so its disagreements with the 2027 amendment stay
+   Contested and no live term changes state. Had the renewal been dated
+   2024-03-01, the amendment's 3% cap and $1,251,250 rent would govern, the
+   renewal's readings kept in the history (pinned in the unit suites).
+4. **F3** stays: the governing document's reading is the term. Every cell
+   opens its sources — the governing document (name, type, date, clause, page,
+   confidence), any decision, and every earlier reading it replaced; a
+   contested cell shows what each document says.
+5. **Rent Inc.** (`rent_escalations`) quotes its whole schedule — up to 2400
+   characters — and every dollar amount and percentage in the value must be in
+   the quote, or the term is Unclear (derived). The other four new fields keep
+   the 600-character quote and the same figures check. A decision's
+   `source_quote` stays within migration 026's 600.
+6. **Merge-only re-read** — "Read the new terms" asks the stored text for the
+   five new keys only and adds them to the stored reading. The existing
+   entries, the reading's status, model and time, and every decision are left
+   exactly as they were; a failure writes nothing; a converted acquisition is
+   never read again.
+7. **Options** stays free text (v1).
+8. The five new fields are **acquisition-only**: not in `TENANT_KEY`, dropped
+   by `normalizeTenant`, so conversion writes none of them to the property's
+   tenant record.
+
+### The five new fields (group D, free text)
+
+`rent_escalations` (Rent increases) · `cam_recovery` (CAM recovery) ·
+`tax_recovery` (Tax recovery) · `insurance_recovery` (Insurance recovery) ·
+`percentage_rent` (Percentage rent). The abstraction prompt now names 32 keys,
+asks for the renewal notice period, a ≤160-character summary for the five, and
+`None` only for an explicit denial; its token ceiling is 7500 (was 6000). No
+migration: `abstracted_fields` is free-form and decisions key on any field.
+
+### CSV
+
+`<review>-lease-matrix.csv`: the thirteen headers in order; dates M/D/YYYY;
+Base Rent as "$annual / $monthly/mo (calc.)"; **Not established**,
+**Contested**, **Unclear** in words — never a blank cell; unmatched entries
+left out, with a line saying so. `<review>-lease-matrix-provenance.csv`: one
+row per leasehold × column with state, governing document, type, date,
+page, confidence, clause, earlier readings and decision. Both UTF-8 with a
+BOM; a cell starting `= + - @` (or tab/return) is written as text.
+
+### Verified
+
+`test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);
+`tools/acquisition-matrix13-mutation.js` (new); the resolver, terms, report,
+clarity, decisions, canonical and leaseholds harnesses re-run.

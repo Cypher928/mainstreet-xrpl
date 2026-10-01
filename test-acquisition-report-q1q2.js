@@ -81,10 +81,14 @@ const rowSig = (r) => [r.attrs.key, r.attrs.state, r.attrs.origin || '', r.attrs
 // nothing. One scan is in no leasehold; one upload was replaced.
 const ev = (fields) => ({ schemaVersion: 1, model: 'claude-sonnet-4-6', at: '2026-09-22T15:09:11Z', fields });
 const F  = (value, quote, page, confidence) => ({ value, quote, page: page ?? null, confidence: confidence ?? null });
+// F4: the renewal is UNDATED here, so it cannot be ordered against the 2027
+// amendment and their disagreements stay Contested — this suite draws
+// contradictions. Dated (2024-03-01), the newer amendment would govern
+// (F2); test-acquisition-leasehold.js and test-acquisition-report*.js pin that.
 const LEASE = {
   id: 'doc-shoprite', family_id: 'fam-1', family_status: 'proposed',
   file_name: 'ShopRite_Anchor_Tenant_Lease.pdf', doc_type: 'renewal', doc_type_status: 'corrected',
-  doc_date: '2024-03-01', storage_path: 'leases/u/acq_x-ShopRite.pdf', abstraction_status: 'success',
+  doc_date: null, storage_path: 'leases/u/acq_x-ShopRite.pdf', abstraction_status: 'success',
   abstracted_fields: ev({
     tenant_name: F('ShopRite Supermarkets, Inc.', 'Tenant:   ShopRite Supermarkets, Inc.', 1, 0.99),
     suite:       F('Anchor Unit A-1', 'Premises: Anchor Unit A-1', 1, 0.9),
@@ -155,7 +159,7 @@ section('1 · one row per fact, carrying exactly the model\'s state');
   check('Q1 lists all six identity facts', r1.length === 6 && q1.length === 6, String(r1.length));
   check('Q2: every model fact is a row, in order, with its state, origin and derived flag',
     JSON.stringify(r2.map(rowSig)) === JSON.stringify(q2.map(sig)), r2.map(rowSig).join(' '));
-  check('Q2 lists all ten income terms', r2.length === 10 && q2.length === 10, String(r2.length));
+  check('Q2 lists all fifteen income terms (ten, and the acquisition matrix\'s five)', r2.length === 15 && q2.length === 15, String(r2.length));
   const states = new Set(q1.concat(q2).map(f => f.state));
   check('the fixture exercises all four states across Q1 and Q2 (non-vacuous)',
     ['verified', 'assumption', 'issue', 'missing'].every(s => states.has(s)), [...states].join(','));
@@ -335,9 +339,10 @@ section('10 · every new table cell holds its content in one block');
 section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
 {
   const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
-  // R-1 unfrozen once, for §4l's provenance change only; the pin follows it.
-  check('acquisition-report.js (R-1) is byte-for-byte the §4l revision',
-    sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a');
+  // R-1 unfrozen for §4l's provenance change, and for the acquisition
+  // matrix's five Q2 fields (QUESTION_FIELDS only); the pin follows it.
+  check('acquisition-report.js (R-1) is byte-for-byte the matrix-fields revision',
+    sha('acquisition-report.js') === 'ec81d002753aa0dd464c0c598f7ab871fd1e8d2d60ce47209cd92571124c7e24');
 
   // R-2's drawing of Q3 and Q4, from the committed view, against this one.
   const gitRoot = process.env.ACQ_REPORT_GIT_ROOT || ROOT;

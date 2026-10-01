@@ -23,6 +23,9 @@
  *     nothing was chosen, so nothing is reported.
  *   · A term no document establishes is NOT blank, zero or "none": its cell is
  *     an em dash carrying the words "Not established".
+ *   · A term a document speaks to without a clear value is NOT "Not
+ *     established": its cell says "Unclear" (F1). The clause exists; it could
+ *     not be read. Only `missing` is drawn as the em dash.
  *   · A value a person entered is marked as entered, every time.
  *   · An unfiled row is what a file said, unchecked. It is listed apart, never
  *     given a status, and never opens a leasehold record — it has none.
@@ -91,6 +94,13 @@
     return String(value);
   }
 
+  // A value's words in its state. An unclear term with no value says
+  // "Unclear" — never null, which every renderer draws as "Not established".
+  function _textOf(state, value, type) {
+    var t = formatValue(value, type);
+    return (t === null && state === 'unclear') ? STATE_LABEL.unclear : t;
+  }
+
   /**
    * One term of one canonical row: its value, how it is shown, and its state
    * in the matrix's vocabulary. The state comes from the row's own `_states`
@@ -111,7 +121,7 @@
     var value = state === 'contested' ? null : (r[field] === undefined ? null : r[field]);
     var text  = state === 'contested' ? 'Contested'
               : state === 'missing'   ? null
-              : formatValue(value, meta.type);
+              : _textOf(state, value, meta.type);
     return { field: field, label: meta.label, type: meta.type, state: state,
              value: value, text: text, stateText: STATE_TEXT[state] };
   }
@@ -203,14 +213,19 @@
     return { kind: 'verified', label: 'Key terms verified by a person' };
   }
 
+  // An unclear cell with no value to show: the clause exists, unread.
+  function _noValue(cell) { return !!cell && cell.state === 'unclear' && (cell.value === null || cell.value === undefined); }
+
   /** Lease / CAM structure: the lease type, then the CAM cap — each with its own state. */
   function structureFor(row, opts) {
     var type = cellFor(row, 'lease_type', opts);
     var cap  = cellFor(row, 'cap', opts);
     var parts = [];
     if (type.state === 'contested') parts.push({ field: 'lease_type', state: 'contested', text: 'Lease type contested' });
+    else if (_noValue(type))        parts.push({ field: 'lease_type', state: 'unclear', text: 'Lease type unclear' });
     else if (type.text !== null)    parts.push({ field: 'lease_type', state: type.state, text: type.text });
     if (cap.state === 'contested')  parts.push({ field: 'cap', state: 'contested', text: 'Cap contested' });
+    else if (_noValue(cap))         parts.push({ field: 'cap', state: 'unclear', text: 'Cap unclear' });
     else if (cap.text !== null)     parts.push({ field: 'cap', state: cap.state, text: cap.text + ' cap' });
     return { parts: parts, text: parts.length ? parts.map(function (p) { return p.text; }).join(' · ') : null };
   }
@@ -272,6 +287,7 @@
     function part(cell, fmt, noun) {
       if (!cell) return null;
       if (cell.state === 'contested') return noun + ' contested';
+      if (_noValue(cell))             return noun + ' unclear';
       if (cell.text === null)         return noun + ' not established';
       return fmt(cell.text);
     }
@@ -288,13 +304,17 @@
   // and the CAM cap, security and renewal — the CORE lease terms — then the
   // OTHER lease terms: the CAM mechanics, and the obligations and special
   // terms. Every field the resolver knows appears exactly once (detailOrder
-  // appends any field not named here, so a new one is never lost). There is
-  // no separate rent-increase field: escalations live in the base-rent clause.
+  // appends any field not named here, so a new one is never lost). The
+  // acquisition matrix's own columns — rent increases and how CAM, taxes and
+  // insurance are recovered, and percentage rent — follow the rent they
+  // qualify, in "Rent & recoveries", among the OTHER terms.
   var DETAIL_GROUPS = [
     { key: 'premises', tier: 'core', title: 'Premises & term',
       fields: ['tenant_name', 'suite', 'leased_sqft', 'start_date', 'end_date', 'lease_type'] },
     { key: 'rent', tier: 'core', title: 'Rent & CAM cap', fields: ['base_rent', 'cap'] },
     { key: 'security', tier: 'core', title: 'Security & renewal', fields: ['security_deposit', 'renewal_options'] },
+    { key: 'recoveries', tier: 'other', title: 'Rent & recoveries',
+      fields: ['rent_escalations', 'cam_recovery', 'tax_recovery', 'insurance_recovery', 'percentage_rent'] },
     { key: 'cam', tier: 'other', title: 'CAM details',
       fields: ['cap_base_amount', 'admin_fee_pct', 'admin_fee_basis', 'gross_up_pct',
                'expense_stop', 'pro_rata_method', 'excluded_categories', 'audit_rights'] },
@@ -327,8 +347,8 @@
 
   /**
    * The Lease Terms layer of a record: every term, in review order, grouped,
-   * with its value as a person reads it — or "Contested" (nothing chosen), or
-   * null for not established. Read from the resolver's terms for that
+   * with its value as a person reads it — or "Contested" (nothing chosen),
+   * "Unclear" (language, no clear value), or null for not established. Read from the resolver's terms for that
    * leasehold, the same terms the evidence below is drawn from.
    */
   function termRows(resolvedTerms, opts) {
@@ -344,7 +364,7 @@
       var t = terms[f], meta = _meta(f, opts), state = termState(t);
       var text = state === 'contested' ? 'Contested'
                : state === 'missing'   ? null
-               : formatValue(t.value, meta.type);
+               : _textOf(state, t.value, meta.type);
       var row = { field: f, label: t.label || meta.label, state: state, text: text };
       var g = groups.filter(function (x) { return x.key === groupOf[f]; })[0] || other;
       g.rows.push(row);
@@ -464,6 +484,193 @@
     return out;
   }
 
+  // ── The acquisition matrix: the buyer's own thirteen columns ──────────────
+  //
+  // Exactly the columns, and the order, of the buyer's hand-built acquisition
+  // matrix. One field per column; every cell is the same resolved term the
+  // summary matrix and the record read (cellFor), so no column has a state of
+  // its own. What a cell adds is how it is WRITTEN (dates as M/D/YYYY, a
+  // monthly rent worked out from the annual and labelled so, a stated "None")
+  // and, for the detail view, WHERE it came from: the governing document, its
+  // clause, and every earlier reading (F3 — the newest document governs; the
+  // readings it replaced stay open to inspection).
+  var MATRIX13 = [
+    { key: 'tenant',      header: 'Tenant',            field: 'tenant_name' },
+    { key: 'lease_exp',   header: 'Lease Exp.',        field: 'end_date' },
+    { key: 'sqft',        header: 'Sq. Ft.',           field: 'leased_sqft' },
+    { key: 'base_rent',   header: 'Base Rent',         field: 'base_rent' },
+    { key: 'rent_inc',    header: 'Rent Inc.',         field: 'rent_escalations' },
+    { key: 'cam',         header: 'CAM',               field: 'cam_recovery' },
+    { key: 'taxes',       header: 'Taxes',             field: 'tax_recovery' },
+    { key: 'ins',         header: 'Ins.',              field: 'insurance_recovery' },
+    { key: 'pct_rent',    header: '% Rent',            field: 'percentage_rent' },
+    { key: 'options',     header: 'Options',           field: 'renewal_options' },
+    { key: 'exclusive',   header: 'Exclusive',         field: 'exclusive_use' },
+    { key: 'co_ten',      header: 'Co-Ten',            field: 'co_tenancy' },
+    { key: 'termination', header: 'Termination Right', field: 'termination_rights' },
+  ];
+  var NONE_STATED = 'None (stated)';
+
+  /** "2034-02-28" → "2/28/2034"; anything else unchanged. */
+  function usDate(v) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v));
+    return m ? (Number(m[2]) + '/' + Number(m[3]) + '/' + m[1]) : (v == null ? null : String(v));
+  }
+  function _money(n) {
+    var r = Math.round(n * 100) / 100;
+    return '$' + r.toLocaleString('en-US', { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  }
+
+  // The reading of the governing document, out of the term's own history.
+  function _governingReading(term) {
+    var t = term || {};
+    var h = _arr(t.history).filter(function (x) { return x.documentId && x.documentId === t.governingDocumentId; })[0];
+    return h || null;
+  }
+
+  /**
+   * One cell of the thirteen. `row` is the canonical row (its states decide
+   * the cell's state, exactly as in the summary matrix); `term` is the
+   * resolver's term for the same field (where it came from). Returns
+   *   { column, header, field, label, state, value, text, sub, noneStated,
+   *     stateText, source }
+   * `text` is never blank: a term no document establishes is null here and
+   * every renderer writes it as "Not established".
+   */
+  function matrix13Cell(row, column, term, opts) {
+    var col = column || {};
+    var c = cellFor(row, col.field, opts);
+    var t = term || null;
+    var out = { column: col.key, header: col.header, field: col.field, label: c.label,
+                state: c.state, value: c.value, text: c.text, sub: null, noneStated: false,
+                stateText: c.stateText, source: null };
+    if (col.key === 'tenant') {
+      out.text = (row && row.tenant_name) || 'Unnamed leasehold';
+    } else if (c.state !== 'contested' && c.state !== 'missing' && c.value !== null) {
+      if (c.type === 'date') out.text = usDate(c.value);
+      if (col.field === 'base_rent' && typeof c.value === 'number' && isFinite(c.value)) {
+        out.sub = _money(c.value / 12) + '/mo (calc.)';
+      }
+      // "None (stated)": the document itself denies the provision — the value
+      // None, its clause in hand, read or confirmed from a document. Never for
+      // a silent document (that is Not established), never for an unclear
+      // reading, never for a value a person typed with no document behind it.
+      var quote = t ? t.quote : ((row && row.quotes) || {})[col.field];
+      if (c.value === 'None' && quote && (c.state === 'read' || c.state === 'verified')) {
+        out.noneStated = true; out.text = NONE_STATED;
+      }
+    }
+    if (t) {
+      var g = _governingReading(t);
+      out.source = {
+        documentId:   t.governingDocumentId || null,
+        fileName:     t.governingDocumentName || null,
+        docType:      t.governingDocType || null,
+        docDate:      g ? (g.docDate || null) : null,
+        docStatus:    t.governingDocStatus || null,
+        quote:        t.quote || null,
+        page:         t.page == null ? null : t.page,
+        confidence:   t.confidence == null ? null : t.confidence,
+        derived:      !!t.derived,
+        support:      t.support || null,
+        note:         t.note || null,
+        decision:     t.decision || null,
+        // Every reading the governing one replaced, newest-ranked first.
+        prior: _arr(t.supersededValues).map(function (h) {
+          return { documentId: h.documentId || null, fileName: h.fileName || null, docType: h.docType || null,
+                   docDate: h.docDate || null, value: h.value, quote: h.quote || null,
+                   page: h.page == null ? null : h.page };
+        }),
+        readings: contestedReadings(t),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * The thirteen-column matrix: one row per leasehold, in the projection's
+   * order, each with its thirteen cells. `termsByLeasehold` maps a leasehold
+   * id to the resolver's terms for it (as resolveFamilyTerms returns them).
+   * Raw rows nothing represents are counted, never shown as tenants.
+   */
+  function buildMatrix13(canonicalRows, termsByLeasehold, opts) {
+    var rows = _arr(canonicalRows);
+    var byId = termsByLeasehold || {};
+    var leaseholds = rows.filter(function (r) { return r._source === 'leasehold'; }).map(function (r) {
+      var id = r._leaseholdId || r.id || null;
+      var terms = (id && byId[id]) || {};
+      return {
+        leaseholdId: id,
+        tenant: r.tenant_name || 'Unnamed leasehold',
+        cells: MATRIX13.map(function (col) { return matrix13Cell(r, col, terms[col.field] || null, opts); }),
+      };
+    });
+    return { columns: MATRIX13.map(function (c) { return { key: c.key, header: c.header, field: c.field }; }),
+             leaseholds: leaseholds,
+             unfiled: rows.filter(function (r) { return r._source === 'unfiled'; }).length };
+  }
+
+  // ── CSV ───────────────────────────────────────────────────────────────────
+  // UTF-8 with a byte-order mark, so a spreadsheet reads "—" and "§" as
+  // written; every cell quoted where it must be; and a cell that a
+  // spreadsheet would run as a formula (= + - @, or a leading tab or return)
+  // is written as text. A lease clause is somebody else's document.
+  var CSV_BOM = '\uFEFF';
+  function csvCell(v) {
+    var s = v == null ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function _csv(lines) { return CSV_BOM + lines.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n'; }
+
+  /** One cell as the matrix CSV writes it — never blank. */
+  function csvText(cell) {
+    var c = cell || {};
+    if (c.column === 'tenant') return c.text;
+    if (c.state === 'contested') return STATE_LABEL.contested;
+    if (c.state === 'missing' || c.text === null || c.text === undefined) return STATE_LABEL.missing;
+    if (c.state === 'unclear' && (c.value === null || c.value === undefined)) return STATE_LABEL.unclear;
+    var t = c.text + (c.sub ? ' / ' + c.sub : '');
+    return c.state === 'unclear' ? t + ' (unclear)' : t;
+  }
+
+  /** The buyer's thirteen headers, in the buyer's order, one row per leasehold. */
+  function matrix13Csv(m13) {
+    var m = m13 || { columns: MATRIX13, leaseholds: [] };
+    var lines = [m.columns.map(function (c) { return c.header; })];
+    _arr(m.leaseholds).forEach(function (l) { lines.push(l.cells.map(csvText)); });
+    if (m.unfiled) {
+      lines.push([]);
+      lines.push(['Not included: ' + m.unfiled + (m.unfiled === 1 ? ' extracted entry' : ' extracted entries')
+        + ' not matched to a tenant — as extracted, not reviewed.']);
+    }
+    return _csv(lines);
+  }
+
+  var PROVENANCE_HEADERS = ['Tenant', 'Column', 'Value', 'State', 'Governing document', 'Document type',
+                            'Document date', 'Page', 'Confidence', 'Clause', 'Earlier readings', 'Decision'];
+  /** Where every cell came from: one row per leasehold × column. */
+  function matrix13ProvenanceCsv(m13) {
+    var m = m13 || { leaseholds: [] };
+    var lines = [PROVENANCE_HEADERS];
+    _arr(m.leaseholds).forEach(function (l) {
+      l.cells.forEach(function (c) {
+        var s = c.source || {};
+        var state = c.noneStated ? 'Stated in the document: none' : (STATE_LABEL[c.state] || c.state);
+        lines.push([
+          l.tenant, c.header, csvText(c), state,
+          s.fileName || '', s.docType || '', s.docDate ? usDate(s.docDate) : (s.fileName ? 'Undated' : ''),
+          s.page == null ? '' : s.page, s.confidence == null ? '' : s.confidence, s.quote || '',
+          _arr(s.prior).map(function (p) {
+            return (p.fileName || 'A document') + (p.docDate ? ' (' + usDate(p.docDate) + ')' : ' (undated)') + ': ' + (p.value == null ? '—' : p.value);
+          }).join(' | '),
+          s.decision ? (s.decision.action + (s.decision.decidedAt ? ' ' + String(s.decision.decidedAt).slice(0, 10) : '')) : '',
+        ]);
+      });
+    });
+    return _csv(lines);
+  }
+
   var api = {
     KEY_FIELDS: KEY_FIELDS,
     DETAIL_GROUPS: DETAIL_GROUPS,
@@ -494,6 +701,16 @@
     buildMatrix: buildMatrix,
     headline: headline,
     attentionSummary: attentionSummary,
+    MATRIX13: MATRIX13,
+    NONE_STATED: NONE_STATED,
+    usDate: usDate,
+    matrix13Cell: matrix13Cell,
+    buildMatrix13: buildMatrix13,
+    csvCell: csvCell,
+    csvText: csvText,
+    matrix13Csv: matrix13Csv,
+    PROVENANCE_HEADERS: PROVENANCE_HEADERS,
+    matrix13ProvenanceCsv: matrix13ProvenanceCsv,
   };
   if (root) root.AcquisitionLeaseMatrix = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

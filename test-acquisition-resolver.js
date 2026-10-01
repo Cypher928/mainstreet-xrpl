@@ -318,18 +318,18 @@ t('a term no current document establishes is missing, and says so in words', () 
   eq(m.note, 'No current document on file establishes this term.');
 });
 
-t('every one of the 27 fields comes back, whatever happened to it', () => {
+t('every one of the 32 fields comes back, whatever happened to it', () => {
   const r = resolve([withFields({}, { cap: E(4, 'capped at 4%') })]);
   deq(Object.keys(r.terms), T.FIELDS);
-  eq(Object.keys(r.terms).length, 27);
+  eq(Object.keys(r.terms).length, 32);
 });
 
-t('a family with no readable document at all is 27 missing terms, not an error', () => {
+t('a family with no readable document at all is 32 missing terms, not an error', () => {
   const r = resolve([]);
   eq(r.ok, true);
-  eq(Object.keys(r.terms).length, 27);
+  eq(Object.keys(r.terms).length, 32);
   ok(T.FIELDS.every(f => r.terms[f].state === 'missing'));
-  eq(r.summary.missing, 27);
+  eq(r.summary.missing, 32);
 });
 
 // ── missing is not none ─────────────────────────────────────────────────────
@@ -538,6 +538,90 @@ t('documents of DIFFERENT rank disagreeing is supersession, not a contradiction'
   eq(term.supersededValues.length, 1);
 });
 
+// ── F2 / F4: which disagreements are contradictions, acquisition-side ───────
+sec('F2/F4 — a contradiction is a disagreement the documents cannot order');
+
+const amdAt = (id, date, value, quote, type) => withFields(
+  { id: id, file_name: id + '.pdf', doc_type: type || 'amendment', doc_date: date },
+  { renewal_options: E(value, quote || value) });
+
+t('F2: dated amendments of one rank are a chain, not a contradiction — the newer governs', () => {
+  const term = resolve([amdAt('a19', '2019-01-01', 'Two 5-year options'), amdAt('a23', '2023-06-01', 'One 5-year option')]).terms.renewal_options;
+  eq(term.state, 'ai_extracted'); deq(term.contradictions, []);
+  eq(term.value, 'One 5-year option'); eq(term.governingDocumentName, 'a23.pdf');
+});
+t('F3: the older reading is not lost — it stays in the history and the superseded values', () => {
+  const term = resolve([amdAt('a19', '2019-01-01', 'Two 5-year options'), amdAt('a23', '2023-06-01', 'One 5-year option')]).terms.renewal_options;
+  ok(term.supersededValues.some(h => h.value === 'Two 5-year options' && h.fileName === 'a19.pdf'));
+  eq(term.history.length, 2);
+});
+t('a renewal and an amendment share a rank: dated, the newer governs without contest', () => {
+  const term = resolve([amdAt('ren', '2024-03-01', 'Two options', null, 'renewal'), amdAt('amd', '2027-01-01', 'One option')]).terms.renewal_options;
+  eq(term.state, 'ai_extracted'); eq(term.value, 'One option');
+});
+t('F2: the same reading in other case and spacing is not a contradiction', () => {
+  const term = resolve([amdAt('x1', '2024-05-01', 'Grocery  exclusive'), amdAt('x2', '2024-05-01', 'grocery exclusive ')]).terms.renewal_options;
+  deq(term.contradictions, []); eq(term.state, 'ai_extracted');
+});
+t('the same date and different readings IS a contradiction, with both documents', () => {
+  const term = resolve([amdAt('s1', '2024-05-01', 'Two options'), amdAt('s2', '2024-05-01', 'No options')]).terms.renewal_options;
+  eq(term.state, 'conflicting');
+  deq(term.contradictions[0].documents.slice().sort(), ['s1.pdf', 's2.pdf']);
+  deq(term.contradictions[0].values.slice().sort(), ['No options', 'Two options']);
+});
+t('F4: an UNDATED document that disagrees with a dated one of its rank is contested — never presumed oldest', () => {
+  const term = resolve([amdAt('d1', '2024-05-01', 'Two options'), amdAt('u1', null, 'No options')]).terms.renewal_options;
+  eq(term.state, 'conflicting');
+  ok(term.contradictions[0].documents.indexOf('u1.pdf') >= 0, 'the undated document is not a party to it');
+});
+t('F4: an undated document that AGREES is no contradiction', () => {
+  const term = resolve([amdAt('d1', '2024-05-01', 'Two options'), amdAt('u1', null, 'two options')]).terms.renewal_options;
+  eq(term.state, 'ai_extracted');
+});
+t('F4: two undated documents of one rank that disagree are contested', () => {
+  const term = resolve([amdAt('u1', null, 'Two options'), amdAt('u2', null, 'No options')]).terms.renewal_options;
+  eq(term.state, 'conflicting');
+});
+t('a disagreement in a SUPERSEDED rank is not a contradiction — two lease copies under a governing amendment', () => {
+  const l1 = withFields({ id: 'l1', file_name: 'lease-a.pdf', doc_type: 'original_lease', doc_date: '2020-01-01' }, { renewal_options: E('Two 5-yr options', 'Two 5-yr options') });
+  const l2 = withFields({ id: 'l2', file_name: 'lease-b.pdf', doc_type: 'original_lease', doc_date: null }, { renewal_options: E('Two five year options', 'Two five year options') });
+  const term = resolve([l1, l2, amdAt('am', '2023-01-01', 'One 5-year option')]).terms.renewal_options;
+  eq(term.state, 'ai_extracted'); deq(term.contradictions, []);
+});
+t('a dated chain does not hide an undated peer further down it', () => {
+  const term = resolve([amdAt('a1', '2019-01-01', 'A'), amdAt('a2', '2023-01-01', 'B'), amdAt('u', null, 'C')]).terms.renewal_options;
+  eq(term.state, 'conflicting');
+  deq(term.contradictions[0].documents.slice().sort(), ['a2.pdf', 'u.pdf']);
+});
+t('narrowed, never widened: no reasoner contradiction means none here', () => {
+  const r = T.resolveTerms({ cap: { currentValue: 5, contradictions: [], reasoning: 'r', confidence: 80, supersededValues: [] } },
+    [AMD_A, AMD_B], []);
+  deq(r.cap.contradictions, []);
+});
+t('the shared reasoner is untouched — it still flags the dated chain, owner-side', () => {
+  const docs = T.buildReasonerInput([amdAt('a19', '2019-01-01', 'Two'), amdAt('a23', '2023-06-01', 'One')]);
+  const res = LI.reasonMultiDocumentLease(docs, { fields: T.FIELDS });
+  eq(res.renewal_options.contradictions.length, 1);
+});
+
+// ── group D through the resolver ────────────────────────────────────────────
+sec('group D — a stated None, a derived figure, a document read before D existed');
+
+t('a stated "None" resolves to the value None, read by AI — a finding, not an absence', () => {
+  const r = resolve([withFields({}, { percentage_rent: E('None', 'No percentage rent shall be payable hereunder.') })]);
+  eq(r.terms.percentage_rent.state, 'ai_extracted'); eq(r.terms.percentage_rent.value, 'None');
+});
+t('a schedule figure the clause does not state makes the term unclear and derived', () => {
+  const r = resolve([withFields({}, { rent_escalations: E('Yrs 1-5 $102,000', 'Monthly Base Rent: $8,500.00') })]);
+  eq(r.terms.rent_escalations.state, 'unclear'); eq(r.terms.rent_escalations.derived, true);
+});
+t('a document read before group D existed: the five are missing, never None', () => {
+  const f = {}; T.FIELDS.slice(0, 27).forEach(k => { f[k] = E(null); }); f.cap = E(4, 'capped at 4%');
+  const r = resolve([doc({ abstracted_fields: { schemaVersion: 1, model: 'm', at: 'x', fields: f } })]);
+  T.FIELD_GROUPS.matrix.forEach(k => { eq(r.terms[k].state, 'missing', k); eq(r.terms[k].value, null, k); });
+  eq(r.terms.cap.value, 4);
+});
+
 // ── the ceiling ─────────────────────────────────────────────────────────────
 sec('the classification ceiling — a term is never more settled than its document');
 
@@ -711,17 +795,17 @@ t('resolveFamilyTerms reports honestly when the reasoner is not there', () => {
   ok(/reasonMultiDocumentLease/.test(r.error));
 });
 
-t('the summary adds up to 27, always', () => {
+t('the summary adds up to 32, always', () => {
   const r = resolve([LEASE, AMD, DERIVED], [decision({ field_key: 'cap' })]);
   const s = r.summary;
-  eq(s.verified + s.ai_extracted + s.conflicting + s.unclear + s.missing, 27, JSON.stringify(s));
-  eq(s.total, 27);
+  eq(s.verified + s.ai_extracted + s.conflicting + s.unclear + s.missing, 32, JSON.stringify(s));
+  eq(s.total, 32);
 });
 
 t('summarizeTerms never throws on nonsense', () => {
-  eq(T.summarizeTerms(null).missing, 27);
-  eq(T.summarizeTerms({}).missing, 27);
-  eq(T.summarizeTerms({ cap: { state: 'nonsense' } }).missing, 27);
+  eq(T.summarizeTerms(null).missing, 32);
+  eq(T.summarizeTerms({}).missing, 32);
+  eq(T.summarizeTerms({ cap: { state: 'nonsense' } }).missing, 32);
 });
 
 t('the documents handed in are not modified by being resolved', () => {

@@ -68,7 +68,7 @@ check('there are five questions, in §7\'s order',
   AR.QUESTIONS.map(q => q.title).join(' · '));
 
 // ── 2 · the field partition ────────────────────────────────────────────────
-section('2 · every one of the 27 fields answers exactly one question');
+section('2 · every one of the 32 fields answers exactly one question');
 {
   const assigned = [].concat(AR.QUESTION_FIELDS.what_am_i_buying,
                              AR.QUESTION_FIELDS.what_income,
@@ -246,8 +246,8 @@ section('6 · the report, built from the Pilot\'s actual leasehold');
   check('Q3 likewise', q3.sections[0].facts.length === AR.QUESTION_FIELDS.what_obligations.length);
   const allFacts = rpt.questions.slice(0, 3)
     .reduce((a, q) => a.concat(q.sections[0].facts), []);
-  check('and the three term questions together report all 27',
-    allFacts.length === 27, `${allFacts.length}`);
+  check('and the three term questions together report all 32',
+    allFacts.length === 32, `${allFacts.length}`);
   check('every fact has a state from the four',
     allFacts.every(f => AR.REPORT_STATES.indexOf(f.state) >= 0));
   check('every missing fact carries a sentence — none is blank',
@@ -256,19 +256,29 @@ section('6 · the report, built from the Pilot\'s actual leasehold');
   check('and no missing fact was quietly given a value',
     allFacts.filter(f => f.state === 'missing').every(f => f.value === null));
 
-  // The live contradiction must surface as an issue with both values.
+  // F2: the renewal (2024-03-01) and the amendment (2027-01-01) share a rank
+  // and their dates order them, so the newer 3% governs — it is not an issue.
   const capFact = q2.sections[0].facts.find(f => f.key === 'cap');
-  check('the 4% vs 3% CAM cap is an ISSUE', capFact.state === 'issue', capFact.state);
-  check('with both figures and both documents shown',
-    capFact.competing.length >= 2
-    && capFact.competing.some(c => String(c.value) === '4')
-    && capFact.competing.some(c => String(c.value) === '3'),
-    JSON.stringify(capFact.competing.map(c => c.value)));
+  check('dated documents of one rank: the 3% CAM cap governs, not an issue',
+    capFact.state !== 'issue' && capFact.value === 3, `${capFact.state} ${capFact.value}`);
+  {
+    // F4: undated, the amendment cannot be ordered against the renewal — the
+    // contradiction must surface as an issue with both values.
+    const undated = Object.assign({}, amendment, { doc_date: null });
+    const r2 = AR.buildReport(review, families, [lease, undated], [], WIRE);
+    const cap2 = r2.questions[1].sections[0].facts.find(f => f.key === 'cap');
+    check('an undated disagreeing amendment: the 4% vs 3% CAM cap is an ISSUE', cap2.state === 'issue', cap2.state);
+    check('with both figures and both documents shown',
+      cap2.competing.length >= 2
+      && cap2.competing.some(c => String(c.value) === '4')
+      && cap2.competing.some(c => String(c.value) === '3'),
+      JSON.stringify(cap2.competing.map(c => c.value)));
+  }
 
   const rentFact = q2.sections[0].facts.find(f => f.key === 'base_rent');
   check('base rent is flagged derived', rentFact.derived === true, `state=${rentFact.state}`);
   check('and is NOT presented as document-stated',
-    rentFact.state !== 'verified' && /calculated/i.test(rentFact.note || ''), rentFact.note);
+    rentFact.state !== 'verified' && /calculated|not stated/i.test(rentFact.note || ''), rentFact.note);
 
   check('the entered assumption is carried, separately from AI readings',
     rpt.summary.assumption_entered >= 1 && rpt.summary.assumption_ai_read >= 1,
@@ -409,7 +419,7 @@ section('10 · P1-7 R-1 changes nothing it was told not to');
     /function generateAcquisitionReport\(\)/.test(fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8')));
   check('P1-4\'s five term states are unchanged',
     JSON.stringify(AT.TERM_STATES) === JSON.stringify(['verified', 'ai_extracted', 'conflicting', 'unclear', 'missing']));
-  check('and its 27 fields are unchanged', AT.FIELDS.length === 27);
+  check('and its 32 fields are unchanged', AT.FIELDS.length === 32);
 }
 
 console.log('\n' + '─'.repeat(66));

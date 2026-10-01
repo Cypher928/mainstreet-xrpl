@@ -320,8 +320,8 @@ const DB = `
   });
   check('the Lease Terms panel renders, grouped by leasehold',
         panel.groups.length === 1 && /ShopRite/.test(panel.groups[0]), panel.groups.join(' | '));
-  check('every one of the 27 terms is listed', panel.rows === 27, String(panel.rows));
-  check('each carries a state chip', panel.chips === 27, String(panel.chips));
+  check('every one of the 32 terms is listed', panel.rows === 32, String(panel.rows));
+  check('each carries a state chip', panel.chips === 32, String(panel.chips));
   // §4m: the header says how ready each LEASEHOLD is, not how many of every
   // possible term are verified.
   check('the header states leasehold readiness, not a count of every term',

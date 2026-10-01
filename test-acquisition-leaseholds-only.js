@@ -228,7 +228,10 @@ try { HEAD_SRC = execFileSync('git', ['show', 'HEAD:acquisition-leasehold.js'], 
 ['leaseholdRows', 'legacyRows', 'tenantRowFor', 'canonicalValue', 'attachStates', 'cellState'].forEach(name => {
   t(`${name} is byte-for-byte what it was`, () => {
     if (HEAD_SRC === null) { console.log('    (no git here — skipped, not passed)'); return; }
-    ok(fnText(SRC, name) && fnText(SRC, name) === fnText(HEAD_SRC, name), name + ' changed');
+    // tenantRowFor carries the acquisition matrix's five fields (approved
+    // with the 13-column matrix); that block, and only that block, may differ.
+    const five = (t) => (t || '').replace(/\n      \/\/ The acquisition matrix's own columns\.[\s\S]*?percentage_rent:    v\('percentage_rent'\),/, '');
+    ok(fnText(SRC, name) && five(fnText(SRC, name)) === five(fnText(HEAD_SRC, name)), name + ' changed');
   });
 });
 

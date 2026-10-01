@@ -535,6 +535,8 @@ const SUITES = [
   // Lease Terms evidence, unchanged. Walked with Maple Plaza as the Pilot holds it.
   { label: 'Acquisition Lease Matrix (§4m)',            cmd: 'node test-acquisition-lease-matrix.js' },
   { label: 'Acquisition Lease Matrix walk (e2e, §4m)',  cmd: 'node test-e2e-acquisition-lease-matrix.js' },
+  { label: 'Acquisition matrix — 13 columns, CSVs, guard rails', cmd: 'node test-acquisition-matrix13.js' },
+  { label: 'Acquisition matrix walk + merge-only re-read (e2e)', cmd: 'node test-e2e-acquisition-matrix13.js' },
   // §4n (Option B) — only a canonical leasehold is a tenant: the analysis, the
   // Rent Roll, the Decision Report and conversion read leaseholds only, and an
   // unmatched extraction waits for a person. Walked with Maple Plaza.

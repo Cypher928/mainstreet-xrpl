@@ -14,7 +14,10 @@
  * Group B is five fields the lease extraction contract already returns and
  * nobody governs across a family. Group C is nine genuinely new fields, one
  * per acquisition category the roadmap committed to; they were named in the
- * approved plan rather than added quietly, and they are kept in full.
+ * approved plan rather than added quietly, and they are kept in full. Group D
+ * is the five columns of the buyer's hand-built acquisition matrix that no
+ * field held (Rent Inc., CAM, Taxes, Ins., % Rent) — free text, each a short
+ * summary with the clause as its quote.
  *
  * MISSING IS NOT NONE
  *
@@ -48,8 +51,13 @@
       'termination_rights', 'expansion_rights',
       'assignment_consent', 'exclusive_use', 'co_tenancy',
     ],
+    // D — the acquisition matrix's own columns (Rent Inc., CAM, Taxes, Ins.,
+    // % Rent). Acquisition-only: they have no home on a workspace tenant.
+    matrix: [
+      'rent_escalations', 'cam_recovery', 'tax_recovery', 'insurance_recovery', 'percentage_rent',
+    ],
   };
-  var FIELDS = FIELD_GROUPS.canonical.concat(FIELD_GROUPS.extracted, FIELD_GROUPS.acquisition);
+  var FIELDS = FIELD_GROUPS.canonical.concat(FIELD_GROUPS.extracted, FIELD_GROUPS.acquisition, FIELD_GROUPS.matrix);
 
   // What each field IS, which decides how a raw reading is normalised and how
   // a term is shown. `type` is one of number · money · percent · date ·
@@ -87,6 +95,19 @@
     assignment_consent: { label: 'Assignment consent',      type: 'text',    group: 'acquisition' },
     exclusive_use:      { label: 'Exclusive use',           type: 'text',    group: 'acquisition' },
     co_tenancy:         { label: 'Co-tenancy',              type: 'text',    group: 'acquisition' },
+
+    // `figures`: every dollar amount and percentage in the value must be in
+    // the quote, or the value is not what the clause states (evidenceSupport).
+    // `none`: the document may establish that the provision does not exist —
+    // the value "None", with the denying clause as its quote. Never for a
+    // term the document is silent on.
+    // `quoteMax`: rent_escalations quotes the WHOLE schedule, so every step
+    // shown has its clause; one 600-character excerpt would not.
+    rent_escalations:   { label: 'Rent increases',          type: 'text',    group: 'matrix', figures: true, none: true, quoteMax: 2400 },
+    cam_recovery:       { label: 'CAM recovery',            type: 'text',    group: 'matrix', figures: true, none: true },
+    tax_recovery:       { label: 'Tax recovery',            type: 'text',    group: 'matrix', figures: true, none: true },
+    insurance_recovery: { label: 'Insurance recovery',      type: 'text',    group: 'matrix', figures: true, none: true },
+    percentage_rent:    { label: 'Percentage rent',         type: 'text',    group: 'matrix', figures: true, none: true },
   };
 
   var ABSTRACTION_STATUSES = ['pending', 'success', 'partial', 'failed', 'skipped'];
@@ -132,6 +153,13 @@
   var EVIDENCE_SCHEMA_VERSION = 1;
   var QUOTE_MAX = 600;
   var TEXT_MAX  = 1000;
+  /** A field's own quote allowance: QUOTE_MAX unless its meta says otherwise. */
+  function quoteMaxFor(field) {
+    var m = FIELD_META[field];
+    return (m && m.quoteMax) || QUOTE_MAX;
+  }
+  // The one word a `none` field uses to say the document denies the provision.
+  var NONE_VALUE = 'None';
 
   // ── Normalising one reading ────────────────────────────────────────────────
   function _str(v, max) {
@@ -198,7 +226,12 @@
       case 'date':    return _date(raw);
       case 'boolean': return _boolean(raw);
       case 'enum':    return _enum(raw, meta.values);
-      case 'text':    return _isNil(raw) ? null : _str(String(raw), TEXT_MAX);
+      case 'text':
+        if (_isNil(raw)) return null;
+        // "None" is a finding only with the clause that denies it in hand;
+        // without one it is a guess, and a guess is null — never "None".
+        if (meta.none && _isNegativeWord(String(raw).replace(/[.\s]+$/, ''))) return hasQuote ? NONE_VALUE : null;
+        return _str(String(raw), TEXT_MAX);
       default:        return null;
     }
   }
@@ -219,7 +252,7 @@
     // An array is not a reading of one term — Number([5]) is 5, and that is
     // exactly the kind of accident that turns nothing into a value.
     var o = (raw && typeof raw === 'object') ? (Array.isArray(raw) ? { value: null } : raw) : { value: raw };
-    var quote = _str(o.quote, QUOTE_MAX);
+    var quote = _str(o.quote, quoteMaxFor(field));
     return {
       value:      normalizeFieldValue(field, o.value, !!quote),
       quote:      quote,
@@ -275,6 +308,52 @@
       counts: { fields: FIELDS.length, valued: valued, evidenced: evidenced,
                 missing: FIELDS.length - valued },
     };
+  }
+
+  // ── Reading a document again for fields it was never asked about ────────
+  //
+  // MERGE-ONLY. A document read before group D existed carries 27 entries. A
+  // second, full reading could change a value a person already confirmed —
+  // and a confirmation does not record the value it confirmed, so the term
+  // would read "Verified" on a value nobody saw. So a second reading adds
+  // ONLY the keys the stored evidence lacks. A key that is present, even as
+  // { value: null, quote: null }, was asked about and answered, and is never
+  // touched; every existing entry is carried over as the very object it was.
+
+  /** The fields of `fields` (default: group D) this evidence was never asked about. */
+  function unreadFields(abstraction, fields) {
+    var want = Array.isArray(fields) ? fields : FIELD_GROUPS.matrix;
+    var f = abstraction && abstraction.fields && typeof abstraction.fields === 'object' ? abstraction.fields : null;
+    if (!f) return [];
+    return want.filter(function (k) { return FIELDS.indexOf(k) >= 0 && !Object.prototype.hasOwnProperty.call(f, k); });
+  }
+
+  /**
+   * The stored evidence with a second reading's answers for the unread fields
+   * added, and nothing else changed. Returns { ok, abstraction, added } or
+   * { ok: false, error }. `added` is [] when there was nothing to add; the
+   * abstraction is then the one passed in.
+   */
+  function mergeUnreadFields(existing, reading, opts) {
+    var o = opts || {};
+    if (!existing || typeof existing !== 'object' || !existing.fields || typeof existing.fields !== 'object') {
+      return { ok: false, error: 'The document has no reading to add to' };
+    }
+    var want = unreadFields(existing, o.fields);
+    if (!want.length) return { ok: true, abstraction: existing, added: [] };
+    var built = buildAbstraction(reading, { model: o.model, at: o.at });
+    if (!built.ok) return { ok: false, error: built.error };
+    var fields = {};
+    Object.keys(existing.fields).forEach(function (k) { fields[k] = existing.fields[k]; });
+    want.forEach(function (k) { fields[k] = built.abstraction.fields[k]; });
+    var out = {};
+    Object.keys(existing).forEach(function (k) { out[k] = existing[k]; });
+    out.fields = fields;
+    // Who read these, and when — the original reading's model and time stay
+    // the document's own.
+    out.supplements = (Array.isArray(existing.supplements) ? existing.supplements : [])
+      .concat([{ fields: want, model: built.abstraction.model, at: built.abstraction.at }]);
+    return { ok: true, abstraction: out, added: want };
   }
 
   /** What a row's evidence amounts to, for a status chip. Never throws. */
@@ -397,6 +476,27 @@
   // numeral check can call it derived.
   var NEGATIVE_CLAUSE = /\b(?:no|none|not|nor|never|nil|zero|without|waives?|waived|excluded|shall\s+not|n\/a)\b/i;
 
+  // The dollar amounts and percentages a summary states: "$102,000",
+  // "3%", "4% of sales over $3,986,250". Years, suite numbers and counts are
+  // not figures; a summary may carry them freely.
+  function _figuresIn(text) {
+    var s = String(text), out = [], re = /\$\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*%/g, m;
+    while ((m = re.exec(s))) {
+      var n = Number(String(m[1] || m[2]).replace(/,/g, ''));
+      if (isFinite(n)) out.push(n);
+    }
+    return out;
+  }
+  // A free-text summary is what the clause states only when every figure in
+  // it is in the clause, and a "None" only when the clause denies it. A step
+  // the AI worked out (a monthly figure from an annual one, a share computed
+  // from square feet) is DERIVED, which the resolver reads as unclear.
+  function _textSupport(meta, e) {
+    if (meta.none && e.value === NONE_VALUE) return NEGATIVE_CLAUSE.test(e.quote) ? 'stated' : 'derived';
+    var inQuote = _numeralsIn(e.quote);
+    return _figuresIn(e.value).every(function (n) { return inQuote.indexOf(n) >= 0; }) ? 'stated' : 'derived';
+  }
+
   /**
    * How well one entry's quote supports its value.
    *   none     there is no quote
@@ -409,6 +509,7 @@
     if (!e.quote) return 'none';
     if (e.value === null || e.value === undefined) return 'none';
     if (!meta) return 'none';
+    if (meta.type === 'text' && meta.figures) return _textSupport(meta, e);
     if (meta.type !== 'number' && meta.type !== 'money' && meta.type !== 'percent') return 'stated';
     if (e.value === 0 && NEGATIVE_CLAUSE.test(e.quote)) return 'stated';
     return _numeralsIn(e.quote).indexOf(e.value) >= 0 ? 'stated' : 'derived';
@@ -482,6 +583,53 @@
   // table out of that file and asserts the two are identical, which is the same
   // guard P1-3 put on the document tiers.
   var DEFAULT_TIER = { side_letter: 4, estoppel: 3, amendment: 2, original_lease: 1 };
+
+  // ── Which disagreements are contradictions (F2 / F4) ──────────────────────
+  //
+  // The shared reasoner (lease-intelligence.js, also the owner-side lease
+  // reasoner) calls ANY two same-rank documents with byte-different values a
+  // contradiction — in every rank, dated or not. For an acquisition that is
+  // too eager: an amendment chain is the deal changing, not the documents
+  // disagreeing, and two wordings of one clause are not a dispute. The
+  // reasoner is left as it is; the acquisition side keeps only what is a real
+  // contradiction for the term a person reads:
+  //
+  //   · in the GOVERNING rank — a lower rank is superseded whatever it says;
+  //   · between documents their dates cannot order — the same date, or one of
+  //     them undated (F4: an undated document is NOT presumed the oldest; if
+  //     it disagrees, nothing is chosen);
+  //   · whose values still differ once case and whitespace are set aside.
+  //
+  // When dates do order two documents of one rank, the newer governs, and the
+  // older reading stays in the history, open to inspection.
+  function _sameReading(a, b) {
+    var n = function (v) { return String(v).trim().toLowerCase().replace(/\s+/g, ' '); };
+    return n(a) === n(b);
+  }
+  function _dateKey(d) {
+    if (!d) return null;
+    var t = new Date(d).getTime();
+    return isNaN(t) ? null : t;
+  }
+  function acquisitionContradictions(valued, tierOfDocType) {
+    var v = Array.isArray(valued) ? valued : [];
+    if (v.length < 2) return [];
+    var tierOf = typeof tierOfDocType === 'function' ? tierOfDocType : function (t) { return DEFAULT_TIER[t] || 0; };
+    var rank = function (h) { return tierOf(REASONER_DOC_TYPE[h.docType] || 'original_lease'); };
+    var gov = v[0], tier = rank(gov), gd = _dateKey(gov.docDate);
+    var peers = [gov].concat(v.slice(1).filter(function (h) {
+      if (rank(h) !== tier) return false;
+      var hd = _dateKey(h.docDate);
+      return gd === null || hd === null || hd === gd;   // the dates cannot order them
+    }));
+    var values = [];
+    peers.forEach(function (h) {
+      if (!values.some(function (x) { return _sameReading(x, h.value); })) values.push(h.value);
+    });
+    if (values.length < 2) return [];
+    return [{ tier: tier, documents: peers.map(function (h) { return h.fileName; }),
+              documentIds: peers.map(function (h) { return h.documentId; }), values: values }];
+  }
 
   // ── The human decisions overlay ───────────────────────────────────────────
   /** The decision in force for a field: the latest one, unless it reopened. */
@@ -626,7 +774,10 @@
       term.note = null;
 
       if (fromReasoner) {
-        term.contradictions     = Array.isArray(fromReasoner.contradictions) ? fromReasoner.contradictions : [];
+        // Narrowed from the reasoner's, never widened: a disagreement the
+        // reasoner did not see is not invented here.
+        term.contradictions     = (Array.isArray(fromReasoner.contradictions) && fromReasoner.contradictions.length)
+          ? acquisitionContradictions(valued, tierOf) : [];
         term.reasoning          = fromReasoner.reasoning || null;
         term.reasonerConfidence = fromReasoner.confidence == null ? null : fromReasoner.confidence;
         // The reasoner decides precedence; the lineage above only names the
@@ -883,6 +1034,10 @@
     abstractionErrorFor: abstractionErrorFor,
     EVIDENCE_SCHEMA_VERSION: EVIDENCE_SCHEMA_VERSION,
     QUOTE_MAX: QUOTE_MAX,
+    quoteMaxFor: quoteMaxFor,
+    unreadFields: unreadFields,
+    mergeUnreadFields: mergeUnreadFields,
+    NONE_VALUE: NONE_VALUE,
     normalizeFieldValue: normalizeFieldValue,
     normalizeEntry: normalizeEntry,
     buildAbstraction: buildAbstraction,
@@ -906,6 +1061,7 @@
     DECISION_SELECT: DECISION_SELECT,
     buildDecisionPayload: buildDecisionPayload,
     resolveTerms: resolveTerms,
+    acquisitionContradictions: acquisitionContradictions,
     resolveFamilyTerms: resolveFamilyTerms,
     summarizeTerms: summarizeTerms,
   };

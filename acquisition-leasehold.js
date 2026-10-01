@@ -114,6 +114,13 @@
       assignment_consent: v('assignment_consent'),
       exclusive_use:    v('exclusive_use'),
       co_tenancy:       v('co_tenancy'),
+      // The acquisition matrix's own columns. Acquisition-only: conversion
+      // carries none of them to the property's tenant record.
+      rent_escalations:   v('rent_escalations'),
+      cam_recovery:       v('cam_recovery'),
+      tax_recovery:       v('tax_recovery'),
+      insurance_recovery: v('insurance_recovery'),
+      percentage_rent:    v('percentage_rent'),
       quotes:   quotes,
       _states:  states,
       _origins: origins,

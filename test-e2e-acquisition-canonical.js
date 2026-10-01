@@ -59,11 +59,15 @@ const FIELDS = (o) => ({ schemaVersion: 1, model: 'claude-sonnet-4-6', at: '2026
 // corrected renewal and a confirmed amendment that disagree on the cap), a
 // third file in no leasehold, and one raw tenant row per file — all three
 // still saying what the extraction said.
+// F4: the renewal is UNDATED here, so it cannot be ordered against the 2027
+// amendment and their disagreements stay Contested — this suite draws
+// contradictions. Dated (2024-03-01), the newer amendment would govern
+// (F2); test-acquisition-leasehold.js and test-acquisition-report*.js pin that.
 const MAPLE_DOCS = [
   { id: 'm-lease', review_id: MAPLE, user_id: UID, intake_id: 'ik-m1', file_name: 'ShopRite_Anchor_Tenant_Lease.pdf',
     intake_kind: 'lease', parsing_status: 'success', storage_path: 'leases/u1/acq_m1.pdf', produced_kind: 'tenant', produced_id: 't-lease',
     doc_type: 'renewal', doc_type_status: 'corrected', doc_type_source: 'human', confirmed_by: UID,
-    confirmed_at: '2026-09-21T20:30:00Z', doc_date: '2024-03-01', family_id: FAM, family_status: 'confirmed', family_source: 'human',
+    confirmed_at: '2026-09-21T20:30:00Z', doc_date: null, family_id: FAM, family_status: 'confirmed', family_source: 'human',
     superseded_by_document_id: null, classification_history: [], abstraction_status: 'success',
     abstracted_fields: FIELDS({
       tenant_name: EV('ShopRite Supermarkets, Inc.', 'Tenant: ShopRite Supermarkets, Inc.', 1, 0.99),

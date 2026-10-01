@@ -6314,6 +6314,9 @@
       padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; }
     .acq-doc-reabstract:hover { border-color: var(--text-3); }
     .acq-doc-reabstract[disabled] { opacity: 0.5; cursor: default; }
+    .acq-doc-read-new { background: none; border: 1px solid #334155; color: var(--text-3);
+      padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; }
+    .acq-doc-read-new:hover { border-color: var(--text-3); }
 
     /* ── Unfiled: why, and the one thing a person may do (Issue B) ──────────
        A lease document with no leasehold used to say nothing at all, so a
@@ -6428,6 +6431,50 @@
     .acq-lm-legend li { white-space: nowrap; }
     .acq-lm-legend .acq-lm-v { margin-right: 4px; }
     .acq-lm-status-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+    /* The acquisition matrix: the buyer's thirteen columns. The table scrolls
+       inside its own frame — never the page — with the tenant held in view;
+       a long clause is clamped to three lines and opens in full on a click. */
+    .acq-lm-views { display: inline-flex; gap: 2px; margin: 2px 2px 6px; border: 1px solid #1e293b; border-radius: 8px; padding: 2px; }
+    .acq-lm-view { background: none; border: 0; color: var(--text-4); font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+    .acq-lm-view.active { background: rgba(148, 163, 184, 0.14); color: var(--text-2); font-weight: 600; }
+    .acq-m13-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 2px 8px; }
+    .acq-m13-actions button { background: none; border: 1px solid #334155; color: var(--text-3);
+      padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; }
+    .acq-m13-scroll { overflow-x: auto; max-width: 100%; border: 1px solid #1e293b; border-radius: 8px; }
+    .acq-m13-scroll:focus { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: 1px; }
+    .acq-m13-table { border-collapse: separate; border-spacing: 0; font-size: 0.76rem; min-width: 1180px; width: 100%; }
+    .acq-m13-table th { text-align: left; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-4); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #1e293b; white-space: nowrap; }
+    .acq-m13-table td { padding: 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6); vertical-align: top; max-width: 190px; }
+    .acq-m13-table .acq-m13-tenant { position: sticky; left: 0; z-index: 1; background: var(--theme-surface);
+      border-right: 1px solid #1e293b; min-width: 130px; max-width: 170px; }
+    .acq-m13-open { background: none; border: 0; padding: 8px; color: var(--text-1, var(--text-2)); font-weight: 700;
+      text-align: left; cursor: pointer; font-size: 0.78rem; text-transform: none; letter-spacing: 0; }
+    .acq-m13-open:hover { text-decoration: underline; }
+    .acq-m13-cell { display: block; width: 100%; min-height: 100%; background: none; border: 0; padding: 8px;
+      text-align: left; cursor: pointer; color: var(--text-2); font: inherit; }
+    .acq-m13-cell:hover, .acq-m13-cell:focus { background: rgba(148, 163, 184, 0.06); }
+    .acq-m13-cell:focus { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: -2px; }
+    .acq-m13-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .acq-m13-clamp .acq-lm-v { white-space: normal; }
+    .acq-m13-sub { display: block; font-size: 0.66rem; color: var(--text-4); margin-top: 2px; }
+    .acq-m13-detail { margin: 10px 2px 0; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px;
+      background: var(--theme-surface); font-size: 0.78rem; color: var(--text-2); }
+    .acq-m13-d-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .acq-m13-d-title { font-weight: 700; }
+    .acq-m13-close { background: none; border: 1px solid #334155; color: var(--text-3); border-radius: 6px;
+      width: 28px; height: 28px; cursor: pointer; font-size: 1rem; line-height: 1; }
+    .acq-m13-d-value { margin-top: 6px; font-size: 0.86rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .acq-m13-d-value[data-state="unclear"] { font-style: italic; }
+    .acq-m13-d-value[data-state="contested"] { color: var(--c-f87171); font-weight: 600; }
+    .acq-m13-d-state, .acq-m13-d-note, .acq-m13-d-meta, .acq-m13-d-none, .acq-m13-d-dec { font-size: 0.7rem; color: var(--text-4); margin-top: 3px; }
+    .acq-m13-d-gov, .acq-m13-d-sec { margin-top: 10px; overflow-wrap: anywhere; }
+    .acq-m13-d-k { display: block; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-4); margin-bottom: 2px; }
+    .acq-m13-d-sec ul { margin: 2px 0 0; padding-left: 16px; }
+    .acq-m13-d-quote { margin: 4px 0 0; padding: 4px 8px; border-left: 2px solid #334155; color: var(--text-3);
+      font-size: 0.72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .acq-m13-record { margin-top: 10px; background: none; border: 1px solid #334155; color: var(--c-60a5fa, #60a5fa);
+      padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; }
     .acq-lm-unverified { font-size: 0.66rem; color: var(--c-fbbf24, #fbbf24); white-space: nowrap; }
     .acq-lm-docs-due { display: block; margin: 0 2px 8px; padding: 6px 10px; width: 100%; text-align: left;
       background: rgba(251, 191, 36, 0.06); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 6px;
@@ -6573,7 +6620,7 @@
       .acq-doc-open,
       .acq-doc-nofile  { order: 5; flex: 0 0 auto; }
       /* Touch targets, now that they are no longer crammed into a row. */
-      .acq-doc-type, .acq-doc-confirm, .acq-doc-reabstract, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
+      .acq-doc-type, .acq-doc-confirm, .acq-doc-reabstract, .acq-doc-read-new, .acq-doc-open { padding-top: 6px; padding-bottom: 6px; }
       /* At 375px the reason and its control stack rather than squeezing the
          button off the row. */
       .acq-doc-unfiled { flex-direction: column; align-items: stretch; gap: 7px; }

@@ -233,13 +233,21 @@ section('4 · a calculated figure is never drawn as document-stated');
 // ── 5 · contradictions ─────────────────────────────────────────────────────
 section('5 · a contradiction shows both sides and picks neither');
 {
-  // cap (4 vs 3) and base_rent (1,202,500 vs 1,251,250) are Q2 facts; Q3's
-  // live contradiction is renewal_options. Draw a Q2 fact through the same
-  // row function so the rule is tested on the real case.
-  const q2 = MODEL.questions.find(q => q.id === 'what_income');
+  // cap (4 vs 3) and base_rent (1,202,500 vs 1,251,250) are Q2 facts. With
+  // the amendment dated after the renewal they are NOT contradictions (F2:
+  // the newer document of one rank governs). Undated, the amendment cannot be
+  // ordered against the renewal (F4), and both terms are contested — drawn
+  // here through the same row function as every other fact.
+  {
+    const dated = MODEL.questions.find(q => q.id === 'what_income').sections[0].facts.find(f => f.key === 'cap');
+    check('dated renewal → amendment: the 3% cap governs and is not an issue',
+      dated.state !== 'issue' && dated.value === 3, `${dated.state} ${dated.value}`);
+  }
+  const UNDATED = AR.buildReport(REVIEW, FAMILIES, [LEASE, Object.assign({}, AMENDMENT, { doc_date: null }), SCAN, OLD], [], WIRE);
+  const q2 = UNDATED.questions.find(q => q.id === 'what_income');
   const capFact = q2.sections[0].facts.find(f => f.key === 'cap');
   const capRow = AV.factRow(capFact, OPTS);
-  check('the live 4% vs 3% cap is an issue in the model', capFact.state === 'issue');
+  check('an undated amendment\'s 4% vs 3% cap is an issue in the model', capFact.state === 'issue');
   check('the row says Contested, not a value', /Contested/.test(capRow) && !/acqr-value/.test(capRow));
   check('both figures are drawn', /4%/.test(capRow) && /3%/.test(capRow));
   check('each with the document that asserts it',
@@ -338,9 +346,11 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
   const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
   // R-1 was frozen at edcf259 and unfrozen once, for §4l's provenance change
   // only (a verified term with support `entered` carries origin `entered` and
-  // no evidence; `verified_entered` is counted). This is that file.
-  check('acquisition-report.js (R-1) is byte-for-byte the §4l revision',
-    sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a',
+  // no evidence; `verified_entered` is counted), and once more for the
+  // acquisition matrix: its five fields placed in Q2 (QUESTION_FIELDS only).
+  // This is that file.
+  check('acquisition-report.js (R-1) is byte-for-byte the matrix-fields revision',
+    sha('acquisition-report.js') === 'ec81d002753aa0dd464c0c598f7ab871fd1e8d2d60ce47209cd92571124c7e24',
     sha('acquisition-report.js').slice(0, 12));
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
   // The changes v1 may carry: Option B's stale guard (docs §4n) and the
@@ -387,7 +397,7 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
   check('no new serverless function — api/ still holds twelve', apiFiles.length === 12, String(apiFiles.length));
   check('no new migration', !fs.readdirSync(path.join(ROOT, 'migrations')).some(f => /^028_/.test(f)));
   check('P1-4\'s term states and fields are unchanged',
-    AT.TERM_STATES.join() === 'verified,ai_extracted,conflicting,unclear,missing' && AT.FIELDS.length === 27);
+    AT.TERM_STATES.join() === 'verified,ai_extracted,conflicting,unclear,missing' && AT.FIELDS.length === 32);
 }
 
 console.log('\n' + '─'.repeat(66));

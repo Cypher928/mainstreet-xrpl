@@ -25,7 +25,7 @@
 //   5  a response that would have died under the old ceiling survives the new
 //      one, and one that outlives the new ceiling still aborts
 //   6  every non-acquisition caller keeps the 58s default, unchanged
-//   7  a sparse reply still stores all 27 fields, each missing one null
+//   7  a sparse reply still stores all 32 fields, each missing one null
 //   8  MISSING IS NOT NONE: an explicit denial stays a VALUE with its clause
 //   9  the six failure reasons are one vocabulary in three places, and each
 //      maps from the thing that actually causes it
@@ -103,7 +103,7 @@ function fakeReq(body) {
 }
 const ABSTRACTION_BODY = {
   task: 'acquisition_abstraction',
-  max_tokens: 6000,
+  max_tokens: 7500,
   messages: [{ role: 'user', content: 'Document text:\nA LEASE AMENDMENT' }],
 };
 
@@ -297,11 +297,13 @@ section('6 · every existing caller keeps its old behaviour');
   // Every claudeFetch call site, and which of them raises the ceiling.
   const sites = [...SCRIPT_SRC.matchAll(/claudeFetch\(/g)].map(m => m.index);
   const raising = [...SCRIPT_SRC.matchAll(/timeoutMs:\s*\d+/g)].map(m => m.index);
-  check('there is exactly ONE raised ceiling in the whole file', raising.length === 1, String(raising.length));
-  check('and it belongs to the abstraction, not to anything else',
-    SCRIPT_SRC.slice(Math.max(0, raising[0] - 2000), raising[0]).includes("task: 'acquisition_abstraction'"));
+  // Two: the abstraction, and the merge-only reading of the acquisition
+  // matrix's new terms — the same task, from the same stored text.
+  check('there are exactly TWO raised ceilings in the whole file', raising.length === 2, String(raising.length));
+  check('and both belong to the abstraction task, not to anything else',
+    raising.every(i => SCRIPT_SRC.slice(Math.max(0, i - 2000), i).includes("task: 'acquisition_abstraction'")));
   check('every other claudeFetch call site passes no second argument',
-    sites.length > 1, `${sites.length} call sites, 1 raised`);
+    sites.length > 2, `${sites.length} call sites, 2 raised`);
   check('explainFetch is untouched — its 90s ceiling still matches /api/explain',
     /_fetchWithTimeout\('\/api\/explain', fetchOpts, timeoutMs \|\| 90000\)/.test(SCRIPT_SRC)
     && VERCEL.functions['api/explain.js'].maxDuration === 90);
@@ -321,7 +323,7 @@ section('7 · the 27-field stored contract is unchanged by the smaller prompt');
   const built = AT.buildAbstraction(sparse, { model: 'claude-sonnet-4-6', at: '2026-09-22T04:00:00.000Z' });
   check('a two-field reply is accepted', built.ok && built.status === 'success', built.status);
   const f = built.abstraction.fields;
-  check('and all 27 fields are stored', Object.keys(f).length === 27, String(Object.keys(f).length));
+  check('and all 32 fields are stored', Object.keys(f).length === 32, String(Object.keys(f).length));
   check('every one of AcquisitionTerms.FIELDS is present',
     AT.FIELDS.every(k => Object.prototype.hasOwnProperty.call(f, k)));
   const missing = AT.FIELDS.filter(k => !(k in sparse.fields));
@@ -372,11 +374,11 @@ section('8 · an explicit denial is still a VALUE, not an absence');
     /Report ONLY the fields THIS DOCUMENT ESTABLISHES/.test(TASKS_SRC));
   check('and it no longer demands all 27 be emitted',
     !/Report EVERY one of these 27 fields/.test(TASKS_SRC));
-  check('but the 27 keys are still spelled out for the model',
+  check('but the 32 keys are still spelled out for the model',
     AT.FIELDS.every(k => TASKS_SRC.includes('\n  ' + k + ' ') || TASKS_SRC.includes('\n  ' + k + '  ')),
-    AT.FIELDS.filter(k => !TASKS_SRC.includes('\n  ' + k)).join(',') || 'all 27 named');
-  check('the task ceiling is untouched at 6000',
-    /acquisition_abstraction:\s*\{ system: _withBoundary\(ACQUISITION_ABSTRACTION_SYSTEM\),\s*maxTokens: 6000 \}/.test(TASKS_SRC));
+    AT.FIELDS.filter(k => !TASKS_SRC.includes('\n  ' + k)).join(',') || 'all 32 named');
+  check('the task ceiling is 7500 — raised once, for the acquisition matrix\'s five fields',
+    /acquisition_abstraction:\s*\{ system: _withBoundary\(ACQUISITION_ABSTRACTION_SYSTEM\),\s*maxTokens: 7500 \}/.test(TASKS_SRC));
 }
 
 // ── 9 · the six reasons ────────────────────────────────────────────────────

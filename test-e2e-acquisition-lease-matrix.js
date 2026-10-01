@@ -12,7 +12,7 @@
 //      states and their legend; the documents to review in the record's
 //      own status, one click from Documents › Needs review
 //   3  clicking ShopRite opens ShopRite's record: back, name, headline,
-//      Needs attention as the workload (2 contested · 9 not established ·
+//      Needs attention as the workload (2 contested · 14 not established ·
 //      1 unclear · 11 values read by AI · not yet verified), then its Lease
 //      Terms evidence and no other
 //   4  the 67,000 correction still reads Verified — 67,000, with the document
@@ -410,14 +410,14 @@ const DB = `
   check('ShopRite opens ShopRite\'s record: Back, the name, and no matrix',
         r1.open && r1.leasehold === SHOP && r1.back && r1.title === 'ShopRite Supermarkets, Inc.' && r1.matrixRows === 0, r1.title);
   check('the headline: 67,000 SF · NNN · $1,251,250 base rent', r1.headline === '67,000 SF · NNN · $1,251,250 base rent', r1.headline);
-  check('Needs attention is the workload, never "N items": 2 contested · 9 not established · 1 unclear · 11 values read by AI · not yet verified',
-        !r1.attnAggregate && r1.attnCats.join(' | ') === '2 contested | 9 not established | 1 unclear | 11 values read by AI · not yet verified',
+  check('Needs attention is the workload, never "N items": 2 contested · 14 not established · 1 unclear · 11 values read by AI · not yet verified',
+        !r1.attnAggregate && r1.attnCats.join(' | ') === '2 contested | 14 not established | 1 unclear | 11 values read by AI · not yet verified',
         r1.attnCats.join(' | '));
-  check('…and each line names every term it counts, as a link: 2, 9, 1 and 11 of them',
-        r1.attnTerms.contested.length === 2 && r1.attnTerms.missing.length === 9 && r1.attnTerms.unclear.join() === 'Audit rights'
+  check('…and each line names every term it counts, as a link: 2, 14, 1 and 11 of them',
+        r1.attnTerms.contested.length === 2 && r1.attnTerms.missing.length === 14 && r1.attnTerms.unclear.join() === 'Audit rights'
         && r1.attnTerms.unverified.length === 11 && r1.attnTerms.unverified[0] === 'Tenant', JSON.stringify(r1.attnTerms).slice(0, 200));
-  check('then its Lease Terms evidence — ShopRite\'s group only, all 27 terms',
-        r1.groups.length === 1 && r1.groups[0] === SHOP && r1.rows === 27, `${r1.groups.join(',')} / ${r1.rows}`);
+  check('then its Lease Terms evidence — ShopRite\'s group only, all 32 terms',
+        r1.groups.length === 1 && r1.groups[0] === SHOP && r1.rows === 32, `${r1.groups.join(',')} / ${r1.rows}`);
   const focusBack = await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('acq-lh-back'));
   check('focus moves to Back, so the keyboard lands in the record', focusBack);
 
@@ -447,17 +447,18 @@ const DB = `
         && lay.facts.includes('base_rent=$1,251,250✓') && lay.facts.includes('security_deposit=—'), lay.facts.join(' | '));
   check('Needs attention lists its terms in review order: contested Commencement, then Renewal options',
         r1.attnTerms.contested.join(' | ') === 'Commencement | Renewal options', r1.attnTerms.contested.join(' | '));
-  check('Lease terms, in review order: Tenant → Suite → Leased SF → Commencement → Expiration → Lease type → Base rent → CAM cap → Security deposit → Renewal → CAM details → obligations',
+  check('Lease terms, in review order: Tenant → Suite → Leased SF → Commencement → Expiration → Lease type → Base rent → CAM cap → Security deposit → Renewal → Rent & recoveries → CAM details → obligations',
         lay.tgroups[0] === 'Premises & term:tenant_name,suite,leased_sqft,start_date,end_date,lease_type'
         && lay.tgroups[1] === 'Rent & CAM cap:base_rent,cap'
         && lay.tgroups[2] === 'Security & renewal:security_deposit,renewal_options'
-        && /^CAM details:cap_base_amount,/.test(lay.tgroups[3]) && /^Obligations & special terms:/.test(lay.tgroups[4]),
+        && lay.tgroups[3] === 'Rent & recoveries:rent_escalations,cam_recovery,tax_recovery,insurance_recovery,percentage_rent'
+        && /^CAM details:cap_base_amount,/.test(lay.tgroups[4]) && /^Obligations & special terms:/.test(lay.tgroups[5]),
         lay.tgroups.map(g => g.split(':')[0]).join(' → '));
   check('the term counts live in the record, in the five states\' words',
-        lay.termsSub === '27 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 9 not established', lay.termsSub);
-  check('the evidence follows the same order, all 27 terms once',
+        lay.termsSub === '32 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 14 not established', lay.termsSub);
+  check('the evidence follows the same order, all 32 terms once',
         lay.evidence.slice(0, 8).join(',') === 'tenant_name,suite,leased_sqft,start_date,end_date,lease_type,base_rent,cap'
-        && lay.evidence.length === 27 && new Set(lay.evidence).size === 27, lay.evidence.slice(0, 8).join(','));
+        && lay.evidence.length === 32 && new Set(lay.evidence).size === 32, lay.evidence.slice(0, 8).join(','));
   check('Documents: the two files behind ShopRite, each with its type and an opener',
         lay.docs.length === 2 && lay.docs.map(d => d.name).sort().join(',') === 'Maple_Plaza_Test_Lease_Amendment.pdf,ShopRite_Anchor_Tenant_Lease.pdf'
         && lay.docs.every(d => d.open) && lay.docs.some(d => /Amendment · 2027-01-01/.test(d.meta)), JSON.stringify(lay.docs.map(d => d.meta)));
@@ -485,12 +486,12 @@ const DB = `
         tr0.coreBeforeOther && tr0.coreVisible.join(',') === 'tenant_name,suite,leased_sqft,start_date,end_date,lease_type,base_rent,cap,security_deposit,renewal_options'
         && tr0.coreHead === 'Core lease terms 10 terms · 4 verified by a person · 3 read by AI, not yet verified · 2 contested · 1 not established', tr0.coreHead);
   check('Other lease terms are folded — with what is in them on the fold — and nothing in them is contested',
-        !tr0.otherOpen && tr0.otherVisible === 0 && tr0.otherFields.length === 17
-        && tr0.otherHead === 'Other lease terms 17 terms · 8 read by AI, not yet verified · 1 unclear · 8 not established', JSON.stringify([tr0.otherOpen, tr0.otherVisible, tr0.otherFields.length, tr0.otherHead]));
-  check('all 27 terms are on the page, each once', tr0.allTerms === 27, String(tr0.allTerms));
+        !tr0.otherOpen && tr0.otherVisible === 0 && tr0.otherFields.length === 22
+        && tr0.otherHead === 'Other lease terms 22 terms · 8 read by AI, not yet verified · 1 unclear · 13 not established', JSON.stringify([tr0.otherOpen, tr0.otherVisible, tr0.otherFields.length, tr0.otherHead]));
+  check('all 32 terms are on the page, each once', tr0.allTerms === 32, String(tr0.allTerms));
   await page.click('#acqTermsList details.acq-lh-other > summary');
   const tr1 = await tierState();
-  check('one click unfolds the Other lease terms: all 17 visible, CAM details first', tr1.otherOpen && tr1.otherVisible === 17 && tr1.otherFields[0] === 'cap_base_amount',
+  check('one click unfolds the Other lease terms: all 22 visible, Rent & recoveries first', tr1.otherOpen && tr1.otherVisible === 22 && tr1.otherFields[0] === 'rent_escalations',
         `${tr1.otherOpen} ${tr1.otherVisible}`);
   await page.click('#acqTermsList .acq-lh-term[data-field="admin_fee_pct"]');
   check('an Other term still opens its evidence, with its controls', await page.evaluate(() => {
@@ -532,7 +533,7 @@ const DB = `
         && chips.byField.start_date === 'Contested' && chips.byField.audit_rights === 'Unclear' && chips.byField.security_deposit === 'Not established'
         && Object.values(chips.byField).every(v => ['Verified by a person', 'Read by AI · not yet verified', 'Unclear', 'Contested', 'Not established'].includes(v)),
         JSON.stringify(chips.byField).slice(0, 200));
-  check('the evidence counts read the same way', chips.groupSub === '27 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 9 not established', chips.groupSub);
+  check('the evidence counts read the same way', chips.groupSub === '32 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 14 not established', chips.groupSub);
   check('Back names the record: "← Back to MainStreet\'s Record"', chips.back === '← Back to MainStreet’s Record', chips.back);
   await page.click('#acqTermsList .acq-lh-attn-item.unverified');
   check('the unverified item opens the first value nobody has verified — Tenant', await page.evaluate(() =>
@@ -613,8 +614,8 @@ const DB = `
   const r3 = await record();
   check('Luxe Nails opens Luxe Nails\' record', r3.leasehold === LUXE && r3.title === 'Luxe Nails' && r3.groups.length === 1 && r3.groups[0] === LUXE, r3.title);
   check('its headline says what is not established', r3.headline === '3,000 SF · Lease type not established · Base rent not established', r3.headline);
-  check('Luxe Nails\' workload: 23 not established · 4 values read by AI · not yet verified — its own terms, not ShopRite\'s',
-        !r3.attnAggregate && r3.attnCats.join(' | ') === '23 not established | 4 values read by AI · not yet verified'
+  check('Luxe Nails\' workload: 28 not established · 4 values read by AI · not yet verified — its own terms, not ShopRite\'s',
+        !r3.attnAggregate && r3.attnCats.join(' | ') === '28 not established | 4 values read by AI · not yet verified'
         && r3.attnTerms.missing.slice(0, 5).join(', ') === 'Suite, Commencement, Expiration, Lease type, Base rent'
         && r3.attnTerms.unverified.join(', ') === 'Tenant, Leased sq ft, CAM cap, Excluded categories',
         r3.attnCats.join(' | '));

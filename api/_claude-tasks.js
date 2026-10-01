@@ -259,7 +259,8 @@ RULES:
 // The 27 names are acquisition-terms.js's and are reproduced here verbatim —
 // a test holds the two lists equal. Group A is LeaseIntelligence's canonical
 // thirteen; B is what lease_extraction already returns; C is the nine the
-// approved plan named. None may be dropped or renamed here.
+// approved plan named; D is the five columns of the buyer's acquisition
+// matrix no other field held. None may be dropped or renamed here.
 //
 // MISSING IS NOT NONE. A term the document does not address is
 // { value: null, quote: null }. A document that says "Tenant shall have no
@@ -278,7 +279,7 @@ Return ONLY valid JSON. No explanation. No markdown. Start with { and end with }
 
 Report ONLY the fields THIS DOCUMENT ESTABLISHES. Omit every other key entirely — do not emit a placeholder object for a term the document does not address. The reader fills the rest in; a page of nulls costs time and establishes nothing.
 
-These are the only 27 keys that exist. Use them exactly as spelled:
+These are the only 32 keys that exist. Use them exactly as spelled:
 
   cap                           number   — annual CAM / operating-expense increase cap; a percentage as a plain number (5 for "5%"), or a dollar amount
   cap_base_amount               number   — the dollar base the cap is measured from, when stated
@@ -287,7 +288,7 @@ These are the only 27 keys that exist. Use them exactly as spelled:
   expense_stop                  number   — expense stop or base-year stop, dollars per square foot
   audit_rights                  boolean  — true if the tenant has an explicit right to audit; false if explicitly waived
   pro_rata_method               "rentable" | "leasable" | "occupied" | "gross" — the pro-rata denominator
-  renewal_options               string   — count, term and rate basis of renewal options, or the clause that denies them
+  renewal_options               string   — count, term, rate basis and exercise notice period of renewal options, or the clause that denies them
   tenant_name                   string   — the tenant named in THIS document (for an assignment, the assignee)
   leased_sqft                   number   — the premises' square footage as an integer
   start_date                    "YYYY-MM-DD" — commencement date THIS document states or changes
@@ -307,11 +308,17 @@ These are the only 27 keys that exist. Use them exactly as spelled:
   assignment_consent            string   — the standard for landlord consent to assignment or sublease
   exclusive_use                 string   — any exclusive-use protection granted to the tenant
   co_tenancy                    string   — any co-tenancy condition and its remedy
+  rent_escalations              string   — every scheduled base-rent increase, as period or date → new annual amount, or the CPI / percentage rule
+  cam_recovery                  string   — how CAM is recovered: pro rata or fixed (a fixed amount's increase rule), share %, admin fee, cap, exclusions
+  tax_recovery                  string   — how real estate taxes are recovered: pro rata, share %, denominator exclusions, fixed
+  insurance_recovery            string   — how insurance is recovered: pro rata, included in CAM, a fixed amount, or carried by the tenant
+  percentage_rent               string   — the percentage-rent rate and breakpoint, e.g. "4% of sales over $3,986,250"
 
 RULES:
 - value: what THIS document establishes for the term, in the type shown. Do not carry a value over from what a lease "usually" says, from the file name, or from any other document.
 - MISSING IS NOT NONE, and omitting a key is how you say MISSING. If the document says nothing about a term, leave its key out. If the document EXPLICITLY denies or waives a term — "Tenant shall have no option to renew", "there shall be no cap on Operating Expenses", "Tenant waives any right to audit" — that is a VALUE and the key MUST be present (the denying language for a string field; 0 for a number field; false for a boolean), with the clause as its quote. An explicit denial is a finding, not an absence. Never report an unaddressed term as 0, false, "none" or "".
-- quote: the exact verbatim span of the document that establishes the value — copied character for character, at most 600 characters, the shortest span that establishes it. Never paraphrase. A value with no quote will not be trusted, so if you cannot quote it, leave the key out.
+- The last five (rent_escalations, cam_recovery, tax_recovery, insurance_recovery, percentage_rent): value is a concise summary of at most 160 characters; every dollar amount and percentage in it must appear in the quote exactly as the document states it — never convert monthly to annual or compute a share. If the document EXPLICITLY states the provision does not exist ("Tenant shall not pay percentage rent", "Base Rent shall not increase during the Term"), the value is exactly "None" and the quote is that denying clause. "None" is ONLY for an explicit denial: a document that is silent on the term, or that you could not read clearly, gets no key at all.
+- quote: the exact verbatim span of the document that establishes the value — copied character for character, at most 600 characters (rent_escalations: up to 2400, so the quote covers EVERY step the value lists), the shortest span that establishes it. Never paraphrase. A value with no quote will not be trusted, so if you cannot quote it, leave the key out.
 - page: the page number from the nearest preceding "--- Page N ---" marker in the text, ONLY when such a marker is present and you are certain. Otherwise null. Never guess a page.
 - confidence: your confidence that the value is what this document establishes, 0.0 to 1.0.
 - An amendment, side letter or estoppel usually addresses only a few terms. Emit only those few. Do not invent what an amendment does not change.
@@ -343,7 +350,7 @@ const CLAUDE_TASKS = {
   // Acquisition Review P1-3. Six small fields and a short quote; 400 is room
   // for that and not for an abstraction.
   document_classification:  { system: _withBoundary(DOCUMENT_CLASSIFICATION_SYSTEM),  maxTokens: 400  },
-  // Acquisition Review P1-4. Twenty-seven fields, each with a verbatim quote
+  // Acquisition Review P1-4. Thirty-two fields, each with a verbatim quote
   // of up to 600 characters: ~200 tokens a field when every one is addressed,
   // which an original lease can do. A truncated reply is unparseable and the
   // whole reading is lost, so the ceiling sits above the worst case.
@@ -354,8 +361,12 @@ const CLAUDE_TASKS = {
   // reading that ran past the browser's fetch ceiling and was discarded. The
   // stored contract is unchanged — acquisition-terms.js buildAbstraction walks
   // FIELDS and normalises every absent key to {value,quote,page,confidence} of
-  // nulls, so all 27 are stored either way.
-  acquisition_abstraction:  { system: _withBoundary(ACQUISITION_ABSTRACTION_SYSTEM),  maxTokens: 6000 },
+  // nulls, so all 32 are stored either way.
+  //
+  // The five matrix fields (D) add four short summaries and one schedule
+  // whose quote may run to 2400 characters (~600 tokens); 7500 keeps the
+  // worst case above the ceiling, as 6000 did for 27.
+  acquisition_abstraction:  { system: _withBoundary(ACQUISITION_ABSTRACTION_SYSTEM),  maxTokens: 7500 },
 };
 
 /**

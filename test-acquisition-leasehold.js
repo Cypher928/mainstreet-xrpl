@@ -121,10 +121,23 @@ section('2 · one leasehold as one tenant row');
     row._states.leased_sqft === 'ai_extracted', row._states.leased_sqft);
   check('and the row does not show the file\'s stale 65,000 anywhere',
     !Object.keys(row).some(k => row[k] === 65000));
-  check('the CAM cap contradiction (4% vs 3%) is NULL on the row, not either figure',
-    row.cap === null && row.cam_cap === null, JSON.stringify([row.cap, row.cam_cap]));
-  check('and the row says it is contested',
-    row._states.cap === 'conflicting' && AL.cellState(row, 'cap') === 'contested');
+  // F2: the renewal (2024) and the amendment (2027) share a rank and their
+  // dates order them — the deal changed; the documents do not disagree. The
+  // newer one governs and the 4% stays in the history, open to inspection.
+  check('dated documents of one rank: the newer CAM cap (3%) governs, not contested',
+    row.cap === 3 && row.cam_cap === 3 && row._states.cap === 'ai_extracted', JSON.stringify([row.cap, row.cam_cap, row._states.cap]));
+  check('and the superseded 4% is kept in the term\'s history',
+    res.terms.cap.supersededValues.some(h => h.value === 4 && h.fileName === 'ShopRite_Anchor_Tenant_Lease.pdf'));
+  {
+    // F4: an UNDATED amendment cannot be placed before or after the renewal,
+    // so its disagreement is a contradiction — never presumed the oldest.
+    const undated = Object.assign({}, amendment, { doc_date: null });
+    const r2 = AL.tenantRowFor(families[0], AT.resolveFamilyTerms([lease, undated], [correction], { reasoner: LI }));
+    check('an undated disagreeing document: the CAM cap (4% vs 3%) is NULL on the row, not either figure',
+      r2.cap === null && r2.cam_cap === null, JSON.stringify([r2.cap, r2.cam_cap]));
+    check('and the row says it is contested',
+      r2._states.cap === 'conflicting' && AL.cellState(r2, 'cap') === 'contested');
+  }
   check('a term no document establishes is null and says missing',
     row.security_deposit === null && row._states.security_deposit === 'missing'
     && AL.cellState(row, 'security_deposit') === 'missing');

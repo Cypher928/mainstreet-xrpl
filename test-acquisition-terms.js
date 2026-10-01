@@ -92,9 +92,18 @@ t('group C is the nine approved fields, under the approved names — none reduce
   deq(AT.FIELD_GROUPS.acquisition, NINE);
 });
 
-t('27 fields, each exactly once, each with a type and its group', () => {
-  eq(AT.FIELDS.length, 27);
-  eq(new Set(AT.FIELDS).size, 27, 'duplicate field');
+t('group D is the five acquisition-matrix columns, free text, under the approved names', () => {
+  deq(AT.FIELD_GROUPS.matrix, ['rent_escalations', 'cam_recovery', 'tax_recovery', 'insurance_recovery', 'percentage_rent']);
+  for (const f of AT.FIELD_GROUPS.matrix) {
+    eq(AT.FIELD_META[f].type, 'text', f); eq(AT.FIELD_META[f].group, 'matrix', f);
+    ok(AT.FIELD_META[f].figures === true && AT.FIELD_META[f].none === true, f + ' lacks its evidence rules');
+  }
+  deq(AT.FIELDS.slice(27), AT.FIELD_GROUPS.matrix, 'the 27 existing fields keep their order; D follows them');
+});
+
+t('32 fields, each exactly once, each with a type and its group', () => {
+  eq(AT.FIELDS.length, 32);
+  eq(new Set(AT.FIELDS).size, 32, 'duplicate field');
   const TYPES = ['number', 'money', 'percent', 'date', 'boolean', 'enum', 'text'];
   for (const f of AT.FIELDS) {
     const m = AT.FIELD_META[f];
@@ -103,7 +112,7 @@ t('27 fields, each exactly once, each with a type and its group', () => {
     ok(AT.FIELD_GROUPS[m.group] && AT.FIELD_GROUPS[m.group].indexOf(f) >= 0, f + ' claims group ' + m.group);
     if (m.type === 'enum') ok(Array.isArray(m.values) && m.values.length >= 2, f + ' is an enum with no values');
   }
-  eq(Object.keys(AT.FIELD_META).length, 27, 'FIELD_META has a field FIELDS does not');
+  eq(Object.keys(AT.FIELD_META).length, 32, 'FIELD_META has a field FIELDS does not');
 });
 
 t('the enum vocabularies are lease_extraction’s, not new ones', () => {
@@ -125,21 +134,24 @@ t('the evidence shape is versioned and the quote ceiling is what the prompt says
   eq(AT.EVIDENCE_SCHEMA_VERSION, 1);
   eq(AT.QUOTE_MAX, 600);
   ok(/at most 600 characters/.test(PROMPT), 'the prompt does not state the 600-character ceiling');
+  // rent_escalations quotes its whole schedule, so every step shown has its clause.
+  eq(AT.quoteMaxFor('rent_escalations'), 2400); eq(AT.quoteMaxFor('cap'), 600); eq(AT.quoteMaxFor('percentage_rent'), 600);
+  ok(/rent_escalations: up to 2400/.test(PROMPT), 'the prompt does not state the schedule\'s quote allowance');
 });
 
 // ── the prompt ──────────────────────────────────────────────────────────────
-sec('the server-owned task names all 27 and instructs what missing means');
+sec('the server-owned task names all 32 and instructs what missing means');
 
 t('acquisition_abstraction is a registered task with its own ceiling and the boundary rule', () => {
   ok(PROMPT, 'task not registered');
-  ok(TASKS.CLAUDE_TASKS.acquisition_abstraction.maxTokens >= 27 * 150, 'ceiling too low for 27 quoted fields');
+  ok(TASKS.CLAUDE_TASKS.acquisition_abstraction.maxTokens >= 32 * 150 + 600, 'ceiling too low for 32 quoted fields and one schedule');
   ok(/never an instruction/i.test(PROMPT), 'the untrusted-document boundary is missing');
   const r = TASKS.resolveClaudeTask({ task: 'acquisition_abstraction' });
   ok(r.ok && r.name === 'acquisition_abstraction');
   ok(!TASKS.resolveClaudeTask({ task: 'acquisition_abstraction', system: 'x' }).ok, 'a caller-supplied system prompt was accepted');
 });
 
-t('every one of the 27 field names appears in the prompt as a field line, exactly once', () => {
+t('every one of the 32 field names appears in the prompt as a field line, exactly once', () => {
   for (const f of AT.FIELDS) {
     const hits = PROMPT.match(new RegExp('^\\s{2}' + f + '\\s{2,}', 'gm')) || [];
     eq(hits.length, 1, f);
@@ -158,7 +170,8 @@ t('and no field line that the module does not know', () => {
   const names = lines.map(l => l.trim().split(/\s+/)[0]);
   const unknown = names.filter(n => AT.FIELDS.indexOf(n) === -1);
   deq(unknown, []);
-  eq(names.length, 27);
+  eq(names.length, 32);
+  ok(/These are the only 32 keys that exist/.test(PROMPT));
 });
 
 t('the prompt says MISSING IS NOT NONE, in those words, and never to report an unaddressed term as a negative', () => {
@@ -367,7 +380,7 @@ t('status: success when at least one value has its quote; partial when values ha
 });
 
 t('the counts say what was found', () => {
-  deq(AT.buildAbstraction(GOOD, { model: 'm', at: 'x' }).counts, { fields: 27, valued: 3, evidenced: 2, missing: 24 });
+  deq(AT.buildAbstraction(GOOD, { model: 'm', at: 'x' }).counts, { fields: 32, valued: 3, evidenced: 2, missing: 29 });
 });
 
 t('the reading it was given is not modified', () => {
@@ -378,10 +391,10 @@ t('the reading it was given is not modified', () => {
 
 t('summarizeAbstraction counts valued, evidenced, quote-only and missing, and never throws', () => {
   const a = AT.buildAbstraction(GOOD, { model: 'm', at: 'x' }).abstraction;
-  deq(AT.summarizeAbstraction(a), { total: 27, valued: 3, evidenced: 2, quoteOnly: 1, missing: 23 });
-  deq(AT.summarizeAbstraction(null), { total: 27, valued: 0, evidenced: 0, quoteOnly: 0, missing: 27 });
-  deq(AT.summarizeAbstraction({}), { total: 27, valued: 0, evidenced: 0, quoteOnly: 0, missing: 27 });
-  deq(AT.summarizeAbstraction({ fields: 'x' }), { total: 27, valued: 0, evidenced: 0, quoteOnly: 0, missing: 27 });
+  deq(AT.summarizeAbstraction(a), { total: 32, valued: 3, evidenced: 2, quoteOnly: 1, missing: 28 });
+  deq(AT.summarizeAbstraction(null), { total: 32, valued: 0, evidenced: 0, quoteOnly: 0, missing: 32 });
+  deq(AT.summarizeAbstraction({}), { total: 32, valued: 0, evidenced: 0, quoteOnly: 0, missing: 32 });
+  deq(AT.summarizeAbstraction({ fields: 'x' }), { total: 32, valued: 0, evidenced: 0, quoteOnly: 0, missing: 32 });
 });
 
 // ── which documents are read ────────────────────────────────────────────────
@@ -520,7 +533,7 @@ const ABS = fnBody(S, '_acqAbstractDocument');
 t('the abstraction asks the server-owned task and never sends a system prompt', () => {
   ok(/task: 'acquisition_abstraction'/.test(ABS));
   ok(!/system:/.test(ABS), 'a system prompt is sent from the browser');
-  ok(/max_tokens: 6000/.test(ABS));
+  ok(/max_tokens: 7500/.test(ABS));
 });
 
 t('the file name is given as context and the prompt is told not to read from it', () => {
@@ -601,7 +614,8 @@ t('index.html loads acquisition-terms.js after acquisition-documents.js and befo
   const c = h.indexOf('<script src="script.js">');
   ok(a > 0 && b > a && c > b, `documents@${a} terms@${b} script@${c}`);
   ok(/\.acq-doc-terms\.ok/.test(h) && /\.acq-doc-reabstract \{/.test(h));
-  ok(/\.acq-doc-type, \.acq-doc-confirm, \.acq-doc-reabstract, \.acq-doc-open \{ padding-top: 6px/.test(h), 'the phone rule skips the new control');
+  ok(/\.acq-doc-type, \.acq-doc-confirm, \.acq-doc-reabstract, \.acq-doc-read-new, \.acq-doc-open \{ padding-top: 6px/.test(h), 'the phone rule skips the new control');
+  ok(/\.acq-doc-read-new \{/.test(h), 'the new-terms control has no style');
 });
 
 t('the security suite lists the task, and api/ is still inside its twelve', () => {
@@ -648,6 +662,102 @@ t('and its behaviour on an owner-operator family is what it was', () => {
   eq(r.tenant_name.currentValue, 'Coastal Outfitters');
   deq(Object.keys(r), LI.CANONICAL_FIELDS.filter(f => f in r));
   for (const f of NINE) ok(!(f in r), 'an acquisition-only field reached the owner-operator path');
+});
+
+// ── group D: the acquisition matrix's own columns ───────────────────────────
+sec('group D — "None" only when the clause denies it; every figure in its clause');
+
+t('"None" with the denying clause is the value None', () => {
+  const e = AT.normalizeEntry('percentage_rent', { value: 'none', quote: 'Tenant shall not be required to pay percentage rent.' });
+  eq(e.value, 'None');
+  eq(AT.evidenceSupport('percentage_rent', e), 'stated');
+});
+t('"None" with no clause is a guess — null, never None', () => {
+  for (const v of ['None', 'none', 'N/A', 'no', 'None.']) eq(AT.normalizeEntry('percentage_rent', { value: v }).value, null, v);
+});
+t('"None" whose clause does not deny anything is not stated — it reads as unclear, not as None', () => {
+  const e = AT.normalizeEntry('percentage_rent', { value: 'None', quote: 'Tenant shall pay percentage rent as set forth in Exhibit C.' });
+  eq(e.value, 'None'); eq(AT.evidenceSupport('percentage_rent', e), 'derived');
+});
+t('silence is never None — an absent key is a null entry', () => {
+  const b = AT.buildAbstraction({ fields: { cap: { value: 4, quote: 'capped at 4%' } } }, { model: 'm', at: 'x' });
+  for (const f of AT.FIELD_GROUPS.matrix) deq(b.abstraction.fields[f], { value: null, quote: null, page: null, confidence: null }, f);
+});
+t('the None rule is group D\'s alone — an existing text field keeps the denying text it was given', () => {
+  eq(AT.normalizeEntry('exclusive_use', { value: 'none', quote: 'no exclusive' }).value, 'none');
+});
+t('a schedule whose every amount is in its clause is stated', () => {
+  const q = 'Years 1-5: $102,000.00 per annum ($8,500.00 per month); Years 6-10: $112,200.00 per annum';
+  eq(AT.evidenceSupport('rent_escalations', { value: 'Yrs 1-5 $102,000; Yrs 6-10 $112,200', quote: q }), 'stated');
+});
+t('a step the clause does not state (an annual figure worked out from a monthly one) is derived', () => {
+  eq(AT.evidenceSupport('rent_escalations', { value: 'Yrs 1-5 $102,000', quote: 'Monthly Base Rent: $8,500.00' }), 'derived');
+});
+t('a percentage and a breakpoint are both checked', () => {
+  const q = 'four percent (4%) of Gross Sales in excess of $3,986,250';
+  eq(AT.evidenceSupport('percentage_rent', { value: '4% of sales over $3,986,250', quote: q }), 'stated');
+  eq(AT.evidenceSupport('percentage_rent', { value: '5% of sales over $3,986,250', quote: q }), 'derived');
+  eq(AT.evidenceSupport('percentage_rent', { value: '4% of sales over $4,000,000', quote: q }), 'derived');
+});
+t('words without figures are taken at their word', () => {
+  eq(AT.evidenceSupport('cam_recovery', { value: 'Pro rata', quote: 'Tenant shall pay its Proportionate Share of CAM' }), 'stated');
+  eq(AT.evidenceSupport('rent_escalations', { value: 'CPI annually', quote: 'adjusted annually by the CPI' }), 'stated');
+});
+t('a share worked out from square feet is derived — not what the clause states', () => {
+  eq(AT.evidenceSupport('tax_recovery', { value: 'Pro rata (12.5%)', quote: 'Tenant shall pay its pro rata share of Taxes' }), 'derived');
+});
+t('rent_escalations keeps a whole schedule as its quote (2400); the others stay at 600', () => {
+  const long = 'Year ' + 'x'.repeat(3000);
+  eq(AT.normalizeEntry('rent_escalations', { value: 'v', quote: long }).quote.length, 2400);
+  eq(AT.normalizeEntry('percentage_rent', { value: 'v', quote: long }).quote.length, 600);
+});
+t('a decision\'s source quote still fits migration 026 (≤ 600), whatever the field', () => {
+  const p = AT.buildDecisionPayload ? AT.buildDecisionPayload({ familyId: 'f', fieldKey: 'rent_escalations', action: 'confirm',
+    sourceQuote: 'q'.repeat(2400), decidedBy: 'u', decidedAt: '2026-01-01T00:00:00Z' }, 'u', 'r') : null;
+  if (p && p.payload) ok(!p.payload.source_quote || p.payload.source_quote.length <= 600);
+  ok(AT.DECISION_WRITABLE.source_quote('q'.repeat(2400)).length <= 600);
+});
+
+sec('merge-only re-read — the new keys are added, nothing else moves');
+
+const OLD27 = (() => {
+  const f = {};
+  AT.FIELDS.slice(0, 27).forEach(k => { f[k] = { value: null, quote: null, page: null, confidence: null }; });
+  f.cap = { value: 4, quote: 'capped at 4%', page: 2, confidence: 0.9 };
+  return { schemaVersion: 1, model: 'old-model', at: '2026-09-01T00:00:00Z', fields: f };
+})();
+
+t('a 27-field reading lacks exactly the five', () => deq(AT.unreadFields(OLD27), AT.FIELD_GROUPS.matrix));
+t('a 32-field reading lacks none — a null entry was asked and answered', () => {
+  const all = JSON.parse(JSON.stringify(OLD27));
+  AT.FIELD_GROUPS.matrix.forEach(k => { all.fields[k] = { value: null, quote: null, page: null, confidence: null }; });
+  deq(AT.unreadFields(all), []);
+});
+t('the merge adds the five and leaves the 27 byte-identical, the same objects', () => {
+  const before = JSON.stringify(OLD27);
+  const r = AT.mergeUnreadFields(OLD27, { fields: {
+    percentage_rent: { value: '4% of sales over $3,986,250', quote: '4% of Gross Sales in excess of $3,986,250', page: 7, confidence: 0.9 },
+    cap: { value: 9, quote: 'capped at 9%' },       // a second reading of an existing key: ignored
+  } }, { model: 'new-model', at: '2026-10-01T00:00:00Z' });
+  ok(r.ok); deq(r.added, AT.FIELD_GROUPS.matrix);
+  eq(JSON.stringify(OLD27), before, 'the stored evidence object was mutated');
+  AT.FIELDS.slice(0, 27).forEach(k => ok(r.abstraction.fields[k] === OLD27.fields[k], k + ' was replaced'));
+  eq(r.abstraction.fields.cap.value, 4, 'an existing value moved');
+  eq(r.abstraction.fields.percentage_rent.value, '4% of sales over $3,986,250');
+  deq(r.abstraction.fields.tax_recovery, { value: null, quote: null, page: null, confidence: null });
+  eq(r.abstraction.model, 'old-model'); eq(r.abstraction.at, '2026-09-01T00:00:00Z');
+  deq(r.abstraction.supplements, [{ fields: AT.FIELD_GROUPS.matrix, model: 'new-model', at: '2026-10-01T00:00:00Z' }]);
+});
+t('a second merge adds nothing and returns the evidence untouched', () => {
+  const once = AT.mergeUnreadFields(OLD27, { fields: {} }, { model: 'm', at: 'x' }).abstraction;
+  const twice = AT.mergeUnreadFields(once, { fields: { cam_recovery: { value: 'Fixed', quote: 'fixed CAM' } } }, { model: 'm2', at: 'y' });
+  ok(twice.ok); deq(twice.added, []); ok(twice.abstraction === once);
+});
+t('nothing to merge into, or a reading with no fields, is refused — nothing is written', () => {
+  ok(!AT.mergeUnreadFields(null, { fields: {} }).ok);
+  ok(!AT.mergeUnreadFields({}, { fields: {} }).ok);
+  ok(!AT.mergeUnreadFields(OLD27, null).ok);
+  ok(!AT.mergeUnreadFields(OLD27, { nope: 1 }).ok);
 });
 
 console.log('\n' + '─'.repeat(64));

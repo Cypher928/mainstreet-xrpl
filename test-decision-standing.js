@@ -182,7 +182,7 @@ t('D10 the public API is intact: AcquisitionTerms still exports latestDecision a
 sec('E  FIELD_LABELS (property-leaseholds.js) ≡ FIELD_META labels (acquisition-terms.js)');
 const metaLabels = {}; FIELDS.forEach(f => { metaLabels[f] = AT.FIELD_META[f].label; });
 eq(PL.FIELD_LABELS, metaLabels, 'E1 the 27 labels are identical, key for key');
-eq(Object.keys(PL.FIELD_LABELS).length, 27, 'E2 twenty-seven');
+eq(Object.keys(PL.FIELD_LABELS).length, 32, 'E2 thirty-two');
 const metaNumeric = FIELDS.filter(f => /^(number|money|percent)$/.test(AT.FIELD_META[f].type)).sort();
 eq(Object.keys(PL.NUMERIC_FIELDS).sort(), metaNumeric, 'E3 the fields compared as quantities are exactly FIELD_META\'s number/money/percent fields');
 eq([PL.fieldLabel('leased_sqft'), PL.fieldLabel('nope'), PL.fieldLabel(null)], ['Leased sq ft', 'nope', ''], 'E4 fieldLabel: the label, else the key, else ""');

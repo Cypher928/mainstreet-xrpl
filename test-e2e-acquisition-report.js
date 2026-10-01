@@ -43,12 +43,16 @@ const FIELDS = (o) => ({ schemaVersion: 1, model: 'claude-sonnet-4-6', at: '2026
 // The Pilot's leasehold, reproduced: a renewal and an amendment at the same
 // tier, disagreeing. Plus a scan with no original that could not be read, and
 // an unrelated lease in no leasehold — so question 4 has every kind of row.
+// F4: the renewal is UNDATED here, so it cannot be ordered against the 2027
+// amendment and their disagreements stay Contested — this suite draws
+// contradictions. Dated (2024-03-01), the newer amendment would govern
+// (F2); test-acquisition-leasehold.js and test-acquisition-report*.js pin that.
 const DOCS = [
   { id: 'd-lease', review_id: REVIEW_ID, user_id: UID, intake_id: 'ik-1',
     file_name: 'ShopRite_Anchor_Tenant_Lease.pdf', intake_kind: 'lease', parsing_status: 'success',
     storage_path: 'leases/' + UID + '/acq_x_1-ShopRite_Anchor_Tenant_Lease.pdf',
     doc_type: 'renewal', doc_type_status: 'corrected', doc_type_source: 'human',
-    confirmed_by: UID, confirmed_at: '2026-09-21T20:30:00Z', doc_date: '2024-03-01',
+    confirmed_by: UID, confirmed_at: '2026-09-21T20:30:00Z', doc_date: null,
     family_id: FAM, family_status: 'proposed', family_source: 'ai',
     superseded_by_document_id: null, classification_history: [],
     abstraction_status: 'success', abstraction_model: 'claude-sonnet-4-6', abstracted_at: '2026-09-21T20:30:55Z',
@@ -618,7 +622,7 @@ const DB = `
   const Q2d = d1.q2;
   check('Q2 is drawn', !!Q2d);
   check('Q2 on screen is exactly the model — key, state, origin, derived, in order',
-        JSON.stringify(Q2d.rows) === JSON.stringify(exp.q2) && exp.q2.length === 10, Q2d.rows.join(','));
+        JSON.stringify(Q2d.rows) === JSON.stringify(exp.q2) && exp.q2.length === 15, Q2d.rows.join(','));
   check('all three income sources head the table: contractual, rent roll, general ledger',
         JSON.stringify(Q2d.heads) === JSON.stringify(['Leasehold', 'Contractual (from the leases)',
           'Rent roll (as the seller states it)', 'General ledger (as the books show it)']), Q2d.heads.join(' | '));
