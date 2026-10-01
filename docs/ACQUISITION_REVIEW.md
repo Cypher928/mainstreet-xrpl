@@ -1777,15 +1777,35 @@ button beside it says what to do:
 | Analysis | Button | Note |
 |---|---|---|
 | none yet | ⚡ Run Analysis | Ready — click to run risk analysis. |
+| none yet, no seller invoices | ⚡ Run Analysis | Ready — runs a lease-only analysis (no seller invoices). Add seller invoices to include CAM recovery. |
 | out of date | ↻ Refresh Analysis | Out of date — refresh the analysis to use what is on file now. |
 | current | ↻ Re-run Analysis | Analysis is current — up to date with MainStreet’s Record, the property area and the invoices. Re-run it only if you want a fresh run. |
 | not yet checkable | ⚡ Run Analysis | Checking the analysis against MainStreet’s Record… |
 
 Every state runs the same full analysis — stored, and logged as an analysis run;
 a current one stays clickable so it can be run again on purpose. Missing
-inputs (no leasehold, no invoice, no area) still say so first. The
+inputs (no leasehold, no area) still say so first. The
 freshness check (`_acqAnalysisStaleParts`) is unchanged — pinned to the
 commit by test. The walk now reads only what is rendered.
+
+**Seller invoices are optional (lease-only analysis).** Run Analysis needs at
+least one leasehold and Total Property SqFt above zero — not an invoice (§7: a
+buyer often has none). With no invoices the engine returns its rent roll and no
+CAM summary; the analysis is stored exactly as any other, `canonical` included
+(basis, fingerprint, area, the invoice fingerprint of none, and every
+leasehold's term states), so freshness and the conversion gate read it
+unchanged. The Risk Analysis tab says *Lease-only analysis — Seller invoices
+were not provided, so CAM recovery was not analyzed* above the occupancy check
+and Rent Roll CSV, and the Rent Roll tab is the usual one. There is no Decision
+Report control, and `generateAcquisitionReport()` refuses an analysis without a
+summary (its lease-only guard is marked, like the Option B stale guard). Adding
+an invoice changes the invoice fingerprint, so the analysis reads as out of date
+and Acquire is blocked until it is refreshed; the refreshed run carries the CAM
+summary and the Decision Report returns. Pending documents, unmatched
+extractions, no leaseholds and a stale analysis still block Acquire, and the
+server conversion and the 036 freeze are untouched. Walked by
+`test-e2e-acquisition-lease-only.js`; mutants in
+`tools/acquisition-lease-only-mutation.js`.
 
 **The overlay.** `closeReport()` empties the report. A new analysis — Run
 Analysis or a refresh — calls `_acqInvalidateDecisionReport()`, which closes

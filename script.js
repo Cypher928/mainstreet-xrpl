@@ -34729,7 +34729,11 @@ function _updateAcqAnalyzeBtn() {
                              : (_acqTenants.some(t => t.tenant_name || t.tenantName) || _acqFamilyRows(_activeAcqId).length > 0);
   const hasInvoices = _acqInvoices.some(i => i.amount);
   const hasSqFt     = _acqSqFt > 0;
-  const ready = hasTenants && hasInvoices && hasSqFt;
+  // Seller invoices are optional (ACQUISITION_REVIEW.md, P1-3 finding): a
+  // buyer often has none. Without them the analysis is lease-only — occupancy,
+  // rent roll, expirations and the term states — and CAM recovery is not
+  // analysed. The leaseholds and the property area are still required.
+  const ready = hasTenants && hasSqFt;
   // What the button does now (§4o): run a first analysis, refresh one that is
   // out of date, or run a current one again on purpose — every one a full
   // run, stored and logged. Whether it is current is _acqAnalysisStale's
@@ -34753,11 +34757,11 @@ function _updateAcqAnalyzeBtn() {
                   : '⚡ Run Analysis';
   if (note) {
     note.textContent = !hasTenants  ? (loaded && _acqUnresolvedExtractions(_activeAcqId) ? _acqNoLeaseholdsMessage(_activeAcqId) : 'Upload at least one lease to enable analysis.')
-                     : !hasInvoices ? 'Upload at least one invoice to enable analysis.'
                      : !hasSqFt    ? 'Enter total property square footage above.'
                      : current     ? 'Analysis is current — up to date with MainStreet’s Record, the property area and the invoices. Re-run it only if you want a fresh run.'
                      : why         ? 'Out of date — refresh the analysis to use what is on file now.'
                      : hasAnalysis ? 'Checking the analysis against MainStreet’s Record…'
+                     : !hasInvoices ? 'Ready — runs a lease-only analysis (no seller invoices). Add seller invoices to include CAM recovery.'
                      : 'Ready — click to run risk analysis.';
   }
 }
@@ -35110,8 +35114,48 @@ async function runAcquisitionAnalysis() {
   _updateAcqAnalyzeBtn();
 }
 
+// A lease-only analysis: run with leaseholds and the property area but no
+// seller invoices. The engine returns its rent roll (occupancy, expirations,
+// WALT, rollover) and the term states ride on `canonical` as always; there is
+// no CAM summary, so nothing that reports CAM recovery may be drawn from it.
+function _acqIsLeaseOnlyAnalysis(a) {
+  return !!a && !a.summary && Array.isArray(a.tenantSummary) && a.tenantSummary.length > 0
+    && a.invoices === 0 && !!a.rentRoll;
+}
+
 function _renderAcqReport(report, container) {
   if (!container) return;
+  if (_acqIsLeaseOnlyAnalysis(report)) {
+    // The rent roll and the occupancy check, as a full analysis draws them;
+    // in place of the CAM figures, a plain statement of why there are none.
+    // No Decision Report control: it reports CAM recovery.
+    _acqRentRollReport = report;
+    const rrTab = _renderRentRollTab(report.rentRoll, report.tenantSummary || []);
+    _acqRentRollReport = null;
+    const leaseOnly = `
+    <div class="acq-lease-only" style="padding:10px 14px;background:var(--theme-surface);border-radius:7px;margin-bottom:14px;">
+      <div style="font-size:0.86rem;font-weight:700;">Lease-only analysis</div>
+      <div style="font-size:0.8rem;color:var(--text-4);margin-top:4px;">Seller invoices were not provided, so CAM recovery was not analyzed. Occupancy, the rent roll and lease expirations below come from MainStreet’s Record. Add seller invoices and re-run the analysis to include CAM recovery and the Decision Report.</div>
+    </div>`;
+    container.innerHTML = `
+  <div class="acq-report">
+    <div class="acq-report-tabs">
+      <button class="acq-tab${_acqActiveTab === 'risk'    ? ' active' : ''}" data-tab="risk"     onclick="switchAcqTab('risk')">Risk Analysis</button>
+      <button class="acq-tab${_acqActiveTab === 'rentroll'? ' active' : ''}" data-tab="rentroll" onclick="switchAcqTab('rentroll')">&#x1F4CA;&nbsp;Rent Roll</button>
+    </div>
+    <div id="acqTabRisk" class="acq-tab-pane"${_acqActiveTab !== 'risk'     ? ' style="display:none"' : ''}>
+      ${leaseOnly}${_acqOccupancyCheckHtml((report.rentRoll || {}).occupancy)}
+      <div class="acq-export-bar">
+        <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
+      </div>
+    </div>
+    <div id="acqTabRentRoll" class="acq-tab-pane"${_acqActiveTab !== 'rentroll' ? ' style="display:none"' : ''}>
+      ${rrTab}
+    </div>
+  </div>`;
+    _acqUpdateStaleNotice();
+    return;
+  }
   if (report.error) {
     container.innerHTML = `<div style="color:var(--c-f87171);padding:16px;">${esc(report.error)}</div>`;
     return;
@@ -35696,6 +35740,14 @@ function generateAcquisitionReport() {
     showToast('Run analysis first to generate a report.', { color: '#92400e', textColor: '#fef3c7' });
     return;
   }
+  // ── Lease-only guard ──
+  // The Decision Report reports CAM recovery; a lease-only analysis has none.
+  if (!review.data.analysis.summary) {
+    showToast('The Decision Report needs seller invoices: add them and re-run the analysis. The Acquisition Report on the Lease Terms card needs none.',
+      { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return;
+  }
+  // ── end Lease-only guard ──
   // ── Option B stale guard ──
   // A report that leaves the building must not carry figures older than the
   // record. Until the record has loaded, whether they are cannot be told.

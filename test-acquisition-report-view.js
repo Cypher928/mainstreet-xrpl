@@ -343,10 +343,12 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
     sha('acquisition-report.js') === '861d0d237c69e349bd01320404f853d4f451072816192954ee3c23bc67029d2a',
     sha('acquisition-report.js').slice(0, 12));
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
-  // The changes v1 may carry: Option B's stale guard (docs §4n), between its
+  // The changes v1 may carry: Option B's stale guard (docs §4n) and the
+  // lease-only guard (no CAM summary, no Decision Report), each between its
   // markers, and the occupancy check under Lease Stability (§4o), one call.
   // Everything else in the function is pinned to HEAD.
   const unguard = (f) => f.replace(/\n  \/\/ ── Option B stale guard ──[\s\S]*?  \/\/ ── end Option B stale guard ──\n/, '\n')
+    .replace(/\n  \/\/ ── Lease-only guard ──[\s\S]*?  \/\/ ── end Lease-only guard ──\n/, '\n')
     .replace('</div>${_acqOccupancyCheckHtml(occ, true)}\n', '</div>\n');
   const v1Now = unguard((S.match(/^function generateAcquisitionReport\(\) \{[\s\S]*?^\}/m) || [''])[0]);
   let v1Head = '';

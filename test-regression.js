@@ -542,6 +542,10 @@ const SUITES = [
   { label: 'Acquisition leaseholds only walk (e2e, §4n)', cmd: 'node test-e2e-acquisition-leaseholds-only.js' },
   { label: 'Acquisition analysis freshness (§4o)',        cmd: 'node test-acquisition-analysis-freshness.js' },
   { label: 'Acquisition analysis freshness walk (e2e, §4o)', cmd: 'node test-e2e-acquisition-analysis-freshness.js' },
+  // Seller invoices are optional: leaseholds and the property area run a
+  // lease-only analysis (rent roll, occupancy, term states, no CAM), the
+  // Decision Report waits for invoices, and the conversion gate is unchanged.
+  { label: 'Acquisition lease-only analysis walk (e2e)',  cmd: 'node test-e2e-acquisition-lease-only.js' },
   // The migration itself, executed against a throwaway PostgreSQL cluster —
   // no Supabase project is contacted. SKIPS loudly when no local server binary
   // is present, which is a skip and not a pass.
