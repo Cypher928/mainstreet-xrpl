@@ -42,6 +42,7 @@ const API    = fs.readFileSync(path.join(ROOT, 'api/lease-documents.js'), 'utf8'
 const LUI    = require('./lease-upload-identity.js');
 const LS     = require('./leasehold-status.js');
 const FP     = require('./field-provenance.js');
+const AD     = require('./acquisition-documents.js');
 const TN     = require('./tenant-normalize.js');
 
 // The API handler narrates every write on the console; the suite speaks through `out`.
@@ -126,9 +127,12 @@ const FNS = [
   'saveLeaseDocument', 'dedupeTenants', 'mintTenantIdentity', '_amendmentMerge',
   '_findHeldLeaseUpload', '_removeHeldLeaseUpload', '_persistableTenantRows', '_saveAfterHeldDecision',
   '_repaintAfterHeldDecision', 'resolveHeldLeaseUpload', '_tenantsBelongTo',
+  // Bulk Intake B1–B5: the shared save, the retry path and the document-type hold.
+  '_settleLeaseJobRoster', '_persistLeaseUploads', '_classifyLeaseUpload', '_leaseUploadDocGate',
+  '_leaseRetryInput', '_pickLeaseRetryFile', 'retryLeaseUpload', '_retryLeaseJobWithFile',
 ];
 const JOB_STAGES = SCRIPT.slice(SCRIPT.indexOf('const _JOB_STAGES = {'), SCRIPT.indexOf('};', SCRIPT.indexOf('const _JOB_STAGES = {')) + 2);
-const APP_SRC = JOB_STAGES + '\nconst _resolvedHeldUploads = new Set();\nconst _heldInFlight = new Set();\n'
+const APP_SRC = JOB_STAGES + '\nconst _resolvedHeldUploads = new Set();\nconst _heldInFlight = new Set();\nlet _leaseRetryPick = null;\n'
   + FNS.map(n => fnSource(SCRIPT, n)).join('\n') + '\n'
   + FNS.map(n => `this.${n} = ${n};`).join('\n');
 
@@ -172,14 +176,14 @@ function makeApp(opts) {
     console: { log() {}, warn() {}, info() {}, error() {}, groupCollapsed() {}, groupEnd() {} },
     crypto: nodeCrypto, setTimeout, clearTimeout, setImmediate, Promise, Map, Set, JSON, Date, Math, Object, Array, String, Number, Boolean, Error, RegExp,
     File: class File {},
-    window: { LeaseUploadIdentity: LUI, LeaseholdStatus: LS, FieldProvenance: FP,
+    window: { LeaseUploadIdentity: LUI, LeaseholdStatus: LS, FieldProvenance: FP, AcquisitionDocuments: AD,
               AuthService: { getCurrentUser: () => ({ id: 'u-pm', email: 'pm@example.test' }) } },
     _props: [A, B], activePropId: 'prop-A', tenantData: [null, null, null, ...A.tenants],
     _leaseJobs: new Map(), _leaseDebug: new Map(), _lastIngestTelemetry: null, _saveDebounceTimer: null,
     lastResults: [], _resultsStale: false,
     document: { getElementById: (id) => (els[id] || (els[id] = el())) },
     currentProperty: () => box._props.find(p => p && p.id === box.activePropId) || null,
-    _syncJobToDb: () => Promise.resolve(true), _trackJobLiveness: () => {},
+    _syncJobToDb: () => Promise.resolve(true), _updateJobRowById: () => Promise.resolve(true), _trackJobLiveness: () => {},
     renderBulkResults: () => {}, logError: (w, e) => rec.errors.push(w + ': ' + (e && e.message)), logActivity: () => {},
     appendPropertyTimelineEvent: (p, e) => { (p.timeline || (p.timeline = [])).push(e); rec.timeline.push({ prop: p.id, ...e }); },
     appendPropertyTimelineEventOnce: (p, k, e) => { (p.timeline || (p.timeline = [])).push(e); rec.timeline.push({ prop: p.id, ...e }); },
@@ -194,6 +198,10 @@ function makeApp(opts) {
     callClaudeForLease: async (text, name) => { const f = box.__files[name]; if (f && f.__gate) await f.__gate; return f && f.__extract ? clone(f.__extract) : null; },
     extractTextFromPdfDirect: () => Promise.resolve(null), callClaudeWithPdfDirect: () => Promise.resolve(null),
     normalizeTenant: (d) => TN.normalizeTenant(d),
+    // The document-type reading (B5). Every file in this suite is a lease
+    // unless it says otherwise, so A-2's own cases run exactly as before.
+    _acqClassifyDocument: async (text, name) => { const f = box.__files[name]; return f && '__classify' in f ? clone(f.__classify) : { docType: 'original_lease', confidence: 0.95 }; },
+    getLeaseFile: async () => null,
     parseSqft: (v) => parseFloat(String(v == null ? '' : v).replace(/,/g, '')) || 0,
     saveProperty: async (p) => { rec.saves.push({ id: p.id, tenants: clone((p.tenants || []).filter(Boolean)), pendingLeaseUploads: clone(p.pendingLeaseUploads || []) }); },
     resyncTenantsToTable: async (pid, rows) => { rec.resyncs.push({ pid, ids: rows.map(r => r.id) }); rows.forEach(r => db.tenantsTable.add(r.id + '|' + pid)); },
@@ -535,6 +543,9 @@ const EXT = (over) => Object.assign({ tenant_name: 'Brand New Co', suite: '900',
       && rows[0].parsing_status === 'success',
       'G6 a retried upload writes the SAME register row (its document id is kept on the job)', JSON.stringify(rows.map(r => r.id)));
     eq(T.A().tenants.filter(t => t && t.id === jobId).length, 1, 'G7 …and is still one leasehold row');
+    // The saved roster is deduplicated by id (Bulk Intake B4 saves a retry as a
+    // batch is saved), which would hide a second row; the live roster must not have one.
+    eq(T.box.tenantData.filter(t => t && t.id === jobId).length, 1, 'G7b …one row in the live roster too (the retry replaced its row by id)');
   }
 
   // ════════════════════════════════════════════════════════════════════════

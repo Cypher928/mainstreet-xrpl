@@ -185,7 +185,16 @@ CAM charges shall not increase more than 4% per annum.
 
     async function upload(tenant, sqft, file) {
       await page.unroute('**/api/claude').catch(() => {});
-      await page.route('**/api/claude', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(lease(tenant, sqft)) }));
+      // The pipeline asks two things of /api/claude: the lease's terms and, since
+      // Bulk Intake B5, what kind of document it is (document_classification).
+      // These are original leases.
+      await page.route('**/api/claude', r => {
+        let task = null; try { task = JSON.parse(r.request().postData() || '{}').task; } catch (_) {}
+        const body = task === 'document_classification'
+          ? { docType: 'original_lease', docDate: null, tenantName: tenant, suite: null, confidence: 0.95, evidence: 'LEASE AGREEMENT' }
+          : lease(tenant, sqft);
+        return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
       const before = registerPosts.length;
       const rpcBefore = await page.evaluate(() => window.__rpcLog.length);
       await page.setInputFiles('#bulkLeaseInput', { name: file, mimeType: 'text/plain', buffer: Buffer.from(leaseText(tenant, sqft), 'utf-8') });

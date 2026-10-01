@@ -178,13 +178,20 @@ const writesOf = (sc) => sc.calls.filter(c => c.u.includes('/rest/v1/lease_docum
     /if \(Array\.isArray\(registerQueue\) && !_held\) registerQueue\.push\(_registerWrite\);\s*else _saveLeaseRegisterWrite\(_registerWrite\);/.test(pipe));
   const bulk = stripComments(fnSource(SRC, 'handleBulkLeases'));
   ok('B7 handleBulkLeases passes its queue to the pipeline', /_runLeaseJobPipeline\(jobId, _registerQueue\)/.test(bulk));
-  const iResync = bulk.indexOf('await resyncTenantsToTable(propertyId');
-  const iFlush  = bulk.indexOf('await _flushLeaseRegisterWrites(_registerQueue)');
-  ok('B8 …and flushes it AFTER the batch\'s tenant resync', iResync > 0 && iFlush > iResync);
+  // Bulk Intake B4: the save is ONE helper both the batch and the retry use.
+  const persist = stripComments(fnSource(SRC, '_persistLeaseUploads'));
+  ok('B7b …and saves through _persistLeaseUploads with that queue', /await _persistLeaseUploads\(propertyId, target, _registerQueue\)/.test(bulk));
+  const iResync = persist.indexOf('await resyncTenantsToTable(propertyId');
+  const iFlush  = persist.indexOf('await _flushLeaseRegisterWrites(registerQueue)');
+  ok('B8 …which flushes the queue AFTER the tenant resync', iResync > 0 && iFlush > iResync);
   ok('B9 …in a finally, so a failed save never drops a document',
-    /try\s*\{[^]*?await saveProperty\(target\);[^]*?await resyncTenantsToTable\([^]*?\}\s*finally\s*\{\s*await _flushLeaseRegisterWrites\(_registerQueue\);\s*\}/.test(bulk));
-  ok('B10 the single-file retry keeps calling the pipeline without a queue (immediate write)',
-    /await _runLeaseJobPipeline\(jobId\);/.test(SRC));
+    /try\s*\{[^]*?await saveProperty\(target\);[^]*?await resyncTenantsToTable\([^]*?\}\s*finally\s*\{[^}]*?await _flushLeaseRegisterWrites\(registerQueue\);\s*\}/.test(persist));
+  // B4 changed this deliberately: the single-file retry used to call the
+  // pipeline with no queue (an immediate register write, before its tenant row
+  // existed — left unlinked) and saved nothing. It is now a batch of one.
+  const retry = stripComments(fnSource(SRC, 'retryLeaseJob'));
+  ok('B10 the single-file retry passes its OWN queue, and saves and flushes it as a batch does (B4)',
+    /await _runLeaseJobPipeline\(jobId, _retryQueue\);/.test(retry) && /await _persistLeaseUploads\(propertyId, prop, _retryQueue\)/.test(retry));
   ok('B11 the pipeline is called from exactly the two places it was', (SRC.match(/await _runLeaseJobPipeline\(/g) || []).length === 2);
 
   // ── C · the queue helpers, executed ────────────────────────────────────────

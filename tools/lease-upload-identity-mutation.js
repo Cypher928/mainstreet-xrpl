@@ -40,7 +40,7 @@ const MUTANTS = [
     from: '      if (fillOnly) return;\n', to: '' },
   // ── the pipeline: hold, do not attach ───────────────────────────────────
   { id: 'U08', file: S, why: 'a UNIQUE candidate is not held (the old auto-attach boundary)',
-    from: 'const _held       = _candidates.length > 0;', to: 'const _held       = _candidates.length > 1;' },
+    from: 'const _held       = _candidates.length > 0 || !!(_docGate && _docGate.hold);', to: 'const _held       = _candidates.length > 1 || !!(_docGate && _docGate.hold);' },
   { id: 'U09', file: S, why: 'a held upload\'s evidence is written against its first candidate before any decision',
     from: '    if (!_held) {\n      try {\n        // No source_document_id here: the register row is written after the\n        // batch (it names the tenant row, which must exist first), and the\n        // lineage column is a foreign key to it.\n        _persistExtractedEvidence(propertyId, _linkedTenantId, finalEntry.fieldEvidence);',
     to:   '    if (true) {\n      try {\n        _persistExtractedEvidence(propertyId, _linkedTenantId || (_candidates[0] || {}).id, finalEntry.fieldEvidence);' },

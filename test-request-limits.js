@@ -314,10 +314,12 @@ else {
     // downscales and batches a 40 MB copier scan, and refusing it would break
     // the feature built to accept it.
     const s = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
-    const retryFn = s.slice(s.indexOf('async function retryExtractionWithFile'),
-                            s.indexOf('async function retryExtractionWithFile') + 900);
+    // Since Bulk Intake B1/B2 the retry is the upload pipeline itself, picked
+    // on its own input: neither the picker nor the retry may gate on size.
+    const { fnSource } = require('./test-support/fn-source.js');
+    const retryFn = ['_leaseRetryInput', '_retryLeaseJobWithFile', 'retryLeaseJob'].map(n => fnSource(s, n)).join('\n');
     assert('the downscaling extraction path is NOT gated on raw file size',
-      !/_guardUploadSize/.test(retryFn),
+      retryFn.length > 500 && !/_guardUploadSize/.test(retryFn),
       'gating it would reject the 40 MB scans LeaseIngest exists to handle');
   } finally {
     await b.close(); srv.close();

@@ -102,7 +102,9 @@ sec('4. Identity is created once, where a tenant becomes new');
   // Source pins for the two halves of the rule.
   is(/id:\s*d\.id\s*\?\?\s*null,/.test(TNCODE), '4l source: normalizeTenant preserves or nulls');
   const mintCalls = (CODE.match(/mintTenantIdentity\(normalizeTenant\(/g) || []).length;
-  is(mintCalls >= 4, '4m source: the extraction boundaries mint explicitly', mintCalls + ' sites');
+  // Three boundaries since Bulk Intake B1/B2 removed retryExtractionWithFile:
+  // a retry now runs the job pipeline, which mints at its own boundary.
+  is(mintCalls >= 3, '4m source: the extraction boundaries mint explicitly', mintCalls + ' sites');
   is(!/crypto\.randomUUID/.test(TNCODE),
      '4n source: tenant-normalize.js mints nothing at all');
 

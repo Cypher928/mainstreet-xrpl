@@ -570,6 +570,11 @@ const SUITES = [
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },
   { label: 'Leasehold lifecycle plumbing + no deletes (A-1)', cmd: 'node test-lifecycle-plumbing.js' },
   { label: 'Lease upload identity: held proposals, durable document id (A-2)', cmd: 'node test-lease-upload-identity.js' },
+  // Bulk Intake B1–B5: retry through the protected pipeline on its own input,
+  // a successful retry persisted and linked, job status updated by id, and a
+  // document that is not a new lease held rather than created.
+  { label: 'Bulk Intake: retry, persistence, job status, document type (B1–B5)', cmd: 'node test-bulk-intake.js' },
+  { label: 'Bulk Intake: retry has its own input (e2e, B1/B4)',                  cmd: 'node test-e2e-bulk-retry-input.js' },
   { label: 'Leasehold all-active inert golden (A-1)',         cmd: 'node tools/leasehold-inert-golden.js' },
   { label: 'Escrow reserve extraction',                 cmd: 'node test-escrow.js' },
   { label: 'Demo lease document contract',              cmd: 'node test-demo-lease.js' },

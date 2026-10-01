@@ -61,12 +61,21 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
     const origFrom = db.from.bind(db);
     db.from = (table) => {
       if (table !== 'lease_jobs') return origFrom(table);
+      const answer = (row) => {
+        if (window.__failNext > 0) { window.__failNext--; return Promise.resolve({ error: { message: 'simulated write failure' } }); }
+        return Promise.resolve({ data: [row], error: null });
+      };
       return {
         upsert: (row) => {
-          window.__writes.push(JSON.parse(JSON.stringify(row)));
-          if (window.__failNext > 0) { window.__failNext--; return Promise.resolve({ error: { message: 'simulated write failure' } }); }
-          return Promise.resolve({ data: [row], error: null });
+          window.__writes.push(Object.assign(JSON.parse(JSON.stringify(row)), { __via: 'upsert' }));
+          return answer(row);
         },
+        // B3: a job this page does not hold is changed by id — an UPDATE, never
+        // an upsert whose proposed row (no property_id) RLS would refuse.
+        update: (row) => ({ eq: (col, val) => {
+          window.__writes.push(Object.assign(JSON.parse(JSON.stringify(row)), { id: val, __via: 'update', __by: col }));
+          return answer(row);
+        } }),
       };
     };
   });
@@ -91,6 +100,9 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
     : bad('status not completed', JSON.stringify(w[0]));
   (w[0] && w[0].id === 'ghost-1')
     ? ok('the write is keyed by the job id') : bad('job id missing from the row', JSON.stringify(w[0]));
+  (w[0] && w[0].__via === 'update' && w[0].__by === 'id' && !('property_id' in w[0]))
+    ? ok('…as an UPDATE by id with no property_id — never an upsert RLS would refuse (B3)')
+    : bad('out-of-memory job written as an upsert', JSON.stringify(w[0]));
   (w[0] && w[0].extraction_route === 'text' && w[0].confidence_level === 'high')
     ? ok('diagnostics (extraction_route, confidence_level) are carried, not null')
     : bad('diagnostic columns missing', JSON.stringify(w[0]));
@@ -184,7 +196,8 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
       if (t !== 'lease_jobs') return origFrom(t);
       return {
         select: () => ({ in: () => Promise.resolve({ data: stale, error: null }) }),
-        upsert: (row) => { window.__writes.push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ data: [row], error: null }); },
+        upsert: (row) => { window.__writes.push(Object.assign(JSON.parse(JSON.stringify(row)), { __via: 'upsert' })); return Promise.resolve({ data: [row], error: null }); },
+        update: (row) => ({ eq: (col, val) => { window.__writes.push(Object.assign(JSON.parse(JSON.stringify(row)), { id: val, __via: 'update' })); return Promise.resolve({ data: null, error: null }); } }),
       };
     };
     window.__writes = [];
@@ -197,6 +210,9 @@ const bad = (m, d) => { console.log('  \x1b[31m✗\x1b[0m ' + m + (d ? ' — ' +
   (rw && rw.status === 'failed' && /tab closed or was suspended/i.test(rw.error_message || ''))
     ? ok(`reaped job explains itself: "${rw.error_message.slice(0, 58)}\u2026"`)
     : bad('reaped job lacks an explanation', JSON.stringify(rw));
+  (rw && rw.__via === 'update' && rw.id === 'stale-1' && !('property_id' in rw))
+    ? ok('the reaped job is closed by id, with an UPDATE (B3)')
+    : bad('reaper did not update by id', JSON.stringify(rw));
 
   console.log('\n\u2500\u2500 The watchdog does not race a slow-but-healthy extraction \u2500\u2500');
   const race = await page.evaluate(async () => {

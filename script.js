@@ -3713,8 +3713,8 @@ function renderFailedTenants(tenants) {
         <div class="bulk-tenant-summary">
           <span class="bulk-t-status">❌</span>
           <span class="bulk-t-name">${esc(d.fileName || d.tenant_name || 'Unknown')}</span>
-          <span class="bulk-t-meta" data-retry data-index="${i}" style="cursor:pointer;">Extraction failed — tap to re-upload</span>
-          <button class="view-lease-btn" data-retry data-index="${i}" style="margin-left:0;color:var(--c-f97316);">&#x21BA; Retry</button>
+          <span class="bulk-t-meta" data-retry data-index="${i}" data-job-id="${esc(d.id || '')}" style="cursor:pointer;">Extraction failed — tap to re-upload</span>
+          <button class="view-lease-btn" data-retry data-index="${i}" data-job-id="${esc(d.id || '')}" style="margin-left:0;color:var(--c-f97316);">&#x21BA; Retry</button>
           <button class="bulk-t-remove" onclick="event.stopPropagation();removeBulkTenant(${i})">Remove</button>
         </div>
       </div>`;
@@ -4943,8 +4943,14 @@ function updateLeaseJob(jobId, updates, opts) {
     // record neither its completion nor its failure and sat at 'processing'
     // forever with no error_message. Write straight through instead: the
     // database, not a Map, is what has to end up correct.
+    //
+    // By id, as an UPDATE (B3). The row already exists — createLeaseJob wrote
+    // it, with its property — and this page no longer knows that property. An
+    // upsert of { id, status, … } proposes a NEW row with no property_id, which
+    // lease_jobs_owner_all's WITH CHECK refuses, so every such write failed and
+    // the job stayed at 'processing' for ever.
     _trackJobLiveness(jobId, updates);
-    _syncJobToDb({ id: jobId, ...updates, updated_at: new Date().toISOString() }, opts);
+    _updateJobRowById(jobId, { ...updates, updated_at: new Date().toISOString() }, opts);
     return null;
   }
   _trackJobLiveness(jobId, updates);
@@ -4979,6 +4985,35 @@ function _syncJobToDb(job, { terminal = false } = {}) {
           if (retryError) logError('lease_job_sync_retry', retryError, ctx);
           return !retryError;
         });
+    })
+    .catch(e => { logError('lease_job_sync', e, ctx); return false; });
+}
+
+// A job this page does not hold (a reload, a reaped job, a decision made after
+// the page that ran the upload is gone): its EXISTING lease_jobs row is changed
+// by id, and nothing else. An update never inserts, so it cannot create a row;
+// it never carries id or property_id, so it cannot move a job to another
+// property; and RLS limits it to a row of a property this user belongs to — a
+// row it cannot see is simply not changed. Same return and retry contract as
+// _syncJobToDb.
+function _updateJobRowById(jobId, fields, { terminal = false } = {}) {
+  if (!jobId) return Promise.resolve(false);
+  const row = Object.fromEntries(Object.entries(fields || {})
+    .filter(([k]) => !k.startsWith('_') && k !== 'id' && k !== 'property_id'));
+  const ctx = { jobId, stage: row.stage, terminal, byId: true };
+  const write = () => {
+    try { return Promise.resolve(db.from('lease_jobs').update(row).eq('id', jobId)); }
+    catch (e) { return Promise.reject(e); }   // never throw into a lifecycle caller
+  };
+  return write()
+    .then(({ error } = {}) => {
+      if (!error) return true;
+      logError('lease_job_sync', error, ctx);
+      if (!terminal) return false;
+      return write().then(({ error: retryError } = {}) => {
+        if (retryError) logError('lease_job_sync_retry', retryError, ctx);
+        return !retryError;
+      });
     })
     .catch(e => { logError('lease_job_sync', e, ctx); return false; });
 }
@@ -5120,22 +5155,126 @@ function finalizeLeaseJob(jobId, { norm, conf, meta, tenantId, hold }) {
   return needsReview;
 }
 
-// Retry using the stored in-memory File — no re-upload dialog needed.
-// Falls back to retryUploadForSlot if the file is no longer in memory.
+// ─── Retrying a lease upload (B1/B2) ─────────────────────────────────────────
+//
+// ONE retry path, and it is the upload pipeline. A failed upload is re-read
+// under its own job id, in its own property, with its own document id, through
+// _runLeaseJobPipeline — so the A-2 candidate hold, the document-type hold,
+// the square-footage gate and the register link all apply exactly as they did
+// to the first attempt — and is saved as a batch is (_persistLeaseUploads).
+//
+// It replaces retryUploadForSlot / retryExtraction / retryExtractionWithFile,
+// which re-read a file into tenantData[index] of whichever property was on
+// screen, with none of those protections, and saved nothing. Worse,
+// retryUploadForSlot borrowed the Upload Leases control: it replaced
+// #bulkLeaseInput's onchange, so a cancelled retry left the NEXT normal upload
+// to be swallowed as a retry of that row (first file only, written by index),
+// and a completed one set onchange to null — the upload control then did
+// nothing until a reload.
+//
+// A row that is already a persisted leasehold is never re-read in place — that
+// would overwrite the leasehold with an unreviewed extraction, the silent merge
+// A-2 removed. A file offered for it is a NEW upload, and A-2 decides whether
+// it is that leasehold's document.
+
+// The retry's OWN file input, created on first use. The Upload Leases control
+// (#bulkLeaseInput) is never touched. A pick that is cancelled leaves nothing
+// armed anywhere but here, and the next retry replaces it.
+let _leaseRetryPick = null;
+function _leaseRetryInput() {
+  let el = document.getElementById('leaseRetryInput');
+  if (el) return el;
+  el = document.createElement('input');
+  el.type = 'file';
+  el.id = 'leaseRetryInput';
+  el.accept = '.pdf,application/pdf';
+  el.style.display = 'none';
+  el.addEventListener('change', () => {
+    const pick = _leaseRetryPick;
+    _leaseRetryPick = null;
+    const file = el.files && el.files[0];
+    el.value = '';
+    if (!pick || !file) return;
+    // No raw-size gate: the pipeline goes through LeaseIngest, which downscales
+    // a 40 MB copier scan rather than refusing it. Only an empty read is refused.
+    if (file.size === 0) { alert('File failed to load. Try re-uploading.'); return; }
+    // The retry belongs to the property it was asked for — never to whichever
+    // property is on screen when the file arrives.
+    if (activePropId !== pick.propertyId) {
+      showToast('Another property is open now — retry from that property’s upload list.', { color: '#92400e', textColor: '#fef3c7' });
+      return;
+    }
+    Promise.resolve(pick.onFile(file)).catch(e => logError('lease_retry', e, { propId: pick.propertyId }));
+  });
+  document.body.appendChild(el);
+  return el;
+}
+
+function _pickLeaseRetryFile(propertyId, onFile) {
+  if (!propertyId || typeof onFile !== 'function') return;
+  const el = _leaseRetryInput();
+  _leaseRetryPick = { propertyId, onFile };
+  el.value = '';
+  el.click();
+}
+
+/** The Retry control on an upload row: by the row's id, in the property on screen. */
+async function retryLeaseUpload(rowId) {
+  const propertyId = activePropId;
+  if (!rowId || !propertyId) return;
+  const row = _leaseJobRoster(propertyId).rows.find(t => t && t.id === rowId) || null;
+  if (!row) return;
+  if (_persistableTenantRows([row]).length) {
+    // A leasehold: the file is a new upload, for A-2 to decide.
+    return _pickLeaseRetryFile(propertyId, f => handleBulkLeases([f]));
+  }
+  const job = _leaseJobs.get(rowId);
+  let file = (job && job._file) || (typeof File !== 'undefined' && row.leaseFile instanceof File ? row.leaseFile : null);
+  if (!file) { try { file = await getLeaseFile(rowId); } catch (_) { file = null; } }
+  if (file) return _retryLeaseJobWithFile(propertyId, rowId, file);
+  return _pickLeaseRetryFile(propertyId, f => _retryLeaseJobWithFile(propertyId, rowId, f));
+}
+
+/**
+ * Re-run a failed upload's job with `file`. The page that ran it may be gone:
+ * the job is then rebuilt in memory under the SAME id, in the SAME property,
+ * keeping the document id its first attempt wrote, so the retry updates that
+ * register row rather than adding a second one.
+ */
+async function _retryLeaseJobWithFile(propertyId, jobId, file) {
+  if (!propertyId || !jobId || !file) return;
+  const row = _leaseJobRoster(propertyId).rows.find(t => t && t.id === jobId) || null;
+  if (!row || _persistableTenantRows([row]).length) return;   // only an upload, never a leasehold
+  let job = _leaseJobs.get(jobId);
+  if (!job) {
+    job = { id: jobId, property_id: propertyId, status: 'failed', stage: 'upload', progress: 0,
+            file_name: file.name, file_size: file.size, retry_count: 0, _startMs: Date.now() };
+    _leaseJobs.set(jobId, job);
+  }
+  if (job.property_id !== propertyId) return;                 // a job never moves property
+  job._file = file;
+  if (!job._documentId && row.leaseDocumentId) job._documentId = row.leaseDocumentId;
+  return retryLeaseJob(jobId);
+}
+
+// Retry a job whose File is in memory. Without one, the retry's own input asks
+// for it — never the Upload Leases control.
 async function retryLeaseJob(jobId) {
   const job = _leaseJobs.get(jobId);
-  if (!job?._file) {
-    console.warn('[retryLeaseJob] file not in memory for job:', jobId, '— falling back to file picker');
-    const i = tenantData.findIndex(t => t && t.id === jobId);
-    if (i !== -1) retryUploadForSlot(i);
-    return;
-  }
   // Step A-2: the retry belongs to the job's own property, and its row is
   // found by the job's id — there is no index to go stale.
-  const propertyId = job.property_id;
+  const propertyId = (job && job.property_id) || activePropId;
   const _r = _leaseJobRoster(propertyId);
   const i = _leaseJobRowIndex(_r.rows, jobId);
   if (i === -1) { console.warn('[retryLeaseJob] roster entry not found for job:', jobId); return; }
+  // A persisted leasehold is never re-read in place (see above) — refused
+  // before anything is asked of the person.
+  if (_persistableTenantRows([_r.rows[i]]).length) { console.warn('[retryLeaseJob] refused: row is a persisted leasehold:', jobId); return; }
+  if (!job?._file) {
+    console.warn('[retryLeaseJob] file not in memory for job:', jobId, '— asking for it on the retry input');
+    _pickLeaseRetryFile(propertyId, f => _retryLeaseJobWithFile(propertyId, jobId, f));
+    return;
+  }
 
   updateLeaseJob(jobId, {
     status:                  'processing',
@@ -5167,15 +5306,20 @@ async function retryLeaseJob(jobId) {
   });
   if (activePropId === propertyId) renderBulkResults();
 
-  await _runLeaseJobPipeline(jobId);
+  // B4: a retry is a batch of one — the same pipeline with a register queue,
+  // then the same save, tenant sync and register flush as handleBulkLeases. A
+  // retry that ends HELD is saved the same way (property.pendingLeaseUploads),
+  // so the decision it waits for survives a reload; one that succeeds is a
+  // persisted leasehold with its document linked, not a row in browser memory.
+  const _retryQueue = [];
+  await _runLeaseJobPipeline(jobId, _retryQueue);
 
-  const prop = _leaseJobProperty(propertyId);
-  // A retry that ends HELD (the re-read found a candidate leasehold) has left
-  // the roster for property.pendingLeaseUploads — saved now, so the decision
-  // it waits for survives a reload.
-  if (prop && _heldLeaseUploads(prop).some(h => h && h.id === jobId)) {
-    if (activePropId === propertyId) prop.tenants = tenantData.filter(t => t !== null);
-    try { await saveProperty(prop); } catch (e) { console.warn('[retryLeaseJob] save failed:', e && e.message); }
+  const prop = _settleLeaseJobRoster(propertyId, _leaseJobProperty(propertyId));
+  if (prop) {
+    try { await _persistLeaseUploads(propertyId, prop, _retryQueue); }
+    catch (e) { console.warn('[retryLeaseJob] save failed:', e && e.message); logError('lease_retry_save', e, { propId: propertyId, jobId }); }
+  } else {
+    await _flushLeaseRegisterWrites(_retryQueue);   // no record to save: the document is still kept, unlinked
   }
   if (activePropId === propertyId) {
     renderBulkResults();
@@ -5230,6 +5374,44 @@ function _persistExtractedEvidence(propId, tenantId, fieldEvidence, lineage) {
 // the rule that finds the candidates is lease-upload-identity.js
 // (LeaseUploadIdentity.candidates), which _runLeaseJobPipeline consults. Its
 // normalisation of suites and names is the same, moved there whole.
+
+// ─── What kind of document an upload is (B5) ─────────────────────────────────
+//
+// Not a second classifier. The reading is the acquisition intake's — the
+// server-owned document_classification task through _acqClassifyDocument, with
+// AcquisitionDocuments.DOC_TYPES as its vocabulary — and the decision it feeds
+// is A-2's held upload. This only says which readings may become a new
+// leasehold with nobody asked: an original lease. Everything else is held.
+//
+//   original_lease                         → not held on this account
+//   amendment, renewal, extension,
+//   assignment, guaranty, side_letter,
+//   estoppel, snda (a lease's documents)   → held: 'lease_document'
+//   psa, rent_roll, financial_statement,
+//   invoice, other                         → held: 'not_a_lease'
+//   unknown, no reading, no text, no
+//   vocabulary loaded                      → held: 'unclassified'
+//
+// Fails closed: an answer that could not be had is not a lease.
+function _classifyLeaseUpload(text, fileName) {
+  if (typeof _acqClassifyDocument !== 'function') return Promise.resolve(null);
+  return _acqClassifyDocument(text, fileName);
+}
+
+function _leaseUploadDocGate(reading) {
+  const AD = (typeof window !== 'undefined' && window.AcquisitionDocuments) || null;
+  const types = (AD && AD.DOC_TYPES) || null;
+  const raw = reading && reading.docType;
+  const docType = (types && raw && Object.prototype.hasOwnProperty.call(types, raw)) ? raw : 'unknown';
+  const out = {
+    docType,
+    confidence: (reading && typeof reading.confidence === 'number') ? reading.confidence : null,
+    evidence:   (reading && typeof reading.evidence === 'string') ? reading.evidence.slice(0, 200) : null,
+  };
+  if (docType === 'original_lease') return { ...out, hold: false, reason: null };
+  if (docType === 'unknown')        return { ...out, hold: true,  reason: 'unclassified' };
+  return { ...out, hold: true, reason: types[docType].family ? 'lease_document' : 'not_a_lease' };
+}
 
 // ─── The register row a lease upload produced, written after its tenant ──────
 //
@@ -5672,9 +5854,29 @@ async function _runLeaseJobPipeline(jobId, registerQueue) {
     const documentId = job._documentId || (job._documentId = crypto.randomUUID());
     finalEntry.leaseDocumentId = documentId;
 
+    // WHAT IS THIS DOCUMENT? (B5) A tenant name read off a PDF does not make
+    // it a lease: an amendment, an assignment, an estoppel, a notice or an
+    // invoice names the tenant too. The same server-owned classification the
+    // acquisition intake uses (document_classification, which answers
+    // "unknown" rather than guess) is asked BEFORE the roster is read — the
+    // await must not sit between reading the candidates and acting on them.
+    // Only an original lease may become a new leasehold without a person;
+    // anything else, or an answer that could not be had, is HELD exactly as a
+    // candidate match is, for the same decision (attach / new lease / remove).
+    // A-2's candidate rule is untouched: a candidate still holds whatever the
+    // document is.
+    let _docGate = null;
+    if (status !== 'failed') {
+      let _classText = (!usedPdfDirect && leaseText && !leaseText.startsWith('[Claude')) ? leaseText : null;
+      if (!_classText && _visionTextPromise) { try { _classText = await _visionTextPromise; } catch (_) { _classText = null; } }
+      let _reading = null;
+      try { _reading = await _classifyLeaseUpload(_classText, file.name); } catch (_) { _reading = null; }
+      _docGate = _leaseUploadDocGate(_reading);
+    }
+
     const _roster     = _leaseJobRoster(propertyId);
     const _candidates = _LUI.candidates(_roster.rows, finalEntry, { excludeId: jobId });
-    const _held       = _candidates.length > 0;
+    const _held       = _candidates.length > 0 || !!(_docGate && _docGate.hold);
 
     if (_held) {
       _dropLeaseJobRow(propertyId, jobId);
@@ -5692,9 +5894,14 @@ async function _runLeaseJobPipeline(jobId, registerQueue) {
           return { ...c, proposedKind: _LUI.proposeKind(t, finalEntry) };
         }),
         vacancies:  _LUI.vacanciesFor(_roster.rows, finalEntry),
+        // What the document read as (B5) — shown to the person as a reading,
+        // never applied as a decision. `hold` true is why an upload with no
+        // candidate is here at all.
+        documentGate: _docGate,
         decision:   null,
       });
-      console.log(`[leaseIdentity] "${finalEntry.tenant_name}" held for a leasehold decision — ${_candidates.length} candidate(s): ${_candidates.map(c => c.basis).join(', ')}`);
+      console.log(`[leaseIdentity] "${finalEntry.tenant_name}" held for a leasehold decision — ${_candidates.length} candidate(s): ${_candidates.map(c => c.basis).join(', ')}`
+        + (_docGate && _docGate.hold ? ` · read as ${_docGate.docType} (${_docGate.reason})` : ''));
     } else {
       _putLeaseJobRow(propertyId, jobId, finalEntry);
       _retireVacanciesFor(propertyId, finalEntry, jobId);
@@ -5816,6 +6023,40 @@ async function _runLeaseJobPipeline(jobId, registerQueue) {
   }
 }
 
+// ─── What a finished upload (a batch, or a retry of one file) saves ──────────
+//
+// One definition, used by handleBulkLeases and retryLeaseJob alike (B4): a
+// retried lease that succeeded used to stay in browser memory, its document
+// written before its tenant row existed and so left unlinked.
+
+// The roster the upload saves: THIS property's, deduplicated by id.
+function _settleLeaseJobRoster(propertyId, target) {
+  if (!target) return target;
+  // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
+  // Filter nulls first — dedupeTenants cannot handle null entries (crashes on null.fileName).
+  // Step A-2: from THIS property's roster — the live buffer only while it is
+  // still this property's (see _leaseJobRoster), never another property's.
+  target.tenants = dedupeTenants(_leaseJobRoster(propertyId, target).rows.filter(t => t !== null));
+  return target;
+}
+
+// The property row (roster and held uploads), then the tenants table, then the
+// register rows queued during the run — in that order, because a register row
+// names a tenant row, which must exist first (migration 039's foreign key).
+async function _persistLeaseUploads(propertyId, target, registerQueue) {
+  captureCheckpoint(propertyId, 'Before lease upload');
+  try {
+    await saveProperty(target);
+    // Exclude failed extractions — only persist tenants with at minimum a real name
+    await resyncTenantsToTable(propertyId, target.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
+  } finally {
+    // The register rows, now that the tenant rows they name exist. In a
+    // finally so a failed save never drops a document: an unpersisted tenant
+    // is simply not linked (api/lease-documents.js saves it unlinked).
+    await _flushLeaseRegisterWrites(registerQueue);
+  }
+}
+
 // ─── Bulk Lease Upload ────────────────────────────────────────────────────────
 
 async function handleBulkLeases(fileList) {
@@ -5911,11 +6152,7 @@ async function handleBulkLeases(fileList) {
     </div>`;
   }
 
-  // Dedup by name for persistence only (nameless entries keep their id-based key and are retained)
-  // Filter nulls first — dedupeTenants cannot handle null entries (crashes on null.fileName).
-  // Step A-2: from THIS property's roster — the live buffer only while it is
-  // still this property's (see _leaseJobRoster), never another property's.
-  target.tenants = dedupeTenants(_leaseJobRoster(propertyId, target).rows.filter(t => t !== null));
+  _settleLeaseJobRoster(propertyId, target);
 
   if (_onScreen()) {
     renderBulkResults();
@@ -5924,17 +6161,7 @@ async function handleBulkLeases(fileList) {
 
   // Save property row, then resync tenants ONCE after all files are done.
   // Doing this inside processFile caused cumulative inserts: 1+2+3+4+5 = 15 rows for 5 files.
-  captureCheckpoint(propertyId, 'Before lease upload');
-  try {
-    await saveProperty(target);
-    // Exclude failed extractions — only persist tenants with at minimum a real name
-    await resyncTenantsToTable(propertyId, target.tenants.filter(t => t?.tenant_name && (!t?.extractionFailed || t?._userConfirmed) && !t?._pendingJobReview));
-  } finally {
-    // The register rows, now that the tenant rows they name exist. In a
-    // finally so a failed save never drops a document: an unpersisted tenant
-    // is simply not linked (api/lease-documents.js saves it unlinked).
-    await _flushLeaseRegisterWrites(_registerQueue);
-  }
+  await _persistLeaseUploads(propertyId, target, _registerQueue);
   {
     const successCount = (target.tenants || []).filter(t => t && t.status === 'success').length;
     // The activity log is the working buffer of the property on screen.
@@ -9476,7 +9703,21 @@ function _heldLeaseUploadsHtml() {
             <span class="held-upload-hint">— matched by ${esc(c.basis === 'suite+name' ? 'suite and name' : c.basis)}</span></span>
         </label>`).join('')}
       </fieldset>`
-      : `<div class="held-upload-sub">No current leasehold matches this upload any more. It can be recorded as a new lease, or removed.</div>`;
+      : (h.documentGate && h.documentGate.hold)
+        ? `<div class="held-upload-sub">No current leasehold matches it. If it is a new lease, record it as one; otherwise remove it — the document stays in the register, unlinked.</div>`
+        : `<div class="held-upload-sub">No current leasehold matches this upload any more. It can be recorded as a new lease, or removed.</div>`;
+    // What the document read as (B5) — a reading, never a decision.
+    const gate = h.documentGate || null;
+    const AD = window.AcquisitionDocuments;
+    const readAs = gate && gate.docType
+      ? (gate.docType === 'unknown' ? 'MainStreet could not tell what this document is'
+        : `MainStreet read this as: ${(AD && AD.docTypeLabel) ? AD.docTypeLabel(gate.docType) : gate.docType}`) : '';
+    const gateHtml = readAs ? `<div class="held-upload-hint" data-held-read-as="${esc(gate.docType)}">${esc(readAs)}${gate.evidence ? ` — “${esc(gate.evidence)}”` : ''}</div>` : '';
+    const whyHeld = (gate && gate.hold && !cands.length)
+      ? (gate.reason === 'not_a_lease' ? 'It does not read as a lease, so it was not recorded as a leasehold'
+        : gate.reason === 'lease_document' ? 'It reads as a document of a lease, not a new lease, so it was not recorded as a new leasehold'
+        : 'It could not be confirmed as a lease, so it was not recorded as a leasehold')
+      : 'This upload may belong to a leasehold you already have, so nothing has been attached';
 
     let kindHtml = '', planHtml = '', ready = false;
     if (targetOk) {
@@ -9510,8 +9751,8 @@ function _heldLeaseUploadsHtml() {
 
     return `<div class="held-upload" data-held-upload="${hid}">
       <div class="held-upload-title">${esc(inc.tenant_name || h.fileName || 'Uploaded lease')} — needs a leasehold decision</div>
-      <div class="held-upload-sub">${esc(h.fileName || '')}${facts ? ' · ' + esc(facts) : ''}. This upload may belong to a leasehold you already have, so nothing has been attached and it is not in the rent roll or CAM yet.</div>
-      ${candHtml}${kindHtml}${planHtml}
+      <div class="held-upload-sub">${esc(h.fileName || '')}${facts ? ' · ' + esc(facts) : ''}. ${esc(whyHeld)} and it is not in the rent roll or CAM yet.</div>
+      ${gateHtml}${candHtml}${kindHtml}${planHtml}
       <div class="held-upload-actions">
         ${cands.length ? `<button class="primary" data-held="${hid}" onclick="_heldUploadAct(this,'attach')" ${ready ? '' : 'disabled'}>Attach to this leasehold</button>` : ''}
         <button data-held="${hid}" onclick="_heldUploadAct(this,'create')">It's a new lease — create a new leasehold</button>
@@ -10216,156 +10457,9 @@ async function removeBulkTenant(i) {
   await savePropertyData();
 }
 
-// Opens the bulk file input scoped to a single slot so the user can
-// re-select a file for an extraction that failed or had no cached file.
-function retryUploadForSlot(index) {
-  const input = document.getElementById('bulkLeaseInput');
-  if (!input) return;
-  input.value = '';
-  input.onchange = async (e) => {
-    const file = e.target.files[0];
-    input.onchange = null; // detach after one use
-    if (!file) {
-      alert("No file selected.");
-      return;
-    }
-    // NO raw-size gate here. This path goes through LeaseIngest, which
-    // rasterizes and batches a 40 MB copier scan so the original file is never
-    // sent whole — gating it on raw size would reject the documents that
-    // feature exists to accept. The 60 MB guard removed from here was doing
-    // nothing useful either; the real limits apply per-request, downstream.
-    if (file.size === 0) {
-      alert("File failed to load. Try re-uploading.");
-      return;
-    }
-    await retryExtractionWithFile(index, file);
-  };
-  input.click();
-}
-
-async function retryExtraction(index) {
-  const t = tenantData[index];
-  if (!t) return;
-  const file = (t.leaseFile instanceof File) ? t.leaseFile : await getLeaseFile(t.id);
-  if (!file) {
-    retryUploadForSlot(index);
-    return;
-  }
-  await retryExtractionWithFile(index, file);
-}
-
-async function retryExtractionWithFile(index, file) {
-  const t    = tenantData[index];
-  const prop = currentProperty();
-
-  // No raw-size gate — see retryUploadForSlot. LeaseIngest.preflight below
-  // handles large scans by downscaling them, not by refusing them.
-  const row = document.getElementById(`btr-${index}`);
-  if (row) {
-    row.style.opacity = '0.5';
-    const statusEl = row.querySelector('.bulk-t-meta');
-    if (statusEl) statusEl.textContent = 'Processing lease… this may take up to 30 seconds';
-    // Pre-flight: for a large scan, say what is happening so the longer wait
-    // reads as progress rather than a hang.
-    if (statusEl && window.LeaseIngest) {
-      window.LeaseIngest.analyze(file).then(info => {
-        const pf = window.LeaseIngest.preflight(info);
-        if (pf.plan.needsRasterize) statusEl.textContent = pf.title + ' — ' + pf.detail;
-      }).catch(() => {});
-    }
-  }
-
-  try {
-    let leaseText = null;
-    let extracted = null;
-    try {
-      leaseText = await extractLeaseText(file);
-      if (!leaseText) {
-        extracted = { tenant_name: null, status: 'failed' };
-      } else {
-        extracted = await callClaudeForLease(leaseText, file.name);
-      }
-    } catch (err) {
-      console.error('[retryExtraction] extraction error:', err);
-    }
-
-    if (extracted && leaseText) extracted.rawText = leaseText;
-    // Re-extracting an EXISTING tenant: the id below is taken from `t`, so this
-    // mint only fires for a record that never had one.
-    const norm = extracted ? mintTenantIdentity(normalizeTenant(extracted)) : null;
-
-    // Confidence scoring (mirrors handleBulkLeases exactly)
-    const hasStrongName = norm ? isStrongName(norm.tenant_name) : false;
-    let confidenceScore = 0;
-    if (norm) {
-      const hasTenant = !!norm.tenant_name && norm.tenant_name.trim().length > 0;
-      if (hasStrongName)      confidenceScore += 2;
-      else if (hasTenant)     confidenceScore += 1; // weak name still counts
-      if (norm.start_date)    confidenceScore += 1;
-      if (norm.end_date)      confidenceScore += 1;
-      if (norm.leased_sqft)   confidenceScore += 1;
-      if (norm._usedFallback) confidenceScore -= 1;
-    }
-    const hasTenant    = !!norm?.tenant_name?.trim();
-    const hasDates     = !!(norm?.start_date || norm?.end_date);
-    const hasLeaseType = !!norm?.lease_type;
-
-    let status = 'success';
-    if (!hasTenant) {
-      status = 'failed';
-    } else if (!hasDates || !hasLeaseType) {
-      status = 'partial';
-    }
-
-    const isValid    = status !== 'failed';
-    const isPartial  = status === 'partial';
-    const _showRetry = !hasTenant || !hasDates || !hasLeaseType;
-
-    // Preserve reviewer-approved overrides and evidence history across re-extraction.
-    // Without this, retrying a lease would silently discard manual corrections.
-    const prevOverrides = t?.reviewOverrides || {};
-    const prevEvidence  = t?.fieldEvidence   || {};
-
-    // Merge new norm with prev overrides: for any confirmed override, restore
-    // the reviewer-approved value rather than the fresh AI extraction.
-    const mergedNorm = { ...(isValid ? norm : {}) };
-    if (isValid) {
-      Object.keys(prevOverrides).forEach(function(fk) {
-        const ov = prevOverrides[fk];
-        if (ov?.reviewerConfirmed && fk in mergedNorm) {
-          mergedNorm[fk] = ov.override;
-        }
-      });
-    }
-
-    const updated = {
-      ...mergedNorm,
-      leaseFile:        file,
-      leaseExpected:    true,
-      fileName:         file.name,
-      leaseUrl:         t?.leaseUrl ?? null,
-      extractionFailed: !isValid,
-      _needsReview:     isPartial,
-      _showRetry,
-      _error:           isValid ? null : 'Could not identify a tenant — please enter fields manually',
-      id:               t?.id ?? mergedNorm?.id ?? null,   // minted above, never here
-      reviewOverrides:  prevOverrides,
-      fieldEvidence:    prevEvidence,
-    };
-    tenantData[index] = updated;
-    if (prop?.tenants) prop.tenants[index] = updated;
-  } catch (err) {
-    console.error('[retryExtraction] unexpected error:', err);
-    const failed = { ...(t ?? {}), _error: err.message || 'Retry failed' };
-    tenantData[index] = failed;
-    if (prop?.tenants) prop.tenants[index] = failed;
-  } finally {
-    if (row) row.style.opacity = '';
-  }
-
-  renderBulkResults();
-  checkSqftValidation();
-}
+// retryUploadForSlot / retryExtraction / retryExtractionWithFile were removed
+// (B1/B2): every retry now runs through the upload pipeline — see
+// retryLeaseUpload, _retryLeaseJobWithFile and retryLeaseJob.
 
 async function clearBulkResults() {
   // D6 (Step A-1): Clear All clears the UPLOAD LIST, and only that. It used to
@@ -15876,18 +15970,17 @@ document.addEventListener('click', (e) => {
 }, true); // capture phase so we see it before any stopPropagation
 
 // Delegated retry handler — survives innerHTML re-renders.
-// Uses retryLeaseJob (in-memory file) when available; falls back to file picker.
+// Every Retry control goes to retryLeaseUpload, by the row's id: the upload
+// pipeline, the job's own property, and the retry's own file input when the
+// file is no longer in memory (B1/B2). The index is only a fallback for a
+// control that carries no id, and is resolved to an id at once.
 document.addEventListener('click', (e) => {
   const retryEl = e.target.closest('[data-retry]');
   if (!retryEl) return;
   e.stopPropagation();
   const i     = parseInt(retryEl.dataset.index, 10);
-  const jobId = retryEl.dataset.jobId;
-  if (jobId && _leaseJobs.get(jobId)?._file) {
-    retryLeaseJob(jobId);
-  } else {
-    retryUploadForSlot(i);
-  }
+  const rowId = retryEl.dataset.jobId || ((Number.isInteger(i) && tenantData[i]) ? tenantData[i].id : null);
+  retryLeaseUpload(rowId);
 });
 
 // Mousedown diagnostic — fires before click; confirms the pointer event is reaching the DOM

@@ -43,7 +43,7 @@ const MUTANTS = [
   { id: 'L08', file: S, why: 'the flush is no longer in a finally — a failed save drops the documents',
     from: '  } finally {\n    // The register rows, now that', to: '  } catch (_e) {\n    // The register rows, now that' },
   { id: 'L09', file: S, why: 'the retry path gets a queue nobody flushes — its document is never written',
-    from: 'await _runLeaseJobPipeline(jobId);', to: 'await _runLeaseJobPipeline(jobId, []);' },
+    from: 'await _runLeaseJobPipeline(jobId, _retryQueue);', to: 'await _runLeaseJobPipeline(jobId, []);' },
   // ── the queue helpers ────────────────────────────────────────────────────
   { id: 'L10', file: S, why: 'the flush goes out all at once',
     from: '  for (const w of pending) await _saveLeaseRegisterWrite(w);', to: '  await Promise.all(pending.map(_saveLeaseRegisterWrite));' },
