@@ -2400,6 +2400,26 @@ BOM; a cell starting `= + - @` (or tab/return) is written as text.
   percentage with %, a count with separators, a date M/D/YYYY, text as read.
   Stored values are unchanged.
 
+### One button vocabulary, and the CSVs in both views
+
+Every button in the acquisition workflow takes one shape — 36px tall, 44px
+at phone widths, one font size and corner — and one of four looks: primary
+(gold fill: New Review, Run Analysis, Acquire Property), report (gold
+outline: the Acquisition Report), secondary (raised: uploads and downloads)
+and nav (outline: going back), with Delete in red. The rules sit in one block
+in `index.html`; the buttons keep their older class names, which handlers and
+tests find them by.
+
+The record's toolbar is the same in both views: **Summary** /
+**Acquisition Matrix** (13 columns beneath), then **⬇ Matrix CSV** and
+**⬇ Sources CSV**. Both CSVs are built from the thirteen-column model of the
+same record, so each is the same file from either view. The buyer's report
+button reads **📘 Acquisition Report**; every rent roll download reads
+**⬇ Rent Roll CSV**. A converted acquisition keeps the downloads and the
+report (reading is not changing it) and still hides the uploads and Delete.
+Tested by `test-e2e-acquisition-controls.js` at 1366, 768 and 375 wide;
+`tools/acquisition-controls-mutation.js` undoes each rule.
+
 ### Verified
 
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);

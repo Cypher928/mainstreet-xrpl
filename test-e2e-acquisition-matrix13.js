@@ -144,7 +144,7 @@ const NEW_TERMS = { fields: {
   }));
   check('the review still opens on the summary matrix — the thirteen columns are not the default',
         v0.summary && !v0.m13, JSON.stringify(v0));
-  check('the two views are named, the summary selected', v0.tabs.join('|') === 'Summary*|Acquisition matrix · 13 columns', v0.tabs.join('|'));
+  check('the two views are named, the summary selected', v0.tabs.join('|') === 'Summary*|Acquisition Matrix 13 columns', v0.tabs.join('|'));
   await page.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
   await page.waitForSelector('#acqTermsList .acq-m13-table');
 
@@ -348,6 +348,16 @@ const NEW_TERMS = { fields: {
     });
     check('375px: the thirteen columns do not widen the page; the table scrolls inside its frame', ph.page <= 0 && ph.inner && ph.vw === base, JSON.stringify(Object.assign({ base }, ph)));
     check('375px: the tenant column is held in view', ph.sticky === 'sticky', ph.sticky);
+    // A person scrolls the table until the cell sits beside the held tenant
+    // column, then taps it. (Left to itself the browser centres an off-frame
+    // cell in the frame — under the tenant column, which then takes the tap.)
+    await p3.evaluate((shop) => {
+      const cell = document.querySelector(`#acqTermsList .acq-m13-cell[data-leasehold="${shop}"][data-field="base_rent"]`);
+      const sc = document.querySelector('#acqTermsList .acq-m13-scroll');
+      const th = cell.closest('tr').querySelector('th');
+      cell.closest('tr').scrollIntoView({ block: 'center' });
+      sc.scrollLeft += cell.getBoundingClientRect().left - th.getBoundingClientRect().right - 4;
+    }, SHOP);
     await p3.click(`#acqTermsList .acq-m13-cell[data-leasehold="${SHOP}"][data-field="base_rent"]`);
     const pd = await p3.evaluate(() => {
       const d = document.querySelector('#acqTermsList .acq-m13-detail');

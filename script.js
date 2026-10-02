@@ -33495,7 +33495,7 @@ function _acqLeaseMatrixHtml(reviewId) {
   const dueLine = LMx => (LMx ? LMx.documentsLine(due) : []).join(' · ');
   const dueText = dueLine(_LM());
   return `<div class="acq-lm" data-leaseholds="${n}" data-unfiled="${m.unfiled.length}">
-      ${_acqMatrixViewSwitchHtml()}
+      ${_acqMatrixToolbarHtml()}
       <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · one record per tenant/leasehold. This is the reviewed record, built from your documents: open one for its terms, the evidence behind them, and what needs attention.</div>
       ${dueText ? `<button type="button" class="acq-lm-docs-due">${esc(dueText)} — review in Documents ↓</button>` : ''}
       <table class="acq-lm-table">
@@ -33534,7 +33534,19 @@ function acqSetMatrixView(view) {
 
 function _acqMatrixViewSwitchHtml() {
   const tab = (v, label) => `<button type="button" role="tab" class="acq-lm-view${_acqMatrixView === v ? ' active' : ''}" data-view="${v}" aria-selected="${_acqMatrixView === v}">${label}</button>`;
-  return `<div class="acq-lm-views" role="tablist" aria-label="Lease matrix view">${tab('summary', 'Summary')}${tab('acquisition', 'Acquisition matrix · 13 columns')}</div>`;
+  return `<div class="acq-lm-views" role="tablist" aria-label="Lease matrix view">${tab('summary', 'Summary')}${tab('acquisition', 'Acquisition Matrix <span class="acq-lm-view-sub">13 columns</span>')}</div>`;
+}
+
+// The record's toolbar, the same in both views: the two views, and the two
+// downloads. Both CSVs are built from the thirteen-column model of the same
+// reviewed record, so they are the same files whichever view is open.
+function _acqMatrixToolbarHtml() {
+  return `<div class="acq-lm-toolbar">${_acqMatrixViewSwitchHtml()}
+      <div class="acq-m13-actions">
+        <button type="button" class="acq-m13-csv" title="Download the Acquisition Matrix as a spreadsheet (CSV): one row per leasehold, the 13 columns">&#x2B07; Matrix CSV</button>
+        <button type="button" class="acq-m13-prov" title="Download the sources (CSV): the document, clause and page behind every cell">&#x2B07; Sources CSV</button>
+      </div>
+    </div>`;
 }
 
 // The thirteen-column model for a review: the canonical rows, and each
@@ -33575,13 +33587,9 @@ function _acqLeaseMatrix13Html(reviewId) {
   const dueText = (_LM() ? _LM().documentsLine(due) : []).join(' · ');
   const open = _acqM13Open && _acqM13Open.reviewId === reviewId ? _acqM13Open : null;
   return `<div class="acq-lm acq-m13" data-view="acquisition" data-leaseholds="${n}" data-unfiled="${m.unfiled}">
-      ${_acqMatrixViewSwitchHtml()}
+      ${_acqMatrixToolbarHtml()}
       <div class="acq-lm-intro">${n} ${n === 1 ? 'leasehold' : 'leaseholds'} · the acquisition matrix's thirteen columns, from the same reviewed record. Click any cell for the document and clause behind it, and the readings it replaced.</div>
       ${dueText ? `<button type="button" class="acq-lm-docs-due acq-m13-due">${esc(dueText)} — review in Documents ↓</button>` : ''}
-      <div class="acq-m13-actions">
-        <button type="button" class="acq-m13-csv">Download matrix (CSV)</button>
-        <button type="button" class="acq-m13-prov">Download sources (CSV)</button>
-      </div>
       <div class="acq-m13-scroll" tabindex="0" role="region" aria-label="Acquisition matrix">
         <table class="acq-m13-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
       </div>
@@ -35515,7 +35523,7 @@ function _renderAcqReport(report, container) {
     <div id="acqTabRisk" class="acq-tab-pane"${_acqActiveTab !== 'risk'     ? ' style="display:none"' : ''}>
       ${leaseOnly}${_acqOccupancyCheckHtml((report.rentRoll || {}).occupancy)}
       <div class="acq-export-bar">
-        <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
+        <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x2B07; Rent Roll CSV</button>
       </div>
     </div>
     <div id="acqTabRentRoll" class="acq-tab-pane"${_acqActiveTab !== 'rentroll' ? ' style="display:none"' : ''}>
@@ -35704,7 +35712,7 @@ function _renderAcqReport(report, container) {
   const exportBar = `
   <div class="acq-export-bar">
     <button class="acq-export-btn" onclick="acqExportPdf()">&#x1F4E5; Print / Save PDF</button>
-    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4C8; Rent Roll CSV</button>
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x2B07; Rent Roll CSV</button>
   </div>`;
 
   const riskTabContent = `${execSummaryInline}${_acqOccupancyCheckHtml((report.rentRoll || {}).occupancy)}${kpis}${topRisksHtml}${findingsHtml}${tenantTable}${auditHtml}${renewalHtml}${proRataHtml}${exportBar}`;
@@ -35946,7 +35954,7 @@ function _renderRentRollTab(rentRoll, tenantSummary) {
     </table>
   </div>
   <div class="acq-rr-export-bar">
-    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x1F4E5; Export CSV</button>
+    <button class="acq-export-btn" onclick="acqExportRentRollCsv()">&#x2B07; Rent Roll CSV</button>
   </div>
   ${schedHtml}
   <div class="acq-section-sub">Lease Rollover Risk</div>

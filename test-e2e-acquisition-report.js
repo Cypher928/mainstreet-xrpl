@@ -455,7 +455,7 @@ const DB = `
              v1Visible: v1.length, analysis: ((_acqReviews.find(r => r.id === _activeAcqId) || {}).data || {}).analysis,
              active: _activeAcqId };
   });
-  check('the v2 control is on the page', ctl.present && /Acquisition Report v2/.test(ctl.text), ctl.text);
+  check('the v2 control is on the page, labelled "Acquisition Report"', ctl.present && /^📘 Acquisition Report$/.test(ctl.text), ctl.text);
   check('it is reachable with NO CAM analysis run', ctl.visible && ctl.active === REVIEW_ID && ctl.analysis == null,
         'analysis=' + JSON.stringify(ctl.analysis));
   check('the v1 Decision Report is not offered here (it still needs the analysis)', ctl.v1Visible === 0,
