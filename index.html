@@ -6448,8 +6448,15 @@
     .acq-m13-table td { padding: 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6); vertical-align: top; max-width: 190px; }
     .acq-m13-table .acq-m13-tenant { position: sticky; left: 0; z-index: 1; background: var(--theme-surface);
       border-right: 1px solid #1e293b; min-width: 130px; max-width: 170px; }
-    .acq-m13-open { background: none; border: 0; padding: 8px; color: var(--text-1, var(--text-2)); font-weight: 700;
+    /* The tenant is a ROW header: it must not inherit the column headers'
+       nowrap. It wraps to two lines and clips there, inside its own sticky
+       cell, so a long name never paints over Lease Exp. or takes its clicks;
+       the full name is the button's title and the record's heading. */
+    .acq-m13-table tbody .acq-m13-tenant { width: 170px; max-width: 170px; white-space: normal; overflow: hidden; }
+    .acq-m13-open { display: block; width: 100%; background: none; border: 0; padding: 8px; color: var(--text-1, var(--text-2)); font-weight: 700;
       text-align: left; cursor: pointer; font-size: 0.78rem; text-transform: none; letter-spacing: 0; }
+    .acq-m13-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      overflow-wrap: anywhere; }
     .acq-m13-open:hover { text-decoration: underline; }
     .acq-m13-cell { display: block; width: 100%; min-height: 100%; background: none; border: 0; padding: 8px;
       text-align: left; cursor: pointer; color: var(--text-2); font: inherit; }

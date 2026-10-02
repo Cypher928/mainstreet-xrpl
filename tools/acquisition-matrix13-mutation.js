@@ -39,6 +39,21 @@
  *     R04  a closed acquisition is read again
  *     R05  a failed re-read records the document as `failed`
  *
+ *   The Tenant column — index.html / script.js
+ *     T01  the tenant row header inherits the column headers' nowrap again
+ *     T02  the tenant row header no longer clips what overflows it
+ *     T03  a long name is no longer clamped, and runs as many lines as it takes
+ *     T04  the tenant name is drawn outside its clamp
+ *
+ *   Readings in their field's type — acquisition-lease-matrix.js / script.js
+ *     M01  an earlier reading is written raw
+ *     M02  a competing reading is written raw
+ *     M03  the sources CSV writes an earlier reading raw
+ *     M04  every number is written as money, whatever the field
+ *     M05  the panel draws the raw earlier value
+ *     M06  the record's "Replaced" value is written raw
+ *     M07  the record's contested values are written raw
+ *
  *   The view — script.js
  *     V01  the thirteen columns become the default view
  *     V02  a clause in the sources is drawn as HTML
@@ -54,6 +69,7 @@ const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const M = 'acquisition-lease-matrix.js';
+const H = 'index.html';
 const A = 'acquisition-terms.js';
 const S = 'script.js';
 
@@ -123,6 +139,41 @@ const MUTANTS = [
   { id: 'R05', file: S, why: 'a failed re-read records the document as `failed`',
     from: "    showToast('The new terms could not be read for ' + (row.file_name || 'this document') + ' — nothing was changed.');\n    _renderAcqDocuments();\n    return;",
     to:   "    await _acqSaveDocument({ reviewId, intakeId: row.intake_id, fileName: row.file_name, abstractionStatus: 'failed', abstractionError: failed || 'no_fields' });\n    _renderAcqDocuments();\n    return;" },
+  // ── the Tenant column ────────────────────────────────────────────────────
+  { id: 'T01', file: H, why: "the tenant row header inherits the column headers' nowrap again",
+    from: '    .acq-m13-table tbody .acq-m13-tenant { width: 170px; max-width: 170px; white-space: normal; overflow: hidden; }\n',
+    to:   '' },
+  { id: 'T02', file: H, why: 'the tenant row header no longer clips what overflows it',
+    from: '    .acq-m13-table tbody .acq-m13-tenant { width: 170px; max-width: 170px; white-space: normal; overflow: hidden; }',
+    to:   '    .acq-m13-table tbody .acq-m13-tenant { width: 170px; max-width: 170px; white-space: normal; }' },
+  { id: 'T03', file: H, why: 'a long name is no longer clamped, and runs as many lines as it takes',
+    from: '    .acq-m13-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;',
+    to:   '    .acq-m13-name { display: block;' },
+  { id: 'T04', file: S, why: 'the tenant name is drawn outside its clamp',
+    from: '<span class="acq-m13-name">${esc(l.tenant)}</span></button></th>',
+    to:   '${esc(l.tenant)}<span class="acq-m13-name"></span></button></th>' },
+  // ── readings in their field's type ───────────────────────────────────────
+  { id: 'M01', file: M, why: 'an earlier reading is written raw',
+    from: 'docDate: h.docDate || null, value: h.value, text: readingText(h.value, c.type),',
+    to:   'docDate: h.docDate || null, value: h.value, text: h.value == null ? null : String(h.value),' },
+  { id: 'M02', file: M, why: 'a competing reading is written raw',
+    from: '          r.text = readingText(r.value, c.type); return r;',
+    to:   '          r.text = r.value == null ? null : String(r.value); return r;' },
+  { id: 'M03', file: M, why: 'the sources CSV writes an earlier reading raw',
+    from: "': ' + (p.text || readingText(p.value));",
+    to:   "': ' + (p.value == null ? '—' : p.value);" },
+  { id: 'M04', file: M, why: 'every number is written as money, whatever the field',
+    from: "    if (type === 'date') return usDate(value);\n    return formatValue(value, type);",
+    to:   "    if (type === 'date') return usDate(value);\n    return formatValue(value, typeof value === 'number' ? 'money' : type);" },
+  { id: 'M05', file: S, why: 'the panel draws the raw earlier value',
+    from: "<strong>${esc(p.text || '—')}</strong>",
+    to:   "<strong>${esc(p.value == null ? '—' : String(p.value))}</strong>" },
+  { id: 'M06', file: S, why: 'the record\'s "Replaced" value is written raw',
+    from: "Replaced ${esc(_acqTermValue({ value: term.supersededValues[0].value, type: term.type }) || '—')}",
+    to:   "Replaced ${esc(String(term.supersededValues[0].value))}" },
+  { id: 'M07', file: S, why: "the record's contested values are written raw",
+    from: "esc((c.values || []).map(v => _acqTermValue({ value: v, type: term.type }) || '—').join(' vs '))",
+    to:   "esc((c.values || []).join(' vs '))" },
   // ── the view ─────────────────────────────────────────────────────────────
   { id: 'V01', file: S, why: 'the thirteen columns become the default view',
     from: "  try { return localStorage.getItem('acqMatrixView') === 'acquisition' ? 'acquisition' : 'summary'; }",

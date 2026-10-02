@@ -19,6 +19,10 @@
 //      and time are untouched, and the new value reaches the matrix
 //   7  a failed new-terms reading writes nothing
 //   8  a closed (converted) acquisition offers no new-terms reading
+//  10  long tenant names (over 21 characters, and one very long) stay inside
+//      the sticky Tenant column at desktop, tablet and phone widths; the
+//      Lease Exp. cell beside them takes its own clicks, at its left edge;
+//      short names are untouched; earlier readings are written as money
 //   9  the phone: the table scrolls inside its frame, never the page; the
 //      tenant stays in view
 //
@@ -102,7 +106,19 @@ const NEW_TERMS = { fields: {
       const w = document.getElementById('obWelcomeModal');
       if (w && w.style.display !== 'none') { if (typeof obCloseWelcome === 'function') obCloseWelcome('skip'); else w.style.display = 'none'; }
     });
-    await page.evaluate(async ({ maple, fx, status }) => {
+    await page.evaluate(async ({ maple, fx, status, names }) => {
+      // Regression fixture: a leasehold's tenant renamed, in its family label
+      // and in every reading of its tenant_name.
+      const rename = (fam, d) => {
+        const n = names && names[fam];
+        if (!n) return d;
+        const f = d.abstracted_fields && d.abstracted_fields.fields;
+        if (f && f.tenant_name) f.tenant_name = Object.assign({}, f.tenant_name, { value: n, quote: 'Tenant: ' + n });
+        return d;
+      };
+      fx = JSON.parse(JSON.stringify(fx));
+      fx.families.forEach(f => { if (names && names[f.id]) { f.label = names[f.id]; f.tenant_hint = names[f.id]; } });
+      fx.documents.forEach(d => rename(d.family_id, d));
       __store.acquisition_reviews.push({ id: maple, user_id: 'u1', name: 'Maple Plaza', status: status,
         created_at: '2026-09-17T19:14:41Z', updated_at: 'rev-0',
         data: { tenants: fx.tenants, invoices: [], totalSqFt: 0, documents: [], analysis: null } });
@@ -112,7 +128,7 @@ const NEW_TERMS = { fields: {
       fx.decisions.forEach(d => __store.acquisition_term_decisions.push(JSON.parse(JSON.stringify(d))));
       await _loadAcqReviewsAndRender();
       selectAcquisitionReview(maple);
-    }, { maple: MAPLE, fx: F, status: o.status || 'complete' });
+    }, { maple: MAPLE, fx: F, status: o.status || 'complete', names: o.names || null });
     await page.waitForSelector(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`, { timeout: 15000 });
     return { ctx, page };
   }
@@ -192,7 +208,7 @@ const NEW_TERMS = { fields: {
         d1.field === 'base_rent' && /Governing document Maple_Plaza_Test_Lease_Amendment\.pdf · Amendment · 1\/1\/2027/.test(d1.text)
         && /\$19\.25 per rentable square foot/.test(d1.text), d1.text.slice(0, 220));
   check('F3: the reading it replaced is open to inspection — the renewal\'s $1,202,500, undated, with its clause',
-        /Earlier readings \(1\)/.test(d1.text) && /ShopRite_Anchor_Tenant_Lease\.pdf · Renewal · undated: 1202500/.test(d1.text)
+        /Earlier readings \(1\)/.test(d1.text) && /ShopRite_Anchor_Tenant_Lease\.pdf · Renewal · undated: \$1,202,500/.test(d1.text)
         && /\$18\.50 per square foot/.test(d1.text), (d1.text.match(/Earlier readings[\s\S]{0,200}/) || [''])[0]);
   check('and the person\'s decision on it is named', /Confirmed by a person|Corrected by a person/.test(d1.text));
   check('focus moves to the sources\' Close', d1.focus);
@@ -340,6 +356,118 @@ const NEW_TERMS = { fields: {
     });
     check('375px: the sources open within the screen', pd.right <= pd.w && pd.page <= 0, JSON.stringify(pd));
     await c3.close();
+  }
+
+  // ── 10 · long tenant names stay inside the Tenant column ─────────────────
+  {
+    const LONG = {
+      [F.FAM.shoprite]: 'Northeastern Regional Supermarket Holdings Corporation of America, LLC',   // 70 chars
+      [F.FAM.luxe]:     'Luxe Nails & Spa Franchise Group',                                         // 32 chars
+      [F.FAM.prime]:    'Prime Wellness Spa LLC (A)',                                               // 26 chars
+    };
+    const SHORT = F.FAM.coffee;   // keeps its own short name
+    const layout = (page) => page.evaluate(() => [].map.call(document.querySelectorAll('#acqTermsList .acq-m13-table tbody tr'), tr => {
+      tr.scrollIntoView({ block: 'center' });   // the pointer can only hit what is on screen
+      const th = tr.querySelector('th'), btn = th.querySelector('.acq-m13-open'), nm = th.querySelector('.acq-m13-name');
+      const td = tr.querySelector('td[data-col="lease_exp"]'), cell = td.querySelector('.acq-m13-cell');
+      const a = th.getBoundingClientRect(), b = btn.getBoundingClientRect(), n = nm.getBoundingClientRect(), c = td.getBoundingClientRect();
+      // What the pointer would hit at the left edge, middle and right of the Lease Exp. cell.
+      const ys = [c.top + 6, c.top + c.height / 2, c.bottom - 6];
+      const hits = [];
+      ys.forEach(y => [c.left + 2, c.left + 12, c.left + c.width / 2].forEach(x => {
+        const h = document.elementFromPoint(x, y); hits.push(!!(h && h.closest && h.closest('td') === td));
+      }));
+      return { id: tr.getAttribute('data-leasehold'), name: nm.textContent, len: nm.textContent.length,
+               title: btn.getAttribute('title'), thRight: a.right, btnRight: b.right, nameRight: n.right, tdLeft: c.left,
+               clamped: nm.scrollHeight > nm.clientHeight + 1, lines: Math.round(n.height / parseFloat(getComputedStyle(nm).lineHeight || '16')),
+               allHits: hits.every(Boolean), cellH: c.height };
+    }));
+    for (const [label, vp, mobile] of [['desktop 1366', { width: 1366, height: 900 }, false], ['tablet 768', { width: 768, height: 1024 }, true],
+                                        ['phone 375', { width: 375, height: 812 }, true]]) {
+      const { ctx: c4, page: p4 } = await open(vp, mobile, { names: LONG });
+      await p4.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
+      await p4.waitForSelector('#acqTermsList .acq-m13-table');
+      const L0 = await layout(p4);
+      const long = L0.filter(r => r.len > 21);
+      check(`${label}: the fixture really has long names (over 21 chars) and a short one`,
+            long.length === 3 && L0.some(r => r.id === SHORT && r.len <= 21), L0.map(r => r.len).join(','));
+      check(`${label}: every tenant name stays inside its cell — never past the Lease Exp. border`,
+            L0.every(r => r.btnRight <= r.thRight + 0.5 && r.nameRight <= r.thRight + 0.5 && r.thRight <= r.tdLeft + 0.5),
+            L0.map(r => `${r.len}c:${Math.round(r.nameRight - r.tdLeft)}px`).join(' '));
+      check(`${label}: nothing intercepts the Lease Exp. cell — its left edge, middle and right take the pointer`,
+            L0.every(r => r.allHits), L0.filter(r => !r.allHits).map(r => r.len + 'c').join(','));
+      const vlong = L0.find(r => r.id === F.FAM.shoprite);
+      check(`${label}: a very long name is clamped (with an ellipsis), and its full text and title stay available`,
+            vlong.clamped && vlong.name === LONG[F.FAM.shoprite] && vlong.title === 'Open the lease record: ' + LONG[F.FAM.shoprite],
+            `clamped=${vlong.clamped}`);
+      const shortRow = L0.find(r => r.id === SHORT);
+      check(`${label}: a short name is shown whole, unclamped`, !shortRow.clamped && shortRow.name === 'Maple Coffee Co.', shortRow.name);
+      // A real pointer click at the very left of a Lease Exp. cell beside the longest name opens THAT cell.
+      const box = await (await p4.$(`#acqTermsList .acq-m13-cell[data-leasehold="${F.FAM.shoprite}"][data-field="end_date"]`)).boundingBox();
+      await p4.mouse.click(box.x + 3, box.y + box.height / 2);
+      const opened = await p4.evaluate(() => { const d = document.querySelector('#acqTermsList .acq-m13-detail'); return d ? d.getAttribute('data-field') + '|' + d.getAttribute('data-leasehold') : null; });
+      check(`${label}: a click at the left edge of Lease Exp. beside the longest name opens Lease Exp.'s evidence`,
+            opened === 'end_date|' + F.FAM.shoprite, String(opened));
+      await p4.keyboard.press('Escape');
+      // Scrolling: the Tenant column stays put and still holds the names inside it.
+      const sc = await p4.evaluate(() => {
+        const s = document.querySelector('#acqTermsList .acq-m13-scroll');
+        const th = document.querySelector('#acqTermsList .acq-m13-table tbody .acq-m13-tenant');
+        const l0 = th.getBoundingClientRect().left; s.scrollLeft = s.scrollWidth; const l1 = th.getBoundingClientRect().left;
+        const r = { scrollable: s.scrollWidth > s.clientWidth, moved: s.scrollLeft, shift: Math.round(l1 - l0),
+                    page: document.documentElement.scrollWidth - window.innerWidth };
+        s.scrollLeft = 0; return r;
+      });
+      if (label === 'desktop 1366') check(`${label}: the 13 columns fit; the page does not scroll sideways`, sc.page <= 0, JSON.stringify(sc));
+      else check(`${label}: the table scrolls inside its frame; the Tenant column stays put; the page does not scroll`,
+                 sc.scrollable && sc.moved > 0 && Math.abs(sc.shift) <= 1 && sc.page <= 0, JSON.stringify(sc));
+      // The Tenant still opens the record, and the summary is still there.
+      await p4.click(`#acqTermsList .acq-m13-open[data-leasehold="${F.FAM.shoprite}"]`);
+      await p4.waitForSelector('#acqTermsList .acq-lh');
+      const title = await p4.evaluate(() => document.querySelector('#acqTermsList .acq-lh-title').textContent.trim());
+      check(`${label}: the long name opens its record, which shows the full name`, title === LONG[F.FAM.shoprite], title);
+      await c4.close();
+    }
+  }
+
+  // ── 10b · earlier readings are written as money ──────────────────────────
+  {
+    const { ctx: c5, page: p5 } = await open({ width: 1366, height: 900 }, false);
+    await p5.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
+    await p5.waitForSelector('#acqTermsList .acq-m13-table');
+    await p5.click(`#acqTermsList .acq-m13-cell[data-leasehold="${SHOP}"][data-field="base_rent"]`);
+    const rentPanel = await p5.evaluate(() => document.querySelector('#acqTermsList .acq-m13-detail').textContent.replace(/\s+/g, ' '));
+    check('the Base Rent panel writes its earlier reading as $1,202,500 — never the raw 1202500',
+          /undated: \$1,202,500/.test(rentPanel) && !/\b1202500\b/.test(rentPanel), (rentPanel.match(/Earlier readings[^$]{0,80}\$?[\d,]+/) || [''])[0]);
+    await p5.keyboard.press('Escape');
+    await p5.click(`#acqTermsList .acq-m13-cell[data-leasehold="${SHOP}"][data-field="leased_sqft"]`);
+    const sqPanel = await p5.evaluate(() => document.querySelector('#acqTermsList .acq-m13-detail').textContent.replace(/\s+/g, ' '));
+    check('the Sq. Ft. panel writes its earlier reading as 65,000 — a count, not money',
+          /undated: 65,000/.test(sqPanel) && !/\$65,000/.test(sqPanel), (sqPanel.match(/Earlier readings[^\d]{0,80}[\d,]+/) || [''])[0]);
+    await p5.keyboard.press('Escape');
+    const [dl3] = await Promise.all([p5.waitForEvent('download'), p5.click('#acqTermsList .acq-m13-prov')]);
+    const prov = fs.readFileSync(await dl3.path(), 'utf8');
+    check('the sources CSV writes the earlier rent as $1,202,500 and the earlier sq ft as 65,000',
+          /\(undated\): \$1,202,500/.test(prov) && /\(undated\): 65,000/.test(prov) && !/\(undated\): 1202500/.test(prov) && !/\$65,000/.test(prov));
+    const [dl4] = await Promise.all([p5.waitForEvent('download'), p5.click('#acqTermsList .acq-m13-csv')]);
+    const mx = fs.readFileSync(await dl4.path(), 'utf8');
+    check('the matrix CSV is unchanged in kind: governing values as the cells write them', /"\$1,251,250 \/ \$104,270\.83\/mo \(calc\.\)"/.test(mx));
+    // The record's own evidence row for base rent: the competing values, as money.
+    await p5.click('#acqTermsList .acq-lm-view[data-view="summary"]');
+    await p5.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
+    await p5.waitForSelector('#acqTermsList .acq-term-row[data-field="base_rent"]');
+    const rec = await p5.evaluate(() => {
+      const r = document.querySelector('#acqTermsList .acq-term-row[data-field="base_rent"]');
+      const q = document.querySelector('#acqTermsList .acq-term-row[data-field="leased_sqft"]');
+      return { rent: r.textContent.replace(/\s+/g, ' '), sqft: q.textContent.replace(/\s+/g, ' ') };
+    });
+    check('the record writes the rent readings in contest as money, never raw',
+          /\$1,202,500/.test(rec.rent) && /\$1,251,250/.test(rec.rent) && !/\b1202500\b|\b1251250\b/.test(rec.rent), (rec.rent.match(/Contested[^)]*\)/) || [''])[0].slice(0, 160));
+    check('the record writes square footage as a count, never money', !/\$6[57],000/.test(rec.sqft));
+    const unchanged = await p5.evaluate((fx) => JSON.stringify(__store.acquisition_documents.map(d => d.abstracted_fields)) === JSON.stringify(fx.documents.map(d => d.abstracted_fields))
+      && __store.acquisition_term_decisions.length === fx.decisions.length, F);
+    check('no document\'s stored evidence and no decision changed', unchanged);
+    await c5.close();
   }
 
   check('no uncaught errors', errs.length === 0, errs.slice(0, 3).join(' | '));

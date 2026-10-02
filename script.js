@@ -33247,11 +33247,11 @@ function _renderAcqTerms() {
           ? `<div class="acq-term-conflict" data-resolved="person">Documents previously contained conflicting values: `
           : `<div class="acq-term-conflict">Documents disagree: `)
           + term.contradictions.map(c =>
-              esc((c.values || []).join(' vs ')) + ' (' + esc((c.documents || []).join(', ')) + ')').join('; ')
+              esc((c.values || []).map(v => _acqTermValue({ value: v, type: term.type }) || '—').join(' vs ')) + ' (' + esc((c.documents || []).join(', ')) + ')').join('; ')
           + (selected ? `. This value was selected by a person.</div>` : `. Nothing has been chosen for you.</div>`) : '');
 
       const superseded = !contested && (term.supersededValues && term.supersededValues.length)
-        ? `<div class="acq-term-superseded">Replaced ${esc(String(term.supersededValues[0].value))}`
+        ? `<div class="acq-term-superseded">Replaced ${esc(_acqTermValue({ value: term.supersededValues[0].value, type: term.type }) || '—')}`
           + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '') + '</div>' : '';
 
       // A value a person ENTERED (§4l): verified, and the row says every time
@@ -33566,7 +33566,7 @@ function _acqLeaseMatrix13Html(reviewId) {
   const body = m.leaseholds.map(l => `
       <tr data-leasehold="${esc(l.leaseholdId)}">
         <th scope="row" class="acq-m13-tenant"><button type="button" class="acq-m13-open" data-leasehold="${esc(l.leaseholdId)}"
-            title="${esc('Open the lease record: ' + l.tenant)}">${esc(l.tenant)}</button></th>
+            title="${esc('Open the lease record: ' + l.tenant)}"><span class="acq-m13-name">${esc(l.tenant)}</span></button></th>
         ${l.cells.slice(1).map(c => `<td data-col="${esc(c.column)}"><button type="button" class="acq-m13-cell" data-leasehold="${esc(l.leaseholdId)}"
             data-field="${esc(c.field)}" data-state="${esc(c.state)}" aria-label="${esc(l.tenant + ' — ' + c.header + ': ' + (c.text === null ? 'not established' : c.text) + '. Show the source')}"
             >${_acqM13CellHtml(c)}</button></td>`).join('')}
@@ -33623,10 +33623,10 @@ function _acqM13DetailHtml(m, open) {
     : `<div class="acq-m13-d-gov"><span class="acq-m13-d-k">Governing document</span> ${c.state === 'entered' ? 'None — entered by a person, no document on file supports it.' : 'No document on file establishes this.'}</div>`;
   const decided = s.decision ? `<div class="acq-m13-d-dec">${esc({ confirm: 'Confirmed', correct: 'Corrected', reject: 'Rejected', reopen: 'Reopened' }[s.decision.action] || s.decision.action)} by a person${s.decision.decidedAt ? ' on ' + esc(LM.usDate(String(s.decision.decidedAt).slice(0, 10))) : ''}</div>` : '';
   const readings = (s.readings || []).length ? `<div class="acq-m13-d-sec"><div class="acq-m13-d-k">What each document says</div><ul>${s.readings.map(r =>
-      `<li><strong>${esc(r.fileName || 'A document')}</strong> · ${esc(typeLabel(r.docType))}: ${esc(r.value == null ? '—' : String(r.value))}${r.quote ? `<blockquote class="acq-m13-d-quote">${esc(r.quote)}</blockquote>` : ''}</li>`).join('')}</ul></div>` : '';
+      `<li><strong>${esc(r.fileName || 'A document')}</strong> · ${esc(typeLabel(r.docType))}: ${esc(r.text || '—')}${r.quote ? `<blockquote class="acq-m13-d-quote">${esc(r.quote)}</blockquote>` : ''}</li>`).join('')}</ul></div>` : '';
   const prior = (s.prior || []);
   const priorHtml = c.column === 'tenant' ? '' : `<div class="acq-m13-d-sec"><div class="acq-m13-d-k">Earlier readings (${prior.length})</div>${prior.length
-      ? `<ul>${prior.map(p => `<li>${esc(p.fileName || 'A document')} · ${esc(typeLabel(p.docType))} · ${esc(dated(p.docDate))}: <strong>${esc(p.value == null ? '—' : String(p.value))}</strong>${p.quote ? `<blockquote class="acq-m13-d-quote">${esc(p.quote)}</blockquote>` : ''}</li>`).join('')}</ul>`
+      ? `<ul>${prior.map(p => `<li>${esc(p.fileName || 'A document')} · ${esc(typeLabel(p.docType))} · ${esc(dated(p.docDate))}: <strong>${esc(p.text || '—')}</strong>${p.quote ? `<blockquote class="acq-m13-d-quote">${esc(p.quote)}</blockquote>` : ''}</li>`).join('')}</ul>`
       : '<div class="acq-m13-d-none">No other document speaks to this term.</div>'}</div>`;
   return `<div class="acq-m13-detail" role="dialog" aria-label="${esc(l.tenant + ' — ' + c.header)}" data-leasehold="${esc(l.leaseholdId)}" data-field="${esc(c.field)}">
       <div class="acq-m13-d-head"><span class="acq-m13-d-title">${esc(l.tenant)} — ${esc(c.header)}</span>

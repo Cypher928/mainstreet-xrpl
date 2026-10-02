@@ -187,7 +187,7 @@ t('it names an undated governing document "Undated", never a blank date', () => 
   ok(/Lease Exp\.,2\/28\/2039,[^\r\n]*,ShopRite_Anchor_Tenant_Lease\.pdf,renewal,Undated,/.test(p), 'the undated renewal governs Lease Exp.');
   ok(/Maple_Plaza_Test_Lease_Amendment\.pdf,amendment,1\/1\/2027,/.test(p));
 });
-t('and lists every earlier reading of a term', () => ok(/ShopRite_Anchor_Tenant_Lease\.pdf \(undated\): 1202500/.test(LM.matrix13ProvenanceCsv(M))));
+t('and lists every earlier reading of a term, written in its field\'s type', () => ok(/ShopRite_Anchor_Tenant_Lease\.pdf \(undated\): \$1,202,500/.test(LM.matrix13ProvenanceCsv(M))));
 
 // ── 5 · guard rails ─────────────────────────────────────────────────────────
 sec('5 · guard rails');
@@ -241,6 +241,87 @@ t('every value the thirteen-column view prints into HTML is escaped', () => {
       .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|_acqLmCellHtml\(c\)|_acqM13CellHtml\(c\)|_acqUnfiledListHtml|sub\}|none\}|head\}|body\}|n\}|n ===|m\.unfiled\}|dueText \?|open \?|i === 0 \?|l\.cells\.slice|m\.leaseholds\.map|m\.columns\.map|gov\}|decided\}|readings\}|priorHtml\}|s\.note &&|s\.quote \?|s\.docStatus|s\.readings\.map|prior\.length\}|prior\.length\s|prior\.map|p\.quote \?|r\.quote \?|_acqMatrixView === v|v\}|label\}|tab\(|c\.state === 'contested' \? 'Ranked first|c\.state === 'entered' \? 'None — entered|s\.decision\.decidedAt \? ' on ' \+ esc\()/.test(s));
     deq(raw, [], name + ' interpolates without esc()');
   }
+});
+
+// ── 6 · readings are written in their field's type (fix: raw 1202500) ─────
+sec('6 · earlier and competing readings are written in their field\'s type');
+t('readingText: money as dollars, percent with %, a count with separators, a date M/D/YYYY', () => {
+  eq(LM.readingText(1202500, 'money'), '$1,202,500');
+  eq(LM.readingText(1251250.5, 'money'), '$1,251,250.5');
+  eq(LM.readingText(4, 'percent'), '4%');
+  eq(LM.readingText(65000, 'number'), '65,000');
+  eq(LM.readingText('2024-03-01', 'date'), '3/1/2024');
+  eq(LM.readingText(true, 'boolean'), 'Yes');
+});
+t('readingText never makes text, a count or a date into currency', () => {
+  eq(LM.readingText("120 days' prior written notice", 'text'), "120 days' prior written notice");
+  eq(LM.readingText('1202500', 'text'), '1202500');
+  ok(!/\$/.test(LM.readingText(65000, 'number')), 'a square footage became money');
+  ok(!/\$/.test(LM.readingText(4, 'percent')), 'a percentage became money');
+  ok(!/\$/.test(LM.readingText('2034-02-28', 'date')), 'a date became money');
+});
+t('a reading with no value says — rather than blank or "null"', () => {
+  eq(LM.readingText(null, 'money'), '—'); eq(LM.readingText(undefined, 'text'), '—'); eq(LM.readingText('', 'text'), '—');
+});
+t('Base Rent\'s earlier reading is written $1,202,500 — and its stored value is still the number', () => {
+  const p = cellOf(M, 'base_rent').source.prior[0];
+  eq(p.text, '$1,202,500'); eq(p.value, 1202500);
+});
+t('a square footage reading is written 65,000, never as money', () => {
+  const sq = cellOf(M, 'sqft').source.prior;
+  ok(sq.length >= 1, 'no earlier sq-ft reading in the fixture');
+  sq.forEach(p => { eq(p.text, '65,000'); ok(!/\$/.test(p.text)); });
+});
+t('competing readings of a money term are each written as dollars', () => {
+  const at = (id, date, v) => Object.assign({}, SHOP_DOCS[0], { id, file_name: id + '.pdf', doc_type: 'amendment', doc_type_status: 'confirmed', doc_date: date,
+    abstracted_fields: { schemaVersion: 1, model: 'm', at: 'x', fields: { base_rent: { value: v, quote: 'base rent of $' + v.toLocaleString('en-US') } } } });
+  const r = AT.resolveFamilyTerms([at('a1', '2025-01-01', 1202500), at('a2', '2025-01-01', 1251250)], [], { reasoner: LI });
+  eq(r.terms.base_rent.state, 'conflicting');
+  const row = AL.tenantRowFor({ id: 'f' }, r);
+  const c = LM.matrix13Cell(row, LM.MATRIX13[3], r.terms.base_rent, OPTS);
+  deq(c.source.readings.map(x => x.text).sort(), ['$1,202,500', '$1,251,250']);
+  deq(c.source.readings.map(x => x.value).sort(), [1202500, 1251250], 'the stored values were changed');
+});
+t('a competing text reading is written exactly as read', () => {
+  const r = cellOf(M, 'options').source.readings;
+  ok(r.some(x => /fifteen \(15\) years/.test(x.text)) && r.every(x => x.text === x.value || x.text === '—'));
+});
+t('the provenance CSV writes a square footage reading as a count, not money', () => {
+  ok(/\(undated\): 65,000/.test(LM.matrix13ProvenanceCsv(M)) && !/\$65,000/.test(LM.matrix13ProvenanceCsv(M)));
+});
+t('building the matrix leaves the documents\' stored evidence untouched', () => {
+  const before = JSON.stringify(SHOP_DOCS.map(d => d.abstracted_fields));
+  LM.matrix13ProvenanceCsv(LM.buildMatrix13([SHOP_ROW], { [F.FAM.shoprite]: SHOP_RES.terms }, OPTS));
+  eq(JSON.stringify(SHOP_DOCS.map(d => d.abstracted_fields)), before);
+});
+t('the sources panel draws the written reading, never the raw value', () => {
+  const B = fnBody(S, '_acqM13DetailHtml');
+  ok(/esc\(r\.text \|\| '—'\)/.test(B) && /esc\(p\.text \|\| '—'\)/.test(B), 'the panel draws a raw value');
+  ok(!/String\(r\.value\)|String\(p\.value\)/.test(B));
+});
+t('the record\'s own "Replaced" and contested values are written in the term\'s type', () => {
+  const B = fnBody(S, '_renderAcqTerms');
+  ok(/Replaced \$\{esc\(_acqTermValue\(\{ value: term\.supersededValues\[0\]\.value, type: term\.type \}\)/.test(B), 'Replaced is raw');
+  ok(/\(c\.values \|\| \[\]\)\.map\(v => _acqTermValue\(\{ value: v, type: term\.type \}\)/.test(B), 'contested values are raw');
+});
+
+// ── 7 · the Tenant row header keeps a long name inside its sticky cell ─────
+sec('7 · a long tenant name stays inside the Tenant column');
+const H = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+t('the tenant ROW header wraps and clips inside its own cell — it does not inherit the column headers\' nowrap', () => {
+  ok(/\.acq-m13-table tbody \.acq-m13-tenant \{[^}]*white-space: normal;[^}]*overflow: hidden;[^}]*\}/.test(H));
+  ok(/\.acq-m13-table tbody \.acq-m13-tenant \{[^}]*max-width: 170px;/.test(H));
+});
+t('the column headers keep nowrap — the fix is scoped to the row header', () => {
+  ok(/\.acq-m13-table th \{[^}]*white-space: nowrap;[^}]*\}/.test(H));
+});
+t('a long name is clamped to two lines with an ellipsis, breaking long words', () => {
+  ok(/\.acq-m13-name \{[^}]*-webkit-line-clamp: 2;[^}]*overflow: hidden;[^}]*overflow-wrap: anywhere;/.test(H));
+});
+t('the Tenant column is still sticky', () => ok(/\.acq-m13-table \.acq-m13-tenant \{ position: sticky; left: 0;/.test(H)));
+t('the full name stays available: the button\'s title names it, and its text is the whole name', () => {
+  const B = fnBody(S, '_acqLeaseMatrix13Html');
+  ok(/title="\$\{esc\('Open the lease record: ' \+ l\.tenant\)\}"><span class="acq-m13-name">\$\{esc\(l\.tenant\)\}<\/span>/.test(B));
 });
 
 console.log('\n' + '─'.repeat(64));

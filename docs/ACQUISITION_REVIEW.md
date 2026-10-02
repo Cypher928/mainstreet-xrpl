@@ -2387,6 +2387,19 @@ row per leasehold × column with state, governing document, type, date,
 page, confidence, clause, earlier readings and decision. Both UTF-8 with a
 BOM; a cell starting `= + - @` (or tab/return) is written as text.
 
+### Fixed after browser verification on Pilot data
+
+- **Long tenant names** spilled out of the sticky Tenant column (the column
+  headers' `nowrap` also applied to the row header) and covered the left of
+  the Lease Exp. cell, taking its clicks. The row header now wraps to two
+  lines and clips inside its own cell; the full name is the button's title
+  and the record's heading. The column headers keep `nowrap`.
+- **Earlier and competing readings** were written raw ("1202500") in the
+  sources panel, the sources CSV and the record's "Replaced" / contested
+  lines. They are now written in their field's type — money as dollars, a
+  percentage with %, a count with separators, a date M/D/YYYY, text as read.
+  Stored values are unchanged.
+
 ### Verified
 
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);

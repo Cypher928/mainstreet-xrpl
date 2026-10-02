@@ -521,6 +521,15 @@
     return '$' + r.toLocaleString('en-US', { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
   }
 
+  // A reading's value in its field's type, as the cell writes it: money as
+  // dollars, a percentage with %, a date M/D/YYYY, a count with separators,
+  // text as it stands. The stored value is never changed — this is display.
+  function readingText(value, type) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (type === 'date') return usDate(value);
+    return formatValue(value, type);
+  }
+
   // The reading of the governing document, out of the term's own history.
   function _governingReading(term) {
     var t = term || {};
@@ -578,10 +587,12 @@
         // Every reading the governing one replaced, newest-ranked first.
         prior: _arr(t.supersededValues).map(function (h) {
           return { documentId: h.documentId || null, fileName: h.fileName || null, docType: h.docType || null,
-                   docDate: h.docDate || null, value: h.value, quote: h.quote || null,
-                   page: h.page == null ? null : h.page };
+                   docDate: h.docDate || null, value: h.value, text: readingText(h.value, c.type),
+                   quote: h.quote || null, page: h.page == null ? null : h.page };
         }),
-        readings: contestedReadings(t),
+        readings: contestedReadings(t).map(function (r) {
+          r.text = readingText(r.value, c.type); return r;
+        }),
       };
     }
     return out;
@@ -662,7 +673,7 @@
           s.fileName || '', s.docType || '', s.docDate ? usDate(s.docDate) : (s.fileName ? 'Undated' : ''),
           s.page == null ? '' : s.page, s.confidence == null ? '' : s.confidence, s.quote || '',
           _arr(s.prior).map(function (p) {
-            return (p.fileName || 'A document') + (p.docDate ? ' (' + usDate(p.docDate) + ')' : ' (undated)') + ': ' + (p.value == null ? '—' : p.value);
+            return (p.fileName || 'A document') + (p.docDate ? ' (' + usDate(p.docDate) + ')' : ' (undated)') + ': ' + (p.text || readingText(p.value));
           }).join(' | '),
           s.decision ? (s.decision.action + (s.decision.decidedAt ? ' ' + String(s.decision.decidedAt).slice(0, 10) : '')) : '',
         ]);
@@ -704,6 +715,7 @@
     MATRIX13: MATRIX13,
     NONE_STATED: NONE_STATED,
     usDate: usDate,
+    readingText: readingText,
     matrix13Cell: matrix13Cell,
     buildMatrix13: buildMatrix13,
     csvCell: csvCell,
