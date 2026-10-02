@@ -509,7 +509,8 @@ sec('D. The hydrator: read as the caller, only after the checks');
       .filter(f => !/^038_leasehold_protection(_rollback)?\.sql$/.test(f))
       .filter(f => !/^039_register_leasehold_link(_rollback)?\.sql$/.test(f))
       .filter(f => !/^042_register_relink_deterministic(_rollback)?\.sql$/.test(f))
-      .filter(f => !/^043_leasehold_absorption(_rollback)?\.sql$/.test(f));
+      .filter(f => !/^043_leasehold_absorption(_rollback)?\.sql$/.test(f))
+      .filter(f => !/^044_acquisition_conversion_safeguards(_rollback)?\.sql$/.test(f));
     eq(MIG, [], 'G9 no migration was added for P5-6B');
     const CS = strip(fs.readFileSync('./api/_mcp-capabilities.js', 'utf8'));
     is(/userToken: c\.token/.test(CS) && (CS.match(/c\.token/g) || []).length >= 2, 'G10 the token is handed to the hydrator — and to nothing new');
