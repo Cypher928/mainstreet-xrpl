@@ -230,7 +230,7 @@ t('validateTermInput takes each type in its own form, and says what it needs oth
   ok(!v('lease_type', 'triple-ish').ok && /one of/.test(v('lease_type', 'triple-ish').error));
   const blank = v('base_rent', '   ');
   ok(!blank.ok && blank.empty === true, 'a blank value is not "empty"');
-  ok(/document/.test(v('security_deposit', 'none').error), 'a "none" typed for a figure is not explained');
+  ok(/enter 0/i.test(v('security_deposit', 'none').error), 'a "none" typed for a figure does not say how to record zero');
 });
 t('every stored form reads back as the same value', () => {
   [['base_rent', '$1,250,000'], ['end_date', '2031-12-31'], ['cap', '5%'], ['lease_type', 'gross'], ['leased_sqft', '12,500']].forEach(([f, x]) => {
@@ -334,6 +334,167 @@ t('the record labels each set-aside reading and offers Keep only on a conflict',
 t('the matrix\'s sources panel names the reading a person set aside', () => {
   const D = fnBody(S, '_acqM13DetailHtml');
   ok(/Replaced reading — corrected by a person/.test(D) && /Rejected reading — set aside by a person, not used/.test(D) && /A document now reads this differently/.test(D));
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+sec('7 · the Acquisition Report names the replaced reading, apart from the evidence');
+
+const vm = require('vm');
+const AV = require('./acquisition-report-view.js');
+function loadLI() {
+  const sb = { window: {}, console }; vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'lease-intelligence.js'), 'utf8'), sb, { filename: 'lease-intelligence.js' });
+  return sb.window.LeaseIntelligence;
+}
+const WIRE = { terms: AT, reasoner: loadLI() };
+const REPORT_DOC = () => Object.assign(LEASE(), { family_status: 'confirmed', doc_date: '2024-03-01', storage_path: 'leases/u/x.pdf' });
+const reportFor = (decisions) => {
+  const model = AR.buildReport({ name: 'Test', data: {} }, [{ id: 'f1', label: 'Tenant' }], [REPORT_DOC()], decisions, WIRE);
+  return { model, html: AV.renderReport(model, { linkFor: (p, n) => AV.esc(n), typeLabel: (t) => t }) };
+};
+const rowsByKey = (html, key) => (html.match(new RegExp('<tr class="acqr-fact" data-key="' + key + '"[\\s\\S]*?</tr>', 'g')) || []);
+const CORR = () => [dec('base_rent', 'correct', { new_value: '1250000', previous_value: '1202500', source_document_id: 'd1', note: 'Per the estoppel' })];
+
+t('the report\'s fact for a corrected term carries the replaced reading — value, document, page, clause', () => {
+  const f = AR.projectTerm(corrected());
+  ok(f.replaced, 'no replaced reading on the fact');
+  eq([f.value, f.replaced.value, f.replaced.documentName, f.replaced.page, f.replaced.quote],
+     [1250000, 1202500, 'Lease.pdf', 3, 'Annual base rent of $1,202,500.']);
+});
+t('and its evidence is not the replaced clause — the document\'s reading is not the support for the corrected value', () => {
+  const f = AR.projectTerm(corrected());
+  ok(!f.evidence || !f.evidence.quote, 'the replaced clause is still the evidence: ' + JSON.stringify(f.evidence));
+});
+t('the report as drawn: the corrected value, and the replaced reading labelled as such', () => {
+  const rows = rowsByKey(reportFor(CORR()).html, 'base_rent');
+  ok(rows.length >= 1, 'no base rent row');
+  rows.forEach(r => {
+    ok(/<span class="acqr-value">\$1,250,000<\/span>/.test(r), 'the corrected value is not the value: ' + r.slice(0, 200));
+    ok(/class="acqr-replaced"/.test(r) && /Replaced reading/.test(r) && /\$1,202,500/.test(r) && /Annual base rent of \$1,202,500\./.test(r), 'the replaced reading is not drawn');
+  });
+});
+t('the replaced reading is drawn apart from the evidence, and is never introduced as the "Source"', () => {
+  rowsByKey(reportFor(CORR()).html, 'base_rent').forEach(r => {
+    const ev = (r.match(/<div class="acqr-evidence"[\s\S]*?<\/div>/) || [''])[0];
+    ok(!/1,202,500/.test(ev), 'the replaced reading sits inside the evidence block: ' + ev);
+    ok(/not the support for this value/.test(r), 'the replaced reading does not say it is not the support');
+  });
+});
+t('a rejected reading is drawn as rejected, not as a value', () => {
+  const rows = rowsByKey(reportFor([dec('base_rent', 'reject', { previous_value: '1202500' })]).html, 'base_rent');
+  rows.forEach(r => {
+    ok(!/<span class="acqr-value">/.test(r), 'the rejected reading is drawn as the value');
+    ok(/class="acqr-rejected"/.test(r) && /Rejected reading/.test(r) && /\$1,202,500/.test(r), 'the rejected reading is not drawn');
+  });
+});
+t('a correction that quotes the very clause it replaces is not supported by it: no clause, no page, no Source in the report', () => {
+  const same = [dec('base_rent', 'correct', { new_value: '1250000', previous_value: '1202500', source_document_id: 'd1',
+                                              source_quote: 'Annual base rent of $1,202,500.', source_page: 3 })];
+  const term = resolve(same).base_rent;
+  eq([term.value, term.quote, term.page, term.replacedReading && term.replacedReading.quote],
+     [1250000, null, null, 'Annual base rent of $1,202,500.']);
+  ok(!(rowOf(resolve(same)).quotes || {}).base_rent, 'the projection cites the replaced clause');
+  const rows = rowsByKey(reportFor(same).html, 'base_rent');
+  ok(rows.length >= 1, 'no base rent row');
+  rows.forEach(r => {
+    ok(!/class="acqr-evidence"/.test(r), 'a Source block supports $1,250,000 with the $1,202,500 clause: ' + r.slice(0, 300));
+    ok(/class="acqr-replaced"/.test(r) && /\$1,202,500/.test(r), 'the replaced reading is not drawn');
+  });
+});
+t('a correction that quotes its OWN clause keeps it as the Source, and the replaced reading stays apart', () => {
+  const own = [dec('base_rent', 'correct', { new_value: '1250000', previous_value: '1202500', source_document_id: 'd1',
+                                             source_quote: 'Base rent is amended to $1,250,000.', source_page: 4 })];
+  const term = resolve(own).base_rent;
+  eq([term.value, term.quote, term.page], [1250000, 'Base rent is amended to $1,250,000.', 4]);
+  rowsByKey(reportFor(own).html, 'base_rent').forEach(r => {
+    const ev = (r.match(/<div class="acqr-evidence"[\s\S]*?<\/div>/) || [''])[0];
+    ok(/Source:/.test(ev) && /amended to \$1,250,000/.test(ev), 'the correction\'s own clause is not the Source: ' + ev);
+    ok(!/1,202,500/.test(ev), 'the replaced reading is inside the evidence');
+    ok(/class="acqr-replaced"/.test(r) && /Annual base rent of \$1,202,500\./.test(r), 'the replaced reading is not drawn');
+  });
+});
+t('a term nobody corrected draws no replaced reading', () => {
+  rowsByKey(reportFor([]).html, 'base_rent').forEach(r => ok(!/acqr-replaced|acqr-rejected/.test(r)));
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+sec('8 · zero and "none", by field type');
+
+const V = (f, x) => AT.validateTermInput(f, x);
+t('money: a typed zero is a value — "$0", never missing', () => {
+  ['0', '$0', '0.00', '$0.00'].forEach(x => { const r = V('security_deposit', x); ok(r.ok && r.value === 0 && r.stored === '0', x + ' → ' + JSON.stringify(r)); });
+});
+t('percent: a typed zero is a value — "0%"', () => {
+  ['0', '0%'].forEach(x => { const r = V('cap', x); ok(r.ok && r.value === 0, x + ' → ' + JSON.stringify(r)); });
+});
+t('a count that cannot be zero: a leased area of 0 is refused, and says why', () => {
+  const r = V('leased_sqft', '0'); ok(!r.ok && /greater than zero/.test(r.error), JSON.stringify(r));
+});
+t('no figure may be negative', () => {
+  ['security_deposit', 'cap', 'leased_sqft', 'base_rent'].forEach(f => ok(!V(f, '-5').ok && !V(f, '(5)').ok, f));
+});
+t('a figure cannot be "none": the person is told to enter 0', () => {
+  ['none', 'None', 'no', 'n/a', 'nil', 'zero'].forEach(x => { const r = V('security_deposit', x); ok(!r.ok && /enter 0/i.test(r.error), x + ' → ' + JSON.stringify(r)); });
+});
+t('a term that can be "None (stated)": a bare "None" asserts a clause, so a person cannot record it', () => {
+  ['None', 'none', 'no', 'N/A'].forEach(x => { const r = V('percentage_rent', x); ok(!r.ok && /clause/.test(r.error), x + ' → ' + JSON.stringify(r)); });
+});
+t('…but may describe what they know, which is recorded as their text', () => {
+  const r = V('percentage_rent', 'No percentage rent (per seller)'); ok(r.ok && r.value === 'No percentage rent (per seller)', JSON.stringify(r));
+});
+t('a yes/no term\'s "No" is still a value', () => { const r = V('audit_rights', 'no'); ok(r.ok && r.value === false, JSON.stringify(r)); });
+const NO_DEP = () => { const d = LEASE(); return d; };   // the lease says nothing about a deposit
+t('an entered zero resolves to a verified, entered $0 — not missing, not unreadable', () => {
+  const term = resolve([dec('security_deposit', 'correct', { new_value: '0', note: AT.ENTERED_NOTE })], [NO_DEP()]).security_deposit;
+  eq([term.state, term.support, term.value, !!term.decisionUnreadable], ['verified', 'entered', 0, false]);
+});
+t('a corrected zero resolves to 0, verified', () => {
+  const term = resolve([dec('base_rent', 'correct', { new_value: '0', previous_value: '1202500', source_document_id: 'd1' })]).base_rent;
+  eq([term.state, term.value], ['verified', 0]);
+});
+t('the payload builder takes the same zero, and refuses the same words', () => {
+  const missing = resolve([], [NO_DEP()]).security_deposit;
+  const p0 = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'security_deposit', action: 'correct', newValue: '$0', entered: true }, missing);
+  ok(p0.ok && p0.payload.new_value === '0', JSON.stringify(p0));
+  const pn = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'security_deposit', action: 'correct', newValue: 'none', entered: true }, missing);
+  ok(!pn.ok, 'a "none" figure was accepted');
+  const missingPct = AT.resolveTerms({}, [NO_DEP()], []).percentage_rent;
+  const pp = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'percentage_rent', action: 'correct', newValue: 'None', entered: true }, missingPct);
+  ok(!pp.ok, 'a bare "None" was entered with no clause');
+});
+t('a correction without a clause is a person\'s value: 0 is taken, "none" is refused with the way to record zero', () => {
+  const term = resolve().base_rent;
+  const p0 = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'base_rent', action: 'correct', newValue: '0', sourceDocumentId: 'd1' }, term);
+  ok(p0.ok && p0.payload.new_value === '0', JSON.stringify(p0));
+  const pn = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'base_rent', action: 'correct', newValue: 'none', sourceDocumentId: 'd1' }, term);
+  ok(!pn.ok && /enter 0/i.test(pn.error), JSON.stringify(pn));
+});
+t('a correction that cites a clause is still checked against the field\'s type', () => {
+  const term = resolve().end_date;
+  const p = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'end_date', action: 'correct', newValue: 'the end of 2031',
+                                                 sourceDocumentId: 'd1', sourceQuote: 'The term expires at the end of 2031.' }, term);
+  ok(p && p.ok === false && /not a date/.test(p.error), 'a malformed quoted correction was accepted: ' + JSON.stringify(p));
+  const good = AT.buildDecisionPayload('r1', 'u1', { familyId: 'f1', fieldKey: 'end_date', action: 'correct', newValue: '2031-12-31',
+                                                    sourceDocumentId: 'd1', sourceQuote: 'The term expires December 31, 2031.' }, term);
+  ok(good.ok && good.payload.new_value === '2031-12-31', JSON.stringify(good));
+});
+t('a zero is shown as $0 in the matrix, its CSV and the report — never as missing', () => {
+  const terms = resolve([dec('base_rent', 'correct', { new_value: '0', previous_value: '1202500', source_document_id: 'd1' })]);
+  const row = Object.assign(rowOf(terms), { _source: 'leasehold', _leaseholdId: 'f1' });
+  eq(AL.canonicalValue(terms.base_rent), 0);
+  eq(row.base_rent, 0);
+  const c = LM.cellFor(row, 'base_rent'); eq([c.state, c.text], ['verified', '$0']);
+  const csv = LM.matrix13Csv(LM.buildMatrix13([row], { f1: terms })).split('\r\n')[1];
+  ok(/\$0/.test(csv) && !/Not established/.test(csv.split(',')[3] || ''), csv);
+  const f = AR.projectTerm(terms.base_rent); eq([f.state, f.value], ['verified', 0]);
+});
+t('an entered description is never drawn as "None (stated)"', () => {
+  const docs = [LEASE()];
+  const terms = AT.resolveTerms(REASONER, docs, [dec('percentage_rent', 'correct', { new_value: 'No percentage rent (per seller)', note: AT.ENTERED_NOTE })]);
+  const row = Object.assign(rowOf(terms), { _source: 'leasehold', _leaseholdId: 'f1' });
+  const m = LM.buildMatrix13([row], { f1: terms });
+  const cell = m.leaseholds[0].cells.find(x => x.field === 'percentage_rent');
+  eq([cell.noneStated, cell.state], [false, 'entered']);
 });
 
 console.log('\n' + '─'.repeat(66));

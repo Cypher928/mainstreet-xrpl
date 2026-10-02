@@ -196,6 +196,34 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
         (await decCount(page)) === n0 + 2 && dEnt.new_value === '48000' && dEnt.source_document_id === null && dEnt.source_quote === null
         && dEnt.previous_value === null && /^Entered by a person\. No document on file supports it\./.test(dEnt.note), JSON.stringify(dEnt));
 
+  // ── 2 · a zero is a figure, not a blank ──────────────────────────────────
+  // Luxe's lease states no security deposit. A person who knows it is $0
+  // enters 0: it is kept as the number 0 everywhere, never as "not
+  // established"; and "none" typed for the figure is refused with the way to
+  // record it.
+  await page.click(`${rowSel('security_deposit')} .acq-term-enter`);
+  await page.waitForSelector(`${rowSel('security_deposit')} .acq-term-editor`);
+  await page.fill(`${rowSel('security_deposit')} .acq-te-input`, 'none');
+  const zNone = await page.evaluate((sel) => ({ save: document.querySelector(sel + ' .acq-te-save').disabled,
+    err: (document.querySelector(sel + ' .acq-te-error') || {}).textContent || '' }), rowSel('security_deposit'));
+  check('"none" typed for a deposit is refused before saving, and says to enter 0', zNone.save && /enter 0/i.test(zNone.err) && (await decCount(page)) === n0 + 2, JSON.stringify(zNone));
+  await page.fill(`${rowSel('security_deposit')} .acq-te-input`, '0');
+  const zPv = await page.evaluate((sel) => document.querySelector(sel + ' .acq-te-preview').textContent, rowSel('security_deposit'));
+  check('0 is accepted, and the preview records $0', /\$0 · Verified · Entered by a person/.test(zPv), zPv);
+  await page.click(`${rowSel('security_deposit')} .acq-te-save`);
+  await page.waitForTimeout(800);
+  const zRec = await page.evaluate(({ sel, luxe }) => {
+    const d = __store.acquisition_term_decisions.slice(-1)[0];
+    const r = document.querySelector(sel);
+    const t = _acqFamilyTerms(luxe).terms.security_deposit;
+    const f = window.AcquisitionReport.projectTerm(t);
+    return { stored: d.new_value, src: d.source_document_id, value: (r.querySelector('.acq-term-value') || {}).innerText || null,
+             termValue: t.value, termState: t.state, fact: [f.value, f.state, f.origin] };
+  }, { sel: rowSel('security_deposit'), luxe: LUXE });
+  check('an entered 0 is stored as "0", shown as $0, resolved to the number 0, and reported as a verified $0 — not as missing',
+        zRec.stored === '0' && zRec.src === null && zRec.value === '$0' && zRec.termValue === 0 && zRec.termState === 'verified'
+        && zRec.fact[0] === 0 && zRec.fact[1] === 'verified' && zRec.fact[2] === 'entered', JSON.stringify(zRec));
+
   // ── 2 · reject a reading ─────────────────────────────────────────────────
   await openRecord(page, PRIME);
   await page.click(`${rowSel('end_date')} .acq-term-reject`);
@@ -220,7 +248,7 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
     };
     const rows = _acqLeaseholdsOnly(_acqCanonicalRows(m));
     const by = id => rows.find(r => r._leaseholdId === id) || {};
-    const conversion = { shop: by(shop).base_rent, luxe: by(luxe).base_rent, primeEnd: by(prime).end_date, luxeOrigin: (by(luxe)._origins || {}).base_rent };
+    const conversion = { shop: by(shop).base_rent, luxe: by(luxe).base_rent, primeEnd: by(prime).end_date, luxeOrigin: (by(luxe)._origins || {}).base_rent, luxeDeposit: by(luxe).security_deposit };
     const review = _acqReviews.find(r => r.id === m);
     const ts = (review.data.analysis.tenantSummary || []);
     const rr = (review.data.analysis.rentRoll || {}).rows || (review.data.analysis.rentRoll || {}).tenants || [];
@@ -238,7 +266,7 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
         /\$1,300,000/.test(everywhere.summary.shopRent) && /\$48,000/.test(everywhere.summary.luxeRent) && /Rejected by a person/.test(everywhere.summary.primeExp)
         && !/2029/.test(everywhere.summary.primeExp), JSON.stringify(everywhere.summary));
   check('the rows conversion takes: 1,300,000 · 48,000 (entered) · no expiration', everywhere.conversion.shop === 1300000 && everywhere.conversion.luxe === 48000
-        && everywhere.conversion.luxeOrigin === 'entered' && everywhere.conversion.primeEnd === null, JSON.stringify(everywhere.conversion));
+        && everywhere.conversion.luxeOrigin === 'entered' && everywhere.conversion.primeEnd === null && everywhere.conversion.luxeDeposit === 0, JSON.stringify(everywhere.conversion));
   check('the analysis (rent roll, Risk Analysis, Ask AI\'s stored copy) carries the same', everywhere.analysis.shop === 1300000 && everywhere.analysis.luxe === 48000
         && (everywhere.analysis.primeEnd === null || everywhere.analysis.primeEnd === undefined || everywhere.analysis.primeEnd === ''), JSON.stringify(everywhere.analysis));
   const csvLine = (csv, name) => csv.split('\r\n').find(l => l.indexOf(name) >= 0 || l.indexOf('"' + name) >= 0) || '';
@@ -257,9 +285,27 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
   await page.click('#acqReportV2Btn');
   await page.waitForSelector('#reportOverlay', { state: 'visible', timeout: 15000 });
   const rep = await page.evaluate(() => document.getElementById('reportOverlay').innerText.replace(/\s+/g, ' '));
+  // ShopRite's Base Rent row as drawn: the corrected value, the replaced
+  // reading in its own block, and no "Source:" block naming the clause that
+  // read $1,251,250 as support for $1,300,000.
+  const repShop = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#reportOverlay tr.acqr-fact[data-key="base_rent"]')]
+      .filter(r => /\$1,300,000/.test(r.innerText));
+    const r = rows[0];
+    if (!r) return { n: 0 };
+    const q = s => r.querySelector(s);
+    return { n: rows.length, value: (q('.acqr-value') || {}).innerText || null,
+             replaced: q('[data-set-aside="replaced"]') ? q('[data-set-aside="replaced"]').innerText.replace(/\s+/g, ' ') : null,
+             replacedStruck: q('.acqr-setaside-value') ? getComputedStyle(q('.acqr-setaside-value')).textDecorationLine : null,
+             evidence: q('.acqr-evidence') ? q('.acqr-evidence').innerText : null,
+             replacedInEvidence: !!r.querySelector('.acqr-evidence [data-set-aside], .acqr-evidence .acqr-setaside-value') };
+  });
   await page.evaluate(() => closeReport());
   check('the Acquisition Report as drawn shows $1,300,000 and $48,000 and never the replaced $1,251,250 as a value',
-        /\$1,300,000/.test(rep) && /\$48,000/.test(rep), rep.slice(0, 80));
+        /\$1,300,000/.test(rep) && /\$48,000/.test(rep) && repShop.value === '$1,300,000', rep.slice(0, 80));
+  check('the report shows ShopRite\'s previous $1,251,250 as the "Replaced reading", struck through, apart from the evidence — and no Source block supports the new value with the old clause',
+        repShop.n === 1 && /^Replaced reading: \$1,251,250/.test(repShop.replaced || '') && /not the support for this value/.test(repShop.replaced || '')
+        && repShop.replacedStruck === 'line-through' && repShop.evidence === null && !repShop.replacedInEvidence, JSON.stringify(repShop));
   // The Acquisition Matrix, and its downloads.
   await page.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
   await page.waitForSelector('#acqTermsList .acq-m13-table');
@@ -346,7 +392,7 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
   // ── 5 · append-only; evidence intact ─────────────────────────────────────
   const tail = await page.evaluate(() => ({ writes: window.__decWrites.slice(), decs: JSON.stringify(__store.acquisition_term_decisions), n: __store.acquisition_term_decisions.length }));
   check('no decision was updated, deleted or upserted — only inserted', tail.writes.length === 0, tail.writes.join(','));
-  check('every decision that was there before is still there, unchanged, first', tail.decs.indexOf(D0.slice(0, -1)) === 0 && tail.n === n0 + 5, String(tail.n - n0) + ' added');
+  check('every decision that was there before is still there, unchanged, first', tail.decs.indexOf(D0.slice(0, -1)) === 0 && tail.n === n0 + 6, String(tail.n - n0) + ' added');
   const EV1 = await page.evaluate((doc) => JSON.stringify(__store.acquisition_documents.filter(d => d.id !== doc).map(d => [d.id, d.abstracted_fields])), LUXE_DOC);
   const EV0x = JSON.stringify(JSON.parse(EV0).filter(([id]) => id !== LUXE_DOC));
   check('every document\'s evidence is byte-identical (the Luxe lease was changed only by this test, to stand for a re-read)', EV1 === EV0x);

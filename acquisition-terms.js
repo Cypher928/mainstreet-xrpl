@@ -888,7 +888,7 @@
     // (A sourceless correction on a term no document establishes is an entry
     // too, as it always was, whatever its note.)
     if (isEnteredDecision(d) || (d.action === 'correct' && term.state === 'missing' && !d.source_document_id)) {
-      var entered = normalizeFieldValue(term.field, d.new_value, false);
+      var entered = personValue(term.field, d.new_value).value;
       if (entered === null || entered === undefined) return _unreadable(term);
       var doc = term.state === 'missing' ? null : _reading(term);
       var docContested = term.state === 'conflicting';
@@ -945,12 +945,16 @@
       // reading's clause states a different figure, so it is kept and named as
       // `replacedReading`, never shown as the new value's support.
       var quote = _str(d.source_quote, QUOTE_MAX);
-      var corrected = normalizeFieldValue(term.field, d.new_value, !!quote);
+      // A correction that quotes the very clause it replaces cites the
+      // reading it corrects; that clause states the old value and is no
+      // support for the new one. The value is the person's.
+      if (quote && term.quote && quote === _str(term.quote, QUOTE_MAX)) quote = null;
+      var corrected = quote ? normalizeFieldValue(term.field, d.new_value, true) : personValue(term.field, d.new_value).value;
       if (corrected === null || corrected === undefined) return _unreadable(term);
       term.replacedReading = _reading(term);
       term.value = corrected;
       term.quote = quote || null;
-      term.page  = _page(d.source_page);
+      term.page  = quote ? _page(d.source_page) : null;
       term.confidence = null;
       term.support = 'stated';
       term.derived = false;
@@ -1088,10 +1092,9 @@
       } else if (term.state !== 'missing') {
         return { ok: false, error: 'A document establishes this term. Correct the reading instead of entering a value.' };
       }
-      var typed = normalizeFieldValue(payload.field_key, payload.new_value, false);
-      if (typed === null || typed === undefined) {
-        return { ok: false, error: inputError(payload.field_key, payload.new_value) };
-      }
+      var pv = personValue(payload.field_key, payload.new_value);
+      if (pv.error) return { ok: false, error: personError(payload.field_key, pv.error, payload.new_value) };
+      var typed = pv.value;
       if (keep && JSON.stringify(typed) !== JSON.stringify(term.value)) {
         return { ok: false, error: 'Keep records the value already entered; enter a different value by reopening the term.' };
       }
@@ -1120,8 +1123,17 @@
     // written — never stored to be shown as verified with no value. What is
     // accepted is exactly what the resolver will read back, in its own form.
     if (payload.action === 'correct') {
-      var to = normalizeFieldValue(payload.field_key, payload.new_value, !!payload.source_quote);
-      if (to === null || to === undefined) return { ok: false, error: inputError(payload.field_key, payload.new_value) };
+      // A correction that quotes its clause is read as a document reading;
+      // one that does not is a person's value, read by the person's rule.
+      var to;
+      if (payload.source_quote) {
+        to = normalizeFieldValue(payload.field_key, payload.new_value, true);
+        if (to === null || to === undefined) return { ok: false, error: inputError(payload.field_key, payload.new_value) };
+      } else {
+        var pc = personValue(payload.field_key, payload.new_value);
+        if (pc.error) return { ok: false, error: personError(payload.field_key, pc.error, payload.new_value) };
+        to = pc.value;
+      }
       payload.new_value = storedForm(to);
     }
 
@@ -1154,13 +1166,60 @@
     if (typeof v === 'boolean') return v ? 'yes' : 'no';
     return String(v);
   }
+  // ── What a PERSON types: zero and "none", by field type ─────────────────
+  //
+  // A person's value is not an AI reading. An AI reading of "0" or "none"
+  // with no clause behind it is a guess, and normalizeFieldValue reads it as
+  // nothing; a person who types 0 means zero. So a person's input is read by
+  // its own rule, and the AI rule is unchanged:
+  //
+  //   money, percent   0 is a value ($0, 0%), never "not established". A word
+  //                    for none ("none", "no", "n/a", "nil", "zero") is not a
+  //                    figure: the person is asked to enter 0. Never negative.
+  //   leased area      must be greater than zero. Never negative.
+  //   a term a document can state as "None" (rent increases, CAM / tax /
+  //                    insurance recovery, percentage rent): a bare "None" is
+  //                    the finding that a document's clause denies the term —
+  //                    a person with no clause on file cannot make it. They
+  //                    may describe what they know instead ("No percentage
+  //                    rent (per seller)"), recorded as their text, entered,
+  //                    and never drawn as "None (stated)".
+  //   everything else  as normalizeFieldValue reads it (a yes/no term's "No"
+  //                    is still No).
+  var GREATER_THAN_ZERO = { leased_sqft: true };
+  function personValue(field, raw) {
+    var meta = FIELD_META[field];
+    if (!meta) return { error: 'unknown' };
+    var s = raw === null || raw === undefined ? '' : String(raw).trim();
+    if (!s) return { error: 'empty' };
+    if (meta.type === 'number' || meta.type === 'money' || meta.type === 'percent') {
+      if (_isNegativeWord(s) && !/^0+(\.0+)?$/.test(s)) return { error: 'none_word' };
+      var c = s.replace(/[$,%\s]/g, '');
+      if (/^-/.test(c) || /^\(.*\)$/.test(c)) return { error: 'negative' };
+      var n = Number(c);
+      if (!c || !isFinite(n)) return { error: 'not_a_figure' };
+      if (n === 0 && GREATER_THAN_ZERO[field]) return { error: 'zero' };
+      return { value: n };
+    }
+    if (meta.type === 'text' && meta.none && _isNegativeWord(s.replace(/[.\s]+$/, ''))) return { error: 'none_needs_clause' };
+    var v = normalizeFieldValue(field, s, false);
+    return (v === null || v === undefined) ? { error: 'invalid' } : { value: v };
+  }
+  function personError(field, code, raw) {
+    var meta = FIELD_META[field] || {};
+    var label = meta.label || field;
+    if (code === 'none_word') return 'To record a figure of zero, enter 0. A word like “none” is not a figure.';
+    if (code === 'negative') return label + ' cannot be negative.';
+    if (code === 'zero') return 'A leased area must be greater than zero.';
+    if (code === 'none_needs_clause') return '“None” for ' + label.toLowerCase() + ' means a document’s clause says there is none, and only a document can establish that. '
+      + 'Describe what you know instead — for example “No ' + label.toLowerCase() + ' (per seller)”.';
+    return inputError(field, raw);
+  }
+
   function inputError(field, raw) {
     var meta = FIELD_META[field] || {};
     var s = raw === null || raw === undefined ? '' : String(raw).trim();
     if (!s) return 'Enter ' + inputHint(field) + '.';
-    if ((meta.type === 'number' || meta.type === 'money' || meta.type === 'percent') && _isNegativeWord(s)) {
-      return 'Only a document\u2019s clause can establish that there is none. Enter the figure, or leave the term as it is.';
-    }
     if (meta.type === 'date') return 'That is not a date. Choose a date, or type it as YYYY-MM-DD.';
     return 'That is not ' + inputHint(field) + ' for ' + (meta.label || field) + '.';
   }
@@ -1175,9 +1234,9 @@
     if (!FIELD_META[field]) return { ok: false, error: 'Unknown term.' };
     var s = raw === null || raw === undefined ? '' : String(raw).trim();
     if (!s) return { ok: false, error: inputError(field, s), empty: true };
-    var v = normalizeFieldValue(field, s, false);
-    if (v === null || v === undefined) return { ok: false, error: inputError(field, s) };
-    return { ok: true, value: v, stored: storedForm(v) };
+    var p = personValue(field, s);
+    if (p.error) return { ok: false, error: personError(field, p.error, s) };
+    return { ok: true, value: p.value, stored: storedForm(p.value) };
   }
 
   // ── A term's decisions, in the order they were made (Step C) ──────────────
@@ -1282,6 +1341,7 @@
     // ── Step C: manual entry and its safeguards ─────────────────────────────
     isEnteredDecision: isEnteredDecision,
     validateTermInput: validateTermInput,
+    personValue: personValue,
     inputHint: inputHint,
     storedForm: storedForm,
     decisionReason: decisionReason,

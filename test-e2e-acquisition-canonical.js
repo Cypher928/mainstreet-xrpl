@@ -467,6 +467,7 @@ const DB = `
     const row = (k) => { const r = root.querySelector(`.acqr-leasehold .acqr-fact[data-key="${k}"]`); return r ? {
       state: r.getAttribute('data-state'), origin: r.getAttribute('data-origin'), text: r.innerText.replace(/\s+/g, ' ').trim(),
       evidence: !!r.querySelector('.acqr-evidence'), competing: r.querySelectorAll('.acqr-competing-item').length,
+      replaced: r.querySelector('[data-set-aside="replaced"]') ? r.querySelector('[data-set-aside="replaced"]').innerText.replace(/\s+/g, ' ').trim() : null,
       chip: [].map.call(r.querySelectorAll('.acqr-state .acqr-chip, .acqr-state .acqr-origin'), e => e.textContent.trim()) } : null; };
     return { deposit: row('security_deposit'), sqft: row('leased_sqft'), cap: row('cap'),
              legend: (root.querySelector('.acqr-legend') || {}).innerText || '',
@@ -476,8 +477,12 @@ const DB = `
         v2 && v2.deposit && v2.deposit.state === 'verified' && v2.deposit.origin === 'entered' && !v2.deposit.evidence
         && JSON.stringify(v2.deposit.chip) === JSON.stringify(['Verified', 'Entered by a person · No document on file supports this value'])
         && /\$25,000/.test(v2.deposit.text), v2 && v2.deposit && JSON.stringify(v2.deposit.chip));
-  check('Report v2: the corrected sqft is Verified from its document, with a Source block and no entered tag',
-        v2 && v2.sqft && v2.sqft.state === 'verified' && !v2.sqft.origin && v2.sqft.evidence && /67,000/.test(v2.sqft.text), v2 && v2.sqft && v2.sqft.text.slice(0, 100));
+  // The correction cites the amendment but quotes no clause of its own: the
+  // clause on file reads 65,000, so it is the Replaced reading, never the
+  // Source of 67,000 (Step D).
+  check('Report v2: the corrected sqft is Verified, not entered; the 65,000 reading is the Replaced reading, not a Source block',
+        v2 && v2.sqft && v2.sqft.state === 'verified' && !v2.sqft.origin && !v2.sqft.evidence && /67,000/.test(v2.sqft.text)
+        && /^Replaced reading: 65,000/.test(v2.sqft.replaced || ''), v2 && v2.sqft && v2.sqft.text.slice(0, 160));
   check('Report v2: the legend explains the entered mark', v2 && /Entered by a person/.test(v2.legend));
   check('opening the report called no AI', claude.length === 0);
 

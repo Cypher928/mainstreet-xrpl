@@ -113,7 +113,8 @@ const MUTANTS = [
     from: "      } else if (term.state !== 'missing') {\n        return { ok: false, error: 'A document establishes this term.",
     to:   "      } else if (false) {\n        return { ok: false, error: 'A document establishes this term." },
   { id: 'T05', file: T, why: 'an entry is not validated against the field\'s type',
-    from: '      if (typed === null || typed === undefined) {', to: '      if (false) {' },
+    from: '      if (pv.error) return { ok: false, error: personError(payload.field_key, pv.error, payload.new_value) };\n',
+    to:   '      if (pv.error) pv = { value: payload.new_value };\n' },
   { id: 'T06', file: T, why: 'entered terms are not counted',
     from: "      if (term && term.support === 'entered') out.entered++;\n", to: '' },
 

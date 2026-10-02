@@ -14,7 +14,6 @@
 const fs   = require('fs');
 const path = require('path');
 const vm   = require('vm');
-const { execFileSync } = require('child_process');
 
 const AT = require('./acquisition-terms.js');
 const AL = require('./acquisition-leasehold.js');
@@ -219,20 +218,150 @@ t('projecting, choosing analysis rows and resolving never change review.data.ten
   eq(tenants.length, 13);
 });
 
-sec('6 · the canonical model is unchanged');
-const SRC = fs.readFileSync(path.join(__dirname, 'acquisition-leasehold.js'), 'utf8');
-const fnText = (src, name) => { const m = new RegExp('\\n  function ' + name + '\\(').exec(src); if (!m) return null;
-  let i = src.indexOf('{', m.index), d = 0, j = i; for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}') { d--; if (!d) break; } } return src.slice(m.index, j + 1); };
-let HEAD_SRC = null;
-try { HEAD_SRC = execFileSync('git', ['show', 'HEAD:acquisition-leasehold.js'], { cwd: process.env.ACQ_REPORT_GIT_ROOT || __dirname, encoding: 'utf8' }); } catch (_) {}
-['leaseholdRows', 'legacyRows', 'tenantRowFor', 'canonicalValue', 'attachStates', 'cellState'].forEach(name => {
-  t(`${name} is byte-for-byte what it was`, () => {
-    if (HEAD_SRC === null) { console.log('    (no git here — skipped, not passed)'); return; }
-    // tenantRowFor carries the acquisition matrix's five fields (approved
-    // with the 13-column matrix); that block, and only that block, may differ.
-    const five = (t) => (t || '').replace(/\n      \/\/ The acquisition matrix's own columns\.[\s\S]*?percentage_rent:    v\('percentage_rent'\),/, '');
-    ok(fnText(SRC, name) && five(fnText(SRC, name)) === five(fnText(HEAD_SRC, name)), name + ' changed');
-  });
+sec('6 · the canonical model behaves as required');
+// Behavioral: each canonical function is held to what it must DO, on inputs
+// built here, so a regression in any of them fails — whatever the committed
+// source says. (This section once compared the functions' text with HEAD,
+// which passes trivially once a change is committed.)
+const SYN_TERMS = {
+  tenant_name:      { state: 'verified',     value: 'Acme Hardware', quote: 'ACME HARDWARE, INC., Tenant' },
+  base_rent:        { state: 'verified',     value: 120000, quote: 'Annual Base Rent: $120,000' },
+  security_deposit: { state: 'verified',     value: 0, support: 'entered', quote: 'must not travel' },
+  cap:              { state: 'ai_extracted', value: 5, quote: 'increases capped at 5%' },
+  start_date:       { state: 'conflicting',  value: '2020-01-01', quote: 'must not travel either' },
+  end_date:         { state: 'ai_extracted', value: '2030-12-31' },
+  audit_rights:     { state: 'missing',      value: null, rejected: true },
+  expense_stop:     { state: 'verified',     value: 5000, support: 'entered', enteredConflict: true },
+  leased_sqft:      { state: 'unclear',      value: undefined },
+  suite:            {},
+  percentage_rent:  { state: 'ai_extracted', value: '6% of sales over $1,000,000' },
+  rent_escalations: { state: 'verified',     value: '3% annually' },
+};
+const SYN_FAM = { id: 'fam-syn', label: 'Suite 9 lease', tenant_hint: 'Acme' };
+const SYN = AL.tenantRowFor(SYN_FAM, { ok: true, terms: SYN_TERMS });
+
+t('canonicalValue: a value passes as it is (0 and false included); a contradiction, a missing term and no term give null', () => {
+  eq(AL.canonicalValue({ state: 'verified', value: 120000 }), 120000);
+  eq(AL.canonicalValue({ state: 'verified', value: 0 }), 0, 'zero is a value');
+  eq(AL.canonicalValue({ state: 'ai_extracted', value: false }), false);
+  eq(AL.canonicalValue({ state: 'ai_extracted', value: 'NNN' }), 'NNN');
+  eq(AL.canonicalValue({ state: 'conflicting', value: 7 }), null, 'a contradiction has no value');
+  eq(AL.canonicalValue({ state: 'missing', value: null }), null);
+  eq(AL.canonicalValue({ state: 'unclear' }), null, 'undefined is null');
+  eq(AL.canonicalValue(null), null); eq(AL.canonicalValue(undefined), null);
+});
+t('tenantRowFor: identity and source come from the leasehold', () => {
+  eq(SYN.id, 'fam-syn'); eq(SYN._leaseholdId, 'fam-syn');
+  eq(SYN._source, AL.SOURCE.LEASEHOLD); eq(SYN._status, 'ok');
+  eq(SYN._familyLabel, 'Suite 9 lease'); eq(SYN._resolved, true);
+  eq(SYN.tenant_name, 'Acme Hardware'); eq(SYN._tenantNameFrom, 'term');
+});
+t('tenantRowFor: every one of the 32 fields is on the row, and each is canonicalValue of its term', () => {
+  const fields = Object.keys(AT.FIELD_META);
+  eq(fields.length, 32);
+  fields.forEach(f => { ok(f in SYN, f + ' missing from the row'); eq(SYN[f], AL.canonicalValue(SYN_TERMS[f]), f); });
+  eq(SYN.base_rent, 120000); eq(SYN.security_deposit, 0, 'an entered 0 stays 0');
+  eq(SYN.start_date, null, 'a contested start has no value'); eq(SYN.leased_sqft, null);
+  eq(SYN.percentage_rent, '6% of sales over $1,000,000'); eq(SYN.rent_escalations, '3% annually');
+});
+t('tenantRowFor: every alias a reader uses carries the same value', () => {
+  eq(SYN.cap, 5); eq(SYN.cam_cap, 5);
+  eq(SYN.end_date, '2030-12-31'); eq(SYN.lease_end, '2030-12-31');
+  eq(SYN.start_date, null); eq(SYN.lease_start, null);
+  const live = AL.tenantRowFor(SYN_FAM, { ok: true, terms: { start_date: { state: 'verified', value: '2021-03-01' } } });
+  eq(live.start_date, '2021-03-01'); eq(live.lease_start, '2021-03-01');
+});
+t('tenantRowFor: _states, _origins and _flags mirror each term; only a document clause becomes a quote', () => {
+  deq(Object.keys(SYN._states).sort(), Object.keys(SYN_TERMS).sort());
+  eq(SYN._states.base_rent, 'verified'); eq(SYN._states.start_date, 'conflicting');
+  eq(SYN._states.audit_rights, 'missing'); eq(SYN._states.suite, 'missing', 'a term with no state is missing');
+  eq(SYN._states.leased_sqft, 'unclear');
+  eq(SYN._origins.security_deposit, 'entered'); eq(SYN._origins.expense_stop, 'entered');
+  eq(SYN._origins.base_rent, null); eq(SYN._origins.cap, null);
+  eq(SYN._flags.audit_rights, 'rejected'); eq(SYN._flags.expense_stop, 'entered_conflict');
+  eq(SYN._flags.base_rent, null); eq(SYN._flags.security_deposit, null);
+  // An entered value has no clause; a contradiction has no single clause.
+  deq(Object.keys(SYN.quotes).sort(), ['base_rent', 'cap', 'tenant_name']);
+  eq(SYN.quotes.base_rent, 'Annual Base Rent: $120,000');
+});
+t('tenantRowFor: with no tenant term the leasehold\'s name is the identity, and the row says so', () => {
+  const byLabel = AL.tenantRowFor({ id: 'f1', label: 'Suite 9 lease', tenant_hint: 'Acme' }, { ok: true, terms: {} });
+  eq(byLabel.tenant_name, 'Suite 9 lease'); eq(byLabel._tenantNameFrom, 'leasehold_label');
+  const contested = AL.tenantRowFor({ id: 'f1', label: 'Suite 9 lease' }, { ok: true, terms: { tenant_name: { state: 'conflicting', value: 'A' } } });
+  eq(contested.tenant_name, 'Suite 9 lease', 'a contested tenant name is not used'); eq(contested._tenantNameFrom, 'leasehold_label');
+  eq(AL.tenantRowFor({ id: 'f2', tenant_hint: 'Acme' }, null).tenant_name, 'Acme');
+  const bare = AL.tenantRowFor({ id: 'f3' }, null);
+  eq(bare.tenant_name, 'Unnamed leasehold'); eq(bare._resolved, false); eq(bare.base_rent, null); deq(bare.quotes, {});
+  eq(AL.tenantRowFor(null, null)._leaseholdId, null);
+});
+t('leaseholdRows on Maple Plaza: four leaseholds in family order, then the six unfiled rows; each leasehold resolved from its own documents and decisions', () => {
+  eq(P.leaseholds, 4); eq(P.unfiled, 6); eq(P.rows.length, 10); eq(P.resolverAvailable, true);
+  deq(P.rows.slice(0, 4).map(r => r._leaseholdId), F.families.map(f => f.id));
+  deq(P.rows.slice(0, 4).map(r => r._documentCount), [2, 1, 1, 1]);
+  ok(P.rows.slice(0, 4).every(r => r._source === AL.SOURCE.LEASEHOLD && r._resolved));
+  ok(P.rows.slice(4).every(r => r._source === AL.SOURCE.UNFILED && r._unverified));
+  const shop = P.rows[0];
+  eq(shop.tenant_name, 'ShopRite Supermarkets, Inc.'); eq(shop.base_rent, 1251250); eq(shop.leased_sqft, 67000);
+  eq(shop.start_date, null, 'ShopRite\'s start dates disagree'); eq(shop._states.start_date, 'conflicting');
+  eq(shop.end_date, '2039-02-28'); eq(shop.cam_cap, 3);
+  eq(shop._flags.audit_rights, 'rejected', 'the standing rejection');
+  eq(P.rows[1].leased_sqft, 3000); eq(P.rows[1].cap, 5);
+  deq(P.dropped.map(d => d.why).sort(), ['in_leasehold', 'in_leasehold', 'in_leasehold', 'in_leasehold', 'in_leasehold', 'replaced', 'replaced']);
+});
+t('leaseholdRows: a decision on one leasehold never reaches another', () => {
+  const luxe = F.families[1].id;
+  const extra = { review_id: 'r', family_id: luxe, field_key: 'base_rent', action: 'correct', new_value: '1', previous_value: null,
+                  source_document_id: null, source_quote: null, note: AL.ENTERED_NOTE, decided_at: '2026-10-01T00:00:00Z', created_at: '2026-10-01T00:00:00Z', id: 'x1' };
+  const p2 = project({ decisions: F.decisions.concat([extra]) });
+  eq(p2.rows[1].base_rent, 1, 'the Luxe entry stands'); eq(p2.rows[1]._origins.base_rent, 'entered');
+  eq(p2.rows[0].base_rent, 1251250, 'ShopRite unaffected'); eq(p2.rows[2].base_rent, P.rows[2].base_rent);
+});
+t('leaseholdRows without a resolver still names every leasehold, unresolved and without values', () => {
+  const p3 = AL.leaseholdRows(input(), { terms: {} });
+  eq(p3.resolverAvailable, false); eq(p3.leaseholds, 4);
+  deq(p3.rows.slice(0, 4).map(r => r.tenant_name), F.families.map(f => f.label));
+  ok(p3.rows.slice(0, 4).every(r => r._resolved === false && r.base_rent === null && r._tenantNameFrom === 'leasehold_label'));
+  eq(AL.leaseholdRows(null).rows.length, 0);
+});
+t('legacyRows keeps only the named raw rows no leasehold represents, marks them unverified, and copies without mutating', () => {
+  const tenants = [
+    { id: 'e', _status: 'error', tenant_name: 'Errored' }, { id: 'p', _status: 'pending', tenant_name: 'Pending' },
+    { id: 'n', tenant_name: '' }, { id: 't1', tenant_name: 'Replaced Co' }, { id: 't2', tenant_name: 'In A Leasehold' },
+    { id: 't3', tenant_name: 'Unfiled Doc Co', base_rent: 9000 }, { id: 't4', tenantName: 'Orphan Family Co' }, { tenant_name: 'No Doc Co' },
+  ];
+  const before = JSON.stringify(tenants);
+  const docs = [{ produced_id: 't1', superseded_by_document_id: 'd9', family_id: 'f1', file_name: 'old.pdf' },
+                { produced_id: 't2', family_id: 'f1', file_name: 'in.pdf' },
+                { produced_id: 't3', family_id: null, file_name: 'loose.pdf' },
+                { produced_id: 't4', family_id: 'gone', file_name: 'orphan.pdf' }];
+  const L = AL.legacyRows(tenants, docs, [{ id: 'f1' }]);
+  deq(L.rows.map(r => r.tenant_name || r.tenantName), ['Unfiled Doc Co', 'Orphan Family Co', 'No Doc Co']);
+  deq(L.rows.map(r => r._legacyWhy), ['unfiled_document', 'unfiled_document', 'no_document']);
+  ok(L.rows.every(r => r._source === AL.SOURCE.UNFILED && r._unverified === true && r._note === AL.UNFILED_NOTE));
+  eq(L.rows[0].base_rent, 9000);
+  deq(L.dropped, [{ tenantId: 't1', fileName: 'old.pdf', why: 'replaced' }, { tenantId: 't2', fileName: 'in.pdf', familyId: 'f1', why: 'in_leasehold' }]);
+  eq(JSON.stringify(tenants), before, 'the raw rows were changed');
+  deq(AL.legacyRows(null, null, null), { rows: [], dropped: [] });
+});
+t('attachStates puts each row\'s states back on the summary row at the same position, and nothing on a row without one', () => {
+  const ts = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+  const out = AL.attachStates(ts, [
+    { _source: 'leasehold', _leaseholdId: 'L1', _states: { base_rent: 'verified' }, _origins: { base_rent: 'entered' } },
+    { _source: 'unfiled', _unverified: true, _legacyWhy: 'no_document' }]);
+  ok(out === ts, 'the same array');
+  eq(ts[0]._leaseholdId, 'L1'); eq(ts[0]._source, 'leasehold'); deq(ts[0]._states, { base_rent: 'verified' });
+  deq(ts[0]._origins, { base_rent: 'entered' }); eq(ts[0]._unverified, false); eq(ts[0]._legacyWhy, null);
+  eq(ts[1]._source, 'unfiled'); eq(ts[1]._leaseholdId, null); deq(ts[1]._states, {}); eq(ts[1]._unverified, true); eq(ts[1]._legacyWhy, 'no_document');
+  ok(!('_source' in ts[2]), 'a row with no canonical row is left alone');
+  deq(AL.attachStates(null, null), []);
+});
+t('cellState says what each cell is, for any consumer', () => {
+  const r = { _source: 'leasehold', _states: { a: 'verified', b: 'ai_extracted', c: 'unclear', d: 'conflicting', e: 'missing', f: 'verified' }, _origins: { f: 'entered' } };
+  deq(['a', 'b', 'c', 'd', 'e', 'f', 'z'].map(k => AL.cellState(r, k)), ['verified', 'read', 'read', 'contested', 'missing', 'entered', 'missing']);
+  eq(AL.cellState({ _source: 'unfiled', _states: { a: 'verified' } }, 'a'), 'unverified', 'an unfiled row is never verified');
+  eq(AL.cellState(null, 'a'), 'missing');
+  eq(AL.cellState({ _states: { d: 'conflicting' }, _origins: { d: 'entered' } }, 'd'), 'contested', 'a contradiction outranks the origin');
+  eq(AL.cellState({ _states: { e: 'missing' }, _origins: { e: 'entered' } }, 'e'), 'missing');
 });
 
 sec('7 · the page routes every analytical consumer through the rule');

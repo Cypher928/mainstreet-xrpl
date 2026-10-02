@@ -133,6 +133,30 @@
       + '</div>';
   }
 
+  /**
+   * The reading a person set aside — replaced by a correction, or rejected —
+   * drawn apart from the evidence and saying what it is: what a document
+   * read, not the support for the fact's value.
+   */
+  function setAsideHtml(f) {
+    var out = '';
+    [['replaced', 'acqr-replaced', 'Replaced reading', 'what the document read; not the support for this value'],
+     ['rejected', 'acqr-rejected', 'Rejected reading', 'set aside by a person; not used as the value']].forEach(function (k) {
+      var r = f[k[0]];
+      if (!r) return;
+      var v = formatValue(r.value, f.type);
+      out += '<div class="' + k[1] + '" data-set-aside="' + k[0] + '">'
+        + '<span class="acqr-setaside-lead">' + esc(k[2]) + ':</span> '
+        + '<span class="acqr-setaside-value">' + esc(v === null ? '(no value)' : v) + '</span>'
+        + (r.documentName ? ' <span class="acqr-setaside-doc">— ' + esc(r.documentName)
+            + (r.page != null ? ', p.&nbsp;' + esc(r.page) : '') + '</span>' : '')
+        + ' <span class="acqr-setaside-note">(' + esc(k[3]) + ')</span>'
+        + (r.quote ? '<blockquote class="acqr-quote acqr-setaside-quote">&ldquo;' + esc(r.quote) + '&rdquo;</blockquote>' : '')
+        + '</div>';
+    });
+    return out;
+  }
+
   /** Both sides of a contradiction. Neither is marked as the answer. */
   function competingHtml(fact) {
     var list = Array.isArray(fact.competing) ? fact.competing : [];
@@ -189,6 +213,7 @@
       + cell('acqr-detail', valueCell
         + competingHtml(f)
         + (contested ? '' : evidenceHtml(f.evidence, f.derived, opts))
+        + setAsideHtml(f)
         + (f.note ? '<div class="acqr-note">' + esc(f.note) + '</div>' : ''))
       + '</tr>';
   }

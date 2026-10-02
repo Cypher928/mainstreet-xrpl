@@ -2499,6 +2499,45 @@ failing tests first: 22 of 27 failed on the code before the change) and
 `test-e2e-acquisition-term-entry.js`; `tools/acquisition-term-entry-mutation.js`
 undoes each rule.
 
+### The replaced reading in the report; zero and "none" by type (Step D)
+
+- **The Acquisition Report shows what a correction replaced.** A fact whose
+  term a person corrected carries `replaced` (value, document, page, clause),
+  and a rejected one carries `rejected`. Each is drawn under the value as
+  **Replaced reading:** / **Rejected reading:**, struck through, with "(what
+  the document read; not the support for this value)" or "(set aside by a
+  person; not used as the value)" — in its own block, never inside the
+  **Source:** block. Such a fact has no document evidence unless the
+  correction cites a clause of its own. A correction that quotes the very
+  clause it replaces (no Pilot row does; read-only checked) is resolved as
+  citing nothing: that clause states the old value, so it is shown only as
+  the replaced reading, on every screen.
+- **What a person types is read by its own rule** (`personValue`); the AI
+  rule (`normalizeFieldValue`, which reads an unsupported 0 or "none" as
+  nothing) is unchanged.
+
+  | Field type | 0 | "none", "n/a", "no", "zero" | Negative |
+  |---|---|---|---|
+  | Money (base rent, deposit, TI allowance, cap base, guaranty limit, expense stop) | **$0** — a value, verified, entered or corrected; never "Not established" | Refused: "To record a figure of zero, enter 0." | Refused |
+  | Percent (cap, admin fee, gross-up) | **0%** — a value | Refused, as above | Refused |
+  | Leased area | Refused: "A leased area must be greater than zero." | Refused, as above | Refused |
+  | A term a document can state as **None (stated)** (rent increases, CAM / tax / insurance recovery, percentage rent) | — | Refused: a bare "None" asserts that a document's clause denies the term, and only a document can establish that. The person may describe what they know ("No percentage rent (per seller)"), recorded as their text, entered — never drawn as "None (stated)" | — |
+  | Yes / no (audit rights, …) | — | "No" is the value No, as before | — |
+  | Dates, the allowed values, other text | as before | as before | — |
+
+  The editor, `validateTermInput`, `buildDecisionPayload` (entries and
+  sourceless corrections) and the resolver all use the same rule, so what
+  is accepted is what reads back. A correction that cites a clause is still
+  read by the document rule — that is the one way to record "None (stated)".
+  No stored decision on the Pilot holds 0 or a word for none (read-only
+  checked), so nothing already recorded reads differently.
+- **The leaseholds-only suite tests behaviour.** Its §6 compared six
+  functions with their text at HEAD, which passes trivially once a change is
+  committed. It now asserts what `canonicalValue`, `tenantRowFor`,
+  `leaseholdRows`, `legacyRows`, `attachStates` and `cellState` must do;
+  `tools/acquisition-leaseholds-mutation.js` K01–K14 are each run against
+  that suite alone.
+
 ### Verified
 
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);

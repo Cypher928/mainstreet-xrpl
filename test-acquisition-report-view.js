@@ -347,10 +347,12 @@ section('10 · R-1 pinned; v1, the CAM engine and P1-4 untouched');
   // R-1 was frozen at edcf259 and unfrozen once, for §4l's provenance change
   // only (a verified term with support `entered` carries origin `entered` and
   // no evidence; `verified_entered` is counted), and once more for the
-  // acquisition matrix: its five fields placed in Q2 (QUESTION_FIELDS only).
-  // This is that file.
-  check('acquisition-report.js (R-1) is byte-for-byte the matrix-fields revision',
-    sha('acquisition-report.js') === 'ec81d002753aa0dd464c0c598f7ab871fd1e8d2d60ce47209cd92571124c7e24',
+  // acquisition matrix: its five fields placed in Q2 (QUESTION_FIELDS only),
+  // and once more for the set-aside readings: a fact carries the reading a
+  // correction REPLACED or a person REJECTED as `replaced` / `rejected`, and
+  // such a fact has no document evidence (projectTerm only). This is that file.
+  check('acquisition-report.js (R-1) is byte-for-byte the set-aside-readings revision',
+    sha('acquisition-report.js') === '90802148ec69868f3d1384bdd5d212f9939f81ec55a21c16117195531c210168',
     sha('acquisition-report.js').slice(0, 12));
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
   // The changes v1 may carry: Option B's stale guard (docs §4n) and the

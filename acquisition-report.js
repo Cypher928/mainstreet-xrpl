@@ -167,7 +167,22 @@
       source:   'terms',
     };
 
-    if (t.governingDocumentId || t.quote) {
+    // What a person set aside — the reading a correction REPLACED, or the
+    // reading a person REJECTED — kept apart from the evidence: it is what a
+    // document read, not the support for the fact's value.
+    var setAside = function (r) {
+      return r ? { value: r.value === undefined ? null : r.value, documentName: r.documentName || null,
+                   docType: r.docType || null, page: r.page == null ? null : r.page,
+                   quote: r.quote || null, confidence: r.confidence == null ? null : r.confidence } : null;
+    };
+    if (t.replacedReading) fact.replaced = setAside(t.replacedReading);
+    if (t.rejectedReading) fact.rejected = setAside(t.rejectedReading);
+
+    // A value a person supplied (a correction with no clause of its own) or a
+    // reading a person rejected has no document SOURCE: the document it names
+    // read something else.
+    var noSource = (t.replacedReading && !t.quote) || t.rejected;
+    if (!noSource && (t.governingDocumentId || t.quote)) {
       fact.evidence = {
         documentId:   t.governingDocumentId || null,
         documentName: t.governingDocumentName || null,

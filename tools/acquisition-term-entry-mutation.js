@@ -7,7 +7,8 @@
  *
  * Each mutant undoes ONE rule, and test-acquisition-term-safeguards.js,
  * test-acquisition-decisions.js, test-acquisition-resolver.js,
- * test-acquisition-workspace.js or test-e2e-acquisition-term-entry.js must
+ * test-acquisition-workspace.js, test-acquisition-report.js,
+ * test-acquisition-report-view.js or test-e2e-acquisition-term-entry.js must
  * fail for every one.
  *
  *   Invalid input is refused before it is saved (gap 1)
@@ -36,6 +37,25 @@
  *     C08  the corrected value carries the replaced reading's clause
  *     C09  the replaced reading is not kept
  *
+ *   Zero and "none", by field type (Step D)
+ *     C24  zero is refused for every figure, as "not established"
+ *     C25  a leased area of zero is accepted
+ *     C26  a word for none is taken for a figure's value
+ *     C27  a bare "None" is accepted with no clause behind it
+ *     C28  a negative figure is accepted
+ *     C29  the resolver reads an entered 0 by the AI rule (as nothing)
+ *     C30  a sourceless correction is checked by the AI rule (0 refused)
+ *
+ *   The report shows the replaced reading apart from the evidence (Step D)
+ *     C31  the replaced reading is not carried to the report
+ *     C32  the rejected reading is not carried to the report
+ *     C33  the replaced clause is shown as the new value's Source
+ *     C34  the set-aside reading is not drawn
+ *     C35  it is drawn with the evidence's own label
+ *     C36  the replaced value is not struck through
+ *     C37  a correction quoting the clause it replaces keeps it as support
+ *     C38  …and keeps that clause's page
+ *
  *   The reason, the sources CSV, the freeze, the history
  *     C10  a reason is not recorded on a correction
  *     C14  the sources CSV's Origin column is blank
@@ -53,6 +73,9 @@ const T = 'acquisition-terms.js';
 const L = 'acquisition-leasehold.js';
 const M = 'acquisition-lease-matrix.js';
 const S = 'script.js';
+const AR = 'acquisition-report.js';
+const AV = 'acquisition-report-view.js';
+const H = 'index.html';
 
 const MUTANTS = [
   { id: 'C01', file: T, why: 'a correction the type cannot hold is accepted',
@@ -86,8 +109,8 @@ const MUTANTS = [
     from: '    if (reason && !payload.note) payload.note = reason;\n',
     to:   '' },
   { id: 'C11', file: T, why: 'an entry the type cannot hold is accepted',
-    from: "      if (typed === null || typed === undefined) {\n        return { ok: false, error: inputError(payload.field_key, payload.new_value) };\n      }\n",
-    to:   "      if (typed === null || typed === undefined) typed = payload.new_value;\n" },
+    from: "      if (pv.error) return { ok: false, error: personError(payload.field_key, pv.error, payload.new_value) };\n      var typed = pv.value;\n",
+    to:   "      var typed = pv.error ? payload.new_value : pv.value;\n" },
   { id: 'C12', file: L, why: 'the projection loses the flags',
     from: "      flags[f]   = t.rejected ? 'rejected' : t.enteredConflict ? 'entered_conflict' : null;",
     to:   '      flags[f]   = null;' },
@@ -124,6 +147,51 @@ const MUTANTS = [
   { id: 'C23', file: T, why: 'a correction after a rejection forgets the reading it replaces',
     from: '    } else if (payload.previous_value === undefined && term && term.rejectedReading',
     to:   '    } else if (false && term.rejectedReading' },
+  { id: 'C24', file: T, why: 'zero is refused for every figure',
+    from: '      if (n === 0 && GREATER_THAN_ZERO[field]) return',
+    to:   '      if (n === 0) return' },
+  { id: 'C25', file: T, why: 'a leased area of zero is accepted',
+    from: '      if (n === 0 && GREATER_THAN_ZERO[field]) return',
+    to:   '      if (false) return' },
+  { id: 'C26', file: T, why: 'a word for none is taken for a figure\'s value (zero)',
+    from: "      if (_isNegativeWord(s) && !/^0+(\\.0+)?$/.test(s)) return { error: 'none_word' };\n",
+    to:   "      if (_isNegativeWord(s)) return { value: 0 };\n" },
+  { id: 'C27', file: T, why: 'a bare "None" is accepted with no clause behind it',
+    from: "    if (meta.type === 'text' && meta.none && _isNegativeWord(",
+    to:   "    if (false && _isNegativeWord(" },
+  { id: 'C28', file: T, why: 'a negative figure is accepted',
+    from: "      if (/^-/.test(c) || /^\\(.*\\)$/.test(c)) return { error: 'negative' };\n",
+    to:   '' },
+  { id: 'C29', file: T, why: 'the resolver reads an entered value by the AI rule',
+    from: '      var entered = personValue(term.field, d.new_value).value;',
+    to:   '      var entered = normalizeFieldValue(term.field, d.new_value, false);' },
+  { id: 'C30', file: T, why: 'a sourceless correction is checked by the AI rule',
+    from: '        var pc = personValue(payload.field_key, payload.new_value);',
+    to:   "        var pc = (function (v) { return v === null || v === undefined ? { error: 'invalid' } : { value: v }; })(normalizeFieldValue(payload.field_key, payload.new_value, false));" },
+  { id: 'C31', file: AR, why: 'the replaced reading is not carried to the report',
+    from: '    if (t.replacedReading) fact.replaced = setAside(t.replacedReading);',
+    to:   '' },
+  { id: 'C32', file: AR, why: 'the rejected reading is not carried to the report',
+    from: '    if (t.rejectedReading) fact.rejected = setAside(t.rejectedReading);',
+    to:   '' },
+  { id: 'C33', file: AR, why: 'the replaced clause is shown as the new value\'s Source',
+    from: '    var noSource = (t.replacedReading && !t.quote) || t.rejected;',
+    to:   '    var noSource = false;' },
+  { id: 'C34', file: AV, why: 'the set-aside reading is not drawn',
+    from: '        + setAsideHtml(f)\n',
+    to:   '' },
+  { id: 'C35', file: AV, why: 'it is drawn with the evidence\'s own label',
+    from: "'Replaced reading', 'what the document read; not the support for this value'",
+    to:   "'Source', 'what the document read; not the support for this value'" },
+  { id: 'C36', file: H, why: 'the replaced value is not struck through',
+    from: '    .acqr-setaside-value { text-decoration: line-through; }',
+    to:   '    .acqr-setaside-value { }' },
+  { id: 'C37', file: T, why: 'a correction quoting the clause it replaces keeps it as support',
+    from: '      if (quote && term.quote && quote === _str(term.quote, QUOTE_MAX)) quote = null;\n',
+    to:   '' },
+  { id: 'C38', file: T, why: 'a correction quoting the clause it replaces keeps that clause\'s page',
+    from: '      term.page  = quote ? _page(d.source_page) : null;',
+    to:   '      term.page  = _page(d.source_page);' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-term-entry-mut-'));
@@ -137,7 +205,8 @@ const ORIGINAL = {};
 [...new Set(MUTANTS.map(m => m.file))].forEach(f => { ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8'); });
 // The fast suites first: a mutant they kill never pays for a browser.
 const SUITES = ['test-acquisition-term-safeguards.js', 'test-acquisition-decisions.js', 'test-acquisition-resolver.js',
-                'test-acquisition-workspace.js', 'test-e2e-acquisition-term-entry.js'];
+                'test-acquisition-workspace.js', 'test-acquisition-report.js', 'test-acquisition-report-view.js',
+                'test-e2e-acquisition-term-entry.js'];
 function runSuites() {
   for (const suite of SUITES) {
     try { execFileSync(process.execPath, [suite], { cwd: tmp, stdio: 'pipe', timeout: 600000 }); }

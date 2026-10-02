@@ -207,8 +207,16 @@ section('4 · Q1 — tenant, suite, area, dates and type, each in its own state'
 {
   const suite = rowOf(Q1, 'suite'), sqft = rowOf(Q1, 'leased_sqft'), tenant = rowOf(Q1, 'tenant_name');
   check('a corrected suite is Verified, shows the corrected value, and says a person corrected it',
-    suite && suite.attrs.state === 'verified' && /Anchor Unit A-3/.test(suite.inner)
-    && /Corrected by a person\./.test(suite.inner) && !/Anchor Unit A-1<\/span>/.test(suite.inner), suite && text(suite.inner));
+    suite && suite.attrs.state === 'verified' && /<span class="acqr-value">Anchor Unit A-3<\/span>/.test(suite.inner)
+    && /Corrected by a person\./.test(suite.inner) && !/class="acqr-value">Anchor Unit A-1/.test(suite.inner), suite && text(suite.inner));
+  // The correction quotes the clause it replaces ("Suite: Anchor Unit A-1").
+  // That clause states the old value: it is shown as the replaced reading,
+  // never as the Source of A-3.
+  check('the previous A-1 is shown as the "Replaced reading", with its clause — and no Source block supports A-3',
+    suite && /data-set-aside="replaced"/.test(suite.inner)
+    && /Replaced reading:<\/span> <span class="acqr-setaside-value">Anchor Unit A-1<\/span>/.test(suite.inner)
+    && /not the support for this value/.test(suite.inner) && /acqr-setaside-quote">&ldquo;Suite: Anchor Unit A-1&rdquo;/.test(suite.inner)
+    && !/class="acqr-evidence"/.test(suite.inner), suite && text(suite.inner));
   check('an AI-read area is an Assumption marked AI-read, with its clause as Source',
     sqft && sqft.attrs.state === 'assumption' && sqft.attrs.origin === 'ai_read'
     && /AI-read · not confirmed/.test(sqft.inner) && /Source:/.test(sqft.inner) && /65,000/.test(sqft.inner));
@@ -340,9 +348,11 @@ section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
 {
   const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
   // R-1 unfrozen for §4l's provenance change, and for the acquisition
-  // matrix's five Q2 fields (QUESTION_FIELDS only); the pin follows it.
-  check('acquisition-report.js (R-1) is byte-for-byte the matrix-fields revision',
-    sha('acquisition-report.js') === 'ec81d002753aa0dd464c0c598f7ab871fd1e8d2d60ce47209cd92571124c7e24');
+  // matrix's five Q2 fields (QUESTION_FIELDS only), and for the set-aside
+  // readings (`replaced` / `rejected`, with no evidence; projectTerm only);
+  // the pin follows it.
+  check('acquisition-report.js (R-1) is byte-for-byte the set-aside-readings revision',
+    sha('acquisition-report.js') === '90802148ec69868f3d1384bdd5d212f9939f81ec55a21c16117195531c210168');
 
   // R-2's drawing of Q3 and Q4, from the committed view, against this one.
   const gitRoot = process.env.ACQ_REPORT_GIT_ROOT || ROOT;

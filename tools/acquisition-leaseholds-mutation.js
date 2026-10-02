@@ -60,6 +60,24 @@
  *     X07  the portfolio calls a gated review Ready to convert
  *     X08  Ask AI is handed the stored reviews again
  *
+ *   The canonical model's behaviour — acquisition-leasehold.js. Each of these
+ *   is run against test-acquisition-leaseholds-only.js ALONE (`unitOnly`): its
+ *   §6 must catch it by behaviour, not by comparing the source with HEAD.
+ *     K01  the cam_cap alias loses the cap
+ *     K02  lease_start reads another term
+ *     K03  a contradiction's value is used
+ *     K04  a value of 0 is read as nothing
+ *     K05  an entered or contested term's clause is cited
+ *     K06  an entered value a document now contradicts is not flagged
+ *     K07  a row named from its leasehold says the name came from a document
+ *     K08  one leasehold's decisions reach another
+ *     K09  a replaced upload's raw row is kept as unfiled
+ *     K10  attachStates drops the origins
+ *     K11  cellState ignores an entered origin
+ *     K12  an unfiled row's cell can read verified
+ *     K13  the percentage-rent column is dropped from the row
+ *     K14  every leasehold counts every document
+ *
  * Not mutated, and why: _acqEnsureRecord's early loads — every walk opens the
  * review and waits for the record, so removing them changes nothing a walk can
  * see; they guard a click made faster than the panel loads.
@@ -181,6 +199,48 @@ const MUTANTS = [
   { id: 'X08', file: S, why: 'Ask AI is handed the stored reviews again',
     from: '  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviewsForConsumers() });',
     to:   '  const ans = AIWorkspace.answer({ question, context: _aiwContext, wctx: _aiwWctx, props: _props, acqReviews: _acqReviews });' },
+  { id: 'K01', file: L, unitOnly: true, why: 'the cam_cap alias loses the cap',
+    from: "      cap:          v('cap'),         cam_cap:     v('cap'),",
+    to:   "      cap:          v('cap'),         cam_cap:     null," },
+  { id: 'K02', file: L, unitOnly: true, why: 'lease_start reads another term',
+    from: "      start_date:   v('start_date'),  lease_start: v('start_date'),",
+    to:   "      start_date:   v('start_date'),  lease_start: v('end_date')," },
+  { id: 'K03', file: L, unitOnly: true, why: 'a contradiction\'s value is used',
+    from: "    if (term.state === 'conflicting') return null;\n",
+    to:   '' },
+  { id: 'K04', file: L, unitOnly: true, why: 'a value of 0 is read as nothing',
+    from: '    return term.value === undefined ? null : term.value;',
+    to:   '    return term.value || null;' },
+  { id: 'K05', file: L, unitOnly: true, why: 'an entered or contested term\'s clause is cited',
+    from: "      if (t.quote && t.support !== 'entered' && t.state !== 'conflicting') quotes[f] = t.quote;",
+    to:   '      if (t.quote) quotes[f] = t.quote;' },
+  { id: 'K06', file: L, unitOnly: true, why: 'an entered value a document now contradicts is not flagged',
+    from: "      flags[f]   = t.rejected ? 'rejected' : t.enteredConflict ? 'entered_conflict' : null;",
+    to:   "      flags[f]   = t.rejected ? 'rejected' : null;" },
+  { id: 'K07', file: L, unitOnly: true, why: 'a row named from its leasehold says the name came from a document',
+    from: "      _tenantNameFrom: tenantName ? 'term' : 'leasehold_label',",
+    to:   "      _tenantNameFrom: 'term'," },
+  { id: 'K08', file: L, unitOnly: true, why: 'one leasehold\'s decisions reach another',
+    from: '        ? AT.resolveFamilyTerms(mine, decs.filter(function (d) { return d.family_id === fam.id; }), { reasoner: o.reasoner })',
+    to:   '        ? AT.resolveFamilyTerms(mine, decs, { reasoner: o.reasoner })' },
+  { id: 'K09', file: L, unitOnly: true, why: 'a replaced upload\'s raw row is kept as unfiled',
+    from: '      if (doc && doc.superseded_by_document_id) {',
+    to:   '      if (false) {' },
+  { id: 'K10', file: L, unitOnly: true, why: 'attachStates drops the origins',
+    from: '      t._origins     = r._origins || {};',
+    to:   '      t._origins     = {};' },
+  { id: 'K11', file: L, unitOnly: true, why: 'cellState ignores an entered origin',
+    from: "    if ((r._origins || {})[field] === 'entered') return 'entered';\n",
+    to:   '' },
+  { id: 'K12', file: L, unitOnly: true, why: 'an unfiled row\'s cell can read verified',
+    from: "    if (r._source === SOURCE.UNFILED) return 'unverified';\n",
+    to:   '' },
+  { id: 'K13', file: L, unitOnly: true, why: 'the percentage-rent column is dropped from the row',
+    from: "      percentage_rent:    v('percentage_rent'),\n",
+    to:   '' },
+  { id: 'K14', file: L, unitOnly: true, why: 'every leasehold counts every document',
+    from: '      row._documentCount = mine.length;',
+    to:   '      row._documentCount = docs.length;' },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-lh-mut-'));
@@ -192,13 +252,12 @@ try { fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modul
 
 const ORIGINAL = {};
 [S, L, D, AI, CC, DR, E].forEach(f => { ORIGINAL[f] = fs.readFileSync(path.join(ROOT, f), 'utf8'); });
-// The fast suite first: a mutant it kills never pays for a browser. The pin in
-// the unit suite reads HEAD from the real checkout (this copy has no .git).
+// The fast suite first: a mutant it kills never pays for a browser.
 const ENV = Object.assign({}, process.env, { ACQ_REPORT_GIT_ROOT: ROOT });
 const SUITES = [['node', 'test-acquisition-leaseholds-only.js'], ['node', 'test-e2e-acquisition-leaseholds-only.js'],
                 ['node', 'test-e2e-acquisition-canonical.js']];
-function runSuites() {
-  for (const [bin, suite] of SUITES) {
+function runSuites(unitOnly) {
+  for (const [bin, suite] of (unitOnly ? SUITES.slice(0, 1) : SUITES)) {
     try { execFileSync(bin, [suite], { cwd: tmp, stdio: 'pipe', timeout: 900000, env: ENV }); }
     catch (_) { return false; }
   }
@@ -224,7 +283,7 @@ for (const m of MUTANTS) {
     console.log(`  ??   ${m.id}  ANCHOR NOT UNIQUE in ${m.file} — malformed mutant`); survived.push(m.id + ' (anchor not unique)'); continue;
   }
   fs.writeFileSync(path.join(tmp, m.file), src.slice(0, i) + m.to + src.slice(i + m.from.length));
-  const passed = runSuites();
+  const passed = runSuites(!!m.unitOnly);
   fs.writeFileSync(path.join(tmp, m.file), src);
   if (!passed) { killed++; console.log(`  kill ${m.id}  ${m.why}`); continue; }
   survived.push(`${m.id}: ${m.why}`);
