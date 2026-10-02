@@ -183,6 +183,9 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
   check('and so does the append-only activity entry', a2.type === 'extraction_resolved' && a2.meta && a2.meta.rowId === SAFE
     && a2.meta.reason === r2.reason && a2.meta.concerns.length === 2 && /confirmed by a person despite/.test(a2.summary)
     && (D2.activity || []).length === (D1.activity || []).length + 1, JSON.stringify(a2).slice(0, 300));
+  const att2 = await page.evaluate(() => (__store.acquisition_conversion_attestations || []).map(a => [a.kind, a.row_key, a.family_id, a.reason, a.review_id]));
+  check('the confirmation the server reads (migration 044) is recorded too: this entry, this leasehold, this review, the reason',
+    JSON.stringify(att2) === JSON.stringify([['match_confirmed', SAFE, SUN, 'Seller confirms SafeShield occupies the Sunrise suite (test)', MAPLE]]), JSON.stringify(att2));
   await openList(page);
   const resolvedLine = await page.evaluate((key) => (document.querySelector(`#acqTermsList li.acq-um-resolved[data-row="${key}"]`) || {}).innerText || '', SAFE);
   check('the resolved line says it was matched despite the concern, with the reason', /matched despite/.test(resolvedLine) && /Seller confirms/.test(resolvedLine), resolvedLine.slice(0, 200));
@@ -196,8 +199,9 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
     const d = await review(page);
     const r = (d.extractionResolutions || {})[row] || {};
     const asked = await page.evaluate((sel) => !!document.querySelector(sel + ' .acq-um-confirm'), rowLi(row));
-    check(`${name}: matched at once — no question, no concern fields`, !asked && r.action === 'matched' && r.familyId === fam
-      && !('concerns' in r) && !('reason' in r) && d.activity.length === n0 + 1, JSON.stringify(r));
+    check(`${name}: matched at once — no question, no concern fields, nothing recorded for the server`, !asked && r.action === 'matched' && r.familyId === fam
+      && !('concerns' in r) && !('reason' in r) && d.activity.length === n0 + 1
+      && await page.evaluate((k) => !(__store.acquisition_conversion_attestations || []).some(a => a.row_key === k), row), JSON.stringify(r));
   }
   await openList(page);
   await page.click(`${rowLi(INS_ROW)} .acq-um-dismiss`);
@@ -239,10 +243,12 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
   await page.click(`#acqConvertAction .acq-docless-ack-btn[data-family="${SUN}"]`);
   await page.waitForTimeout(800);
   const D4 = await review(page);
-  const ack = (D4.leaseholdAcknowledgements || {})[SUN] || {};
+  const acks = await page.evaluate((sun) => (__store.acquisition_conversion_attestations || []).filter(a => a.family_id === sun && a.kind === 'no_document_on_file'), SUN);
   const a4 = (D4.activity || []).slice(-1)[0] || {};
-  check('the acknowledgement is recorded on the review: condition, who, when — and verifiesTerms false',
-    ack.condition === 'no_document_on_file' && ack.verifiesTerms === false && ack.by === F.UID && typeof ack.at === 'string', JSON.stringify(ack));
+  check('the acknowledgement is a row the server reads (migration 044): this review, this leasehold, no_document_on_file — and the page claims no verification, no person and no time of its own',
+    acks.length === 1 && acks[0].review_id === MAPLE && !('verifies_terms' in acks[0] && acks[0].verifies_terms !== false)
+    && !('acted_by' in acks[0]) && !('created_at' in acks[0]), JSON.stringify(acks));
+  check('…and nothing about it is written into review.data, which the server does not trust', !('leaseholdAcknowledgements' in D4), Object.keys(D4).join(','));
   check('and in the activity history, worded as a missing lease, not a verification',
     a4.type === 'leasehold_acknowledged' && a4.meta.familyId === SUN && a4.meta.verifiesTerms === false && /does not verify them/.test(a4.summary)
     && D4.activity.length === D3.activity.length + 1, a4.summary);

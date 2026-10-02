@@ -1893,35 +1893,21 @@ document." — and `_acqConversionBlock` refuses conversion until a person
 acknowledges each one. The convert dialog says it again at the moment of
 conversion.
 
-The acknowledgement is kept in `review.data.leaseholdAcknowledgements`,
-keyed by leasehold, beside `extractionResolutions` and `documentDispositions`
-(`{ condition: 'no_document_on_file', label, verifiesTerms: false, by, at }`),
-and in a `leasehold_acknowledged` activity entry. It changes no term, decision,
+The acknowledgement is a row in `acquisition_conversion_attestations`
+(migration 044, §4q), which the database stamps with the person and the
+time. It is also recorded in a `leasehold_acknowledged` activity entry. (The
+first local build kept it in `review.data.leaseholdAcknowledgements`. That
+build never shipped, and the map is no longer written or read.) It changes no term, decision,
 document or leasehold, and every place it is shown says it does not verify
 any lease term. A leasehold that has its lease cannot be acknowledged; a
 converted (frozen) acquisition offers none of this and writes nothing.
 
-### Server-side enforcement: not added (proposal only)
+### Server-side enforcement
 
-The safeguards are enforced in the page. `acquire_property` (migration 035)
-still checks only what it checked before: a `matched`/`new_leasehold`
-resolution naming one of the review's leaseholds settles an extraction, and a
-leasehold with no document does not stop acquisition. A client that bypasses
-the page could still convert a review with an unacknowledged documentless
-leasehold, or record a concerning match with no reason. Closing that needs a
-new migration, which has **not** been written or applied. Proposed, for a
-separate approval:
-
-- in `acquire_property`, after step 5b: refuse when any leasehold of the
-  review has no live document (`acquisition_documents.family_id = f.id`,
-  `superseded_by_document_id is null`, not disposed `not_relevant`/`duplicate`)
-  and `review.data->'leaseholdAcknowledgements'->(f.id::text)->>'condition'`
-  is not `no_document_on_file` — same errcode (`check_violation`), naming the
-  leaseholds;
-- name comparison stays in the page (a SQL port of `matchConcerns` would be a
-  second implementation to keep in step); the server can at most require that
-  a resolution carrying `concerns` with a `mismatch` also carries a non-empty
-  `reason`.
+Superseded by §4q: migration 044 enforces both safeguards inside
+`acquire_property`, from evidence the server keeps itself. The
+`review.data.leaseholdAcknowledgements` map described above is no longer
+written; an acknowledgement is a row in `acquisition_conversion_attestations`.
 
 ### Verified
 
@@ -1934,6 +1920,171 @@ blocks Acquire until acknowledged; a converted copy offers nothing);
 `tools/acquisition-match-safeguards-mutation.js` undoes each rule.
 `test-e2e-acquisition-leaseholds-only.js` now acknowledges Sunrise's missing
 lease where its walk converts.
+
+## 4q. Server-side acquisition safeguards (migration 044; local, NOT applied)
+
+### The gap
+
+§4p's safeguards ran only in the page. `acquire_property` (035) is the one
+server path that converts an acquisition, and it is callable directly by any
+administrator of the property: it settled an extraction on any
+`matched`/`new_leasehold` resolution naming one of the review's leaseholds,
+and it let a leasehold with no lease document on file become a tenant with no
+question asked.
+
+### What the server can trust
+
+- **Server-owned tables**: `acquisition_document_families` (the leaseholds,
+  their `label`), `acquisition_documents` (`family_id`,
+  `superseded_by_document_id`), `properties.name`, `acquisition_reviews.name`.
+- **`review.data`** (`tenants`, `extractionResolutions`,
+  `documentDispositions`) is JSON written whole by the browser. 035 already
+  reads it for the extraction gate. It is what a person decided, but nothing in
+  it is stamped by the server. A key in it is exactly the "arbitrary
+  client-supplied boolean" the gate must not accept.
+
+Two pieces of evidence the gate needs are therefore NOT taken from
+`review.data`:
+
+1. **The acknowledgement** that a leasehold has no lease on file, and
+2. **the human reason** given for confirming a materially mismatched match.
+
+They become rows in a new append-only table,
+`acquisition_conversion_attestations`, modelled on
+`acquisition_term_decisions` (026):
+- composite to the review and the leasehold;
+- bound to the property by 034's `acq_child_property_bind`;
+- frozen with the episode by 036's `acq_children_frozen`;
+- readable and insertable by members of the property (034's RLS model);
+- never updated or deleted, except when its review or leasehold is deleted.
+
+A BEFORE INSERT trigger stamps `acted_by = auth.uid()` and
+`created_at = now()`. Whatever the client sends for those is overwritten, and
+an unauthenticated insert is refused. The trigger also refuses:
+- a leasehold that is not one of the review's;
+- a closed or converted review;
+- an acknowledgement for a leasehold that has a lease on file;
+- a match confirmation whose row is not one of the review's extracted entries,
+  or a mismatched one without a reason.
+
+`verifies_terms` exists only to be `false`: a CHECK refuses anything else.
+An acknowledgement records that the lease is missing; it does not verify any
+term.
+
+**Whether a match is a material mismatch** is never taken from the client
+(`resolution.concerns` is ignored). The server works it out itself with
+`acq_compare_tenant_names` / `acq_compare_property`. These are a line-for-line
+SQL port of `AcquisitionLeasehold.compareTenantNames` / `compareProperty`, and
+the verifier runs both over the same corpus and requires identical results.
+
+### The gate (two steps added to `acquire_property`, after 5b, before the roster)
+
+- **5c · no lease on file.** Every leasehold of the review with no live
+  document (filed into it, not superseded, not disposed `not_relevant` /
+  `duplicate`, the same rule as `documentlessLeaseholds`) needs a
+  `no_document_on_file` attestation for **this review and this leasehold**.
+  Otherwise the call is refused, naming the leaseholds and saying the
+  acknowledgement does not verify any term.
+- **5d · concerning matches.** Every `matched` resolution 5b honours is
+  compared again: the extracted tenant name against the leasehold's label, and
+  the property the lease names against the review's and property's names. A
+  **mismatch** on either needs a `match_confirmed` attestation for this review,
+  this extracted row and this leasehold, with a non-blank reason. Otherwise the
+  call is refused, naming the match. An **uncertain** comparison is not a
+  material concern and is not blocked (the page still asks about it). A match
+  with no concern is unaffected.
+
+Everything else in 035 is unchanged, verbatim and in the same order:
+- authorization before any existence message;
+- property and review checks;
+- one open episode;
+- the pending-document and extraction gates;
+- roster validation;
+- the transition on the SAME property id;
+- tenants, invoices, the conversion record, exactly one event.
+
+A refusal raises, so plpgsql rolls the whole call back.
+
+### Legacy and existing records
+
+Nothing is backfilled and no acknowledgement is invented. Earlier
+browser-written fields are not honoured: a `leaseholdAcknowledgements` map
+from the unshipped 5bc5e84 build, or a `reason` on a resolution. A review
+reaching `acquire_property` after 044 meets the gate in full:
+- each documentless leasehold must be acknowledged again, through the table;
+- a legacy mismatched match must be undone and matched again with a reason.
+
+On Pilot (read on 2026-10-02):
+- The 6 open reviews (3 draft, 3 complete, all with a property) have no
+  documentless leasehold and no `matched` resolution, so none is newly blocked.
+- The 5 converted reviews are frozen by 036 and never reach the function again.
+
+### Who may record one
+
+The guard admits only two callers:
+- the property's owner;
+- an active member of its organisation in any role but `read_only`.
+
+It checks this before anything else, so a caller who may not act learns
+nothing from the refusal about what exists. Converting still requires an
+administrator of the property (035's rule, unchanged). RLS lets members select
+and insert; nobody updates. A row is deleted only when its review or leasehold
+is deleted (034's `delete_prospect_acquisition` still works). A converted
+review takes none (036's freeze is attached to the new table too).
+
+### The page
+
+- **Acknowledge — no lease on file** inserts the row first and writes nothing
+  else if the database refuses it. Only after the row is kept does it add the
+  activity entry.
+- **Match anyway** inserts a `match_confirmed` row (entry, leasehold, reason)
+  before it records the match. If the row is refused, no match is written and
+  the question stays open.
+- `_acqConversionBlock` reads the same rows. It refuses what 5c and 5d would
+  refuse, in the same order, naming the leaseholds and the matches.
+- A legacy mismatched match without a reason is undone and matched again from
+  MainStreet's Record.
+
+### Verified
+
+- `tools/verify-migration-044.js` runs on a throwaway cluster built from
+  `verify-migration-036.js`'s Pilot-shaped stand-ins, with 032–036 installed
+  from their files. It first shows the bypass is open on 035.
+- **Parity:** the SQL comparison equals the JS over 2,601 tenant-name pairs,
+  216 property cases and 28 `requiresReason` cases.
+- **The nine required behaviours**, each refusal leaving the property, review,
+  tenants, events and attestations byte-identical.
+- **Authorization, the freeze, idempotency and the SAME property id** still
+  hold.
+- **Nothing outside 044 moved.** The rollback restores 035's function byte for
+  byte, and 044 applies again.
+- `tools/acquisition-server-gate-mutation.js` undoes each of 044's rules (19
+  mutants).
+- The page side is covered by `test-acquisition-match-safeguards.js`,
+  `test-e2e-acquisition-match-safeguards.js` and
+  `tools/acquisition-match-safeguards-mutation.js` (S19, S23–S27).
+
+### Edge cases left open
+
+- **Uncertain matches.** An uncertain comparison is not enforced by the server
+  (the page still asks about it). This follows the rule that an uncertain
+  comparison is not proof of a mismatch.
+- **Unicode whitespace.** The SQL trims ASCII whitespace where JavaScript's
+  `trim()` also strips Unicode spaces. A lease property name padded with a
+  non-breaking space could compare differently. The parity corpus does not
+  include one.
+- **Undo and re-match.** A reason, once recorded, stays: append-only, it is
+  history. Undoing a match and matching the same entry to the same leasehold
+  again reuses it.
+- **Filed documents.** The gate covers extraction resolutions (`matched`). A
+  document filed into a leasehold by a person (`family_status = confirmed`)
+  is not name-compared. That is a separate path, unchanged here.
+
+### Order of deployment
+
+044 must be applied before a client that writes attestations is served. A page
+built for 044 that loads no attestations (the table missing) fails closed: the
+gate in the page treats every documentless leasehold as unacknowledged.
 
 ## 5. Verification
 

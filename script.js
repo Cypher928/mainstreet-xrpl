@@ -32437,7 +32437,8 @@ function _acqUnresolvedExtractions(reviewId) {
 // Everything the record is read from has arrived for this review.
 function _acqRecordLoaded(reviewId) {
   return _acqFamilies.has(reviewId) && _acqDocs.has(reviewId)
-      && _acqDecisions.has(reviewId) && _acqEvidenceLoaded.has(reviewId);
+      && _acqDecisions.has(reviewId) && _acqEvidenceLoaded.has(reviewId)
+      && _acqAttestations.has(reviewId);
 }
 
 // Load whatever of the record has not arrived yet, so a gate never decides from
@@ -32448,6 +32449,7 @@ async function _acqEnsureRecord(reviewId) {
   if (!_acqDocs.has(reviewId))          await _acqLoadDocuments(reviewId);
   if (!_acqDecisions.has(reviewId))     await _acqLoadDecisions(reviewId);
   if (!_acqEvidenceLoaded.has(reviewId)) await _acqLoadEvidence(reviewId);
+  if (!_acqAttestations.has(reviewId))  await _acqLoadAttestations(reviewId);
 }
 
 function _acqNoLeaseholdsMessage(reviewId) {
@@ -32513,9 +32515,94 @@ function _acqConversionBlock(review) {
       + docless.map(l => l.label).join(', ') + '. Each would become a tenant with no lease terms established by any document. '
       + 'Acknowledge each one below to continue — an acknowledgement records that the lease is missing; it does not verify any term.';
   }
+  const unreasoned = _acqUnreasonedMismatches(id);
+  if (unreasoned.length) {
+    return unreasoned.length + (unreasoned.length === 1 ? ' match was' : ' matches were') + ' made despite a material mismatch with no recorded reason: '
+      + unreasoned.map(m => '“' + m.extracted + '” → “' + m.label + '”').join(', ') + '. '
+      + 'Undo each one in MainStreet’s Record and match it again, giving a reason.';
+  }
   const stale = _acqAnalysisStale(review);
   if (stale) return stale + ' Refresh the analysis from MainStreet’s Record before acquiring.';
   return '';
+}
+
+// ── Acknowledgements and match reasons the server keeps (migration 044) ─────
+//
+// acquire_property refuses a leasehold with no lease on file that no person
+// has acknowledged, and a materially mismatched match no person has given a
+// reason for. It reads both from acquisition_conversion_attestations — rows
+// the database stamps with who and when, append-only — never from
+// review.data. The page reads the same rows, so it refuses what the server
+// would refuse before anyone clicks Acquire. With none loaded (the table
+// missing, a read that failed) the page fails closed the same way.
+const _acqAttestations = new Map();   // reviewId → rows, oldest first
+const _ACQ_ATTESTATION_SELECT = 'id, review_id, family_id, kind, row_key, reason, verifies_terms, acted_by, created_at';
+const _ACQ_MATCH_CONFIRMED = 'match_confirmed';
+let _acqAttestationsUnavailable = false;
+function _acqAttestationRows(reviewId) { return _acqAttestations.get(reviewId) || []; }
+
+async function _acqLoadAttestations(reviewId) {
+  if (!reviewId) return [];
+  try {
+    const { data, error } = await db
+      .from('acquisition_conversion_attestations')
+      .select(_ACQ_ATTESTATION_SELECT)
+      .eq('review_id', reviewId)
+      .order('created_at', { ascending: true });
+    if (error) {
+      _acqAttestationsUnavailable = !!_AD().schemaGap(error);
+      console.warn('[acq] could not load acknowledgements' + (_acqAttestationsUnavailable ? ' — run migrations/044_acquisition_conversion_safeguards.sql' : '') + ':', error.message);
+      _acqAttestations.set(reviewId, []);
+      return [];
+    }
+    _acqAttestationsUnavailable = false;
+    _acqAttestations.set(reviewId, Array.isArray(data) ? data : []);
+    return _acqAttestationRows(reviewId);
+  } catch (e) {
+    console.warn('[acq] _acqLoadAttestations failed:', e && e.message);
+    _acqAttestations.set(reviewId, []);
+    return [];
+  }
+}
+
+// Record one. Append-only: this INSERTS; the database stamps the person and
+// the time, and refuses anything out of scope (044's guard).
+async function _acqSaveAttestation(reviewId, fields) {
+  try {
+    const { data, error } = await db
+      .from('acquisition_conversion_attestations')
+      .insert(Object.assign({ review_id: reviewId }, fields))
+      .select(_ACQ_ATTESTATION_SELECT);
+    if (error) {
+      if (_AD().schemaGap(error)) _acqAttestationsUnavailable = true;
+      console.error('[acq] acknowledgement not recorded:', error.message, '| code:', error.code);
+      return null;
+    }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (row) _acqAttestations.set(reviewId, _acqAttestationRows(reviewId).concat([row]));
+    return row;
+  } catch (e) {
+    console.warn('[acq] _acqSaveAttestation failed:', e && e.message);
+    return null;
+  }
+}
+
+// Every `matched` resolution the names or the property materially argue
+// against (AcquisitionLeasehold.requiresReason) that has no recorded reason
+// for THAT entry as THAT leasehold — what acquire_property 5d refuses.
+function _acqUnreasonedMismatches(reviewId) {
+  const AL = _AL();
+  if (!AL || !reviewId) return [];
+  const reasoned = _acqAttestationRows(reviewId)
+    .filter(a => a && a.kind === _ACQ_MATCH_CONFIRMED && typeof a.reason === 'string' && a.reason.trim());
+  return _acqUnmatched(reviewId)
+    .filter(x => x.key && x.resolution && x.resolution.action === AL.RESOLUTION.MATCHED)
+    .filter(x => AL.requiresReason(_acqMatchConcerns(reviewId, x.key, x.resolution.familyId)))
+    .filter(x => !reasoned.some(a => a.row_key === x.key && a.family_id === x.resolution.familyId))
+    .map(x => {
+      const fam = _acqFamilyRows(reviewId).find(f => f && f.id === x.resolution.familyId) || {};
+      return { key: x.key, extracted: x.row.tenant_name || x.row.tenantName || 'unnamed', label: fam.label || fam.tenant_hint || 'unnamed' };
+    });
 }
 
 // ── Leaseholds with no lease on file (AcquisitionLeasehold.documentlessLeaseholds)
@@ -32523,14 +32610,18 @@ function _acqConversionBlock(review) {
 // A leasehold no live document is filed into has no lease term established by
 // a document. Acquiring the property would make it a permanent tenant with
 // none, so before conversion each one is named, and a person acknowledges it.
-// The acknowledgement is kept on the review (data.leaseholdAcknowledgements,
-// keyed by leasehold, beside extractionResolutions and documentDispositions)
-// and in its activity history. It records that the lease is missing; it never
-// changes a term's state and never verifies one.
+// The acknowledgement is a row in acquisition_conversion_attestations (above),
+// with an entry in the review's activity history. It records that the lease is
+// missing; it never changes a term's state and never verifies one.
 function _acqLeaseholdAcknowledgements(reviewId) {
-  const review = _acqReviews.find(r => r && r.id === reviewId);
-  const a = review && review.data && review.data.leaseholdAcknowledgements;
-  return (a && typeof a === 'object' && !Array.isArray(a)) ? a : {};
+  const AL = _AL();
+  const out = {};
+  _acqAttestationRows(reviewId).forEach(a => {
+    if (a && AL && a.kind === AL.NO_DOCUMENT_ON_FILE && a.family_id) {
+      out[a.family_id] = { condition: a.kind, verifiesTerms: false, by: a.acted_by || null, at: a.created_at || null };
+    }
+  });
+  return out;
 }
 function _acqDocumentlessLeaseholds(reviewId) {
   const AL = _AL();
@@ -32556,19 +32647,21 @@ async function acqAcknowledgeDocumentless(familyId) {
   if (!l) return false;                          // it has a document: nothing to acknowledge
   const acks = _acqLeaseholdAcknowledgements(reviewId);
   if (acks[familyId] && acks[familyId].condition === AL.NO_DOCUMENT_ON_FILE) return false;
-  const { data: { user } } = await db.auth.getUser();
-  const at = new Date().toISOString();
-  const next = Object.assign({}, acks);
-  next[familyId] = { condition: AL.NO_DOCUMENT_ON_FILE, label: l.label, verifiesTerms: false,
-                     by: (user && user.id) || null, at };
-  review.data = Object.assign({}, review.data || {}, { leaseholdAcknowledgements: next });
+  // The record the server reads first; nothing else is written if it fails.
+  const row = await _acqSaveAttestation(reviewId, { family_id: familyId, kind: AL.NO_DOCUMENT_ON_FILE });
+  if (!row) {
+    showToast('⚠️ The acknowledgement could not be recorded — nothing was changed.'
+      + (_acqAttestationsUnavailable ? ' Run migrations/044_acquisition_conversion_safeguards.sql in Supabase.' : ''),
+      { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return false;
+  }
   _acqRecord(review, { type: 'leasehold_acknowledged',
     summary: 'Acknowledged: no lease document is on file for “' + l.label + '”. Its lease terms are not established by any document; this acknowledgement does not verify them.',
-    meta: { familyId, condition: AL.NO_DOCUMENT_ON_FILE, verifiesTerms: false } });
-  const ok = await _saveAcqReview(review);
+    meta: { familyId, condition: AL.NO_DOCUMENT_ON_FILE, verifiesTerms: false, attestationId: row.id || null } });
+  await _saveAcqReview(review);
   if (_activeAcqId === reviewId) { _renderAcqConvertAction(review); _renderAcqDocuments(); }
   _renderAcqSection(_acqReviews);
-  return ok;
+  return true;
 }
 
 // Every leasehold with no lease on file, before conversion: named, with the
@@ -33631,6 +33724,19 @@ async function acqConfirmPendingMatch(reason) {
     return false;
   }
   _acqPendingMatch = null;
+  // The confirmation the server reads (044) first — this entry, this
+  // leasehold, the reason — and the match only once it is kept.
+  const kept = concerns.length
+    ? await _acqSaveAttestation(p.reviewId, { family_id: p.familyId, kind: _ACQ_MATCH_CONFIRMED, row_key: p.rowKey, reason: why || null })
+    : true;
+  if (!kept) {
+    _acqPendingMatch = p;
+    _renderAcqDocuments();
+    showToast('⚠️ The confirmation could not be recorded — nothing was changed.'
+      + (_acqAttestationsUnavailable ? ' Run migrations/044_acquisition_conversion_safeguards.sql in Supabase.' : ''),
+      { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+    return false;
+  }
   const ok = await acqResolveExtraction(p.rowKey, AL.RESOLUTION.MATCHED, p.familyId, { confirmed: true, reason: why });
   if (!ok) {
     _acqPendingMatch = p;
@@ -35158,6 +35264,8 @@ function selectAcquisitionReview(id) {
     // means the first paint of the terms panel already carries both.
     .then(() => _acqLoadDecisions(id))
     .then(() => _acqLoadEvidence(id))
+    // 044: the acknowledgements and match reasons acquire_property reads.
+    .then(() => _acqLoadAttestations(id))
     .then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });
 
   if (d.analysis) {

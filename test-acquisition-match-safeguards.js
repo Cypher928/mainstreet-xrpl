@@ -145,7 +145,21 @@ function world(opts) {
   if (o.status === 'converted') review.data.conversionRecord = { propertyId: 'prop-1' };
   const SUNRISE = { id: 'c99dda4d-b477-4098-a9e3-2af250a6b8af', label: 'Sunrise Cafe & Bakery LLC', tenant_hint: 'Sunrise Cafe & Bakery LLC' };
   const fams = F.families.concat(o.noSunrise ? [] : [SUNRISE]);
-  const calls = { saves: 0, from: 0, renders: 0 };
+  const calls = { saves: 0, from: 0, renders: 0, tables: [], toasts: [] };
+  // The attestation table (migration 044) as the page sees it: an insert that
+  // comes back stamped, or refused when the test says the server refuses.
+  const attestations = (o.attestations || []).map(a => Object.assign({ id: 'att-0', verifies_terms: false, acted_by: 'u1', created_at: '2026-10-02T00:00:00.000Z' }, a));
+  const db = { auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    from: (name) => {
+      calls.from++; calls.tables.push(name);
+      if (name !== 'acquisition_conversion_attestations') throw new Error('no table writes expected but ' + name);
+      return { insert: (row) => ({ select: async () => {
+        if (o.serverRefuses) return { data: null, error: { code: '23514', message: 'refused by the guard' } };
+        const r = Object.assign({}, row, { id: 'att-' + (attestations.length + 1), verifies_terms: false, acted_by: 'u1', created_at: new Date().toISOString() });
+        attestations.push(r);
+        return { data: [r], error: null };
+      } }) };
+    } };
   const rows = F.tenants.map(r => Object.assign({}, r, r.id === '1f89d42e-0651-490c-b6f7-ffc091f8eb0c' ? { property_name: '500 Main Street' } : {}));
   const sandbox = {
     _AL: () => AL, _AW: () => AW_, _acqActor: () => ({ uid: 'u1', email: null }),
@@ -163,18 +177,24 @@ function world(opts) {
     _acqLeaseholdsOnly: () => [{}], _acqCanonicalRows: () => ({}), _acqAnalysisStale: () => '',
     _saveAcqReview: async () => { calls.saves++; return true; },
     _renderAcqDocuments: () => { calls.renders++; }, _renderAcqSection: () => {}, _renderAcqConvertAction: () => {},
-    showToast: () => {},
-    db: { auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) }, from: () => { calls.from++; throw new Error('no table writes expected'); } },
+    showToast: (m) => { calls.toasts.push(m); },
+    _AD: () => ({ schemaGap: (e) => !!(e && e.code === '42P01') }),
+    document: { querySelector: () => null }, CSS: { escape: (x) => x },
+    db,
     _acqRecord: null,
-    Object, Array, JSON, String, Date, Promise, Error,
+    Object, Array, JSON, String, Date, Promise, Error, Map, console,
   };
   const names = ['_acqRecord', '_acqAcquisitionNames', '_acqMatchConcerns', 'acqResolveExtraction', '_acqConversionBlock',
-                 '_acqLeaseholdAcknowledgements', '_acqDocumentlessLeaseholds', '_acqUnacknowledgedDocumentless', 'acqAcknowledgeDocumentless'];
+                 '_acqLeaseholdAcknowledgements', '_acqDocumentlessLeaseholds', '_acqUnacknowledgedDocumentless', 'acqAcknowledgeDocumentless',
+                 '_acqAttestationRows', '_acqSaveAttestation', '_acqUnreasonedMismatches', 'acqConfirmPendingMatch'];
   vm.createContext(sandbox);
-  vm.runInContext(names.map(n => fnSource(SCRIPT, n)).join('\n') + '\n'
+  vm.runInContext("var _acqPendingMatch = null; var _acqAttestationsUnavailable = false;\n"
+    + "const _acqAttestations = new Map([[" + JSON.stringify(review.id) + ", this.__att]]);\n"
+    + "const _ACQ_ATTESTATION_SELECT = '*'; const _ACQ_MATCH_CONFIRMED = 'match_confirmed';\n"
+    + names.map(n => fnSource(SCRIPT, n)).join('\n') + '\n'
     + "const _ACQ_NO_DOCUMENT_TEXT = 'x';\n"
-    + names.map(n => 'this.' + n + ' = ' + n + ';').join('\n'), sandbox);
-  return { sandbox, review, calls, SUNRISE };
+    + names.map(n => 'this.' + n + ' = ' + n + ';').join('\n'), Object.assign(sandbox, { __att: attestations }));
+  return { sandbox, review, calls, SUNRISE, attestations };
 }
 const SAFE_ROW = '1f89d42e-0651-490c-b6f7-ffc091f8eb0c', LUXE_ROW = 'ef57f534-9d56-4b49-a12d-ba0f6be65bf1';
 const snap = (r) => JSON.stringify(r.data);
@@ -238,19 +258,38 @@ await ta('Sunrise with no document blocks conversion, named, saying an acknowled
   const why = w.sandbox._acqConversionBlock(w.review);
   ok(/Sunrise Cafe & Bakery LLC/.test(why) && /no lease document on file/.test(why) && /does not verify any term/.test(why), why);
 });
-await ta('acknowledging it: recorded on the review and in the activity, verifiesTerms false; the gate then passes', async () => {
+await ta('acknowledging it: a row in the table the server reads (044), and an activity entry; verifies nothing; the gate then passes', async () => {
   const w = world();
   const decisionsBefore = JSON.stringify(F.decisions);
   eq(await w.sandbox.acqAcknowledgeDocumentless(w.SUNRISE.id), true);
-  const a = w.review.data.leaseholdAcknowledgements[w.SUNRISE.id];
-  eq([a.condition, a.verifiesTerms, a.label, a.by], [AL.NO_DOCUMENT_ON_FILE, false, 'Sunrise Cafe & Bakery LLC', 'u1']);
-  ok(typeof a.at === 'string' && a.at.length >= 20);
+  eq(w.attestations.length, 1);
+  const a = w.attestations[0];
+  eq([a.review_id, a.family_id, a.kind, a.verifies_terms], [F.REVIEW, w.SUNRISE.id, AL.NO_DOCUMENT_ON_FILE, false]);
+  ok(!('leaseholdAcknowledgements' in w.review.data), 'the acknowledgement was written into review.data, which the server does not trust');
   const act = w.review.data.activity[w.review.data.activity.length - 1];
-  eq([act.type, act.meta.familyId, act.meta.verifiesTerms, act.meta.condition], ['leasehold_acknowledged', w.SUNRISE.id, false, AL.NO_DOCUMENT_ON_FILE]);
+  eq([act.type, act.meta.familyId, act.meta.verifiesTerms, act.meta.condition, act.meta.attestationId], ['leasehold_acknowledged', w.SUNRISE.id, false, AL.NO_DOCUMENT_ON_FILE, 'att-1']);
   ok(/does not verify them/.test(act.summary) && !/verified\b(?! by)/i.test(act.summary.replace('does not verify them', '')), act.summary);
   eq(w.sandbox._acqConversionBlock(w.review), '');
-  eq(w.calls.from, 0, 'a table was written — the acknowledgement touches no decision, document or leasehold');
+  eq(w.calls.tables, ['acquisition_conversion_attestations'], 'something other than the attestation was written — no decision, document or leasehold may be');
   eq(JSON.stringify(F.decisions), decisionsBefore);
+});
+await ta('the client sends no person, time or verification of its own — the database stamps who and when', async () => {
+  const w = world();
+  await w.sandbox.acqAcknowledgeDocumentless(w.SUNRISE.id);
+  const src = fnSource(SCRIPT, 'acqAcknowledgeDocumentless') + fnSource(SCRIPT, '_acqSaveAttestation');
+  ok(!/acted_by|created_at|verifies_terms\s*:/.test(src), 'the page supplies a stamp the server owns');
+});
+await ta('the server refuses the acknowledgement: nothing is written, the gate still blocks, the person is told', async () => {
+  const w = world({ serverRefuses: true }); const before = snap(w.review);
+  eq(await w.sandbox.acqAcknowledgeDocumentless(w.SUNRISE.id), false);
+  eq(snap(w.review), before); eq(w.calls.saves, 0); eq(w.attestations.length, 0);
+  ok(/no lease document on file/.test(w.sandbox._acqConversionBlock(w.review)));
+  ok(/could not be recorded — nothing was changed/.test(w.calls.toasts.join(' ')), w.calls.toasts.join(' | '));
+});
+await ta('a leaseholdAcknowledgements map in review.data (the 5bc5e84 shape) does not satisfy the gate', async () => {
+  const w = world();
+  w.review.data.leaseholdAcknowledgements = { [w.SUNRISE.id]: { condition: AL.NO_DOCUMENT_ON_FILE, verifiesTerms: false } };
+  ok(/no lease document on file/.test(w.sandbox._acqConversionBlock(w.review)));
 });
 await ta('acknowledging twice records once; a leasehold that has its lease cannot be acknowledged', async () => {
   const w = world();
@@ -268,6 +307,48 @@ await ta('a frozen acquisition is never acknowledged on', async () => {
 await ta('with every leasehold’s lease on file, nothing is asked and the gate is as before', async () => {
   const w = world({ noSunrise: true });
   eq(w.sandbox._acqConversionBlock(w.review), '');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+sec('7 · the conversion gate: a material mismatch needs a recorded reason (mirrors 044 5d)');
+await ta('a legacy SafeShield → Luxe Nails match with no recorded reason blocks conversion, named', async () => {
+  const w = world({ noSunrise: true, resolutions: { [SAFE_ROW]: { action: 'matched', familyId: F.FAM.luxe, reason: 'in review.data only', concerns: [] } } });
+  const why = w.sandbox._acqConversionBlock(w.review);
+  ok(/1 match was made despite a material mismatch with no recorded reason/.test(why) && /“SafeShield Security, LLC” → “Luxe Nails”/.test(why) && /Undo each one/.test(why), why);
+});
+await ta('a reason recorded for THAT entry as THAT leasehold settles it; one for another leasehold, or with no reason, does not', async () => {
+  const res = { [SAFE_ROW]: { action: 'matched', familyId: F.FAM.luxe } };
+  let w = world({ noSunrise: true, resolutions: res, attestations: [{ review_id: F.REVIEW, family_id: F.FAM.shoprite, kind: 'match_confirmed', row_key: SAFE_ROW, reason: 'other leasehold' }] });
+  ok(/no recorded reason/.test(w.sandbox._acqConversionBlock(w.review)));
+  w = world({ noSunrise: true, resolutions: res, attestations: [{ review_id: F.REVIEW, family_id: F.FAM.luxe, kind: 'match_confirmed', row_key: SAFE_ROW, reason: null }] });
+  ok(/no recorded reason/.test(w.sandbox._acqConversionBlock(w.review)));
+  w = world({ noSunrise: true, resolutions: res, attestations: [{ review_id: F.REVIEW, family_id: F.FAM.luxe, kind: 'match_confirmed', row_key: SAFE_ROW, reason: 'Seller confirms' }] });
+  eq(w.sandbox._acqConversionBlock(w.review), '');
+});
+await ta('genuine matches (Luxe Nails → Luxe Nails) need nothing recorded', async () => {
+  const w = world({ noSunrise: true, resolutions: { [LUXE_ROW]: { action: 'matched', familyId: F.FAM.luxe } } });
+  eq(w.sandbox._acqConversionBlock(w.review), '');
+});
+await ta('Match anyway: the confirmation (entry, leasehold, reason) is recorded for the server BEFORE the match', async () => {
+  const w = world();
+  w.sandbox._acqPendingMatch = { reviewId: F.REVIEW, rowKey: SAFE_ROW, familyId: w.SUNRISE.id };
+  eq(await w.sandbox.acqConfirmPendingMatch('Seller confirms same occupant'), true);
+  eq(w.attestations.map(a => [a.kind, a.row_key, a.family_id, a.reason]), [['match_confirmed', SAFE_ROW, w.SUNRISE.id, 'Seller confirms same occupant']]);
+  eq(w.review.data.extractionResolutions[SAFE_ROW].action, 'matched');
+});
+await ta('Match anyway, refused by the server: no match is written, and the question stays open', async () => {
+  const w = world({ serverRefuses: true }); const before = snap(w.review);
+  const pending = { reviewId: F.REVIEW, rowKey: SAFE_ROW, familyId: w.SUNRISE.id };
+  w.sandbox._acqPendingMatch = pending;
+  eq(await w.sandbox.acqConfirmPendingMatch('Seller confirms'), false);
+  eq(snap(w.review), before); eq(w.calls.saves, 0);
+  eq(w.sandbox._acqPendingMatch, pending);
+});
+await ta('Match anyway with no reason for a material mismatch: nothing is recorded anywhere', async () => {
+  const w = world();
+  w.sandbox._acqPendingMatch = { reviewId: F.REVIEW, rowKey: SAFE_ROW, familyId: w.SUNRISE.id };
+  eq(await w.sandbox.acqConfirmPendingMatch('   '), false);
+  eq(w.attestations.length, 0); eq(w.calls.from, 0);
 });
 t('the activity vocabulary lists the new entry type', () => {
   ok(AW.ACTIVITY_TYPES.indexOf('leasehold_acknowledged') >= 0);

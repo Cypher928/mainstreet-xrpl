@@ -414,6 +414,7 @@ sec('H. P4 ACQUIRE IN PLACE: a review that has its property is acquired through 
       _acqUnresolvedExtractions: () => 0, _acqPendingDocuments: () => [],
       // Every leasehold in these worlds has its lease on file (or was acknowledged).
       _acqUnacknowledgedDocumentless: () => [],
+      _acqUnreasonedMismatches: () => [],
       _acqLeaseholdsOnly: () => canon, _acqCanonicalRows: () => ({ rows: canon, leaseholds: 2, unfiled: 0, dropped: [], resolverAvailable: true }),
       _acqAnalysisStale: () => '',
       _acqConversionReview: (r) => Object.assign({}, r, { data: Object.assign({}, r.data, { tenants: canon }) }),

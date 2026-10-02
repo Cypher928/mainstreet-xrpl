@@ -35,6 +35,13 @@
  *     S20  a frozen acquisition can be acknowledged on
  *     S21  the panel words the acknowledgement as a verification
  *     S22  the convert dialog does not say it again
+ *
+ *   What the server reads (script.js, migration 044's table)
+ *     S23  the page's gate ignores a mismatch with no recorded reason
+ *     S24  a reason recorded for another leasehold counts
+ *     S25  Match anyway writes the match when the server refused the confirmation
+ *     S26  the browser's leaseholdAcknowledgements map is honoured again
+ *     S27  a refused acknowledgement is written anyway
  */
 const fs = require('fs');
 const os = require('os');
@@ -100,9 +107,9 @@ const MUTANTS = [
   { id: 'S18', file: L, why: 'an acknowledgement is not honoured by the gate',
     from: '      return !(a && typeof a === \'object\' && a.condition === NO_DOCUMENT_ON_FILE);',
     to:   '      return true;' },
-  { id: 'S19', file: S, why: 'the acknowledgement claims to verify the terms',
-    from: '  next[familyId] = { condition: AL.NO_DOCUMENT_ON_FILE, label: l.label, verifiesTerms: false,',
-    to:   '  next[familyId] = { condition: AL.NO_DOCUMENT_ON_FILE, label: l.label, verifiesTerms: true,' },
+  { id: 'S19', file: S, why: 'the acknowledgement is kept in review.data, where the server does not look',
+    from: '  const row = await _acqSaveAttestation(reviewId, { family_id: familyId, kind: AL.NO_DOCUMENT_ON_FILE });',
+    to:   '  const row = { id: null }; review.data = Object.assign({}, review.data, { leaseholdAcknowledgements: { [familyId]: { condition: AL.NO_DOCUMENT_ON_FILE, verifiesTerms: true } } });' },
   { id: 'S20', file: S, why: 'a frozen acquisition can be acknowledged on',
     from: '  if (_acqRefuseFrozen(review)) return false;   // P5-6A\n  const l = _acqDocumentlessLeaseholds(reviewId)',
     to:   '  const l = _acqDocumentlessLeaseholds(reviewId)' },
@@ -112,6 +119,18 @@ const MUTANTS = [
   { id: 'S22', file: S, why: 'the convert dialog does not say it again',
     from: "    doclessEl.style.display = docless.length ? 'block' : 'none';",
     to:   "    doclessEl.style.display = 'none'; return document.getElementById('acqConvertModal').style.display = 'flex';" },
+  { id: 'S23', file: S, why: 'the page\'s gate ignores a mismatch with no recorded reason',
+    from: '  if (unreasoned.length) {', to: '  if (false) {' },
+  { id: 'S24', file: S, why: 'a reason recorded for another leasehold counts',
+    from: '    .filter(x => !reasoned.some(a => a.row_key === x.key && a.family_id === x.resolution.familyId))',
+    to:   '    .filter(x => !reasoned.some(a => a.row_key === x.key))' },
+  { id: 'S25', file: S, why: 'Match anyway writes the match when the server refused the confirmation',
+    from: '  if (!kept) {', to: '  if (false) {' },
+  { id: 'S26', file: S, why: 'the browser\'s leaseholdAcknowledgements map is honoured again',
+    from: '  const out = {};\n  _acqAttestationRows(reviewId).forEach(',
+    to:   '  const out = Object.assign({}, ((_acqReviews.find(r => r && r.id === reviewId) || {}).data || {}).leaseholdAcknowledgements || {});\n  _acqAttestationRows(reviewId).forEach(' },
+  { id: 'S27', file: S, why: 'a refused acknowledgement is written anyway',
+    from: "  if (!row) {\n    showToast('⚠️ The acknowledgement could not be recorded", to: "  if (false) {\n    showToast('⚠️ The acknowledgement could not be recorded" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-match-mut-'));

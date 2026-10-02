@@ -521,7 +521,7 @@ const DB = `
   {
     const { ctx: c2, page: p2 } = await open({ width: 1280, height: 1000 }, false);
     await p2.evaluate(async (snap) => {
-      Object.keys(snap).forEach(k => { window.__store[k].length = 0; snap[k].forEach(r => window.__store[k].push(r)); });
+      Object.keys(snap).forEach(k => { window.__store[k] = window.__store[k] || []; window.__store[k].length = 0; snap[k].forEach(r => window.__store[k].push(r)); });
       await _loadAcqReviewsAndRender();
       selectAcquisitionReview(snap.acquisition_reviews[0].id);
     }, snapshot);
@@ -549,7 +549,7 @@ const DB = `
   {
     const { ctx: c3, page: p3 } = await open({ width: 375, height: 667 }, true);
     await p3.evaluate(async (snap) => {
-      Object.keys(snap).forEach(k => { window.__store[k].length = 0; snap[k].forEach(r => window.__store[k].push(r)); });
+      Object.keys(snap).forEach(k => { window.__store[k] = window.__store[k] || []; window.__store[k].length = 0; snap[k].forEach(r => window.__store[k].push(r)); });
       await _loadAcqReviewsAndRender();
       selectAcquisitionReview(snap.acquisition_reviews[0].id);
     }, snapshot);

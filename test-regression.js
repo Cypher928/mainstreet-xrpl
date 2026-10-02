@@ -574,6 +574,7 @@ const SUITES = [
   { label: 'Migration 043 leasehold absorption (Step B1)',   cmd: 'node tools/verify-migration-043.js' },
   { label: 'Migration 039 register leasehold link',          cmd: 'node tools/verify-migration-039.js' },
   { label: 'Migration 042 register relink (53 rows)',        cmd: 'node tools/verify-migration-042.js' },
+  { label: 'Migration 044 server-side acquisition safeguards', cmd: 'node tools/verify-migration-044.js' },
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },
   { label: 'Leasehold lifecycle plumbing + no deletes (A-1)', cmd: 'node test-lifecycle-plumbing.js' },
   { label: 'Lease upload identity: held proposals, durable document id (A-2)', cmd: 'node test-lease-upload-identity.js' },
