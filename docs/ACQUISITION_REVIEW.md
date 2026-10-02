@@ -2420,6 +2420,28 @@ report (reading is not changing it) and still hides the uploads and Delete.
 Tested by `test-e2e-acquisition-controls.js` at 1366, 768 and 375 wide;
 `tools/acquisition-controls-mutation.js` undoes each rule.
 
+### Navigation: Back to Acquisitions, Back to Lease Matrix
+
+- **← Back to Acquisitions** sits in a bar held at the top of the screen for
+  the whole review — the Summary, the Acquisition Matrix, a lease record,
+  the documents — at every width, below every overlay. It returns to the
+  Acquisitions section with the review's card in view, focused and marked;
+  Enter on the card opens it again. What the review scrolls to (a record, a
+  term, a row) lands below the bar, not under it.
+- **← Back to Lease Matrix** (in a lease record) returns to the view the
+  record was opened from — the Acquisition Matrix stays the Matrix — with
+  the control that opened it focused: the Summary's row, the Matrix's
+  tenant, or the Matrix cell whose sources opened it, brought out from under
+  the held tenant column. Its tooltip names the view.
+- Neither adds or removes a browser history entry, so the browser's own Back
+  behaves as it did. A review still always reopens on its Summary or Matrix
+  (never inside a lease record), as before.
+- The Acquisitions section is shown whenever any acquisition exists, also
+  when the reviews arrive after the portfolio was drawn (before, a person
+  with acquisitions but no managed property could find it hidden).
+- The buyer's report is titled **Acquisition Report** — no "v2" — on the
+  button, the report's header and footer, and its window title.
+
 ### Verified
 
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);

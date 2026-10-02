@@ -534,7 +534,7 @@ const DB = `
         && Object.values(chips.byField).every(v => ['Verified by a person', 'Read by AI · not yet verified', 'Unclear', 'Contested', 'Not established'].includes(v)),
         JSON.stringify(chips.byField).slice(0, 200));
   check('the evidence counts read the same way', chips.groupSub === '32 terms · 4 verified by a person · 11 read by AI, not yet verified · 1 unclear · 2 contested · 14 not established', chips.groupSub);
-  check('Back names the record: "← Back to MainStreet\'s Record"', chips.back === '← Back to MainStreet’s Record', chips.back);
+  check('Back names where it returns: "← Back to Lease Matrix"', chips.back === '← Back to Lease Matrix', chips.back);
   await page.click('#acqTermsList .acq-lh-attn-item.unverified');
   check('the unverified item opens the first value nobody has verified — Tenant', await page.evaluate(() =>
     document.querySelector('#acqTermsList .acq-term-row[data-field="tenant_name"]').classList.contains('acq-term-flash')));

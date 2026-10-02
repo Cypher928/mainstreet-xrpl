@@ -6888,6 +6888,23 @@
       .acq-analyze-btn { min-height: 46px; }
     }
 
+    /* ── Navigation: Back to Acquisitions, held in view ─────────────────────
+       A bar stuck to the top of the screen while a review is open, above
+       everything in the review but below every overlay (the report, the
+       modals). What the review scrolls to lands below it, not under it. */
+    #acqDetailPanel { --acq-nav-h: 58px; }
+    .acq-nav-bar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 12px;
+      padding: 10px 0; background: var(--theme-bg); border-bottom: 1px solid var(--theme-surface); }
+    #acqDetailPanel #acqTermsCard, #acqDetailPanel .acq-term-row, #acqDetailPanel .acq-lm-row,
+    #acqDetailPanel .acq-m13-table tr, #acqDetailPanel .acq-m13-detail, #acqDetailPanel .acq-doc-group,
+    #acqDetailPanel #acqDocsList { scroll-margin-top: calc(var(--acq-nav-h) + 10px); }
+    @media (max-width: 640px) { #acqDetailPanel { --acq-nav-h: 66px; } }
+    /* The review a person came back from: keyboard focus, and a mark that
+       fades, so it is found at a glance among the others. */
+    .acq-card:focus-visible { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: 2px; }
+    .acq-card.acq-card-returned { border-color: #C9973A; box-shadow: 0 0 0 2px rgba(201, 151, 58, 0.35);
+      transition: box-shadow 0.6s, border-color 0.6s; }
+
     /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
     .pid-panel        { background: var(--theme-bg); border: 1px solid var(--theme-accent); border-radius: 10px;
                         margin-bottom: 20px; overflow: hidden; }
@@ -7929,8 +7946,16 @@
 
 <!-- ── Acquisition Detail Panel ──────────────────────────────────────── -->
 <div class="container" id="acqDetailPanel">
+  <!-- The way out of a review, held at the top of the screen however far down
+       the review a person is — in the Summary, the Acquisition Matrix or a
+       lease record. It returns to the Acquisitions section with this review's
+       card focused (backToAcquisitions). Distinct from a lease record's own
+       "Back to Lease Matrix", which stays inside the review. -->
+  <div class="acq-nav-bar" id="acqNavBar" role="navigation" aria-label="Acquisition review">
+    <button type="button" class="acq-back-btn acq-back-to-acqs" id="acqBackToAcqsBtn" onclick="backToAcquisitions()"
+            title="Return to the Acquisitions list, to this review's card">&#x2190; Back to Acquisitions</button>
+  </div>
   <div class="acq-detail-header">
-    <button class="acq-back-btn" onclick="closeAcquisitionDetail()">&#x2190; Back to Portfolio</button>
     <span class="acq-detail-title" id="acqDetailTitle"></span>
     <span class="acq-detail-badge" id="acqDetailBadge"></span>
     <span id="acqConvertAction"></span>

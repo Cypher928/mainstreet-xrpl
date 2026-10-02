@@ -378,9 +378,11 @@ section('11 · R-1 and R-2 frozen; v1, the glue and P1-4 untouched');
     // R-3 needed no glue change. script.js has since changed for cross-review
     // isolation (§4k), so what is pinned is the v2 glue itself.
     const v2Of = (src) => (src.match(/^async function generateAcquisitionReportV2\(\) \{[\s\S]*?^\}/m) || [''])[0];
-    check('the v2 glue is unchanged — it already hands over the whole model',
+    // The one change since: the report's title lost "v2" (Step B, approved),
+    // so the pinned glue is compared with that word removed and nothing else.
+    check('the v2 glue is unchanged — it already hands over the whole model (only its title lost "v2")',
       scriptHead !== null && v2Of(scriptHead).length > 500
-      && v2Of(scriptHead) === v2Of(fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8')));
+      && v2Of(scriptHead).replace(/'Acquisition Report v2/g, "'Acquisition Report") === v2Of(fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8')));
   }
   const apiFiles = fs.readdirSync(path.join(ROOT, 'api')).filter(f => f.endsWith('.js') && !f.startsWith('_'));
   check('no new serverless function — api/ still holds twelve', apiFiles.length === 12, String(apiFiles.length));

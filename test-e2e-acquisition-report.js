@@ -469,7 +469,7 @@ const DB = `
   await page.waitForTimeout(700);
   const d1 = await drawn(page);
   check('the report opens in the report overlay', !!d1 && d1.overlay === 'block', d1 ? d1.overlay : 'no report');
-  check('titled as v2 for this property', !!d1 && /Acquisition Report v2/.test(d1.title), d1 && d1.title);
+  check('titled "Acquisition Report" for this property — no "v2"', !!d1 && /^Acquisition Report — /.test(d1.title) && !/v2/.test(d1.title), d1 && d1.title);
   const after = await snap();
   check('opening the report writes nothing to the store', before === after,
         before === after ? 'byte-identical' : 'store changed');

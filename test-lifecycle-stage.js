@@ -373,7 +373,7 @@ sec('E. Server refusals (P3): the hydrator and list_properties know the stage; t
   t('E26 the review list carries property_id and converted_at', load.includes("select('id, name, status, data, property_id, converted_at, created_at, updated_at')"));
   const state = fnSource(SCRIPT, '_acqPropertyState');
   t('E27 the conversion state reads the row\'s own property_id first, the legacy record second', state.includes('const pid = review?.property_id || review?.data?.conversionRecord?.propertyId;'));
-  const card = fnSource(SCRIPT, '_renderAcqSection');
+  const card = fnSource(SCRIPT, '_renderAcqCards');   // the cards' markup, drawn for _renderAcqSection
   t('E28 an open episode\'s card says it sits on a prospect property', card.includes("(r.property_id && r.status !== 'converted')") && /acq-card-prospect/.test(card));
 }
 

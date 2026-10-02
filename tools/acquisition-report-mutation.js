@@ -224,13 +224,13 @@ const MUTANTS = [
     from: "    linkFor:   (path, name) => window.docLinkHtml",
     to:   "    linkForX:  (path, name) => window.docLinkHtml" },
   { id: 'S07', file: S, why: 'opening the report writes to the review',
-    from: "  openReport('Acquisition Report v2 — ' + propName, body);",
+    from: "  openReport('Acquisition Report — ' + propName, body);",
     to:   "  await db.from('acquisition_reviews').update({ updated_at: 'rev-report' }).eq('id', review.id);\n"
-        + "  openReport('Acquisition Report v2 — ' + propName, body);" },
+        + "  openReport('Acquisition Report — ' + propName, body);" },
   { id: 'S08', file: S, why: 'opening the report calls the AI',
-    from: "  openReport('Acquisition Report v2 — ' + propName, body);",
+    from: "  openReport('Acquisition Report — ' + propName, body);",
     to:   "  claudeFetch({ task: 'report_summary' }).catch(() => {});\n"
-        + "  openReport('Acquisition Report v2 — ' + propName, body);" },
+        + "  openReport('Acquisition Report — ' + propName, body);" },
   { id: 'S09', file: S, why: 'the v1 Decision Report is edited',
     from: "  openReport('Acquisition Decision Report — ' + propName, body);",
     to:   "  openReport('Acquisition Decision Report  — ' + propName, body);" },

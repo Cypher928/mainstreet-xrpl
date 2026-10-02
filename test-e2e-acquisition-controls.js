@@ -15,6 +15,16 @@
 //      opens, the lease record opens and closes, the Summary is the default
 //   5  a converted (closed) acquisition: the downloads and the report stay,
 //      the uploads and Delete stay hidden
+//   6  navigation (Step B): "← Back to Acquisitions" is in view from the
+//      Summary, the Acquisition Matrix and a lease record, however far down,
+//      at 1366, 768 and 375 wide; it lands on the Acquisitions section with
+//      the review's card focused and marked; Enter on the card reopens it.
+//      "← Back to Lease Matrix" returns to the view the record was opened
+//      from — the Matrix stays the Matrix — with the control that opened it
+//      focused (the Summary row, the Matrix tenant, or the Matrix cell, out
+//      from under the held tenant column). Keyboard only, end to end. A
+//      converted review goes back the same way. No history entry is added:
+//      the browser's own Back is untouched. The report's title has no "v2".
 //
 // The stand-in database is test-e2e-acquisition-lease-matrix.js's, read from
 // that file so the two cannot drift. Nothing leaves the page.
@@ -46,6 +56,7 @@ const DB = SRC.slice(SRC.indexOf('const DB = `') + 'const DB = `'.length, SRC.in
 
 // Every button of the acquisition workflow, as the page draws it.
 const BUTTONS = [
+  '#acqBackToAcqsBtn',
   '#acqDetailPanel .acq-detail-header .acq-back-btn',
   '#acqReportV2Btn',
   '#acqTermsList .acq-lm-view',
@@ -257,12 +268,206 @@ const BUTTONS = [
     await c.close();
   }
 
+
+  // ── 6 · navigation ───────────────────────────────────────────────────────
+  // Is "Back to Acquisitions" on screen, and is it what a tap there reaches?
+  const barCheck = (p) => p.evaluate(() => {
+    const b = document.getElementById('acqBackToAcqsBtn');
+    if (!b) return { ok: false, why: 'no button' };
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { ok: r.top >= -0.5 && r.bottom <= window.innerHeight && r.height > 0 && !!hit && (hit === b || b.contains(hit)),
+             top: Math.round(r.top), scrollY: Math.round(window.scrollY), text: b.textContent.trim(), hit: hit && hit.className };
+  });
+  const toBottom = (p) => p.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const landed = (p, id) => p.evaluate((id) => {
+    const sec = document.getElementById('acqSection');
+    const card = document.querySelector(`#acqReviewsGrid .acq-card[data-review-id="${id}"]`);
+    const sr = sec.getBoundingClientRect(), cr = card ? card.getBoundingClientRect() : null;
+    return {
+      panelHidden: getComputedStyle(document.getElementById('acqDetailPanel')).display === 'none',
+      sectionInView: sr.top < window.innerHeight && sr.bottom > 0,
+      cardInView: !!cr && cr.top >= 0 && cr.bottom <= window.innerHeight,
+      focused: !!card && document.activeElement === card,
+      marked: !!card && card.classList.contains('acq-card-returned'),
+      active: _activeAcqId,
+    };
+  }, id);
+  const histNow = (p) => p.evaluate(() => ({ len: history.length, href: location.href }));
+
+  for (const [label, vp, mobile] of [['desktop 1366', { width: 1366, height: 900 }, false],
+                                     ['tablet 768', { width: 768, height: 1024 }, true],
+                                     ['phone 375', { width: 375, height: 812 }, true]]) {
+    const { ctx: c, page: p } = await open(vp, mobile);
+    const h0 = await histNow(p);
+    // From the Summary, scrolled to the foot of the review.
+    let b = await barCheck(p);
+    check(`${label}: "← Back to Acquisitions" is at the top of the review`, b.ok && b.text === '← Back to Acquisitions', JSON.stringify(b));
+    await toBottom(p);
+    b = await barCheck(p);
+    check(`${label}: and still in view, and tappable, at the foot of the Summary`, b.ok && b.scrollY > 200, JSON.stringify(b));
+    // From the Acquisition Matrix.
+    await p.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
+    await p.waitForSelector('#acqTermsList .acq-m13-table');
+    await toBottom(p);
+    b = await barCheck(p);
+    check(`${label}: in view at the foot of the Acquisition Matrix`, b.ok && b.scrollY > 200, JSON.stringify(b));
+    // From a lease record opened from the Matrix.
+    await p.evaluate((s) => document.querySelector(`#acqTermsList .acq-m13-open[data-leasehold="${s}"]`).scrollIntoView({ block: 'center' }), SHOP);
+    await p.click(`#acqTermsList .acq-m13-open[data-leasehold="${SHOP}"]`);
+    await p.waitForSelector('#acqTermsList .acq-lh');
+    const rec = await p.evaluate(() => {
+      const back = document.querySelector('#acqTermsList .acq-lh-back');
+      const bar = document.getElementById('acqNavBar').getBoundingClientRect();
+      const r = back.getBoundingClientRect();
+      // The record's card is scrolled to: its top edge lands below the bar.
+      const card = document.getElementById('acqTermsCard').getBoundingClientRect();
+      return { text: back.textContent.trim(), title: back.title, focused: document.activeElement === back,
+               belowBar: r.top >= bar.bottom - 0.5 && card.top >= bar.bottom - 0.5 && card.top <= bar.bottom + 40,
+               cardTop: Math.round(card.top), barBottom: Math.round(bar.bottom), view: back.getAttribute('data-return-view') };
+    });
+    check(`${label}: the lease record opened from the Matrix offers "← Back to Lease Matrix", back to the Acquisition Matrix`,
+          rec.text === '← Back to Lease Matrix' && rec.title === 'Back to the Acquisition Matrix' && rec.view === 'acquisition', JSON.stringify(rec));
+    check(`${label}: it opens with that Back focused, and the record lands just below the bar, not under it`, rec.focused && rec.belowBar, JSON.stringify(rec));
+    await toBottom(p);
+    b = await barCheck(p);
+    check(`${label}: "← Back to Acquisitions" in view at the foot of the lease record`, b.ok && b.scrollY > 200, JSON.stringify(b));
+    // Back to Lease Matrix → the Matrix, the tenant focused.
+    await p.evaluate(() => document.querySelector('#acqTermsList .acq-lh-back').scrollIntoView({ block: 'center' }));
+    await p.click('#acqTermsList .acq-lh-back');
+    const m = await p.evaluate((s) => ({
+      m13: !!document.querySelector('#acqTermsList .acq-m13-table'), summary: !!document.querySelector('#acqTermsList .acq-lm-table'),
+      focused: document.activeElement === document.querySelector(`#acqTermsList .acq-m13-open[data-leasehold="${s}"]`),
+      tab: (document.querySelector('#acqTermsList .acq-lm-view.active') || {}).getAttribute ? document.querySelector('#acqTermsList .acq-lm-view.active').getAttribute('data-view') : null,
+    }), SHOP);
+    check(`${label}: "← Back to Lease Matrix" returns to the Acquisition Matrix — not the Summary — with the tenant focused`,
+          m.m13 && !m.summary && m.focused && m.tab === 'acquisition', JSON.stringify(m));
+    // A far-right cell's sources open its record; Back returns to that cell,
+    // brought into the frame on a narrow screen and clear of the tenant column.
+    await p.evaluate((s) => {
+      const cell = document.querySelector(`#acqTermsList .acq-m13-cell[data-leasehold="${s}"][data-field="termination_rights"]`);
+      const sc = document.querySelector('#acqTermsList .acq-m13-scroll');
+      cell.closest('tr').scrollIntoView({ block: 'center' });
+      sc.scrollLeft = sc.scrollWidth;
+    }, SHOP);
+    await p.click(`#acqTermsList .acq-m13-cell[data-leasehold="${SHOP}"][data-field="termination_rights"]`);
+    await p.waitForSelector('#acqTermsList .acq-m13-detail');
+    await p.evaluate(() => document.querySelector('#acqTermsList .acq-m13-record').scrollIntoView({ block: 'center' }));
+    await p.click('#acqTermsList .acq-m13-record');
+    await p.waitForSelector('#acqTermsList .acq-lh');
+    await p.evaluate(() => document.querySelector('#acqTermsList .acq-lh-back').scrollIntoView({ block: 'center' }));
+    await p.click('#acqTermsList .acq-lh-back');
+    const fr = await p.evaluate((s) => {
+      const cell = document.querySelector(`#acqTermsList .acq-m13-cell[data-leasehold="${s}"][data-field="termination_rights"]`);
+      const th = cell.closest('tr').querySelector('th').getBoundingClientRect();
+      const frame = document.querySelector('#acqTermsList .acq-m13-scroll').getBoundingClientRect();
+      const r = cell.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + Math.min(20, r.width / 2), r.top + r.height / 2);
+      return { focused: document.activeElement === cell, inFrame: r.left >= th.right - 1 && r.left < frame.right,
+               tappable: !!hit && (hit === cell || cell.contains(hit)), cellL: Math.round(r.left), heldR: Math.round(th.right), frameR: Math.round(frame.right) };
+    }, SHOP);
+    check(`${label}: Back from a record opened from the far-right Termination Right cell — that cell focused, in the frame, clear of the tenant column, tappable`,
+          fr.focused && fr.inFrame && fr.tappable, JSON.stringify(fr));
+    // Back to Acquisitions from the Matrix.
+    await p.click('#acqBackToAcqsBtn');
+    const l = await landed(p, MAPLE);
+    check(`${label}: "← Back to Acquisitions" lands on the Acquisitions section, the review's card in view, focused and marked`,
+          l.panelHidden && l.sectionInView && l.cardInView && l.focused && l.marked && l.active === null, JSON.stringify(l));
+    // Enter on the focused card reopens the review.
+    await p.keyboard.press('Enter');
+    await p.waitForSelector(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"], #acqTermsList .acq-m13-open[data-leasehold="${SHOP}"]`, { timeout: 15000 });
+    check(`${label}: Enter on the focused card opens the review again`, await p.evaluate((id) => _activeAcqId === id, MAPLE));
+    const h1 = await histNow(p);
+    check(`${label}: no history entry was added or taken — the browser's Back is as it was`, h1.len === h0.len && h1.href === h0.href, JSON.stringify([h0, h1]));
+    await c.close();
+  }
+
+  // Keyboard only, desktop: Summary row → record → Back → the row; the cell
+  // whose sources opened a record → Back → that cell, out from under the
+  // held tenant column; Back to Acquisitions from a record opened from the
+  // Summary.
+  {
+    const { ctx: c, page: p } = await open({ width: 1366, height: 900 }, false);
+    await p.focus(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
+    await p.keyboard.press('Enter');
+    await p.waitForSelector('#acqTermsList .acq-lh');
+    const k1 = await p.evaluate(() => { const b = document.querySelector('#acqTermsList .acq-lh-back');
+      return { focused: document.activeElement === b, title: b.title, view: b.getAttribute('data-return-view') }; });
+    check('keyboard: Enter on a Summary row opens the record, its Back focused and naming the Summary',
+          k1.focused && k1.title === 'Back to the Summary' && k1.view === 'summary', JSON.stringify(k1));
+    await p.keyboard.press('Enter');
+    const k2 = await p.evaluate((s) => ({ summary: !!document.querySelector('#acqTermsList .acq-lm-table'),
+      focused: document.activeElement === document.querySelector(`#acqTermsList .acq-lm-row[data-leasehold="${s}"]`) }), SHOP);
+    check('keyboard: Enter on Back returns to the Summary with the row focused', k2.summary && k2.focused, JSON.stringify(k2));
+    // From a Matrix cell's sources.
+    await p.click('#acqTermsList .acq-lm-view[data-view="acquisition"]');
+    await p.waitForSelector('#acqTermsList .acq-m13-table');
+    await p.focus(`#acqTermsList .acq-m13-cell[data-leasehold="${SHOP}"][data-field="termination_rights"]`);
+    await p.keyboard.press('Enter');
+    await p.waitForSelector('#acqTermsList .acq-m13-detail');
+    await p.focus('#acqTermsList .acq-m13-record');
+    await p.keyboard.press('Enter');
+    await p.waitForSelector('#acqTermsList .acq-lh');
+    await p.focus('#acqTermsList .acq-lh-back');
+    await p.keyboard.press('Enter');
+    const k3 = await p.evaluate((s) => {
+      const cell = document.querySelector(`#acqTermsList .acq-m13-cell[data-leasehold="${s}"][data-field="termination_rights"]`);
+      const r = cell.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { m13: !!document.querySelector('#acqTermsList .acq-m13-table'), focused: document.activeElement === cell,
+               visible: !!hit && (hit === cell || cell.contains(hit)), inViewport: r.top >= 0 && r.bottom <= window.innerHeight };
+    }, SHOP);
+    check('keyboard: a record opened from a Matrix cell\'s sources returns to the Matrix with that cell focused, in view and not under the tenant column',
+          k3.m13 && k3.focused && k3.visible && k3.inViewport, JSON.stringify(k3));
+    // A record opened from the Summary, then Back to Acquisitions: the
+    // Summary is unchanged for the next visit.
+    await p.click('#acqTermsList .acq-lm-view[data-view="summary"]');
+    await p.click(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`);
+    await p.waitForSelector('#acqTermsList .acq-lh');
+    await p.focus('#acqBackToAcqsBtn');
+    await p.keyboard.press('Enter');
+    const k4 = await landed(p, MAPLE);
+    check('keyboard: Back to Acquisitions from a lease record lands on the focused card', k4.panelHidden && k4.focused && k4.marked, JSON.stringify(k4));
+    // The cards are drawn again (a count arriving later): focus and mark stay.
+    await p.evaluate(() => _renderAcqSection(_acqReviews));
+    const k5 = await landed(p, MAPLE);
+    check('the focus and the mark survive the cards being drawn again', k5.focused && k5.marked, JSON.stringify(k5));
+    await p.keyboard.press('Enter');
+    await p.waitForSelector(`#acqTermsList .acq-lm-row[data-leasehold="${SHOP}"]`, { timeout: 15000 });
+    check('and the review reopens on its Summary, as a review always opens', await p.evaluate(() => !!document.querySelector('#acqTermsList .acq-lm-table') && !document.querySelector('#acqTermsList .acq-lh')));
+    // The report: its title, and the bar under it.
+    await p.click('#acqReportV2Btn');
+    await p.waitForSelector('#reportOverlay', { state: 'visible', timeout: 15000 });
+    const rp = await p.evaluate(() => {
+      const ov = document.getElementById('reportOverlay');
+      const b = document.getElementById('acqBackToAcqsBtn').getBoundingClientRect();
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return { text: ov.textContent, barCovered: !!hit && !hit.closest('#acqNavBar') };
+    });
+    check('the opened report is titled "Acquisition Report" — "v2" nowhere in it', /Acquisition Report/.test(rp.text) && !/Acquisition Report v2/.test(rp.text));
+    check('the report overlay sits above the bar', rp.barCovered);
+    await p.evaluate(() => closeReport());
+    await c.close();
+  }
+
+  // A converted review goes back the same way.
+  {
+    const { ctx: c, page: p } = await open({ width: 375, height: 812 }, true, { status: 'converted' });
+    await toBottom(p);
+    const b = await barCheck(p);
+    check('a converted review: "← Back to Acquisitions" in view at its foot, on a phone', b.ok, JSON.stringify(b));
+    await p.click('#acqBackToAcqsBtn');
+    const l = await landed(p, MAPLE);
+    check('and it lands on the converted review\'s card, focused', l.panelHidden && l.focused && l.marked, JSON.stringify(l));
+    await c.close();
+  }
+
   // ── the source, for what a walk cannot reach ─────────────────────────────
   const S = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
   const H = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   check('no acquisition button is still labelled "Export CSV", "Download matrix", "Download sources" or "Acquisition Report v2"',
         !/acqExportRentRollCsv\(\)">[^<]*Export CSV/.test(S) && !/Download matrix \(CSV\)|Download sources \(CSV\)/.test(S)
-        && !/&#x1F4D8; Acquisition Report v2/.test(H));
+        && !/&#x1F4D8; Acquisition Report v2/.test(H) && !/'Acquisition Report v2/.test(S));
   check('every Rent Roll download carries the download arrow', (S.match(/acqExportRentRollCsv\(\)">&#x2B07; Rent Roll CSV</g) || []).length === 3);
   check('the Delete button takes its colour from the stylesheet, not an inline style',
         /id="acqDeleteBtn"[^>]*style="margin-left:auto;"/.test(H) && /\.acq-back-btn\.acq-delete-btn \{\s*background: transparent; border-color: rgba\(239, 68, 68, 0\.45\); color: var\(--c-f87171\);/.test(H));

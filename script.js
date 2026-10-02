@@ -33776,8 +33776,11 @@ function _acqLeaseholdHeadHtml(familyId) {
       }).join('')}</ul>` : '<div class="acq-terms-empty">No document is filed into this leasehold.</div>'}
     </section>`;
 
+  // Where "Back to Lease Matrix" returns: the view this record was opened from.
+  const backView = (_acqOpenLeasehold && _acqOpenLeasehold.fromView) || _acqMatrixView;
   return `<div class="acq-lh" data-leasehold="${esc(familyId)}">
-      <button type="button" class="acq-lh-back">&#x2190; Back to MainStreet’s Record</button>
+      <button type="button" class="acq-lh-back" data-return-view="${esc(backView)}"
+        title="${esc(backView === 'acquisition' ? 'Back to the Acquisition Matrix' : 'Back to the Summary')}">&#x2190; Back to Lease Matrix</button>
       <h4 class="acq-lh-title">${esc(e.tenant)}</h4>
       <div class="acq-lh-headline">${esc(LM.headline(e))}</div>
       ${overview}${attn}${terms}${documents}
@@ -33804,7 +33807,7 @@ function _acqBindLeaseMatrixControls(el) {
   el.addEventListener('click', (ev) => {
     const t = ev.target;
     const row = t.closest && t.closest('.acq-lm-row');
-    if (row) { ev.preventDefault(); acqOpenLeasehold(row.getAttribute('data-leasehold')); return; }
+    if (row) { ev.preventDefault(); acqOpenLeasehold(row.getAttribute('data-leasehold'), { view: 'summary' }); return; }
     // The acquisition matrix (13 columns).
     const view = t.closest && t.closest('.acq-lm-view');
     if (view) { ev.preventDefault(); acqSetMatrixView(view.getAttribute('data-view')); return; }
@@ -33816,7 +33819,7 @@ function _acqBindLeaseMatrixControls(el) {
       ev.preventDefault();
       const field = rec.getAttribute('data-field');
       _acqM13Open = null;
-      acqOpenLeasehold(rec.getAttribute('data-leasehold'));
+      acqOpenLeasehold(rec.getAttribute('data-leasehold'), { view: 'acquisition', field: field || null });
       if (field) _acqRevealTerm(field);
       return;
     }
@@ -33856,14 +33859,19 @@ function _acqBindLeaseMatrixControls(el) {
     const row = ev.target && ev.target.closest && ev.target.closest('.acq-lm-row');
     if (!row) return;
     ev.preventDefault();
-    acqOpenLeasehold(row.getAttribute('data-leasehold'));
+    acqOpenLeasehold(row.getAttribute('data-leasehold'), { view: 'summary' });
   });
 }
 
-function acqOpenLeasehold(familyId) {
+// `from` says what opened the record — the view, and the cell when it was one
+// — so "Back to Lease Matrix" returns to that view with that control focused.
+function acqOpenLeasehold(familyId, from) {
   if (!familyId || !_activeAcqId) return;
   if (!_acqFamilyRows(_activeAcqId).some(f => f && f.id === familyId)) return;
-  _acqOpenLeasehold = { reviewId: _activeAcqId, familyId };
+  const f = from || {};
+  _acqOpenLeasehold = { reviewId: _activeAcqId, familyId,
+    fromView: f.view === 'acquisition' || f.view === 'summary' ? f.view : _acqMatrixView,
+    fromField: f.field || null };
   _renderAcqTerms();
   const card = document.getElementById('acqTermsCard');
   if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start' });
@@ -33872,15 +33880,39 @@ function acqOpenLeasehold(familyId) {
 }
 
 function acqBackToLeaseMatrix() {
-  const from = _acqOpenLeasehold && _acqOpenLeasehold.familyId;
+  const o = _acqOpenLeasehold || {};
+  const from = o.familyId;
   _acqOpenLeasehold = null;
+  // The view the record was opened from — the Summary or the Acquisition
+  // Matrix — whatever the view had been before.
+  if (o.fromView === 'summary' || o.fromView === 'acquisition') _acqMatrixView = o.fromView;
   _renderAcqTerms();
-  // Back where the person left: the row they opened, in view and focused.
-  const row = from ? document.querySelector(`#acqTermsList .acq-lm-row[data-leasehold="${CSS.escape(from)}"]`) : null;
-  if (row) {
-    if (row.scrollIntoView) row.scrollIntoView({ block: 'center' });
-    if (row.focus) row.focus({ preventScroll: true });
+  if (!from) return;
+  // Back where the person left: the control they opened it with, in view and
+  // focused — the Summary's row; the Matrix's tenant, or the cell whose
+  // sources opened it.
+  const q = sel => document.querySelector(sel);
+  const id = CSS.escape(from);
+  let target = null;
+  if (_acqMatrixView === 'acquisition') {
+    target = (o.fromField && q(`#acqTermsList .acq-m13-cell[data-leasehold="${id}"][data-field="${CSS.escape(o.fromField)}"]`))
+          || q(`#acqTermsList .acq-m13-open[data-leasehold="${id}"]`);
+  } else {
+    target = q(`#acqTermsList .acq-lm-row[data-leasehold="${id}"]`);
   }
+  if (!target) return;
+  const row = target.closest('tr') || target;
+  if (row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+  // The table is drawn afresh, scrolled to its start; a cell past the right of
+  // a narrow screen is brought into the frame — never so far that it slides
+  // under the held tenant column.
+  const sc = target.closest('.acq-m13-scroll');
+  const th = sc && target.classList.contains('acq-m13-cell') ? row.querySelector('th') : null;
+  if (sc && th) {
+    const cell = target.getBoundingClientRect(), held = th.getBoundingClientRect(), frame = sc.getBoundingClientRect();
+    if (cell.right > frame.right) sc.scrollLeft += Math.min(cell.right - frame.right + 4, cell.left - held.right - 4);
+  }
+  if (target.focus) target.focus({ preventScroll: true });
 }
 
 // An attention item takes the person to its term, and marks it briefly.
@@ -34465,6 +34497,25 @@ function _acqCardLeaseholds(review) {
 function _renderAcqSection(reviews) {
   const grid = document.getElementById('acqReviewsGrid');
   if (!grid) return;
+  // A card that holds keyboard focus keeps it when the cards are drawn again
+  // (a count that arrives a moment later redraws them all).
+  const act = document.activeElement;
+  const focusedCard = act && act.closest && act.closest('#acqReviewsGrid .acq-card');
+  const focusedId = focusedCard ? focusedCard.getAttribute('data-review-id') : null;
+  const returnedId = grid.querySelector('.acq-card.acq-card-returned')
+    ? grid.querySelector('.acq-card.acq-card-returned').getAttribute('data-review-id') : null;
+  _renderAcqCards(grid, reviews);
+  // The section is shown whenever any acquisition exists (renderPortfolio's
+  // rule) — including when the reviews arrive after the portfolio was drawn,
+  // and when a person comes Back to Acquisitions.
+  const sec = document.getElementById('acqSection');
+  if (sec && reviews.length && sec.style.display === 'none') sec.style.display = '';
+  const again =id => id ? grid.querySelector(`.acq-card[data-review-id="${CSS.escape(id)}"]`) : null;
+  if (returnedId && again(returnedId)) again(returnedId).classList.add('acq-card-returned');
+  if (focusedId && again(focusedId) && again(focusedId).focus) again(focusedId).focus({ preventScroll: true });
+}
+
+function _renderAcqCards(grid, reviews) {
   if (!reviews.length) {
     grid.innerHTML = '<div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>';
     return;
@@ -34490,7 +34541,9 @@ function _renderAcqSection(reviews) {
       ? '<span class="acq-card-prospect" title="This deal is a prospect property — the same record becomes the property workspace when acquired">Prospect property</span>'
       : '';
     return `
-    <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" onclick="selectAcquisitionReview('${esc(r.id)}')">
+    <div class="acq-card${r.status === 'converted' ? ' converted' : ''}" data-review-id="${esc(r.id)}" tabindex="0" role="button"
+         aria-label="${esc('Open review: ' + (r.name || 'Untitled'))}" onclick="selectAcquisitionReview('${esc(r.id)}')"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectAcquisitionReview('${esc(r.id)}')}">
       <div class="acq-card-name">${esc(r.name)}</div>
       <div class="acq-card-meta">${esc(date)}</div>
       <span class="acq-card-status ${orphaned ? 'orphaned' : esc(r.status)}">${orphaned ? 'converted' : esc(r.status)}</span>
@@ -34622,7 +34675,8 @@ function selectAcquisitionReview(id) {
   }
 }
 
-function closeAcquisitionDetail() {
+function closeAcquisitionDetail(opts) {
+  const from = _activeAcqId;
   _activeAcqId = null;
   _acqOpenLeasehold = null;
   _acqTenants  = [];
@@ -34630,7 +34684,25 @@ function closeAcquisitionDetail() {
   document.getElementById('acqDetailPanel').style.display     = 'none';
   document.getElementById('portfolioDashboard').style.display = 'block';
   _renderAcqSection(_acqReviews);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (!(opts && opts.toAcquisitions)) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  // Back to Acquisitions: the Acquisitions section, with the review the person
+  // was working on in view, focused and marked. No history entry is added or
+  // removed, so the browser's own Back does what it did before.
+  const sec  = document.getElementById('acqSection');
+  const card = from ? document.querySelector(`#acqReviewsGrid .acq-card[data-review-id="${CSS.escape(from)}"]`) : null;
+  if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'start' });
+  if (card) {
+    const r = card.getBoundingClientRect();
+    if (r.bottom > window.innerHeight || r.top < 0) card.scrollIntoView({ block: 'center' });
+    document.querySelectorAll('#acqReviewsGrid .acq-card-returned').forEach(c => c.classList.remove('acq-card-returned'));
+    card.classList.add('acq-card-returned');
+    if (card.focus) card.focus({ preventScroll: true });
+  }
+}
+
+// "← Back to Acquisitions", held at the top of every screen of a review.
+function backToAcquisitions() {
+  closeAcquisitionDetail({ toAcquisitions: true });
 }
 
 async function deleteActiveAcquisitionReview() {
@@ -36376,7 +36448,7 @@ async function generateAcquisitionReportV2() {
   const propName = review.name || 'Acquisition Review';
   const s        = model.summary || {};
   const body = `
-  ${_rptHeader(propName, 'Acquisition Report v2', now, now, [
+  ${_rptHeader(propName, 'Acquisition Report', now, now, [
     { label: 'Leaseholds', value: String((model.leaseholds || []).length) },
     { label: 'Verified',   value: String(s.verified || 0) },
     { label: 'Issues',     value: String(s.issue || 0) },
@@ -36388,9 +36460,9 @@ async function generateAcquisitionReportV2() {
       : esc(name),
     typeLabel: (t) => _AD().docTypeLabel(t),
   })}
-  ${_rptFooter(propName, 'Acquisition Report v2', now)}`;
+  ${_rptFooter(propName, 'Acquisition Report', now)}`;
 
-  openReport('Acquisition Report v2 — ' + propName, body);
+  openReport('Acquisition Report — ' + propName, body);
 }
 
 function _genUUID() {

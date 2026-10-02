@@ -282,7 +282,7 @@ t('an analysis of no leasehold is refused, never stored', () => {
   ok(/if \(!_acqLeaseholdsOnly\(_acqCanonicalRows\(reviewId\)\)\.length\)/.test(fnBody(S, '_acqRefreshAnalysis')));
 });
 t('the review card counts leaseholds, never raw uploads', () => {
-  const C = fnBody(S, '_renderAcqSection');
+  const C = fnBody(S, '_renderAcqCards');   // the cards' markup, drawn for _renderAcqSection
   ok(/_acqCardLeaseholds\(r\)/.test(C) && !/\(d\.tenants\s*\|\|\s*\[\]\)\.length/.test(C), 'the card still counts raw uploads');
   ok(!/> Tenants</.test(C));
 });

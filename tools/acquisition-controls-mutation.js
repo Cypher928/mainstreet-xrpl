@@ -25,6 +25,23 @@
  *     A10  the report is "Acquisition Report v2" again
  *     A11  the rent roll tab's download is "Export CSV" again
  *     A12  "13 columns" no longer sits beneath "Acquisition Matrix"
+ *
+ *   Navigation (Step B) — index.html / script.js
+ *     B01  the bar is no longer held at the top of the screen
+ *     B02  Back to Acquisitions lands at the top of the page, as before
+ *     B03  the review's card is not focused on the way back
+ *     B04  a card cannot take keyboard focus
+ *     B05  Enter on a card does not open it
+ *     B06  a record opened from the Matrix is taken to have come from the Summary
+ *     B07  a record opened from a cell's sources returns focus to the tenant, not the cell
+ *     B08  a cell past the right of a narrow screen is left out of the frame
+ *     B09  what the review scrolls to lands under the bar
+ *     B10  the Acquisitions section stays hidden when the reviews arrive late
+ *     B11  a redraw of the cards drops their focus
+ *     B12  the lease record's Back is "Back to MainStreet's Record" again
+ *     B13  the report is titled "Acquisition Report v2" again
+ *     B14  Back to Acquisitions adds a history entry
+ *     B15  the cell is brought in so far that it slides under the held tenant column
  */
 const fs = require('fs');
 const os = require('os');
@@ -72,6 +89,51 @@ const MUTANTS = [
   { id: 'A12', file: S, why: '"13 columns" no longer sits beneath "Acquisition Matrix"',
     from: "'Acquisition Matrix <span class=\"acq-lm-view-sub\">13 columns</span>'",
     to:   "'Acquisition Matrix'" },
+  { id: 'B01', file: H, why: 'the bar is no longer held at the top of the screen',
+    from: '    .acq-nav-bar { position: sticky; top: 0; z-index: 30;',
+    to:   '    .acq-nav-bar { position: static; top: 0; z-index: 30;' },
+  { id: 'B02', file: H, why: 'Back to Acquisitions lands at the top of the page',
+    from: 'onclick="backToAcquisitions()"',
+    to:   'onclick="closeAcquisitionDetail()"' },
+  { id: 'B03', file: S, why: 'the card is not focused on the way back',
+    from: "    card.classList.add('acq-card-returned');\n    if (card.focus) card.focus({ preventScroll: true });",
+    to:   "    card.classList.add('acq-card-returned');" },
+  { id: 'B04', file: S, why: 'a card cannot take keyboard focus',
+    from: 'data-review-id="${esc(r.id)}" tabindex="0" role="button"',
+    to:   'data-review-id="${esc(r.id)}" role="button"' },
+  { id: 'B05', file: S, why: 'Enter on a card does not open it',
+    from: "onkeydown=\"if(event.key==='Enter'||event.key===' '){event.preventDefault();selectAcquisitionReview('${esc(r.id)}')}\"",
+    to:   '' },
+  { id: 'B06', file: S, why: 'a record opened from the Matrix is taken to have come from the Summary',
+    from: "acqOpenLeasehold(rec.getAttribute('data-leasehold'), { view: 'acquisition', field: field || null });",
+    to:   "acqOpenLeasehold(rec.getAttribute('data-leasehold'), { view: 'summary', field: field || null });" },
+  { id: 'B07', file: S, why: 'focus returns to the tenant, not the cell whose sources opened the record',
+    from: '    fromField: f.field || null };',
+    to:   '    fromField: null };' },
+  { id: 'B08', file: S, why: 'a cell past the right of a narrow screen is left out of the frame',
+    from: '    if (cell.right > frame.right) sc.scrollLeft += Math.min(',
+    to:   '    if (false) sc.scrollLeft += Math.min(' },
+  { id: 'B15', file: S, why: 'the cell is brought in so far that it slides under the held tenant column',
+    from: 'Math.min(cell.right - frame.right + 4, cell.left - held.right - 4)',
+    to:   '(cell.right - frame.right + 4) + 400' },
+  { id: 'B09', file: H, why: 'what the review scrolls to lands under the bar',
+    from: '    #acqDetailPanel #acqDocsList { scroll-margin-top: calc(var(--acq-nav-h) + 10px); }',
+    to:   '    #acqDetailPanel #acqDocsList { scroll-margin-top: 0; }' },
+  { id: 'B10', file: S, why: 'the Acquisitions section stays hidden when the reviews arrive late',
+    from: "  if (sec && reviews.length && sec.style.display === 'none') sec.style.display = '';",
+    to:   '' },
+  { id: 'B11', file: S, why: 'a redraw of the cards drops their focus',
+    from: '  if (focusedId && again(focusedId) && again(focusedId).focus) again(focusedId).focus({ preventScroll: true });',
+    to:   '' },
+  { id: 'B12', file: S, why: 'the lease record\'s Back is "Back to MainStreet\'s Record" again',
+    from: '>&#x2190; Back to Lease Matrix</button>',
+    to:   '>&#x2190; Back to MainStreet’s Record</button>' },
+  { id: 'B13', file: S, why: 'the report is titled "Acquisition Report v2" again',
+    from: "  ${_rptHeader(propName, 'Acquisition Report', now, now, [",
+    to:   "  ${_rptHeader(propName, 'Acquisition Report v2', now, now, [" },
+  { id: 'B14', file: S, why: 'Back to Acquisitions adds a history entry',
+    from: "function backToAcquisitions() {\n",
+    to:   "function backToAcquisitions() {\n  history.pushState(null, '', '#acquisitions');\n" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-controls-mut-'));
