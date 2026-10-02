@@ -3,7 +3,7 @@
 -- ============================================================================
 -- Restores acquire_property to 035's definition, VERBATIM, and drops what 044
 -- added: the attestations table (with its triggers, policies and indexes), its
--- two trigger functions, and the four name-comparison functions. 034's
+-- two trigger functions, and the five name-comparison functions. 034's
 -- acq_child_property_bind and 036's acq_children_frozen are shared and stay.
 --
 -- DATA. Dropping the table discards every acknowledgement and every recorded
@@ -344,5 +344,6 @@ drop function if exists public.acq_match_requires_reason(jsonb, text, text[]);
 drop function if exists public.acq_compare_property(text, text[]);
 drop function if exists public.acq_compare_tenant_names(text, text);
 drop function if exists public.acq_name_tokens(text);
+drop function if exists public.acq_js_trim(text);
 
 commit;

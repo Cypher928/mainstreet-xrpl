@@ -33,6 +33,14 @@
  *     G17  a mismatch may be confirmed without a reason
  *     G18  a read_only member may acknowledge
  *     G19  an attestation may be deleted outside a cascade
+ *
+ *   Whitespace and case, independent of the database locale
+ *     G20  trimming knows only ASCII whitespace again
+ *     G21  lower() (the database collation) lowers names again
+ *     G22  "İ" is not lowered as JavaScript lowers it
+ *     G23  the Kelvin sign is not lowered as JavaScript lowers it
+ *     G24  the address test's word boundary is the locale's
+ *     G25  a reason is stored untrimmed (Unicode spaces kept)
  */
 const fs = require('fs');
 const os = require('os');
@@ -62,7 +70,7 @@ const MUTANTS = [
     from: "        where a.review_id = p_review_id and a.family_id = m.fid and a.kind = 'match_confirmed'",
     to:   "        where a.review_id = p_review_id and a.kind = 'match_confirmed'" },
   { id: 'G08', why: 'a reasonless confirmation counts for a mismatch',
-    from: "          and a.row_key = m.key and a.reason is not null and length(btrim(a.reason)) > 0);",
+    from: "          and a.row_key = m.key and a.reason is not null and length(public.acq_js_trim(a.reason)) > 0);",
     to:   "          and a.row_key = m.key);" },
   { id: 'G09', why: 'the browser\'s leaseholdAcknowledgements map is honoured',
     from: "     and not exists (\n       select 1 from public.acquisition_conversion_attestations a\n        where a.review_id = p_review_id and a.family_id = f.id and a.kind = 'no_document_on_file');",
@@ -87,6 +95,20 @@ const MUTANTS = [
     from: "                        and m.role <> 'read_only' and m.accepted_at is not null", to: "                        and m.accepted_at is not null" },
   { id: 'G19', why: 'an attestation may be deleted outside a cascade',
     from: "  if tg_op = 'DELETE' and pg_trigger_depth() > 1 then", to: "  if tg_op = 'DELETE' then" },
+  { id: 'G20', why: 'trimming knows only ASCII whitespace again',
+    from: "  select regexp_replace(p_s, '^[\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+|[\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+$', '', 'g');",
+    to:   "  select regexp_replace(p_s, '^[ \\t\\n\\r]+|[ \\t\\n\\r]+$', '', 'g');" },
+  { id: 'G21', why: 'lower() (the database collation) lowers names again',
+    from: "  v_raw := replace(coalesce(p_s, ''), chr(304), 'i' || chr(775));\n  v_raw := replace(v_raw, chr(8490), 'k');\n  v_raw := translate(v_raw, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');",
+    to:   "  v_raw := lower(coalesce(p_s, ''));" },
+  { id: 'G22', why: '"İ" is not lowered as JavaScript lowers it',
+    from: "  v_raw := replace(coalesce(p_s, ''), chr(304), 'i' || chr(775));", to: "  v_raw := coalesce(p_s, '');" },
+  { id: 'G23', why: 'the Kelvin sign is not lowered as JavaScript lowers it',
+    from: "  v_raw := replace(v_raw, chr(8490), 'k');\n", to: "" },
+  { id: 'G24', why: 'the address test\'s word boundary is the locale\'s',
+    from: "[0-9]+[A-Za-z]?(?![A-Za-z0-9_])');", to: "[0-9]+[A-Za-z]?\\y');" },
+  { id: 'G25', why: 'a reason is stored untrimmed (Unicode spaces kept)',
+    from: "  new.reason     := nullif(public.acq_js_trim(coalesce(new.reason, '')), '');", to: "  new.reason     := nullif(btrim(coalesce(new.reason, '')), '');" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-gate-mut-'));

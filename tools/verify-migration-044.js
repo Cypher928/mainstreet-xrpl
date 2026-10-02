@@ -90,12 +90,21 @@ const as = (uid, sql, db) => pg.as('authenticated', uid, sql, db);
 const anon = (sql, db) => pg.as('anon', null, sql, db);
 const refused = (r, re) => !r.ok && (re ? re.test(r.out) : true);
 const one = (sql, db) => q(sql, db).out;
+// A query too long for one command line (the parity corpora) goes through a file.
+const oneF = (sql, db) => { const r = pg.psqlText('\\pset tuples_only on\n\\pset format unaligned\n' + sql, db, 'big'); return r.ok ? r.out.split('\n').filter(l => !/^(Tuples only|Output format)/.test(l)).join('\n').trim() : 'ERROR ' + r.out.slice(0, 200); };
 const parse = (r) => { try { return JSON.parse(r.out); } catch (_) { return { _raw: r.out }; } };
 const lit = (v) => JSON.stringify(v).replace(/'/g, "''");
 const s = (v) => v == null ? 'null' : "'" + String(v).replace(/'/g, "''") + "'";
 const rpcBegin = (db, uid, name, data) => parse(as(uid, `select public.begin_acquisition(${s(name)}, '${lit(Object.assign({ totalSqFt: '1000' }, data || {}))}'::jsonb);`, db));
 const acquire = (db, uid, pid, rid, snapshot) => as(uid, `select public.acquire_property('${pid}'::uuid, '${rid}'::uuid, '${lit(snapshot)}'::jsonb);`, db);
 const fnmd5 = (db) => one(`select md5(pg_get_functiondef('public.acquire_property(uuid,uuid,jsonb)'::regprocedure));`, db);
+// The function BODY's md5 — what Pilot's catalog reports (md5(prosrc)) and what
+// the post-apply checks compare.
+const srcmd5 = (db) => one(`select md5(prosrc) from pg_proc where oid = 'public.acquire_property(uuid,uuid,jsonb)'::regprocedure;`, db);
+const bodyOf = (text) => { const i = text.indexOf('create or replace function public.acquire_property('); const a = text.indexOf('$$', i) + 2; return text.slice(a, text.indexOf('$$', a)); };
+const MD5_035_FILE = require('crypto').createHash('md5').update(bodyOf(fs.readFileSync(M035, 'utf8'))).digest('hex');
+// Pilot's live acquire_property, read-only on 2026-10-02 (md5(prosrc), 17,138 characters).
+const MD5_PILOT_LIVE = '1332880839411b0251613735c09dc612';
 
 // The whole state a refused acquire must leave untouched.
 const snapshot = (db, pid, rid) => one(`
@@ -158,6 +167,8 @@ r = q(SCHEMA, DB);
 check('pilotlike: verify-migration-036.js\'s stand-ins (constraints, triggers, functions, privileges, organisations, policies)', r.ok, r.ok ? '' : r.out.slice(0, 500));
 for (const [n, f] of FILES) { r = pg.psqlFile(f, DB); check(`pilotlike: ${n} installed from its file`, r.ok, r.ok ? '' : r.out.slice(0, 300)); }
 const md5_035 = fnmd5(DB);
+const src_035 = srcmd5(DB);
+check(`before 044: the installed acquire_property body is 035's file (${src_035}) and Pilot's live body (${MD5_PILOT_LIVE})`, src_035 === MD5_035_FILE && src_035 === MD5_PILOT_LIVE, src_035 + ' / ' + MD5_035_FILE);
 
 // ── 0 · the gap ──────────────────────────────────────────────────────────────
 section('0 · BEFORE 044 — a direct call bypasses both safeguards');
@@ -169,7 +180,7 @@ r = acquire(DB, A, G.P, G.R, G.snap);
 check('before 044: SafeShield Security matched to Sunrise Cafe & Bakery with no reason converts', r.ok && parse(r).ok === true, r.out.slice(0, 200));
 
 // Every object outside 044's own, for the "nothing else moved" diff.
-const OWN = ['acquire_property', 'acq_name_tokens', 'acq_compare_tenant_names', 'acq_compare_property', 'acq_match_requires_reason', 'acq_attestations_guard', 'acq_attestations_append_only'];
+const OWN = ['acquire_property', 'acq_js_trim', 'acq_name_tokens', 'acq_compare_tenant_names', 'acq_compare_property', 'acq_match_requires_reason', 'acq_attestations_guard', 'acq_attestations_append_only'];
 const inventory = (db) => q(`
   select string_agg(x, E'\\n' order by x) from (
     select 'con|'||conrelid::regclass::text||'|'||conname||'|'||pg_get_constraintdef(oid) as x from pg_constraint where connamespace='public'::regnamespace and conrelid::regclass::text <> 'acquisition_conversion_attestations'
@@ -188,6 +199,7 @@ r = pg.psqlFile(M044, DB);
 check('044 applies', r.ok, r.ok ? '' : r.out.slice(0, 800));
 r = pg.psqlFile(M044, DB);
 check('044 applies a second time without error', r.ok, r.out.slice(0, 300));
+const src_044 = srcmd5(DB);
 check('acquire_property is still SECURITY DEFINER with an empty search_path', one(`select prosecdef::text||'|'||coalesce(array_to_string(proconfig,','),'') from pg_proc where proname='acquire_property';`, DB) === 'true|search_path=""');
 check('acquire_property: authenticated and service_role may execute; anon and PUBLIC may not',
   pg.canExecute('authenticated', 'public.acquire_property(uuid,uuid,jsonb)', DB) && pg.canExecute('service_role', 'public.acquire_property(uuid,uuid,jsonb)', DB)
@@ -264,6 +276,71 @@ const NAMESETS = [['Maple Plaza'], ['Maple Plaza', 'Maple Plaza'], ['Maple Plaza
   const out = one(`select string_agg(public.acq_match_requires_reason(r, f, array['Maple Plaza'])::text, '|' order by i) from (values ${cases.map(([row, f], i) => `(${i}, '${lit(row)}'::jsonb, ${s(f)})`).join(',')}) v(i, r, f);`, DB).split('|');
   check(`requiresReason(matchConcerns(…)): ${cases.length} cases, the SQL predicate agrees with the JS`, out.join('|') === js.join('|'), out.join('|') + ' vs ' + js.join('|'));
 })();
+
+
+// ── 2b · whitespace and case: JavaScript's, not the database locale's ─────────
+// Pilot's database collates with ICU en-US; this cluster's default database is
+// libc "C". The comparison must not depend on either, so every parity check
+// below runs in BOTH: the pilotlike database (C) and a second database whose
+// collation is ICU en-US, holding only 044's comparison functions.
+section('2b · PARITY UNDER EITHER LOCALE — whitespace, case, word boundary');
+const ICU = 'icu_en_us';
+r = q(`create database ${ICU} template template0 encoding 'UTF8' locale_provider icu icu_locale 'en-US' locale 'C.UTF-8';`, 'postgres');
+check('a second database collating with ICU en-US, as Pilot does', r.ok && one(`select datlocprovider::text||'|'||coalesce(to_jsonb(d)->>'datlocale', to_jsonb(d)->>'daticulocale', '') from pg_database d where datname='${ICU}';`, 'postgres').startsWith('i|en-US'), r.out.slice(0, 200));
+(() => {
+  const a = SQL.indexOf('-- ── 1 · name comparison'), b = SQL.indexOf('-- ── 2 · the evidence');
+  const rr = pg.psqlText(SQL.slice(a, b), ICU, 'comparators');
+  check('…holding 044\'s comparison functions, installed from the migration file', a > 0 && b > a && rr.ok, rr.out.slice(0, 300));
+})();
+const JS_WS = (() => { const out = []; for (let cp = 1; cp <= 0x10FFFF; cp++) { if (cp >= 0xD800 && cp <= 0xDFFF) continue; if (/\s/.test(String.fromCodePoint(cp))) out.push(cp.toString(16)); } return out.join(','); })();
+const JS_LOWER_ASCII = (() => { const out = []; for (let cp = 0x80; cp <= 0x10FFFF; cp++) { if (cp >= 0xD800 && cp <= 0xDFFF) continue; if (/[a-z0-9]/.test(String.fromCodePoint(cp).toLowerCase())) out.push(cp.toString(16)); } return out.join(','); })();
+check('(JavaScript: String.prototype.trim strips exactly what \\s matches)', (() => { for (let cp = 1; cp <= 0xFFFF; cp++) { if (cp >= 0xD800 && cp <= 0xDFFF) continue; const ch = String.fromCodePoint(cp); if ((/\s/.test(ch)) !== (('a' + ch + 'a').slice(1, 2).trim() === '')) return false; } return true; })());
+const WS_CLASS = (strip(SQL).match(/c_js_ws\s+constant\s+text\s*:=\s*'([^']+)'/) || [])[1] || '<missing>';
+check('acq_js_trim and the address test use the same whitespace class', (strip(SQL).match(/regexp_replace\(p_s, '\^(\[[^\]]+\])\+\|/) || [])[1] === WS_CLASS, WS_CLASS);
+const WS = [' ', '\t', '\n', '\r', '\v', '\f', ' ', ' ', ' ', ' ', ' ', '　', '﻿', '\u0085', '​'];
+const TEN2 = ['İSTANBUL DELI', 'Istanbul Deli', 'i̇stanbul deli', 'KWIK MART', 'Kwik Mart', 'Luxe Nails', 'Sunrise Cafe & Bakery LLC', 'SafeShield Security, LLC', 'Maple Coffee Co.']
+  .concat(WS.map(w => w + 'Luxe Nails' + w), WS.map(w => 'Luxe' + w + 'Nails'), WS.map(w => w + 'SafeShield Security' + w), [' ', '　  ']);
+const SRC2 = ['500é Main', '500a Main', '500_ Main', '500K Main', '500 Main Street', 'İstanbul Plaza', 'KENSINGTON Commons', 'vista grove', 'Vista Grove', 'v', 'Lakeview Center']
+  .concat(...['Maple Plaza', '500 Main Street', 'vista grove', 'Lakeview Center'].map(b => WS.map(w => w + b + w)), WS);
+const NAMES2 = [['Maple Plaza'], [' '], [' ', 'Maple Plaza'], ['　Maple Plaza '], ['v'], ['vista grove'], ['Vista Grove'], [' Lakeview Center'],
+  ['   ', 'Lakeview Center'], ['﻿', ' '], ['Istanbul Plaza'], ['Kensington Commons'], ['\u0085Maple Plaza'], ['​Maple Plaza']];
+for (const db of [DB, ICU]) {
+  const tag = db === DB ? 'C' : 'ICU en-US';
+  check(`[${tag}] the whitespace class matches every code point JavaScript's \\s and trim() match — and no other`,
+    one(`select string_agg(to_hex(cp), ',' order by cp) from generate_series(1, 1114111) cp where (cp < 55296 or cp > 57343) and chr(cp) ~ ('^' || '${WS_CLASS}' || '$');`, db) === JS_WS, WS_CLASS);
+  check(`[${tag}] lowering: exactly the code points JavaScript lowers into an ASCII letter or digit survive tokenising (U+0130, U+212A)`,
+    one(`select string_agg(to_hex(cp), ',' order by cp) from generate_series(128, 1114111) cp where (cp < 55296 or cp > 57343) and cardinality(public.acq_name_tokens(chr(cp))) > 0;`, db) === JS_LOWER_ASCII
+    && one(`select public.acq_name_tokens(chr(304))::text || public.acq_name_tokens(chr(8490))::text;`, db) === '{i}{k}', JS_LOWER_ASCII);
+  const pairs = []; for (const x of TEN2) for (const y of TEN2.concat(TENANTS.slice(0, 12))) pairs.push([x, y]);
+  const js = pairs.map(([x, y]) => { const c = AL.compareTenantNames(x, y); return c ? c.level : 'null'; });
+  const out = oneF(`select string_agg(coalesce(public.acq_compare_tenant_names(a, b), 'null'), '|' order by i) from (values ${pairs.map(([x, y], i) => `(${i}, ${s(x)}, ${s(y)})`).join(',')}) v(i, a, b);`, db).split('|');
+  const diff = pairs.map((p, i) => js[i] !== out[i] ? `${JSON.stringify(p)} js=${js[i]} sql=${out[i]}` : null).filter(Boolean);
+  check(`[${tag}] tenant names padded or joined with every kind of whitespace, İ and the Kelvin sign: ${pairs.length} pairs, SQL = JS`, out.length === pairs.length && diff.length === 0, diff.slice(0, 2).join('; '));
+  const cases = []; for (const x of SRC2.concat(SOURCES)) for (const n of NAMES2.concat(NAMESETS)) cases.push([x, n]);
+  const jp = cases.map(([x, n]) => { const c = AL.compareProperty(x, n); return c ? c.level : 'null'; });
+  const arr = (n) => n.length ? `array[${n.map(s).join(',')}]::text[]` : `'{}'::text[]`;
+  const op = oneF(`select string_agg(coalesce(public.acq_compare_property(a, n), 'null'), '|' order by i) from (values ${cases.map(([x, n], i) => `(${i}, ${s(x)}, ${arr(n)})`).join(',')}) v(i, a, n);`, db).split('|');
+  const pd = cases.map((c, i) => jp[i] !== op[i] ? `${JSON.stringify(c)} js=${jp[i]} sql=${op[i]}` : null).filter(Boolean);
+  check(`[${tag}] property sources and names padded with every kind of whitespace, addresses ending in non-ASCII, a leading lower-case "v": ${cases.length} cases, SQL = JS`, op.length === cases.length && pd.length === 0, pd.slice(0, 2).join('; '));
+  check(`[${tag}] …the corpus exercises all three verdicts for both comparisons`, ['null', 'uncertain', 'mismatch'].every(l => js.includes(l) && jp.includes(l)));
+}
+
+// ── 2c · the defects found in the release review stay fixed ─────────────────
+section('2c · THE RELEASE-REVIEW FINDINGS STAY FIXED');
+check('no E-string in 044 relies on \\v (PostgreSQL has no \\v escape: E\'\\v\' is the letter "v")', !/E'[^']*\\v/.test(strip(SQL)));
+for (const db of [DB, ICU]) {
+  const tag = db === DB ? 'C' : 'ICU en-US';
+  check(`[${tag}] the "v" trim defect: "vista grove" keeps its v, and matches "Vista Grove"`,
+    one(`select public.acq_js_trim('vista grove') || '|' || coalesce(public.acq_compare_property('vista grove', array['Vista Grove']), 'null');`, db) === 'vista grove|null');
+  check(`[${tag}] whitespace-only reasons are blank: non-breaking, ideographic, zero-width-no-break and line-separator spaces trim to nothing`,
+    one(`select '[' || public.acq_js_trim(chr(160) || chr(12288) || chr(65279) || chr(8232) || chr(9)) || ']';`, db) === '[]');
+  check(`[${tag}] a blank-looking name cannot soften a different property to "uncertain"`,
+    one(`select public.acq_compare_property('Lakeview Center', array[chr(160), 'Maple Plaza']);`, db) === 'mismatch');
+  check(`[${tag}] locale-independent case: İSTANBUL tokenises as JavaScript does ({i,stanbul}); the Kelvin sign is "k"`,
+    one(`select public.acq_name_tokens(chr(304) || 'STANBUL')::text || public.acq_name_tokens(chr(8490) || 'WIK')::text;`, db) === '{i,stanbul}{kwik}');
+  check(`[${tag}] the address test's boundary is ASCII: "500é Main" is an address, as in JavaScript`,
+    one(`select public.acq_compare_property('500' || chr(233) || ' Main', array['Maple Plaza']);`, db) === AL.compareProperty('500\u00e9 Main', ['Maple Plaza']).level);
+}
 
 // ── 3 · the required behaviours ──────────────────────────────────────────────
 section('3 · THE GATE — every refusal leaves the state byte-identical');
@@ -446,6 +523,23 @@ check('8 · a prospect deal with an acknowledgement can still be deleted; its at
   && one(`select count(*) from public.acquisition_conversion_attestations where review_id='${DP.R}';`, DB) === '0'
   && one(`select count(*) from public.properties where id='${DP.P}';`, DB) === '0', r.out.slice(0, 200));
 
+// 5w · whitespace, at the gate
+const WP = makeDeal(DB, A, 'Maple Plaza', { leaseholds: [{ key: 'luxe', label: 'Luxe Nails', doc: true }],
+  raw: [{ id: 'raw-wp', tenant_name: '\u00A0Luxe\u3000Nails\u00A0', property_name: '\tMaple Plaza\u00A0\n', _status: 'ok' }], res: { 'raw-wp': { action: 'matched', family: 'luxe' } } });
+converts('5w · a genuine match padded with tabs, newlines, non-breaking and ideographic spaces converts with no attestation', WP);
+const WM = makeDeal(DB, A, 'Maple Plaza', { leaseholds: [{ key: 'sun', label: 'Sunrise Cafe & Bakery LLC', doc: true }],
+  raw: [{ id: 'raw-wm', tenant_name: '\uFEFF\tSafeShield Security\u00A0', property_name: '\u00A0500 Main Street\u3000', _status: 'ok' }], res: { 'raw-wm': { action: 'matched', family: 'sun' } } });
+refuseSame('5w · a material mismatch padded with every kind of whitespace still needs a reason: refused', WM, () => acquire(DB, A, WM.P, WM.R, WM.snap), /material mismatch/);
+r = confirmMatch(DB, A, WM, 'raw-wm', 'sun', '\u00A0\u3000');
+check('5w · …and a reason of only non-breaking and ideographic spaces is no reason', refused(r, /reason is required|acq_attestations_reason_check/), r.out.slice(0, 200));
+r = confirmMatch(DB, A, WM, 'raw-wm', 'sun', '\u00A0 Seller confirms the guarantor arrangement \u3000');
+check('5w · …a real reason padded with them is kept, trimmed as the page trims it', r.ok && one(`select (reason = 'Seller confirms the guarantor arrangement')::text from public.acquisition_conversion_attestations where review_id='${WM.R}' and row_key='raw-wm';`, DB) === 'true', r.out.slice(0, 200));
+converts('5w · …and then it converts', WM);
+const WN = makeDeal(DB, A, 'Maple Plaza', { leaseholds: [{ key: 'luxe', label: 'Luxe Nails', doc: true }], raw: [ELSEWHERE], res: { 'raw-ew': { action: 'matched', family: 'luxe' } } });
+as(A, `update public.acquisition_reviews set name = chr(160) where id='${WN.R}';`, DB);
+check('(setup) the review is renamed to a lone non-breaking space; its property keeps "Maple Plaza"', one(`select (name = chr(160))::text from public.acquisition_reviews where id='${WN.R}';`, DB) === 'true');
+refuseSame('5w · a blank-looking review name cannot turn "Lakeview Center" vs "Maple Plaza" into an uncertain comparison: refused', WN, () => acquire(DB, A, WN.P, WN.R, WN.snap), /material mismatch/);
+
 // 9 · legacy
 const LG = makeDeal(DB, A, 'Maple Plaza', { leaseholds: [{ key: 'sun', label: 'Sunrise Cafe & Bakery LLC' }, { key: 'luxe', label: 'Luxe Nails', doc: true }],
   raw: [SAFESHIELD], res: { 'raw-ss': { action: 'matched', family: 'sun', by: 'pm@example.com', at: '2026-09-26T00:13:25Z' } } });
@@ -464,9 +558,18 @@ check('044 touches nothing XRPL, wallet, payment, settlement or billing related'
 check('044 inserts no properties row and backfills no attestation', !/insert\s+into\s+public\.properties\b/i.test(strip(SQL)) && !/insert\s+into\s+public\.acquisition_conversion_attestations/i.test(strip(SQL)));
 r = pg.psqlFile(R044, DB);
 check('rollback applies', r.ok, r.out.slice(0, 300));
-check('acquire_property is 035\'s definition again, byte for byte', fnmd5(DB) === md5_035);
-check('044\'s table and functions are gone, and nothing else changed', one(`select count(*) from pg_proc where proname in (${OWN.slice(1).map(f => `'${f}'`).join(',')});`, DB) === '0'
-  && one(`select to_regclass('public.acquisition_conversion_attestations') is null;`, DB) === 't' && inventory(DB) === before);
+const src_rb = srcmd5(DB);
+console.log(`     acquire_property body md5 — 035 file ${MD5_035_FILE} · Pilot live ${MD5_PILOT_LIVE} · before 044 ${src_035} · after 044 ${src_044} · after rollback ${src_rb}`);
+check('acquire_property is 035\'s definition again, byte for byte (the whole definition and the body)', fnmd5(DB) === md5_035 && src_rb === MD5_035_FILE && src_rb === MD5_PILOT_LIVE, src_rb);
+check('the rollback removes every object 044 owns: the table (and with it its triggers, policies, indexes and constraints) and all seven functions, acq_js_trim included',
+  OWN.slice(1).length === 7 && OWN.includes('acq_js_trim')
+  && one(`select count(*) from pg_proc where proname in (${OWN.slice(1).map(f => `'${f}'`).join(',')});`, DB) === '0'
+  && one(`select to_regclass('public.acquisition_conversion_attestations') is null;`, DB) === 't'
+  && one(`select count(*) from pg_trigger where tgname like 'acq_attestations_%';`, DB) === '0'
+  && one(`select count(*) from pg_policies where policyname like 'acq_attestations_%';`, DB) === '0'
+  && one(`select count(*) from pg_class where relname like 'acq_attestations_%' or relname like 'idx_acq_attestations_%';`, DB) === '0', OWN.join(','));
+check('…and nothing else changed (034\'s acq_child_property_bind and 036\'s acq_children_frozen stay)', inventory(DB) === before
+  && one(`select count(*) from pg_proc where proname in ('acq_child_property_bind','acq_children_frozen');`, DB) === '2');
 check('acquisitions already made stay made', one(`select lifecycle_stage from public.properties where id='${DL.P}';`, DB) === 'acquired');
 r = pg.psqlFile(M044, DB);
 check('044 applies again after the rollback', r.ok && fnmd5(DB) !== md5_035, r.out.slice(0, 300));

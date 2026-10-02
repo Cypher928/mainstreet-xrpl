@@ -1977,6 +1977,36 @@ term.
 SQL port of `AcquisitionLeasehold.compareTenantNames` / `compareProperty`, and
 the verifier runs both over the same corpus and requires identical results.
 
+**The comparison does not depend on the database locale.** Pilot's database
+uses ICU (en-US) rules for sorting and case; a local test cluster uses plain
+"C" rules. The first version of 044 used `lower()`, `\s`, `\y` and `btrim`,
+whose behaviour follows those rules, so a parity test run locally could not
+prove anything about Pilot. The release review found four defects:
+
+- **A bypass.** A review renamed to a lone non-breaking space let a "Lakeview
+  Center" vs "Maple Plaza" mismatch through without a reason: the blank name
+  softened the comparison to "uncertain".
+- **Blank reasons.** A reason made only of non-breaking or ideographic spaces
+  was accepted by the server, while the page rejects it.
+- **The "v" trim.** `E'… \v'` is not an escape in PostgreSQL: it is the
+  letter "v". So the trim stripped a leading or trailing lower-case "v"
+  ("vista grove" became "ista grove").
+- **Locale-dependent verdicts.** "İ", and an address followed by an accented
+  letter, compared differently from the page.
+
+044 now spells out JavaScript's behaviour instead:
+
+- **`acq_js_trim`** strips exactly the 25 code points JavaScript's `trim()` and
+  `\s` strip. It is used for every name, every reason, the reason CHECK, the
+  insert guard and gate 5d.
+- **Lower case** comes from A–Z translation plus the only two non-ASCII
+  characters JavaScript lowers into ASCII: U+0130 "İ" becomes "i" + U+0307, and
+  U+212A, the Kelvin sign, becomes "k". `lower()` is not used.
+- **The address test** uses an ASCII word boundary, as JavaScript's `\b` does.
+
+The verifier enumerates every code point under BOTH a C-locale database and an
+ICU en-US database to keep these lists exact.
+
 ### The gate (two steps added to `acquire_property`, after 5b, before the roster)
 
 - **5c · no lease on file.** Every leasehold of the review with no live
@@ -2051,15 +2081,27 @@ review takes none (036's freeze is attached to the new table too).
   `verify-migration-036.js`'s Pilot-shaped stand-ins, with 032–036 installed
   from their files. It first shows the bypass is open on 035.
 - **Parity:** the SQL comparison equals the JS over 2,601 tenant-name pairs,
-  216 property cases and 28 `requiresReason` cases.
+  216 property cases and 28 `requiresReason` cases. Under both C and ICU en-US
+  it also covers:
+  - every code point, for whitespace and for lowering;
+  - 3,808 tenant pairs and 2,704 property cases padded or joined with every
+    kind of whitespace, plus "İ", the Kelvin sign, non-ASCII after an address
+    number and a leading lower-case "v".
+- **The release-review findings stay fixed:** the "v" trim, whitespace-only
+  reasons, the blank-name bypass, locale-dependent case and the address
+  boundary are each a named check, and each fails against the first version
+  of 044.
 - **The nine required behaviours**, each refusal leaving the property, review,
   tenants, events and attestations byte-identical.
 - **Authorization, the freeze, idempotency and the SAME property id** still
   hold.
-- **Nothing outside 044 moved.** The rollback restores 035's function byte for
-  byte, and 044 applies again.
-- `tools/acquisition-server-gate-mutation.js` undoes each of 044's rules (19
-  mutants).
+- **Nothing outside 044 moved.**
+- **The rollback** restores `acquire_property` byte for byte: its body md5 is
+  `1332880839411b0251613735c09dc612`, the same as 035's file and as Pilot's
+  live function read on 2026-10-02. It removes every object 044 owns (the
+  table and seven functions, `acq_js_trim` included), and 044 applies again.
+- `tools/acquisition-server-gate-mutation.js` undoes each of 044's rules (25
+  mutants, six of them for whitespace and case).
 - The page side is covered by `test-acquisition-match-safeguards.js`,
   `test-e2e-acquisition-match-safeguards.js` and
   `tools/acquisition-match-safeguards-mutation.js` (S19, S23–S27).
@@ -2069,10 +2111,10 @@ review takes none (036's freeze is attached to the new table too).
 - **Uncertain matches.** An uncertain comparison is not enforced by the server
   (the page still asks about it). This follows the rule that an uncertain
   comparison is not proof of a mismatch.
-- **Unicode whitespace.** The SQL trims ASCII whitespace where JavaScript's
-  `trim()` also strips Unicode spaces. A lease property name padded with a
-  non-breaking space could compare differently. The parity corpus does not
-  include one.
+- **Future Unicode versions.** The whitespace and lowering lists match the
+  JavaScript engine the tests run on. A future Unicode release that adds a
+  space character, or a new character that lowers into ASCII, would need the
+  lists extended. The verifier's exhaustive checks would fail and say so.
 - **Undo and re-match.** A reason, once recorded, stays: append-only, it is
   history. Undoing a match and matching the same entry to the same leasehold
   again reuses it.

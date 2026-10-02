@@ -118,6 +118,23 @@ t('only uncertain concerns: a look is asked for, a reason is not required', () =
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+sec('3w · whitespace: tabs, newlines and non-breaking spaces change nothing');
+const PADS = [' ', '\t', '\n', '\u00A0', '\u3000', '\uFEFF'];
+t('a genuine match padded or joined with any of them is still no concern', () => {
+  PADS.forEach(w => {
+    eq(AL.matchConcerns({ tenant_name: w + 'Luxe' + w + 'Nails' + w, property_name: w + 'Maple Plaza' + w }, { label: 'Luxe Nails' }, { acquisitionNames: ['Maple Plaza'] }), []);
+  });
+});
+t('a material mismatch padded with any of them still needs a reason', () => {
+  PADS.forEach(w => {
+    const c = AL.matchConcerns({ tenant_name: w + 'SafeShield Security, LLC' + w, property_name: w + 'Lakeview Center' + w }, { label: 'Sunrise Cafe & Bakery LLC' }, { acquisitionNames: ['Maple Plaza'] });
+    ok(AL.requiresReason(c), JSON.stringify(w));
+  });
+});
+t('a blank-looking acquisition name is no name: it cannot soften a different property to "uncertain"', () => {
+  eq(AL.compareProperty('Lakeview Center', ['\u00A0', 'Maple Plaza']).level, 'mismatch');
+});
+
 sec('4 · leaseholds with no lease on file');
 const FAMS = [{ id: 'f1', label: 'ShopRite' }, { id: 'f2', label: 'Sunrise Cafe & Bakery LLC' }, { id: 'f3', label: 'Luxe' }, { id: 'f4', label: 'Prime' }];
 const DOCS = [{ id: 'd1', family_id: 'f1' }, { id: 'd3', family_id: 'f3', superseded_by_document_id: 'd9' }, { id: 'd4', family_id: 'f4' }];
@@ -343,6 +360,12 @@ await ta('Match anyway, refused by the server: no match is written, and the ques
   eq(await w.sandbox.acqConfirmPendingMatch('Seller confirms'), false);
   eq(snap(w.review), before); eq(w.calls.saves, 0);
   eq(w.sandbox._acqPendingMatch, pending);
+});
+await ta('Match anyway with a reason of only non-breaking and ideographic spaces: no reason — nothing is recorded', async () => {
+  const w = world();
+  w.sandbox._acqPendingMatch = { reviewId: F.REVIEW, rowKey: SAFE_ROW, familyId: w.SUNRISE.id };
+  eq(await w.sandbox.acqConfirmPendingMatch('\u00A0\u3000\u00A0'), false);
+  eq(w.attestations.length, 0); eq(w.calls.from, 0);
 });
 await ta('Match anyway with no reason for a material mismatch: nothing is recorded anywhere', async () => {
   const w = world();

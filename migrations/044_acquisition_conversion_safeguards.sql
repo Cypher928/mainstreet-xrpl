@@ -46,8 +46,9 @@
 --              + acq_attestations_property_bind   (034's acq_child_property_bind)
 --              + acq_children_frozen              (036's, as on the other children)
 --              + acq_attestations_append_only     (BEFORE UPDATE OR DELETE)
---   functions  + acq_name_tokens, acq_compare_tenant_names, acq_compare_property,
---                acq_match_requires_reason (pure, immutable)
+--   functions  + acq_js_trim, acq_name_tokens, acq_compare_tenant_names,
+--                acq_compare_property, acq_match_requires_reason (pure,
+--                immutable, locale-independent)
 --              + acq_attestations_guard, acq_attestations_append_only (trigger)
 --              ~ acquire_property — 035's body VERBATIM with two steps added
 --                after 5b: 5c (no lease on file) and 5d (concerning matches).
@@ -69,9 +70,30 @@
 begin;
 
 -- ── 1 · name comparison (AcquisitionLeasehold, ported) ───────────────────────
+-- JavaScript's String.prototype.trim: the 25 code points \s matches (tabs,
+-- line breaks, non-breaking, ideographic and the other Unicode spaces, U+FEFF),
+-- whatever the database locale says whitespace is. Used for every name and
+-- every reason, so the server and the page agree on what is blank.
+create or replace function public.acq_js_trim(p_s text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select regexp_replace(p_s, '^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$', '', 'g');
+$$;
+
 -- A name as comparable words: lower case, "&" read as "and", apostrophes and
 -- punctuation gone, spelled-out letters joined ("L.L.C." → "llc"), legal
 -- suffixes and filler dropped. Mirrors _nameTokens.
+--
+-- LOCALE-INDEPENDENT. lower() follows the database's collation (Pilot: ICU
+-- en-US), so it is not used. Only ASCII letters and digits survive the
+-- clean-up, so lowering only has to agree with JavaScript's toLowerCase on
+-- the characters that BECOME ASCII: A–Z, and the two non-ASCII code points
+-- whose lower case contains an ASCII letter — U+0130 "İ" (→ "i" + U+0307) and
+-- U+212A KELVIN SIGN (→ "k"). tools/verify-migration-044.js enumerates every
+-- code point to keep that list complete.
 create or replace function public.acq_name_tokens(p_s text)
 returns text[]
 language plpgsql
@@ -86,7 +108,9 @@ declare
   c_legal  constant text[] := array['llc','inc','incorporated','corp','corporation','co','company','ltd','limited','lp','llp','plc','pllc','pc','pa','dba'];
   c_filler constant text[] := array['and','of','the','a','an','at','by'];
 begin
-  v_raw := lower(coalesce(p_s, ''));
+  v_raw := replace(coalesce(p_s, ''), chr(304), 'i' || chr(775));
+  v_raw := replace(v_raw, chr(8490), 'k');
+  v_raw := translate(v_raw, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
   v_raw := replace(v_raw, '&', ' and ');
   v_raw := regexp_replace(v_raw, '[''’]', '', 'g');
   v_raw := btrim(regexp_replace(v_raw, '[^a-z0-9]+', ' ', 'g'));
@@ -159,6 +183,11 @@ $$;
 -- The property a lease names against the acquisition's own names: null when
 -- they agree or there is nothing to compare, else 'mismatch' or 'uncertain'
 -- (a street address cannot be told from a name). Mirrors compareProperty.
+--
+-- Whitespace is JavaScript's (String.prototype.trim and \s: the 25 code points
+-- in c_js_ws, non-breaking and ideographic spaces and U+FEFF included), not
+-- the database's, and the address test's word boundary is ASCII as in
+-- JavaScript (\b), not the locale's (\y).
 create or replace function public.acq_compare_property(p_source text, p_names text[])
 returns text
 language plpgsql
@@ -166,8 +195,8 @@ immutable
 set search_path = ''
 as $$
 declare
-  c_ws      constant text := E' \t\n\r\f\v';
-  v_src     text := btrim(coalesce(p_source, ''), E' \t\n\r\f\v');
+  c_js_ws   constant text := '[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]';
+  v_src     text := public.acq_js_trim(coalesce(p_source, ''));
   v_names   text[];
   v_srcname text;
   st        text[];
@@ -183,15 +212,17 @@ declare
     'street','st','avenue','ave','road','rd','boulevard','blvd','drive','dr','lane','ln',
     'way','suite','ste','highway','hwy','parkway','pkwy'];
 begin
-  v_names := array(select btrim(n, c_ws) from unnest(coalesce(p_names, '{}'::text[])) with ordinality u(n, i)
-                    where n is not null and btrim(n, c_ws) <> '' order by i);
+  v_names := array(select t from (
+                      select public.acq_js_trim(n) as t, i
+                        from unnest(coalesce(p_names, '{}'::text[])) with ordinality u(n, i) where n is not null) x
+                    where t <> '' order by i);
   if v_src = '' or cardinality(v_names) = 0 then
     return null;
   end if;
   v_srcname := split_part(v_src, ',', 1);
   st := public.acq_name_tokens(v_srcname);
   sd := array(select t from unnest(st) with ordinality u(t, n) where not (t = any(c_generic_property)) and t !~ '^[0-9]+$' order by n);
-  v_addr := v_srcname ~* '^\s*[0-9]+[a-z]?\y';
+  v_addr := v_srcname ~ ('^' || c_js_ws || '*[0-9]+[A-Za-z]?(?![A-Za-z0-9_])');
   foreach v_name in array v_names loop
     nt := public.acq_name_tokens(split_part(v_name, ',', 1));
     nd := array(select t from unnest(nt) with ordinality u(t, n) where not (t = any(c_generic_property)) and t !~ '^[0-9]+$' order by n);
@@ -229,10 +260,12 @@ as $$
            p_names), '') = 'mismatch';
 $$;
 
+revoke all on function public.acq_js_trim(text)                             from public, anon;
 revoke all on function public.acq_name_tokens(text)                         from public, anon;
 revoke all on function public.acq_compare_tenant_names(text, text)          from public, anon;
 revoke all on function public.acq_compare_property(text, text[])            from public, anon;
 revoke all on function public.acq_match_requires_reason(jsonb, text, text[]) from public, anon;
+grant execute on function public.acq_js_trim(text)                             to authenticated, service_role;
 grant execute on function public.acq_name_tokens(text)                         to authenticated, service_role;
 grant execute on function public.acq_compare_tenant_names(text, text)          to authenticated, service_role;
 grant execute on function public.acq_compare_property(text, text[])            to authenticated, service_role;
@@ -248,7 +281,7 @@ create table if not exists public.acquisition_conversion_attestations (
                  constraint acq_attestations_kind_check check (kind in ('no_document_on_file', 'match_confirmed')),
   row_key        text,
   reason         text
-                 constraint acq_attestations_reason_check check (reason is null or length(btrim(reason)) between 1 and 1000),
+                 constraint acq_attestations_reason_check check (reason is null or length(public.acq_js_trim(reason)) between 1 and 1000),
   -- An acknowledgement records that a lease is missing. It never verifies a
   -- lease term; this column exists so that no row can ever say it does.
   verifies_terms boolean not null default false
@@ -286,7 +319,7 @@ begin
   end if;
   new.acted_by   := v_uid;
   new.created_at := now();
-  new.reason     := nullif(btrim(coalesce(new.reason, '')), '');
+  new.reason     := nullif(public.acq_js_trim(coalesce(new.reason, '')), '');
 
   -- Who first, so a caller who may not act learns nothing about what exists:
   -- the property's owner, or an active member of its organisation who may
@@ -609,7 +642,7 @@ begin
      and not exists (
        select 1 from public.acquisition_conversion_attestations a
         where a.review_id = p_review_id and a.family_id = m.fid and a.kind = 'match_confirmed'
-          and a.row_key = m.key and a.reason is not null and length(btrim(a.reason)) > 0);
+          and a.row_key = m.key and a.reason is not null and length(public.acq_js_trim(a.reason)) > 0);
   if v_unreasoned > 0 then
     raise exception 'Review % has % match(es) made despite a material mismatch with no recorded reason: %. Undo each match and match it again with a reason before acquisition', p_review_id, v_unreasoned, v_unreasoned_names
       using errcode = 'check_violation';
