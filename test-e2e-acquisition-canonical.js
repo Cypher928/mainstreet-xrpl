@@ -395,8 +395,7 @@ const DB = `
   check('no page error', errs.length === errsBefore, errs.slice(errsBefore).join(' | '));
 
   // ── 2 · the correction reaches the Rent Roll ─────────────────────────────
-  await page.evaluate(() => { window.prompt = () => '67000'; window.confirm = () => true; });
-  await page.evaluate((f) => acqCorrectTerm(f, 'leased_sqft'), FAM);
+  await page.evaluate((f) => acqCorrectTerm(f, 'leased_sqft', '67000'), FAM);   // Step C: the editor's Save
   await page.waitForTimeout(1200);
   const rr2 = await rentRoll();
   check('65,000 → 67,000: the Rent Roll now says 67,000', /67,000/.test(shopRow(rr2).sqft) && !/65,000/.test(shopRow(rr2).sqft), shopRow(rr2).sqft);
@@ -424,19 +423,20 @@ const DB = `
   check('a missing term offers Enter, and nothing else', dep0 && dep0.state === 'missing'
         && JSON.stringify(dep0.buttons) === JSON.stringify(['Enter']), dep0 && JSON.stringify(dep0.buttons));
   const decBefore = await page.evaluate(() => __store.acquisition_term_decisions.length);
-  const prompts = [];
-  await page.evaluate(() => {
-    window.__prompts = [];
-    window.prompt = (msg) => { window.__prompts.push(msg); return '25000'; };
-    window.confirm = (msg) => { window.__prompts.push('CONFIRM: ' + msg); return true; };
-  });
-  await page.evaluate((f) => acqEnterTerm(f, 'security_deposit'), FAM);
-  await page.waitForTimeout(1200);
-  prompts.push(...await page.evaluate(() => window.__prompts));
+  // Step C: Enter opens the inline editor in the row — no browser dialog.
+  await page.evaluate(() => { window.__dialogs = 0; window.prompt = () => { window.__dialogs++; return null; }; window.confirm = () => { window.__dialogs++; return false; }; });
+  await page.click('.acq-term-row[data-field="security_deposit"] .acq-term-enter');
+  await page.waitForSelector('.acq-term-row[data-field="security_deposit"] .acq-term-editor');
+  const ed0 = await page.evaluate(() => (document.querySelector('.acq-term-row[data-field="security_deposit"] .acq-te-note') || {}).innerText || '');
   check('the person is told before typing that no document establishes it and the value will be theirs',
-        /No document on file establishes this term/.test(prompts[0]) && /entered by a person/.test(prompts[0]), (prompts[0] || '').slice(0, 120));
-  check('and asked to confirm with the full provenance sentence',
-        /Verified · Entered by a person · No document on file supports this value\./.test(prompts[1] || ''), (prompts[1] || '').slice(0, 140));
+        /No document on file establishes this term/.test(ed0) && /entered by a person/.test(ed0), ed0.slice(0, 120));
+  await page.fill('.acq-term-row[data-field="security_deposit"] .acq-te-input', '25000');
+  const ed1 = await page.evaluate(() => (document.querySelector('.acq-term-row[data-field="security_deposit"] .acq-te-preview') || {}).innerText || '');
+  check('and shown, before saving, the full provenance sentence',
+        /Verified · Entered by a person · No document on file supports this value/.test(ed1) && /\$25,000/.test(ed1), ed1.slice(0, 140));
+  await page.click('.acq-term-row[data-field="security_deposit"] .acq-te-save');
+  await page.waitForTimeout(1200);
+  check('no browser dialog was used', (await page.evaluate(() => window.__dialogs)) === 0);
   const decs = await page.evaluate(() => JSON.parse(JSON.stringify(__store.acquisition_term_decisions)));
   const entry = decs[decs.length - 1];
   check('one decision was written: a correction with NO source document, quote or page',

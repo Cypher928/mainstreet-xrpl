@@ -6888,6 +6888,46 @@
       .acq-analyze-btn { min-height: 46px; }
     }
 
+    /* ── Manual entry and its safeguards (Step C) ───────────────────────────
+       The inline editor in a term's row; the readings a person set aside; the
+       warning on an entered value a document now reads differently; the
+       term's decision history. */
+    .acq-term-row.editing { flex-wrap: wrap; }
+    .acq-term-editor { flex: 1 1 100%; margin-top: 10px; padding: 12px 14px; border: 1px solid rgba(201, 151, 58, 0.45);
+      border-radius: 8px; background: rgba(201, 151, 58, 0.06); display: grid; gap: 6px; min-width: 0; }
+    .acq-te-title { font-weight: 700; color: var(--text-1); font-size: 0.86rem; }
+    .acq-te-note, .acq-te-hint { font-size: 0.76rem; color: var(--text-3); line-height: 1.45; }
+    .acq-te-label { font-size: 0.76rem; font-weight: 600; color: var(--text-2); margin-top: 4px; }
+    .acq-te-opt { font-weight: 400; color: var(--text-4); }
+    .acq-te-input, .acq-te-reason { width: 100%; box-sizing: border-box; min-height: 36px; padding: 6px 10px; border-radius: 6px;
+      border: 1px solid rgba(var(--line-rgb), 0.3); background: var(--theme-bg); color: var(--text-1); font: inherit; font-size: 0.86rem; }
+    .acq-te-input:focus, .acq-te-reason:focus { outline: 2px solid var(--c-60a5fa, #60a5fa); outline-offset: 1px; }
+    .acq-te-affix { display: flex; align-items: center; gap: 6px; }
+    .acq-te-affix .acq-te-input { flex: 1; min-width: 0; }
+    .acq-te-unit { color: var(--text-3); font-weight: 600; }
+    .acq-te-preview { font-size: 0.8rem; color: var(--text-2); min-height: 1.2em; }
+    .acq-te-error { font-size: 0.8rem; color: var(--c-f87171); min-height: 1.2em; }
+    .acq-te-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+    .acq-te-save:disabled { background: var(--bgc-3d3219); border-color: transparent; color: var(--text-4); cursor: not-allowed; }
+    @media (max-width: 640px) { .acq-te-input, .acq-te-reason { min-height: 44px; } }
+    .acq-term-rejected { color: var(--c-f87171); font-weight: 600; }
+    .acq-term-prior { margin-top: 6px; padding: 6px 9px; border-left: 2px solid rgba(var(--line-rgb), 0.3); font-size: 0.78rem; color: var(--text-3); }
+    .acq-term-prior-k { font-weight: 700; color: var(--text-2); }
+    .acq-term-prior-v { font-weight: 600; color: var(--text-2); text-decoration: line-through; text-decoration-color: rgba(var(--line-rgb), 0.45); }
+    .acq-term-doc-reading .acq-term-prior-v, .acq-term-doc-kept .acq-term-prior-v { text-decoration: none; }
+    .acq-term-doc-conflict { margin-top: 6px; padding: 8px 10px; border-radius: 6px; font-size: 0.78rem; line-height: 1.45;
+      color: var(--c-fbbf24, #fbbf24); background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.4); }
+    .acq-term-doc-conflict .acq-term-prior { color: var(--text-3); }
+    .acq-term-doc-kept { margin-top: 6px; font-size: 0.78rem; color: var(--text-3); }
+    .acq-term-reason { margin-top: 4px; font-size: 0.78rem; color: var(--text-2); font-style: italic; }
+    .acq-term-history { margin-top: 6px; font-size: 0.76rem; color: var(--text-3); }
+    .acq-term-history summary { cursor: pointer; color: var(--text-3); }
+    .acq-th-list { margin: 4px 0 0; padding-left: 18px; }
+    .acq-th-item[data-standing="true"] .acq-th-what { color: var(--text-1); font-weight: 600; }
+    .acq-lm-v.rejected { font-style: normal; color: var(--c-f87171); }
+    .acq-lm-mark.conflict { color: var(--c-fbbf24, #fbbf24); margin-left: 3px; }
+    .acq-m13-d-prior.conflict .acq-m13-d-k { color: var(--c-fbbf24, #fbbf24); }
+
     /* ── Navigation: Back to Acquisitions, held in view ─────────────────────
        A bar stuck to the top of the screen while a review is open, above
        everything in the review but below every overlay (the report, the

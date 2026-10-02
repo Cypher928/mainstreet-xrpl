@@ -570,7 +570,9 @@ t('the decision, document and family writers are the choke points the five acts,
 t('the renderers draw no control on a frozen review', () => {
   const T = fnBody(S, '_renderAcqTerms');
   ok(T.includes('const frozen = _acqFrozen(_activeAcqId);'), 'terms: no predicate');
-  ok(T.includes("const actions = frozen ? '' : entered ?"), 'terms: Confirm/Correct/Reject/Reopen/Enter still drawn');
+  ok(T.includes("const actions = frozen || editing ? '' : entered ?"), 'terms: Confirm/Correct/Reject/Reopen/Enter still drawn');
+  // Step C: the inline editor is never drawn on a frozen review either.
+  ok(T.includes('const editing = !frozen && _acqTermEditor'), 'terms: the editor is drawn on a frozen review');
   const Hd = fnBody(S, '_acqLeaseholdHeadHtml');
   ok(Hd.includes('const frozen = _acqFrozen(_activeAcqId);') && Hd.includes('This record is closed.'), 'leasehold head: the evidence note still invites acts');
   const U = fnBody(S, '_acqUnfiledListHtml');

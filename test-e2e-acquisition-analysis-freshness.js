@@ -247,7 +247,7 @@ const DB = `
   console.log('\nAcquisition Review §4o — analysis freshness, the report overlay, occupancy over 100%\n' + '='.repeat(72));
 
   // As on the Pilot: a person corrects ShopRite's leased area to 65,000 sf.
-  await page.evaluate(async (fam) => { window.prompt = () => '65000'; await acqCorrectTerm(fam, 'leased_sqft'); }, SHOP);
+  await page.evaluate(async (fam) => { await acqCorrectTerm(fam, 'leased_sqft', '65000'); }, SHOP);   // Step C: the editor's Save
   await page.waitForTimeout(400);
   const leased = await page.evaluate((m) => _acqAnalysisRows(_acqLeaseholdsOnly(_acqCanonicalRows(m)))
     .map(t => AcquisitionEngine.normalizeAcqTenant(t).leased_sqft), MAPLE);
@@ -478,7 +478,7 @@ const DB = `
         && /^Before this property can be acquired, a person must resolve: 6 extracted entries not matched to a tenant/.test(gate.block) && /4 documents in Documents/.test(gate.block), gate.block.slice(0, 120));
   check('G · the raw extraction history is untouched — 13 rows', gate.raw === 13, String(gate.raw));
   // A leasehold change is still caught, and named on its own.
-  await page.evaluate(async (fam) => { window.prompt = () => '66000'; await acqCorrectTerm(fam, 'leased_sqft'); }, SHOP);
+  await page.evaluate(async (fam) => { await acqCorrectTerm(fam, 'leased_sqft', '66000'); }, SHOP);   // Step C: the editor's Save
   await page.waitForTimeout(500);
   const g2 = await page.evaluate((m) => { const rv = _acqReviews.find(r => r.id === m); return { occ: rv.data.analysis.rentRoll.occupancy, stale: _acqAnalysisStale(rv) }; }, MAPLE);
   check('G · a term a person corrects is still carried into the analysis (refreshed after the act): 76,500 of 75,500 sf, flagged',

@@ -223,7 +223,10 @@ t('the term still names the decision and the person behind it', () => {
 
 t('the data layer records the previous value explicitly too', () => {
   const C = fnBody(S, 'acqCorrectTerm');
-  ok(/previousValue: term\.value == null \? undefined : String\(term\.value\)/.test(C),
+  // Step C: the value on screen, or — for a rejected term, which has no
+  // value — the reading that was rejected.
+  ok(/const prior = term\.value != null \? term\.value/.test(C) && /term\.rejectedReading\.value/.test(C)
+     && /previousValue: prior == null \? undefined : String\(prior\)/.test(C),
      'the correction does not carry the value it replaces');
   ok(/action: 'correct'/.test(C));
 });
@@ -231,17 +234,19 @@ t('the data layer records the previous value explicitly too', () => {
 // ── 3 · a rejection keeps the evidence ──────────────────────────────────────
 sec('3 · Reject does not erase the source evidence');
 
-t('the reading and its clause survive a rejection', () => {
+t('the reading and its clause survive a rejection — kept as the rejected reading (Step C)', () => {
   const r = resolve([CONFIRMABLE], [decision({ action: 'reject' })]);
-  eq(r.terms.cap.value, 4, 'the reading was deleted');
-  eq(r.terms.cap.quote, 'capped at 4%', 'the clause was deleted');
+  ok(r.terms.cap.rejectedReading, 'the reading was deleted');
+  eq(r.terms.cap.rejectedReading.value, 4, 'the reading was deleted');
+  eq(r.terms.cap.rejectedReading.quote, 'capped at 4%', 'the clause was deleted');
   eq(r.terms.cap.governingDocumentId, 'C1', 'the provenance was deleted');
+  eq(r.terms.cap.value, null, 'a rejected reading is still the value');
 });
 
 t('but it stops reading as an answer', () => {
   const r = resolve([CONFIRMABLE], [decision({ action: 'reject' })]);
   eq(r.terms.cap.state, 'unclear');
-  ok(/rejected this reading/.test(r.terms.cap.note), r.terms.cap.note);
+  ok(/Rejected by a person/.test(r.terms.cap.note), r.terms.cap.note);
 });
 
 t('and the document is untouched', () => {
@@ -561,7 +566,10 @@ t('every value the panel prints into HTML is escaped', () => {
     .filter(s => TEXT_CONTENT_ONLY.indexOf(s) === -1);
   // §4l: enteredTag is a constant, reopen is built from esc()'d values, and
   // enterGate is a constant attribute string.
-  const suspicious = interpolations.filter(s => !/^\$\{(field|fam\.id|st\.cls|term\.|s\.|rows|sub|sections|warn|valueHtml|src|quote|derived|conflict|superseded|decided|blocked|actions|gate|gateTitle|actionable|enteredTag|enteredAttr|reopen|enterGate)/.test(s));
+  // Step C: replaced, rejectedReading, docNow, reasonHtml, keep and stepCAttr
+  // are built with esc() by concatenation; history and editor are built by
+  // their own functions, which esc() every value.
+  const suspicious = interpolations.filter(s => !/^\$\{(field|fam\.id|st\.cls|term\.|s\.|rows|sub|sections|warn|valueHtml|src|quote|derived|conflict|superseded|decided|blocked|actions|gate|gateTitle|actionable|enteredTag|enteredAttr|reopen|enterGate|replaced|rejectedReading|docNow|reasonHtml|history|editor|stepCAttr|keep)\}/.test(s) && !/^\$\{(term\.|s\.)/.test(s));
   deq(suspicious, [], 'unescaped interpolation');
   ok(/countEl\.textContent = /.test(R), 'the counts are no longer set through textContent');
 });
@@ -624,7 +632,7 @@ t('asked for as an ENTRY, the correction is accepted with every source column em
   const r = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: '$25,000', entered: true }, MISSING_TERM());
   ok(r.ok, r.error);
   eq(r.payload.action, 'correct');
-  eq(r.payload.new_value, '$25,000');
+  eq(r.payload.new_value, '25000', 'Step C: stored in the field\'s own form');
   eq(r.payload.source_document_id, null, 'an entry cites a document');
   eq(r.payload.source_quote, null);
   eq(r.payload.source_page, null);
@@ -649,10 +657,10 @@ t('an entry on a term a document DOES establish is refused — correct the readi
 
 t('an entry that is not a value of the field\'s type is refused before it is written', () => {
   const r = payload({ fieldKey: 'security_deposit', action: 'correct', newValue: 'twenty five', entered: true }, MISSING_TERM());
-  ok(!r.ok && /not a money value/.test(r.error), JSON.stringify(r));
+  ok(!r.ok && /not a dollar amount/.test(r.error), JSON.stringify(r));
   const d = payload({ fieldKey: 'end_date', action: 'correct', newValue: '03/01/2030', entered: true },
                     resolve([CONFIRMABLE]).terms.end_date);
-  ok(!d.ok && /not a date value/.test(d.error), JSON.stringify(d));
+  ok(!d.ok && /not a date/.test(d.error), JSON.stringify(d));
 });
 
 t('resolved, the entered term is VERIFIED with support `entered` and no governing document', () => {
@@ -714,22 +722,29 @@ t('the screen offers Enter on a missing term, and Reopen alone on an entered one
   ok(/Entered by a person · No document on file supports this value/.test(R), 'the entered tag is missing or shortened');
   ok(/data-origin="entered"/.test(R));
   // P5-6A: a closed acquisition offers nothing at all; that gate sits in front of the entered/open choice.
-  ok(/const actions = frozen \? '' : entered \? `\s*<div class="acq-term-actions">\$\{reopen\}<\/div>`/.test(R),
+  // Step C: an entered term offers Reopen — and "Keep my value" only while a
+  // document reads it differently; while its editor is open, nothing else.
+  ok(/const actions = frozen \|\| editing \? '' : entered \? `\s*<div class="acq-term-actions">\$\{keep\}\$\{reopen\}<\/div>`/.test(R),
      'an entered term offers Confirm/Correct/Reject');
   const Bind = fnBody(S, '_acqBindTermControls');
   ok(/acq-term-enter/.test(Bind) && /acqEnterTerm\(family, field\)/.test(Bind), 'Enter is not bound');
 });
 
-t('the Enter handler refuses anything but a missing term, explains itself, validates, and asks', () => {
+t('the Enter handler refuses anything but a missing term, explains itself, validates, and asks (Step C: in the inline editor)', () => {
   const En = fnBody(S, 'acqEnterTerm');
   ok(/const reviewId = _activeAcqId;/.test(En), 'the review is not captured before the first await');
-  ok(/term\.state !== 'missing'\) return;/.test(En), 'Enter acts on a term a document establishes');
-  ok(/No document on file establishes this term/.test(En), 'the person is not told what they are doing');
-  ok(/AT\.normalizeFieldValue\(field, String\(typed\)\.trim\(\), false\)/.test(En), 'the typed value is not validated by type');
-  ok(/Verified · Entered by a person · No document on file supports this value\./.test(En), 'the confirmation does not name the provenance');
-  ok(/action: 'correct',\s*newValue: String\(typed\)\.trim\(\), entered: true/.test(En), 'the entry is not written as an entered correction');
+  ok(/term\.state !== 'missing'\) return null;/.test(En), 'Enter acts on a term a document establishes');
+  ok(/acqOpenTermEditor\(familyId, field, 'enter'\)/.test(En), 'Enter does not open the editor');
+  ok(/AT\.validateTermInput\(field, value\)/.test(En) && /if \(!v\.ok\) \{ _acqTermEditorError\(v\.error\); return null; \}/.test(En),
+     'the typed value is not validated by type before it is written');
+  ok(/action: 'correct',\s*newValue: v\.stored, entered: true/.test(En), 'the entry is not written as an entered correction');
   ok(!/sourceDocumentId/.test(En), 'the entry cites a document');
+  ok(!/\bprompt\(|\bconfirm\(/.test(En), 'Enter still asks through a browser dialog');
   ok(/await _acqAfterAct\(reviewId\);/.test(En), 'the analysis is not refreshed after an entry');
+  const Ed = fnBody(S, '_acqTermEditorHtml');
+  ok(/No document on file establishes this term/.test(Ed), 'the person is not told what they are doing');
+  const Up = fnBody(S, '_acqTermEditorUpdate');
+  ok(/Verified · Entered by a person · No document on file supports this value/.test(Up), 'the preview does not name the provenance');
 });
 
 t('every act refreshes the analysis the terms feed (§4l), on the review it belongs to', () => {

@@ -299,6 +299,9 @@ const DB = `
       blocked: (r.querySelector('.acq-term-blocked') || {}).innerText || null,
       confirm: btn('.acq-term-confirm'), correct: btn('.acq-term-correct'),
       reject: btn('.acq-term-reject'), reopen: btn('.acq-term-reopen'),
+      rejectedLabel: (r.querySelector('.acq-term-rejected') || {}).innerText || null,
+      rejectedReading: (r.querySelector('.acq-term-rejected-reading') || {}).innerText || null,
+      replacedReading: (r.querySelector('.acq-term-replaced') || {}).innerText || null,
     };
   }, field);
   const decisions = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__store.acquisition_term_decisions)));
@@ -381,17 +384,21 @@ const DB = `
   check('and the AI evidence is byte-identical', (await evidenceHash()) === EV0);
 
   // ── 5 · Correct ──────────────────────────────────────────────────────────
-  await page.evaluate(() => { window.prompt = () => '6'; });
   await page.click('.acq-term-row[data-field="lease_type"] .acq-term-reject');
   await page.waitForTimeout(300);
-  await page.evaluate(() => { window.prompt = () => '6'; });
+  // Step C: Correct opens the inline editor; the value is typed and saved.
   await page.click('.acq-term-row[data-field="cap"] .acq-term-correct');
+  await page.waitForSelector('.acq-term-row[data-field="cap"] .acq-term-editor');
+  await page.fill('.acq-term-row[data-field="cap"] .acq-te-input', '6');
+  await page.click('.acq-term-row[data-field="cap"] .acq-te-save');
   await page.waitForTimeout(500);
   const capCorrected = await termRow('cap');
   const dc = (await decisions()).filter(d => d.field_key === 'cap' && d.action === 'correct')[0];
   check('correcting records the value it replaced', dc && dc.previous_value === '4' && dc.new_value === '6',
         dc ? `${dc.previous_value} → ${dc.new_value}` : 'no correction recorded');
   check('the term shows the corrected value', /6%/.test(capCorrected.value || ''), capCorrected.value || '');
+  check('and names the reading it replaced, with its clause (Step C)', /Replaced reading/.test(capCorrected.replacedReading || '')
+        && /4%/.test(capCorrected.replacedReading || '') && /capped at 4%/.test(capCorrected.replacedReading || ''), capCorrected.replacedReading || '');
   check('and still reads verified, by a person', capCorrected.state === 'verified'
         && /Corrected by a person/.test(capCorrected.decided || ''), capCorrected.decided || '');
   check('THE DOCUMENT STILL SAYS 4% — a correction does not rewrite evidence',
@@ -399,11 +406,12 @@ const DB = `
 
   // ── 6 · Reject ───────────────────────────────────────────────────────────
   const ltRejected = await termRow('lease_type');
-  check('a rejected term keeps the reading the document gave',
-        /NNN/.test(ltRejected.value || ''), ltRejected.value || '');
+  // Step C: the reading is kept — as the rejected reading — and is no value.
+  check('a rejected term keeps the reading the document gave, named as the rejected reading',
+        /Rejected reading/.test(ltRejected.rejectedReading || '') && /NNN/.test(ltRejected.rejectedReading || ''), ltRejected.rejectedReading || '');
   check('and keeps its clause', /Triple Net/.test(ltRejected.quote || ''), ltRejected.quote || '');
-  check('but stops presenting it as an answer', ltRejected.state === 'unclear', ltRejected.state);
-  check('saying a person rejected it', /rejected this reading/.test(ltRejected.decided || ''), ltRejected.decided || '');
+  check('but stops presenting it as an answer — no value is shown', ltRejected.state === 'unclear' && ltRejected.value === null, ltRejected.state + ' / ' + ltRejected.value);
+  check('saying a person rejected it', /Rejected by a person/.test(ltRejected.rejectedLabel || ''), ltRejected.rejectedLabel || '');
   check('the evidence is still untouched after a rejection', (await evidenceHash()) === EV0);
 
   // ── 7 · Reopen ───────────────────────────────────────────────────────────
@@ -525,14 +533,15 @@ const DB = `
     });
     const reLt = await p2.evaluate(() => {
       const r = document.querySelector('.acq-term-row[data-field="lease_type"]');
-      return r ? { state: r.getAttribute('data-state'), decided: (r.querySelector('.acq-term-decided') || {}).innerText } : null;
+      return r ? { state: r.getAttribute('data-state'), decided: (r.querySelector('.acq-term-rejected') || {}).innerText,
+                   reading: (r.querySelector('.acq-term-rejected-reading') || {}).innerText } : null;
     });
     check('after a reload the reopened term is still unresolved',
           reCap && reCap.state === 'ai_extracted' && /4%/.test(reCap.value || ''),
           reCap ? `${reCap.state} / ${reCap.value}` : 'row absent');
-    check('and the rejected term is still rejected, with its reason',
-          reLt && reLt.state === 'unclear' && /rejected/.test(reLt.decided || ''),
-          reLt ? `${reLt.state} / ${reLt.decided}` : 'row absent');
+    check('and the rejected term is still rejected, with its reading kept (Step C)',
+          reLt && reLt.state === 'unclear' && /Rejected by a person/.test(reLt.decided || '') && /NNN/.test(reLt.reading || ''),
+          reLt ? `${reLt.state} / ${reLt.decided} / ${reLt.reading}` : 'row absent');
     await c2.close();
   }
 

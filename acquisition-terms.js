@@ -811,49 +811,147 @@
     return terms;
   }
 
+  // ── What a person decided, laid over the documents (Step C) ───────────────
+  //
+  // An ENTERED value is a correction that cites no document and carries the
+  // entered note: the person supplied the value. Every other correction cites
+  // the document whose reading it replaced. (On the Pilot, every correction
+  // with no source document carries the entered note, and every other cites
+  // one.)
+  function isEnteredDecision(d) {
+    return !!d && d.action === 'correct' && !d.source_document_id && !d.source_quote
+      && typeof d.note === 'string' && d.note.indexOf(ENTERED_NOTE) === 0;
+  }
+
+  // Two values the field holds the same, each in the field's own form.
+  function _sameValue(field, a, b) {
+    var x = normalizeFieldValue(field, a, true), y = normalizeFieldValue(field, b, true);
+    if (x === null || x === undefined || y === null || y === undefined) return false;
+    return JSON.stringify(x) === JSON.stringify(y);
+  }
+
+  // What the documents say for a term before a decision is laid over it — the
+  // reading a rejection sets aside, a correction replaces, or an entered value
+  // stands beside. Kept whole, as evidence; never the term's value again.
+  function _reading(term) {
+    if ((term.value === null || term.value === undefined) && !term.quote) return null;
+    return {
+      value: term.value === undefined ? null : term.value,
+      quote: term.quote || null,
+      page: term.page == null ? null : term.page,
+      confidence: term.confidence == null ? null : term.confidence,
+      documentId: term.governingDocumentId || null,
+      documentName: term.governingDocumentName || null,
+      docType: term.governingDocType || null,
+      support: term.support || null,
+      derived: !!term.derived,
+      state: term.state || null,
+    };
+  }
+
+  // A stored decision whose value this term's type cannot hold (written before
+  // the payload builder refused one). It is not applied: the documents'
+  // reading stands, and the term says why — never "verified" with no value.
+  function _unreadable(term) {
+    term.decisionUnreadable = true;
+    if (term.decision) term.decision.unreadable = true;
+    term.note = 'A decision was recorded with a value this term cannot hold, so it is not used.'
+      + (term.note ? ' ' + term.note : '');
+    return term;
+  }
+
   /** A person's decision, laid over what the documents said. */
   function _applyDecision(term, decisions, byId) {
     var d = latestDecision(decisions, term.field);
     if (!d) return term;
     term.decision = {
+      id: d.id || null,
       action: d.action, decidedBy: d.decided_by || null, decidedAt: d.decided_at || null,
       note: d.note || null, previousValue: d.previous_value == null ? null : d.previous_value,
+      sourceDocumentId: d.source_document_id || null,
     };
 
-    // AN ENTERED VALUE (§4l). A correction on a term NO document establishes,
-    // citing no document, is a person supplying the value themselves. It is
-    // the canonical value — verified, because a person vouched for it — and
-    // it carries `support: 'entered'` so that no consumer can present it as
-    // something a document says. There is no governing document and no
-    // quote, so there is no ceiling to cap it: the ceiling is a fact about
-    // the document behind a reading, and this reading has none.
-    if (d.action === 'correct' && term.state === 'missing' && !d.source_document_id) {
-      term.value   = normalizeFieldValue(term.field, d.new_value, false);
+    // AN ENTERED VALUE (§4l). A person supplied the value themselves; it is
+    // the canonical value — verified, because a person vouched for it — and it
+    // carries `support: 'entered'` so that no consumer can present it as
+    // something a document says. There is no governing document and no quote,
+    // so there is no ceiling to cap it.
+    //
+    // A document may LATER speak to the term (a re-read, a new amendment). The
+    // entered value still stands and is still marked entered: a reading never
+    // overwrites what a person entered. What the document now says is kept
+    // beside it (`documentReading`), and when it differs the term carries a
+    // warning (`enteredConflict`) until the person decides — reopen the term to
+    // take the document's reading, or keep their value. "Keep" is itself an
+    // entered decision whose previous_value is the reading it was kept over;
+    // a later reading that differs again raises the warning again.
+    // (A sourceless correction on a term no document establishes is an entry
+    // too, as it always was, whatever its note.)
+    if (isEnteredDecision(d) || (d.action === 'correct' && term.state === 'missing' && !d.source_document_id)) {
+      var entered = normalizeFieldValue(term.field, d.new_value, false);
+      if (entered === null || entered === undefined) return _unreadable(term);
+      var doc = term.state === 'missing' ? null : _reading(term);
+      var docContested = term.state === 'conflicting';
+      if (doc) {
+        doc.contested = docContested;
+        doc.superseded = term.supersededValues || [];
+        doc.contradictions = term.contradictions || [];
+      }
+      term.value   = entered;
       term.quote   = null; term.page = null; term.confidence = null;
       term.support = 'entered';
       term.derived = false;
       term.governingDocumentId = null; term.governingDocumentName = null;
       term.governingDocType = null;    term.governingDocStatus = null;
+      term.supersededValues = []; term.contradictions = [];
       term.ceiling = null; term.ceilingReason = null;
       term.canConfirm = true; term.blockedReason = null;
       term.state = 'verified';
       term.note  = ENTERED_NOTE;
+      term.documentReading = doc;
+      term.enteredConflict = false;
+      term.enteredKept = false;
+      if (doc) {
+        var differs = docContested || (doc.value !== null && !_sameValue(term.field, doc.value, entered));
+        var kept = differs && !docContested && d.previous_value != null && _sameValue(term.field, d.previous_value, doc.value);
+        term.enteredConflict = differs && !kept;
+        term.enteredKept = kept;
+        term.note = term.enteredConflict ? ENTERED_NOTE + ' A document now reads this term differently; the entered value stands until a person decides.'
+                  : kept                 ? ENTERED_NOTE + ' Kept by a person over what a document now reads.'
+                  : doc.value === null   ? ENTERED_NOTE + ' A document now has language here, but no value could be read from it.'
+                  :                        ENTERED_NOTE + ' A document now states the same value.';
+      }
       return term;
     }
 
     if (d.action === 'reject') {
-      // The person says the reading is wrong. The reading is kept — it is what
-      // the document said — and the term stops presenting it as an answer.
+      // The person says the reading is wrong. The reading is KEPT — value,
+      // clause, page, document — as `rejectedReading`, and it is no longer
+      // the term's value: nothing downstream (the matrix, the rent roll, the
+      // analysis, conversion, the CSVs, the report) can use it. The governing
+      // document stays named, so Confirm can still take the reading back.
+      term.rejected = true;
+      term.rejectedReading = _reading(term);
+      term.value = null; term.quote = null; term.page = null; term.confidence = null;
+      term.derived = false; term.support = 'none';
       term.state = 'unclear';
-      term.note = 'A person rejected this reading. The document still says what it says.';
+      term.note = 'Rejected by a person. The reading is kept as evidence and is not used as the value.';
       return term;
     }
 
     if (d.action === 'correct') {
+      // A correction cites the document whose reading it replaces. The new
+      // value carries only a clause the correction itself cites: the replaced
+      // reading's clause states a different figure, so it is kept and named as
+      // `replacedReading`, never shown as the new value's support.
       var quote = _str(d.source_quote, QUOTE_MAX);
-      term.value = normalizeFieldValue(term.field, d.new_value, !!quote);
-      term.quote = quote || term.quote;
+      var corrected = normalizeFieldValue(term.field, d.new_value, !!quote);
+      if (corrected === null || corrected === undefined) return _unreadable(term);
+      term.replacedReading = _reading(term);
+      term.value = corrected;
+      term.quote = quote || null;
       term.page  = _page(d.source_page);
+      term.confidence = null;
       term.support = 'stated';
       term.derived = false;
       if (d.source_document_id && byId[d.source_document_id]) {
@@ -965,6 +1063,10 @@
     if (payload.action === 'correct' && !payload.new_value) {
       return { ok: false, error: 'A correction must carry the value it corrects to' };
     }
+    // An optional reason, in the person's words. It is the decision's note —
+    // after the entered note, for an entered value, so the row still says
+    // what it is.
+    var reason = _str(f.reason == null ? null : String(f.reason), 1000);
 
     // ENTERING a value (§4l): a correction on a term no document establishes,
     // asked for as such. It is the same row a correction writes — no
@@ -974,21 +1076,34 @@
     // key the allow-list does not name.
     if (payload.action === 'correct' && f.entered === true) {
       if (!term) return { ok: false, error: 'Entering a term needs the term it is entered for' };
-      if (term.state !== 'missing') {
+      var keep = f.keep === true;
+      if (keep) {
+        // "Keep my value": an entered value a document now reads differently.
+        // The same entered value again, with the reading it was kept over as
+        // its previous value — so the warning clears for THAT reading only.
+        if (term.support !== 'entered' || !term.enteredConflict || !term.documentReading
+            || term.documentReading.value === null || term.documentReading.value === undefined) {
+          return { ok: false, error: 'There is no document reading to keep this value over.' };
+        }
+      } else if (term.state !== 'missing') {
         return { ok: false, error: 'A document establishes this term. Correct the reading instead of entering a value.' };
       }
       var typed = normalizeFieldValue(payload.field_key, payload.new_value, false);
       if (typed === null || typed === undefined) {
-        var meta = FIELD_META[payload.field_key] || {};
-        return { ok: false, error: 'That is not a ' + (meta.type || 'valid') + ' value for ' + (meta.label || payload.field_key) + '.' };
+        return { ok: false, error: inputError(payload.field_key, payload.new_value) };
       }
+      if (keep && JSON.stringify(typed) !== JSON.stringify(term.value)) {
+        return { ok: false, error: 'Keep records the value already entered; enter a different value by reopening the term.' };
+      }
+      payload.new_value = storedForm(typed);
       payload.source_document_id = null;
       payload.source_quote = null;
       payload.source_page = null;
-      payload.previous_value = null;
-      if (!payload.note) payload.note = ENTERED_NOTE;
+      payload.previous_value = keep ? _str(String(term.documentReading.value), 4000) : null;
+      payload.note = ENTERED_NOTE + (reason ? ' Reason: ' + reason : '');
       return { ok: true, payload: payload };
     }
+    if (reason && !payload.note) payload.note = reason;
 
     if (payload.action === 'confirm' || payload.action === 'correct') {
       if (!term) return { ok: false, error: 'Confirming or correcting a term needs the term it acts on' };
@@ -1001,25 +1116,124 @@
       }
     }
 
+    // A correction the field cannot hold is refused HERE, before anything is
+    // written — never stored to be shown as verified with no value. What is
+    // accepted is exactly what the resolver will read back, in its own form.
+    if (payload.action === 'correct') {
+      var to = normalizeFieldValue(payload.field_key, payload.new_value, !!payload.source_quote);
+      if (to === null || to === undefined) return { ok: false, error: inputError(payload.field_key, payload.new_value) };
+      payload.new_value = storedForm(to);
+    }
+
     // What the term read before this act, so the correction records what it
     // replaced rather than erasing it.
+    // A rejected term has no value; what a later act replaces is the reading
+    // that was rejected.
     if (payload.previous_value === undefined && term && term.value !== null && term.value !== undefined) {
       payload.previous_value = _str(String(term.value), 4000);
+    } else if (payload.previous_value === undefined && term && term.rejectedReading
+               && term.rejectedReading.value !== null && term.rejectedReading.value !== undefined) {
+      payload.previous_value = _str(String(term.rejectedReading.value), 4000);
     }
     return { ok: true, payload: payload };
+  }
+
+  // ── What a person types (Step C) ──────────────────────────────────────────
+  var INPUT_HINT = {
+    number: 'a number', money: 'a dollar amount', percent: 'a percentage',
+    date: 'a date', boolean: 'yes or no', text: 'text',
+  };
+  function inputHint(field) {
+    var meta = FIELD_META[field] || {};
+    if (meta.type === 'enum') return 'one of: ' + (meta.values || []).join(', ');
+    return INPUT_HINT[meta.type] || 'a value';
+  }
+  // A value in the form it is stored in: what normalizeFieldValue reads back
+  // unchanged.
+  function storedForm(v) {
+    if (typeof v === 'boolean') return v ? 'yes' : 'no';
+    return String(v);
+  }
+  function inputError(field, raw) {
+    var meta = FIELD_META[field] || {};
+    var s = raw === null || raw === undefined ? '' : String(raw).trim();
+    if (!s) return 'Enter ' + inputHint(field) + '.';
+    if ((meta.type === 'number' || meta.type === 'money' || meta.type === 'percent') && _isNegativeWord(s)) {
+      return 'Only a document\u2019s clause can establish that there is none. Enter the figure, or leave the term as it is.';
+    }
+    if (meta.type === 'date') return 'That is not a date. Choose a date, or type it as YYYY-MM-DD.';
+    return 'That is not ' + inputHint(field) + ' for ' + (meta.label || field) + '.';
+  }
+  /**
+   * What a person typed for a term, checked BEFORE anything is saved:
+   *   { ok: true, value, stored }   the value as the term will hold it, and
+   *                                 the form it is stored in
+   *   { ok: false, error, empty }   why it cannot be saved
+   * The same rule the payload builder enforces and the resolver reads back.
+   */
+  function validateTermInput(field, raw) {
+    if (!FIELD_META[field]) return { ok: false, error: 'Unknown term.' };
+    var s = raw === null || raw === undefined ? '' : String(raw).trim();
+    if (!s) return { ok: false, error: inputError(field, s), empty: true };
+    var v = normalizeFieldValue(field, s, false);
+    if (v === null || v === undefined) return { ok: false, error: inputError(field, s) };
+    return { ok: true, value: v, stored: storedForm(v) };
+  }
+
+  // ── A term's decisions, in the order they were made (Step C) ──────────────
+  var HISTORY_LABEL = {
+    entered: 'Entered by a person', kept: 'Kept over a document\u2019s reading',
+    corrected: 'Corrected', confirmed: 'Confirmed', rejected: 'Rejected', reopened: 'Reopened',
+  };
+  /** The reason a person gave, out of a decision's note. */
+  function decisionReason(note) {
+    if (typeof note !== 'string' || !note.trim()) return null;
+    var s = note.indexOf(ENTERED_NOTE) === 0 ? note.slice(ENTERED_NOTE.length).trim() : note.trim();
+    if (s.indexOf('Reason:') === 0) s = s.slice(7).trim();
+    return s || null;
+  }
+  /**
+   * Every decision on one field, oldest first — append-only, so this is the
+   * whole history — each with what it did, the value it set, the value it
+   * replaced and the person's reason; the one that stands is marked.
+   */
+  function decisionHistory(decisions, field) {
+    var rows = (Array.isArray(decisions) ? decisions : []).filter(function (r) {
+      return r && r.field_key === field && DECISION_ACTIONS.indexOf(r.action) >= 0;
+    }).slice().sort(function (a, b) {
+      var x = String(a.decided_at || ''), y = String(b.decided_at || '');
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+    var stands = latestDecision(decisions, field);
+    return rows.map(function (r) {
+      var kind = r.action === 'correct'
+        ? (isEnteredDecision(r) ? (r.previous_value != null ? 'kept' : 'entered') : 'corrected')
+        : r.action === 'confirm' ? 'confirmed' : r.action === 'reject' ? 'rejected' : 'reopened';
+      return {
+        id: r.id || null, action: r.action, kind: kind, label: HISTORY_LABEL[kind],
+        newValue: r.new_value == null ? null : normalizeFieldValue(field, r.new_value, true),
+        previousValue: r.previous_value == null ? null : normalizeFieldValue(field, r.previous_value, true),
+        rawNew: r.new_value == null ? null : r.new_value, rawPrevious: r.previous_value == null ? null : r.previous_value,
+        reason: decisionReason(r.note),
+        decidedAt: r.decided_at || null, decidedBy: r.decided_by || null,
+        standing: !!stands && stands === r,
+      };
+    });
   }
 
   /** What a family's terms amount to. Never throws. */
   function summarizeTerms(terms) {
     var t = (terms && typeof terms === 'object') ? terms : {};
     var out = { total: FIELDS.length, verified: 0, ai_extracted: 0, conflicting: 0,
-                unclear: 0, missing: 0, derived: 0, blocked: 0, entered: 0 };
+                unclear: 0, missing: 0, derived: 0, blocked: 0, entered: 0, rejected: 0, enteredConflict: 0 };
     for (var i = 0; i < FIELDS.length; i++) {
       var term = t[FIELDS[i]];
       var st = (term && TERM_STATES.indexOf(term.state) >= 0) ? term.state : 'missing';
       out[st]++;
       if (term && term.derived) out.derived++;
       if (term && term.support === 'entered') out.entered++;
+      if (term && term.rejected) out.rejected++;
+      if (term && term.enteredConflict) out.enteredConflict++;
       if (term && term.state !== 'missing' && !term.canConfirm) out.blocked++;
     }
     return out;
@@ -1064,6 +1278,15 @@
     acquisitionContradictions: acquisitionContradictions,
     resolveFamilyTerms: resolveFamilyTerms,
     summarizeTerms: summarizeTerms,
+
+    // ── Step C: manual entry and its safeguards ─────────────────────────────
+    isEnteredDecision: isEnteredDecision,
+    validateTermInput: validateTermInput,
+    inputHint: inputHint,
+    storedForm: storedForm,
+    decisionReason: decisionReason,
+    decisionHistory: decisionHistory,
+    HISTORY_LABEL: HISTORY_LABEL,
   };
   if (root) root.AcquisitionTerms = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

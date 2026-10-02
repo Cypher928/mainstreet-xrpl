@@ -145,7 +145,7 @@ const MUTANTS = [
   { id: 'F05', file: S, why: 'a family can still be written on a frozen review',
     from: '  if (_acqRefuseFrozen(reviewId)) return null;   // P5-6A: no new or renamed leasehold on a closed acquisition', to: '  void reviewId;' },
   { id: 'F06', file: S, why: 'the terms panel still offers the five acts',
-    from: "      const actions = frozen ? '' : entered ? `", to: '      const actions = entered ? `' },
+    from: "      const actions = frozen || editing ? '' : entered ? `", to: '      const actions = entered ? `' },
   { id: 'F07', file: S, why: 'the documents panel still offers the type select',
     from: '    const typeControl = frozen\n', to: '    const typeControl = false\n' },
   { id: 'F08', file: S, why: 'the documents panel still offers Read terms',

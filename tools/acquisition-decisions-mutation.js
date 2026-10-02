@@ -104,7 +104,10 @@ const MUTANTS = [
     to:   '    if (false) {' },
   { id: 'W02', file: A, why: 'a correction with no value is accepted',
     from: "    if (payload.action === 'correct' && !payload.new_value) {",
-    to:   "    if (false) {" },
+    to:   "    if (false) {",
+    // Step C: every correction is now also checked against its field's type,
+    // and an empty value is no value of any type — the same refusal, one line on.
+    equivalent: 'Step C\'s type check refuses an empty correction too: normalizeFieldValue(field, \'\') is null, so buildDecisionPayload still answers ok:false.' },
   { id: 'W03', file: A, why: 'an unknown action is accepted',
     from: "    action:             function (v) { return DECISION_ACTIONS.indexOf(v) >= 0 ? v : null; },",
     to:   "    action:             function (v) { return v; }," },
@@ -116,9 +119,11 @@ const MUTANTS = [
     to:   '    source_page:        function (v) { return v == null ? null : Number(v); },' },
 
   // ── the overlay ──────────────────────────────────────────────────────────
-  { id: 'O01', file: A, why: 'a rejection erases the value the document gave',
-    from: "      term.state = 'unclear';\n      term.note = 'A person rejected this reading.",
-    to:   "      term.state = 'unclear';\n      term.value = null; term.quote = null;\n      term.note = 'A person rejected this reading." },
+  // Step C: a rejection takes the reading out of the value on purpose; what
+  // must survive is the reading itself, kept as rejectedReading.
+  { id: 'O01', file: A, why: 'a rejection erases the reading the document gave',
+    from: "      term.rejectedReading = _reading(term);",
+    to:   "      term.rejectedReading = null;" },
   { id: 'O02', file: A, why: 'a rejection reads as an answer anyway',
     from: "    if (d.action === 'reject') {",
     to:   "    if (false) {" },
@@ -132,8 +137,8 @@ const MUTANTS = [
     from: "      term.support = 'stated';\n      term.derived = false;",
     to:   "      term.support = 'stated';" },
   { id: 'O06', file: A, why: 'a decision erases the contradiction it was made against',
-    from: "    if (d.action === 'correct') {\n      var quote = _str(d.source_quote, QUOTE_MAX);",
-    to:   "    if (d.action === 'correct') {\n      term.contradictions = [];\n      var quote = _str(d.source_quote, QUOTE_MAX);" },
+    from: "      term.replacedReading = _reading(term);\n      term.value = corrected;",
+    to:   "      term.replacedReading = _reading(term);\n      term.contradictions = [];\n      term.value = corrected;" },
 
   // ── the screen ───────────────────────────────────────────────────────────
   { id: 'U01', file: S, why: 'the controls are never disabled',
@@ -188,7 +193,7 @@ const MUTANTS = [
     from: '    // resolver without writing it into the cached row.\n    .map(d => _acqEvidence.has(d.id) ? Object.assign({}, d, { abstracted_fields: _acqEvidence.get(d.id) }) : d);',
     to:   '    // resolver without writing it into the cached row.\n    .map(d => { if (_acqEvidence.has(d.id)) d.abstracted_fields = _acqEvidence.get(d.id); return d; });' },
   { id: 'D06', file: S, why: 'the correction does not carry the value it replaces',
-    from: '    previousValue: term.value == null ? undefined : String(term.value),\n    sourceDocumentId: term.governingDocumentId || undefined }, term);',
+    from: '    previousValue: prior == null ? undefined : String(prior),\n    sourceDocumentId: term.governingDocumentId || undefined }, term);',
     to:   '    sourceDocumentId: term.governingDocumentId || undefined }, term);' },
 
   // ── the migration ────────────────────────────────────────────────────────

@@ -69,11 +69,16 @@
 
     // The clause behind each value, so the engine's findings keep their
     // citations. An entered value has no clause and gets none.
-    var states = {}, origins = {}, quotes = {};
+    // A term's flag, for the screens: a reading a person REJECTED (no value —
+    // the resolver keeps the reading as evidence only), or an ENTERED value a
+    // document now reads differently (the entered value stands, with a
+    // warning until a person decides).
+    var states = {}, origins = {}, quotes = {}, flags = {};
     Object.keys(terms).forEach(function (f) {
       var t = terms[f] || {};
       states[f]  = t.state || 'missing';
       origins[f] = t.support === 'entered' ? 'entered' : null;
+      flags[f]   = t.rejected ? 'rejected' : t.enteredConflict ? 'entered_conflict' : null;
       if (t.quote && t.support !== 'entered' && t.state !== 'conflicting') quotes[f] = t.quote;
     });
 
@@ -124,6 +129,7 @@
       quotes:   quotes,
       _states:  states,
       _origins: origins,
+      _flags:   flags,
       _resolved: !!(resolved && resolved.ok),
     };
     return row;

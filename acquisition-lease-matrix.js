@@ -119,12 +119,23 @@
       : st === 'unclear'     ? 'unclear'
       :                        'read';
     var value = state === 'contested' ? null : (r[field] === undefined ? null : r[field]);
+    var flag  = (r._flags || {})[field] || null;
+    // A rejected reading is no value; the cell says who set it aside.
+    var rejected = flag === 'rejected' && state === 'unclear';
     var text  = state === 'contested' ? 'Contested'
               : state === 'missing'   ? null
+              : rejected              ? REJECTED_TEXT
               : _textOf(state, value, meta.type);
-    return { field: field, label: meta.label, type: meta.type, state: state,
-             value: value, text: text, stateText: STATE_TEXT[state] };
+    var out = { field: field, label: meta.label, type: meta.type, state: state,
+                value: rejected ? null : value, text: text,
+                stateText: rejected ? REJECTED_TEXT + ' — the reading is kept as evidence, not used'
+                         : flag === 'entered_conflict' && state === 'entered' ? STATE_TEXT[state] + ' — a document now reads this term differently'
+                         : STATE_TEXT[state] };
+    if (rejected) out.rejected = true;
+    if (flag === 'entered_conflict' && state === 'entered') out.conflict = true;
+    return out;
   }
+  var REJECTED_TEXT = 'Rejected by a person';
 
   /**
    * Every term of a canonical row that has a value only the AI has read —
@@ -155,6 +166,10 @@
         out.push({ field: f, label: c.label, kind: 'contested', text: c.label + ' — contested' });
       }
     });
+    fields.forEach(function (f) {
+      var c = cellFor(r, f, opts);
+      if (c.conflict) out.push({ field: f, label: c.label, kind: 'entered_conflict', text: c.label + ' — entered value; a document now reads it differently' });
+    });
     KEY_FIELDS.forEach(function (f) {
       var c = cellFor(r, f, opts);
       if (c.state === 'missing') out.push({ field: f, label: c.label, kind: 'missing', text: c.label + ' — not established' });
@@ -168,6 +183,8 @@
   // AI's reading. Verified terms are done and not listed.
   var ATTENTION_KINDS = [
     { kind: 'contested',  state: 'contested', words: function () { return 'contested'; } },
+    { kind: 'entered_conflict', test: function (c) { return !!c.conflict; },
+      words: function (n) { return (n === 1 ? 'entered value' : 'entered values') + ' a document now reads differently'; } },
     { kind: 'missing',    state: 'missing',   words: function () { return 'not established'; } },
     { kind: 'unclear',    state: 'unclear',   words: function () { return 'unclear'; } },
     { kind: 'unverified', state: 'read',      words: function (n) { return (n === 1 ? 'value' : 'values') + ' read by AI · not yet verified'; } },
@@ -188,7 +205,7 @@
       .filter(function (f) { return (r._states || {})[f]; });
     var cells = fields.map(function (f) { return cellFor(r, f, opts); });
     return ATTENTION_KINDS.map(function (k) {
-      var terms = cells.filter(function (c) { return c.state === k.state; })
+      var terms = cells.filter(function (c) { return k.test ? k.test(c) : c.state === k.state; })
         .map(function (c) { return { field: c.field, label: c.label }; });
       return { kind: k.kind, count: terms.length, text: terms.length + ' ' + k.words(terms.length), terms: terms };
     }).filter(function (g) { return g.count > 0; });
@@ -206,6 +223,8 @@
     var att = attention || attentionFor(row, opts);
     var contested = att.filter(function (a) { return a.kind === 'contested'; }).length;
     if (contested) return { kind: 'issues', label: contested + ' contested' };
+    var conflicts = att.filter(function (a) { return a.kind === 'entered_conflict'; }).length;
+    if (conflicts) return { kind: 'issues', label: conflicts === 1 ? '1 entered value to review' : conflicts + ' entered values to review' };
     if (att.some(function (a) { return a.kind === 'missing'; }))  return { kind: 'missing', label: 'Terms not established' };
     if (att.some(function (a) { return a.kind === 'unclear'; }))  return { kind: 'unclear', label: 'Unclear terms' };
     var read = KEY_FIELDS.some(function (f) { return cellFor(row, f, opts).state === 'read'; });
@@ -364,8 +383,11 @@
       var t = terms[f], meta = _meta(f, opts), state = termState(t);
       var text = state === 'contested' ? 'Contested'
                : state === 'missing'   ? null
+               : t.rejected            ? REJECTED_TEXT
                : _textOf(state, t.value, meta.type);
       var row = { field: f, label: t.label || meta.label, state: state, text: text };
+      if (t.rejected) row.rejected = true;
+      if (t.enteredConflict) row.conflict = true;
       var g = groups.filter(function (x) { return x.key === groupOf[f]; })[0] || other;
       g.rows.push(row);
     });
@@ -553,6 +575,8 @@
     var out = { column: col.key, header: col.header, field: col.field, label: c.label,
                 state: c.state, value: c.value, text: c.text, sub: null, noneStated: false,
                 stateText: c.stateText, source: null };
+    if (c.rejected) out.rejected = true;
+    if (c.conflict) out.conflict = true;
     if (col.key === 'tenant') {
       out.text = (row && row.tenant_name) || 'Unnamed leasehold';
     } else if (c.state !== 'contested' && c.state !== 'missing' && c.value !== null) {
@@ -584,6 +608,13 @@
         support:      t.support || null,
         note:         t.note || null,
         decision:     t.decision || null,
+        // Step C: the reading a person set aside, replaced, or entered a value
+        // beside — kept, each in the field's type.
+        rejectedReading: t.rejectedReading ? Object.assign({}, t.rejectedReading, { text: readingText(t.rejectedReading.value, c.type) }) : null,
+        replacedReading: t.replacedReading ? Object.assign({}, t.replacedReading, { text: readingText(t.replacedReading.value, c.type) }) : null,
+        documentReading: t.documentReading ? Object.assign({}, t.documentReading, { text: readingText(t.documentReading.value, c.type) }) : null,
+        enteredConflict: !!t.enteredConflict,
+        enteredKept: !!t.enteredKept,
         // Every reading the governing one replaced, newest-ranked first.
         prior: _arr(t.supersededValues).map(function (h) {
           return { documentId: h.documentId || null, fileName: h.fileName || null, docType: h.docType || null,
@@ -640,6 +671,7 @@
     if (c.column === 'tenant') return c.text;
     if (c.state === 'contested') return STATE_LABEL.contested;
     if (c.state === 'missing' || c.text === null || c.text === undefined) return STATE_LABEL.missing;
+    if (c.rejected) return REJECTED_TEXT;
     if (c.state === 'unclear' && (c.value === null || c.value === undefined)) return STATE_LABEL.unclear;
     var t = c.text + (c.sub ? ' / ' + c.sub : '');
     return c.state === 'unclear' ? t + ' (unclear)' : t;
@@ -659,7 +691,39 @@
   }
 
   var PROVENANCE_HEADERS = ['Tenant', 'Column', 'Value', 'State', 'Governing document', 'Document type',
-                            'Document date', 'Page', 'Confidence', 'Clause', 'Earlier readings', 'Decision'];
+                            'Document date', 'Page', 'Confidence', 'Clause', 'Earlier readings', 'Decision',
+                            'Previous value', 'Origin', 'Reason'];
+
+  // Who the cell's value is owed to, in words.
+  function _origin(c, s) {
+    var d = s.decision || null;
+    if (c.rejected) return REJECTED_TEXT;
+    if (c.state === 'entered') {
+      if (s.enteredConflict) return 'Entered by a person — a document now reads ' + ((s.documentReading && s.documentReading.text) || 'it differently');
+      if (s.enteredKept) return 'Entered by a person — kept over a document\u2019s reading';
+      return 'Entered by a person';
+    }
+    if (d && d.action === 'correct') return 'Corrected by a person';
+    if (d && d.action === 'confirm') return 'Confirmed by a person';
+    if (c.state === 'contested') return 'Contested — nothing chosen';
+    if (c.state === 'missing') return '';
+    return 'Read by AI';
+  }
+  // What the standing decision set aside: the reading it replaced, the reading
+  // it rejected, or the reading an entered value was kept over.
+  function _previous(s) {
+    var r = s.replacedReading || s.rejectedReading || (s.enteredKept ? s.documentReading : null);
+    if (!r) return '';
+    return r.text + (r.documentName ? ' (' + r.documentName + (r.page != null ? ', p. ' + r.page : '') + ')' : '');
+  }
+  var ENTERED_PREFIX = 'Entered by a person. No document on file supports it.';
+  function _reason(s) {
+    var n = s.decision && s.decision.note;
+    if (typeof n !== 'string') return '';
+    var x = n.indexOf(ENTERED_PREFIX) === 0 ? n.slice(ENTERED_PREFIX.length).trim() : n.trim();
+    if (x.indexOf('Reason:') === 0) x = x.slice(7).trim();
+    return x;
+  }
   /** Where every cell came from: one row per leasehold × column. */
   function matrix13ProvenanceCsv(m13) {
     var m = m13 || { leaseholds: [] };
@@ -676,6 +740,9 @@
             return (p.fileName || 'A document') + (p.docDate ? ' (' + usDate(p.docDate) + ')' : ' (undated)') + ': ' + (p.text || readingText(p.value));
           }).join(' | '),
           s.decision ? (s.decision.action + (s.decision.decidedAt ? ' ' + String(s.decision.decidedAt).slice(0, 10) : '')) : '',
+          c.column === 'tenant' ? '' : _previous(s),
+          c.column === 'tenant' ? '' : _origin(c, s),
+          c.column === 'tenant' ? '' : _reason(s),
         ]);
       });
     });
@@ -697,6 +764,7 @@
     summaryLine: summaryLine,
     STATE_TEXT: STATE_TEXT,
     STATE_LABEL: STATE_LABEL,
+    REJECTED_TEXT: REJECTED_TEXT,
     TERM_STATE_LABEL: TERM_STATE_LABEL,
     unverifiedFor: unverifiedFor,
     countsLine: countsLine,

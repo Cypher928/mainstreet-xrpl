@@ -538,6 +538,8 @@ const SUITES = [
   { label: 'Acquisition matrix — 13 columns, CSVs, guard rails', cmd: 'node test-acquisition-matrix13.js' },
   { label: 'Acquisition matrix walk + merge-only re-read (e2e)', cmd: 'node test-e2e-acquisition-matrix13.js' },
   { label: 'Acquisition controls — buttons, CSVs in both views (e2e)', cmd: 'node test-e2e-acquisition-controls.js' },
+  { label: 'Acquisition term safeguards — entry, rejection, re-read', cmd: 'node test-acquisition-term-safeguards.js' },
+  { label: 'Acquisition term entry walk — one value everywhere (e2e)', cmd: 'node test-e2e-acquisition-term-entry.js' },
   // §4n (Option B) — only a canonical leasehold is a tenant: the analysis, the
   // Rent Roll, the Decision Report and conversion read leaseholds only, and an
   // unmatched extraction waits for a person. Walked with Maple Plaza.

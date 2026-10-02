@@ -33199,9 +33199,12 @@ function _renderAcqTerms() {
       // document says, in file-name order.
       const contested = term.state === 'conflicting';
 
-      // MISSING IS NOT NONE, on screen.
+      // MISSING IS NOT NONE, on screen. A REJECTED reading is no value either
+      // (Step C): the row says who set it aside, and keeps the reading below.
       const valueHtml = contested
         ? `<span class="acq-term-contested">Contested — the documents disagree. Nothing has been chosen.</span>`
+        : term.rejected
+        ? `<span class="acq-term-rejected" data-rejected="true">Rejected by a person — not used as the value</span>`
         : shown === null
         ? `<span class="acq-term-missing">${esc(term.state === 'missing'
              ? 'No document on file establishes this'
@@ -33210,7 +33213,9 @@ function _renderAcqTerms() {
 
       // Provenance: the document, and the clause it came from. For a contested
       // term every document's own reading is listed instead (below).
-      const src = !contested && term.governingDocumentName
+      // A corrected or rejected term's document is named with the reading it
+      // gave, below — never as the support for a value it does not state.
+      const src = !contested && !term.replacedReading && !term.rejected && term.governingDocumentName
         ? `<div class="acq-term-src">${esc(term.governingDocumentName)}`
           + (term.governingDocType ? ' · ' + esc(AD.docTypeLabel(term.governingDocType)) : '')
           + (term.page != null ? ' · p.' + esc(term.page) : '')
@@ -33250,9 +33255,31 @@ function _renderAcqTerms() {
               esc((c.values || []).map(v => _acqTermValue({ value: v, type: term.type }) || '—').join(' vs ')) + ' (' + esc((c.documents || []).join(', ')) + ')').join('; ')
           + (selected ? `. This value was selected by a person.</div>` : `. Nothing has been chosen for you.</div>`) : '');
 
+      // Step C: the reading a person set aside — rejected, or replaced by a
+      // correction — kept whole and named for what it is; and, for a value a
+      // person entered, what a document now says beside it.
+      const priorHtml = (k, r, cls) => !r ? '' : '<div class="acq-term-prior ' + esc(cls) + '" data-prior="' + esc(cls) + '">'
+          + '<span class="acq-term-prior-k">' + esc(k) + '</span> '
+          + '<span class="acq-term-prior-v">' + esc(_acqTermValue({ value: r.value, type: term.type }) || 'no value read') + '</span>'
+          + (r.documentName ? '<span class="acq-term-src"> · ' + esc(r.documentName)
+              + (r.docType ? ' · ' + esc(AD.docTypeLabel(r.docType)) : '') + (r.page != null ? ' · p.' + esc(r.page) : '')
+              + (r.confidence != null ? ' · confidence ' + esc(r.confidence) : '') + '</span>' : '')
+          + (r.quote ? '<div class="acq-term-quote">&ldquo;' + esc(r.quote) + '&rdquo;</div>' : '') + '</div>';
+      const replaced = priorHtml('Replaced reading', term.replacedReading, 'acq-term-replaced');
+      const rejectedReading = priorHtml('Rejected reading', term.rejectedReading, 'acq-term-rejected-reading');
+      const docNow = !term.documentReading ? '' : term.enteredConflict
+          ? '<div class="acq-term-doc-conflict" role="note" data-conflict="true">⚠ A document now reads this term differently. Your entered value stands until you decide: <strong>Reopen</strong> to use the document’s reading, or <strong>Keep my value</strong>.'
+            + priorHtml('The document now reads', term.documentReading, 'acq-term-doc-reading') + '</div>'
+          : '<div class="acq-term-doc-kept">' + (term.enteredKept ? 'You kept your entered value over what a document now reads.' : 'A document now speaks to this term.')
+            + priorHtml('The document reads', term.documentReading, 'acq-term-doc-reading') + '</div>';
+      const reason = term.decision ? _AT().decisionReason(term.decision.note) : null;
+      const reasonHtml = reason ? '<div class="acq-term-reason">Reason: ' + esc(reason) + '</div>' : '';
+      const history = _acqTermHistoryHtml(fam.id, field, term);
       const superseded = !contested && (term.supersededValues && term.supersededValues.length)
         ? `<div class="acq-term-superseded">Replaced ${esc(_acqTermValue({ value: term.supersededValues[0].value, type: term.type }) || '—')}`
-          + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '') + '</div>' : '';
+          + (term.supersededValues[0].fileName ? ' from ' + esc(term.supersededValues[0].fileName) : '')
+          // Step C: a document's lineage, named apart from a person's "Replaced reading".
+          + ' — superseded by a later document</div>' : '';
 
       // A value a person ENTERED (§4l): verified, and the row says every time
       // that no document is behind it. The note is the tag; it is not
@@ -33262,7 +33289,7 @@ function _renderAcqTerms() {
         ? `<span class="acq-term-entered" data-origin="entered">Entered by a person · No document on file supports this value</span>` : '';
       const enteredAttr = entered ? ' data-origin="entered"' : '';
 
-      const decided = (term.decision && !entered)
+      const decided = (term.decision && !entered && !term.rejected)
         ? `<div class="acq-term-decided">${esc(term.note || '')}</div>` : '';
 
       const blocked = (!term.canConfirm && term.state !== 'missing')
@@ -33280,13 +33307,22 @@ function _renderAcqTerms() {
       // A missing term has nothing to confirm, correct or reject. A person may
       // ENTER it, and the value is then theirs: verified, with no document.
       const enterGate = _acqDecisionsUnavailable ? ' disabled title="Decisions are not being filed — run migration 026 first."' : '';
-      const actions = frozen ? '' : entered ? `
-        <div class="acq-term-actions">${reopen}</div>`
+      // Correct, Enter and Keep open the inline editor in this row (Step C);
+      // nothing is saved until the editor's Save, and only a value the term's
+      // type can hold. A rejected term is not rejected again.
+      const keep = term.enteredConflict
+        ? '<button class="acq-term-keep" data-field="' + esc(field) + '" data-family="' + esc(fam.id) + '">Keep my value</button>' : '';
+      const editing = !frozen && _acqTermEditor && _acqTermEditor.reviewId === _activeAcqId
+        && _acqTermEditor.familyId === fam.id && _acqTermEditor.field === field;
+      const editor = editing ? _acqTermEditorHtml(fam.id, field, term, _acqTermEditor.mode) : '';
+      const stepCAttr = (term.rejected ? ' data-rejected="true"' : '') + (term.enteredConflict ? ' data-conflict="true"' : '');
+      const actions = frozen || editing ? '' : entered ? `
+        <div class="acq-term-actions">${keep}${reopen}</div>`
         : actionable ? `
         <div class="acq-term-actions">
           <button class="acq-term-confirm" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Confirm</button>
           <button class="acq-term-correct" data-field="${esc(field)}" data-family="${esc(fam.id)}"${gate}${gateTitle}>Correct</button>
-          <button class="acq-term-reject"  data-field="${esc(field)}" data-family="${esc(fam.id)}">Reject</button>
+          ${term.rejected ? '' : `<button class="acq-term-reject"  data-field="${esc(field)}" data-family="${esc(fam.id)}">Reject</button>`}
           ${reopen}
         </div>` : `
         <div class="acq-term-actions">
@@ -33294,7 +33330,7 @@ function _renderAcqTerms() {
         </div>`;
 
       return `
-      <div class="acq-term-row ${esc(st.cls)}" data-field="${esc(field)}" data-state="${esc(term.state)}"${term.derived ? ' data-derived="1"' : ''}${enteredAttr}>
+      <div class="acq-term-row ${esc(st.cls + (editing ? ' editing' : ''))}" data-field="${esc(field)}" data-state="${esc(term.state)}"${term.derived ? ' data-derived="1"' : ''}${enteredAttr}${stepCAttr}>
         <div class="acq-term-main">
           <div class="acq-term-head">
             <span class="acq-term-label">${esc(term.label)}</span>
@@ -33302,9 +33338,10 @@ function _renderAcqTerms() {
             ${enteredTag}
           </div>
           ${valueHtml}
-          ${src}${quote}${derived}${conflict}${superseded}${decided}${blocked}
+          ${src}${quote}${derived}${conflict}${superseded}${decided}${replaced}${rejectedReading}${docNow}${reasonHtml}${blocked}
+          ${history}
         </div>
-        ${actions}
+        ${actions}${editor}
       </div>`;
     }).join('');
 
@@ -33403,9 +33440,14 @@ function _acqLmCellHtml(cell) {
   // F1: an unclear term with no value has a clause behind it — never "—".
   if (cell.state === 'unclear' && cell.text === null) return `<span class="acq-lm-v unclear" data-state="unclear"${title}>Unclear</span>`;
   if (cell.text === null) return `<span class="acq-lm-v missing" data-state="missing"${title} aria-label="${esc(cell.label)}: not established">—</span>`;
+  // Step C: a reading a person rejected is no value — the cell says so.
+  if (cell.rejected) return `<span class="acq-lm-v unclear rejected" data-state="unclear" data-rejected="true"${title}>${esc(cell.text)}</span>`;
   const mark = cell.state === 'verified' ? '<span class="acq-lm-mark" aria-hidden="true">✓</span>'
              : cell.state === 'entered'  ? '<span class="acq-lm-mark entered" aria-hidden="true">✎</span>' : '';
-  return `<span class="acq-lm-v ${esc(cell.state)}" data-state="${esc(cell.state)}"${title}>${esc(cell.text)}${mark}</span>`;
+  // An entered value a document now reads differently: the value stands, marked.
+  const warn = cell.conflict ? '<span class="acq-lm-mark conflict" aria-hidden="true">⚠</span>' : '';
+  const flagAttr = cell.conflict ? ' data-conflict="true"' : '';
+  return `<span class="acq-lm-v ${esc(cell.state)}" data-state="${esc(cell.state)}"${flagAttr}${title}>${esc(cell.text)}${mark}${warn}</span>`;
 }
 
 // Why an extracted entry has no record: its file was never kept as a document,
@@ -33618,6 +33660,7 @@ function _acqM13DetailHtml(m, open) {
   const typeLabel = t => t ? (AD && AD.docTypeLabel ? AD.docTypeLabel(t) : t) : 'Unclassified';
   const dated = d => d ? LM.usDate(d) : 'undated';
   const state = c.noneStated ? 'Read by AI · the document states there is none'
+              : c.rejected ? c.stateText
               : (c.state === 'verified' || c.state === 'entered') ? LM.STATE_TEXT[c.state] : LM.STATE_TEXT[c.state];
   const value = c.state === 'contested' ? 'Contested — nothing has been chosen'
               : c.text === null ? 'Not established' : c.text + (c.sub ? ' · ' + c.sub : '');
@@ -33629,6 +33672,16 @@ function _acqM13DetailHtml(m, open) {
           s.derived ? 'calculated — not stated in the clause' : null].filter(Boolean).join(' · '))}</div>
       </div>`
     : `<div class="acq-m13-d-gov"><span class="acq-m13-d-k">Governing document</span> ${c.state === 'entered' ? 'None — entered by a person, no document on file supports it.' : 'No document on file establishes this.'}</div>`;
+  // Step C: the reading a person set aside — replaced or rejected — and, for
+  // an entered value, what a document now reads beside it. Kept, named.
+  const setAside = (k, r, cls) => !r ? '' : '<div class="acq-m13-d-sec acq-m13-d-prior ' + esc(cls) + '"><div class="acq-m13-d-k">' + esc(k) + '</div>'
+      + '<strong>' + esc(r.text || '—') + '</strong>'
+      + (r.documentName ? ' · ' + esc(r.documentName) + (r.page != null ? ' · p. ' + esc(r.page) : '') : '')
+      + (r.quote ? '<blockquote class="acq-m13-d-quote">' + esc(r.quote) + '</blockquote>' : '') + '</div>';
+  const setAsideHtml = setAside('Replaced reading — corrected by a person', s.replacedReading, 'replaced')
+    + setAside('Rejected reading — set aside by a person, not used', s.rejectedReading, 'rejected')
+    + setAside(s.enteredConflict ? '⚠ A document now reads this differently — the entered value stands until a person decides'
+             : s.enteredKept ? 'Kept over what a document reads' : 'What a document now reads', s.documentReading, s.enteredConflict ? 'conflict' : 'doc');
   const decided = s.decision ? `<div class="acq-m13-d-dec">${esc({ confirm: 'Confirmed', correct: 'Corrected', reject: 'Rejected', reopen: 'Reopened' }[s.decision.action] || s.decision.action)} by a person${s.decision.decidedAt ? ' on ' + esc(LM.usDate(String(s.decision.decidedAt).slice(0, 10))) : ''}</div>` : '';
   const readings = (s.readings || []).length ? `<div class="acq-m13-d-sec"><div class="acq-m13-d-k">What each document says</div><ul>${s.readings.map(r =>
       `<li><strong>${esc(r.fileName || 'A document')}</strong> · ${esc(typeLabel(r.docType))}: ${esc(r.text || '—')}${r.quote ? `<blockquote class="acq-m13-d-quote">${esc(r.quote)}</blockquote>` : ''}</li>`).join('')}</ul></div>` : '';
@@ -33642,7 +33695,7 @@ function _acqM13DetailHtml(m, open) {
       <div class="acq-m13-d-value" data-state="${esc(c.state)}">${esc(value)}</div>
       <div class="acq-m13-d-state">${esc(state)}</div>
       ${s.note && c.state !== 'missing' ? `<div class="acq-m13-d-note">${esc(s.note)}</div>` : ''}
-      ${gov}${decided}${readings}${priorHtml}
+      ${gov}${decided}${setAsideHtml}${readings}${priorHtml}
       <button type="button" class="acq-m13-record" data-leasehold="${esc(l.leaseholdId)}" data-field="${esc(c.field)}">Open the lease record — confirm, correct or enter it there</button>
     </div>`;
 }
@@ -33931,8 +33984,9 @@ function _acqBindTermControls(el) {
   el.addEventListener('click', (ev) => {
     const t = ev.target;
     const hit = (sel) => t.closest && t.closest(sel);
+    if (hit('.acq-te-cancel')) { ev.preventDefault(); acqCancelTermEditor(); return; }
     const btn = hit('.acq-term-confirm') || hit('.acq-term-correct') || hit('.acq-term-reject') || hit('.acq-term-reopen')
-             || hit('.acq-term-enter');
+             || hit('.acq-term-enter') || hit('.acq-term-keep');
     if (!btn || btn.disabled) return;
     ev.preventDefault();
     const field = btn.getAttribute('data-field');
@@ -33942,6 +33996,31 @@ function _acqBindTermControls(el) {
     else if (btn.classList.contains('acq-term-reject'))  acqRejectTerm(family, field);
     else if (btn.classList.contains('acq-term-reopen'))  acqReopenTerm(family, field);
     else if (btn.classList.contains('acq-term-enter'))   acqEnterTerm(family, field);
+    else if (btn.classList.contains('acq-term-keep'))    acqKeepEnteredTerm(family, field);
+  });
+  // The inline editor (Step C): checked as the person types, saved on Save or
+  // Enter, closed on Cancel or Escape.
+  el.addEventListener('input', (ev) => {
+    const f = ev.target && ev.target.closest && ev.target.closest('.acq-term-editor');
+    if (f) _acqTermEditorUpdate(f);
+  });
+  el.addEventListener('change', (ev) => {
+    const f = ev.target && ev.target.closest && ev.target.closest('.acq-term-editor');
+    if (f) _acqTermEditorUpdate(f);
+  });
+  el.addEventListener('submit', (ev) => {
+    const f = ev.target && ev.target.closest && ev.target.closest('.acq-term-editor');
+    if (!f) return;
+    ev.preventDefault();
+    acqSubmitTermEditor(f);
+  });
+  el.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const f = ev.target && ev.target.closest && ev.target.closest('.acq-term-editor');
+    if (!f) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    acqCancelTermEditor();
   });
 }
 
@@ -33972,23 +34051,32 @@ async function acqConfirmTerm(familyId, field) {
   await _acqAfterAct(reviewId);
 }
 
-async function acqCorrectTerm(familyId, field) {
+// CORRECT a term a document establishes. With no value, it opens the inline
+// editor in the term's row; with one (the editor's Save), it checks the value
+// against the term's type BEFORE anything is written, then records it. The
+// reading being replaced is recorded as the previous value, never overwritten.
+async function acqCorrectTerm(familyId, field, value, reason) {
   const reviewId = _activeAcqId;
+  if (_acqRefuseFrozen(reviewId)) return null;   // P5-6A: before the person is asked for a value
   const term = _acqTermFor(familyId, field);
-  if (!term) return;
-  if (_acqRefuseFrozen(reviewId)) return;   // P5-6A: before the person is asked for a value
-  const current = _acqTermValue(term);
-  const next = (typeof prompt === 'function')
-    ? prompt(`Correct “${term.label}”.\n\nWhat the documents say: ${current === null ? 'nothing' : current}`,
-             current === null ? '' : current)
-    : null;
-  if (next === null || String(next).trim() === '') return;
-  await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
-    newValue: String(next).trim(),
+  if (!term) return null;
+  if (value === undefined) { acqOpenTermEditor(familyId, field, 'correct'); return null; }
+  const v = _AT().validateTermInput(field, value);
+  if (!v.ok) { _acqTermEditorError(v.error); return null; }   // nothing is saved
+  // The reading being replaced: the value on screen, or the reading a person
+  // rejected, which is no longer the value but is still what is replaced.
+  const prior = term.value != null ? term.value
+              : (term.rejectedReading && term.rejectedReading.value != null ? term.rejectedReading.value : null);
+  const row = await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
+    newValue: v.stored, reason: reason || undefined,
     // The AI reading being replaced is recorded, not overwritten.
-    previousValue: term.value == null ? undefined : String(term.value),
+    previousValue: prior == null ? undefined : String(prior),
     sourceDocumentId: term.governingDocumentId || undefined }, term);
+  if (!row) return null;
+  _acqTermEditor = null;
   await _acqAfterAct(reviewId);
+  _acqFocusTermRow(field);
+  return row;
 }
 
 async function acqRejectTerm(familyId, field) {
@@ -34008,42 +34096,213 @@ async function acqReopenTerm(familyId, field) {
   await _acqAfterAct(reviewId);
 }
 
-// ENTER a term no document establishes (§4l). The person is told, before and
-// after typing, that the value will be theirs and that no document supports
-// it; the row written is a correction with every source column empty, so it
-// can never be read back as citing a document.
-const _ACQ_TYPE_HINT = {
-  number: 'a number', money: 'a dollar amount', percent: 'a percentage',
-  date: 'a date as YYYY-MM-DD', boolean: 'yes or no', text: 'text',
-};
-async function acqEnterTerm(familyId, field) {
+// ENTER a term no document establishes (§4l). The editor tells the person,
+// before they type, that the value will be theirs and that no document
+// supports it, and its preview says so again before Save. The row written is a
+// correction with every source column empty, so it can never be read back as
+// citing a document.
+async function acqEnterTerm(familyId, field, value, reason) {
   const reviewId = _activeAcqId;
   const AT = _AT();
+  if (_acqRefuseFrozen(reviewId)) return null;   // P5-6A: before the person is asked for a value
   const term = _acqTermFor(familyId, field);
-  if (!AT || !term || term.state !== 'missing') return;
-  if (_acqRefuseFrozen(reviewId)) return;   // P5-6A: before the person is asked for a value
-  const meta = AT.FIELD_META[field] || {};
-  const hint = meta.type === 'enum' ? 'one of: ' + (meta.values || []).join(', ')
-             : (_ACQ_TYPE_HINT[meta.type] || 'a value');
-  const typed = (typeof prompt === 'function')
-    ? prompt(`Enter “${term.label}”.\n\nNo document on file establishes this term. What you enter will be recorded as `
-             + `entered by a person, with no document behind it.\n\nEnter ${hint}:`, '')
-    : null;
-  if (typed === null || String(typed).trim() === '') return;
-  const value = AT.normalizeFieldValue(field, String(typed).trim(), false);
-  if (value === null || value === undefined) {
-    showToast('⚠️ That is not ' + hint + '.', { color: '#92400e', textColor: '#fef3c7', duration: 6000 });
+  if (!AT || !term || term.state !== 'missing') return null;
+  if (value === undefined) { acqOpenTermEditor(familyId, field, 'enter'); return null; }
+  const v = AT.validateTermInput(field, value);
+  if (!v.ok) { _acqTermEditorError(v.error); return null; }   // nothing is saved
+  const row = await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
+    newValue: v.stored, entered: true, reason: reason || undefined }, term);
+  if (!row) return null;
+  _acqTermEditor = null;
+  await _acqAfterAct(reviewId);
+  _acqFocusTermRow(field);
+  return row;
+}
+
+// KEEP an entered value a document now reads differently. The same entered
+// value, recorded again with the reading it is kept over as its previous
+// value: the warning clears for that reading, and comes back if a later
+// reading differs again. With no reason argument it opens the editor (for the
+// optional reason); the editor's Save records it.
+async function acqKeepEnteredTerm(familyId, field, reason) {
+  const reviewId = _activeAcqId;
+  const AT = _AT();
+  if (_acqRefuseFrozen(reviewId)) return null;
+  const term = _acqTermFor(familyId, field);
+  if (!AT || !term || !term.enteredConflict) return null;
+  if (reason === undefined) { acqOpenTermEditor(familyId, field, 'keep'); return null; }
+  const row = await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
+    newValue: AT.storedForm(term.value), entered: true, keep: true, reason: reason || undefined }, term);
+  if (!row) return null;
+  _acqTermEditor = null;
+  await _acqAfterAct(reviewId);
+  _acqFocusTermRow(field);
+  return row;
+}
+
+// ── The inline editor (Step C) ───────────────────────────────────────────────
+// One term at a time, in that term's row: a control for the term's type, an
+// optional reason, a preview of exactly what will be recorded, and Save —
+// enabled only for a value the type can hold. Its draft survives a redraw.
+let _acqTermEditor = null;   // { reviewId, familyId, field, mode: 'correct'|'enter'|'keep', draft, reason }
+
+function acqOpenTermEditor(familyId, field, mode) {
+  if (_acqRefuseFrozen(_activeAcqId)) return;
+  const term = _acqTermFor(familyId, field);
+  if (!term) return;
+  const start = mode === 'correct'
+    ? (term.value != null ? term.value : (term.rejectedReading ? term.rejectedReading.value : null)) : null;
+  _acqTermEditor = { reviewId: _activeAcqId, familyId, field, mode,
+    draft: start == null ? '' : (typeof start === 'boolean' ? (start ? 'yes' : 'no') : String(start)), reason: '' };
+  _renderAcqTerms();
+  const f = document.querySelector(`#acqTermsList .acq-term-editor[data-field="${CSS.escape(field)}"]`);
+  if (!f) return;
+  _acqTermEditorUpdate(f);
+  const first = f.querySelector('.acq-te-input') || f.querySelector('.acq-te-reason');
+  if (f.scrollIntoView) f.scrollIntoView({ block: 'nearest' });
+  if (first && first.focus) first.focus({ preventScroll: true });
+}
+
+function acqCancelTermEditor() {
+  const e = _acqTermEditor;
+  _acqTermEditor = null;
+  _renderAcqTerms();
+  if (!e) return;
+  // Back to the control that opened it.
+  const cls = e.mode === 'enter' ? '.acq-term-enter' : e.mode === 'keep' ? '.acq-term-keep' : '.acq-term-correct';
+  const b = document.querySelector(`#acqTermsList .acq-term-row[data-field="${CSS.escape(e.field)}"] ${cls}`);
+  if (b && b.focus) b.focus();
+}
+
+// After a save: the term's row, in view, its first control focused.
+function _acqFocusTermRow(field) {
+  const r = field ? document.querySelector(`#acqTermsList .acq-term-row[data-field="${CSS.escape(field)}"]`) : null;
+  if (!r) return;
+  if (r.scrollIntoView) r.scrollIntoView({ block: 'nearest' });
+  const b = r.querySelector('button:not([disabled])');
+  if (b && b.focus) b.focus({ preventScroll: true });
+}
+
+function _acqTermEditorError(msg) {
+  const f = document.querySelector('#acqTermsList .acq-term-editor');
+  const e = f && f.querySelector('.acq-te-error');
+  if (e) { e.textContent = msg; return; }
+  showToast('⚠️ ' + msg, { color: '#92400e', textColor: '#fef3c7', duration: 7000 });
+}
+
+// The editor's control for a term's type: a date picker, an amount with its
+// unit, Yes / No, the allowed values, or text.
+function _acqTermInputHtml(field, meta, draft) {
+  const id = 'acqTe-' + field;
+  const v = esc(draft || '');
+  if (meta.type === 'date') return `<input id="${esc(id)}" class="acq-te-input" type="date" value="${v}">`;
+  if (meta.type === 'boolean') return `<select id="${esc(id)}" class="acq-te-input"><option value="">Choose…</option>`
+    + `<option value="yes"${draft === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${draft === 'no' ? ' selected' : ''}>No</option></select>`;
+  if (meta.type === 'enum') return `<select id="${esc(id)}" class="acq-te-input"><option value="">Choose…</option>`
+    + (meta.values || []).map(x => `<option value="${esc(x)}"${x === draft ? ' selected' : ''}>${esc(x)}</option>`).join('') + '</select>';
+  if (meta.type === 'text') return `<textarea id="${esc(id)}" class="acq-te-input" rows="2" maxlength="1000">${v}</textarea>`;
+  const pre = meta.type === 'money' ? '<span class="acq-te-unit">$</span>' : '';
+  const post = meta.type === 'percent' ? '<span class="acq-te-unit">%</span>' : '';
+  return `<span class="acq-te-affix">${pre}<input id="${esc(id)}" class="acq-te-input" type="text" inputmode="decimal" autocomplete="off" value="${v}">${post}</span>`;
+}
+
+function _acqTermEditorHtml(familyId, field, term, mode) {
+  const AT = _AT();
+  const meta = (AT && AT.FIELD_META[field]) || {};
+  const e = _acqTermEditor || {};
+  const title = mode === 'enter' ? 'Enter ' + term.label : mode === 'keep' ? 'Keep your entered value' : 'Correct ' + term.label;
+  const note = mode === 'enter'
+    ? 'No document on file establishes this term. What you enter is recorded as entered by a person, with no document behind it.'
+    : mode === 'keep'
+    ? `Your value ${_acqTermValue(term) || ''} stays. What the document reads (${_acqTermValue({ value: term.documentReading && term.documentReading.value, type: term.type }) || 'no value'}) is kept beside it as evidence.`
+    : 'The document’s reading is kept as the replaced reading; your value becomes the term’s value.';
+  const control = mode === 'keep' ? '' : `
+      <label class="acq-te-label" for="${esc('acqTe-' + field)}">${esc(mode === 'enter' ? 'Value' : 'Corrected value')}</label>
+      ${_acqTermInputHtml(field, meta, e.draft)}
+      <div class="acq-te-hint">Enter ${esc(AT ? AT.inputHint(field) : 'a value')}.</div>`;
+  return `<form class="acq-term-editor" data-family="${esc(familyId)}" data-field="${esc(field)}" data-mode="${esc(mode)}" novalidate
+      aria-label="${esc(title)}">
+      <div class="acq-te-title">${esc(title)}</div>
+      <div class="acq-te-note">${esc(note)}</div>${control}
+      <label class="acq-te-label" for="${esc('acqTeR-' + field)}">Reason <span class="acq-te-opt">(optional)</span></label>
+      <textarea id="${esc('acqTeR-' + field)}" class="acq-te-reason" rows="2" maxlength="500">${esc(e.reason || '')}</textarea>
+      <div class="acq-te-preview" aria-live="polite"></div>
+      <div class="acq-te-error" role="alert"></div>
+      <div class="acq-te-actions">
+        <button type="submit" class="acq-btn acq-btn-primary acq-te-save">Save</button>
+        <button type="button" class="acq-btn acq-btn-nav acq-te-cancel">Cancel</button>
+      </div>
+    </form>`;
+}
+
+// Checked as the person types: the preview names exactly what will be
+// recorded, and Save is enabled only for a value the term's type can hold.
+function _acqTermEditorUpdate(f) {
+  const AT = _AT();
+  const mode = f.getAttribute('data-mode'), field = f.getAttribute('data-field'), familyId = f.getAttribute('data-family');
+  const input = f.querySelector('.acq-te-input'), reasonEl = f.querySelector('.acq-te-reason');
+  const save = f.querySelector('.acq-te-save'), preview = f.querySelector('.acq-te-preview'), err = f.querySelector('.acq-te-error');
+  if (_acqTermEditor && _acqTermEditor.field === field) {
+    if (input) _acqTermEditor.draft = input.value;
+    if (reasonEl) _acqTermEditor.reason = reasonEl.value;
+  }
+  const term = _acqTermFor(familyId, field);
+  if (mode === 'keep') {
+    save.disabled = false; err.textContent = '';
+    preview.textContent = 'Will be recorded as: ' + (_acqTermValue(term || {}) || '') + ' · Verified · Entered by a person · kept over the document’s reading';
     return;
   }
-  const shown = _acqTermValue({ value, type: meta.type });
-  const sure = (typeof confirm === 'function')
-    ? confirm(`Record “${term.label}” as ${shown}?\n\nVerified · Entered by a person · No document on file supports this value.`)
-    : false;
-  if (!sure) return;
-  const row = await _acqSaveDecision({ familyId, fieldKey: field, action: 'correct',
-    newValue: String(typed).trim(), entered: true }, term);
-  if (!row) return;
-  await _acqAfterAct(reviewId);
+  const v = AT ? AT.validateTermInput(field, input ? input.value : '') : { ok: false, error: 'Unavailable.' };
+  save.disabled = !v.ok;
+  err.textContent = v.ok || v.empty ? '' : v.error;
+  preview.textContent = v.ok
+    ? 'Will be recorded as: ' + _acqTermValue({ value: v.value, type: term ? term.type : null })
+      + (mode === 'enter' ? ' · Verified · Entered by a person · No document on file supports this value' : ' · Corrected by a person')
+    : '';
+}
+
+async function acqSubmitTermEditor(f) {
+  const mode = f.getAttribute('data-mode'), field = f.getAttribute('data-field'), familyId = f.getAttribute('data-family');
+  const input = f.querySelector('.acq-te-input'), reasonEl = f.querySelector('.acq-te-reason');
+  const reason = reasonEl ? reasonEl.value.trim() : '';
+  const save = f.querySelector('.acq-te-save');
+  if (save) save.disabled = true;   // one save per press
+  let row = null;
+  if (mode === 'keep') row = await acqKeepEnteredTerm(familyId, field, reason);
+  else if (mode === 'enter') row = await acqEnterTerm(familyId, field, input ? input.value : '', reason);
+  else row = await acqCorrectTerm(familyId, field, input ? input.value : '', reason);
+  // A refusal leaves the editor open with its reason; Save is offered again
+  // only for a value the type can hold.
+  if (!row) { const g = document.querySelector('#acqTermsList .acq-term-editor'); if (g) _acqTermEditorUpdate(g); }
+  return row;
+}
+
+// Every decision on the term, oldest first: what was done, to what value,
+// what it replaced, the person's reason, and which one stands. Read from the
+// append-only decisions; nothing here writes.
+function _acqTermHistoryHtml(familyId, field, term) {
+  const AT = _AT(), LM = _LM();
+  if (!AT || typeof AT.decisionHistory !== 'function') return '';
+  const decs = _acqDecisionRows(_activeAcqId).filter(d => d && d.family_id === familyId);
+  const h = AT.decisionHistory(decs, field);
+  if (!h.length) return '';
+  const fmt = v => _acqTermValue({ value: v, type: term.type });
+  const when = at => at ? (LM && LM.usDate ? LM.usDate(String(at).slice(0, 10)) : String(at).slice(0, 10)) : '';
+  const items = h.map(x => {
+    const what = x.kind === 'corrected' ? 'Corrected to ' + (fmt(x.newValue) || x.rawNew || '—')
+               : x.kind === 'entered'   ? 'Entered ' + (fmt(x.newValue) || x.rawNew || '—')
+               : x.kind === 'kept'      ? 'Kept ' + (fmt(x.newValue) || x.rawNew || '—')
+               : x.label;
+    const prev = x.kind === 'kept' ? 'over the document’s ' + (fmt(x.previousValue) || x.rawPrevious)
+               : x.previousValue != null || x.rawPrevious != null
+               ? (x.kind === 'rejected' ? 'the reading ' : 'replaced ') + (fmt(x.previousValue) || x.rawPrevious) : '';
+    return `<li class="acq-th-item" data-kind="${esc(x.kind)}"${x.standing ? ' data-standing="true"' : ''}>`
+      + `<span class="acq-th-when">${esc(when(x.decidedAt))}</span> <span class="acq-th-what">${esc(what)}</span>`
+      + (prev ? ` <span class="acq-th-prev">· ${esc(prev)}</span>` : '')
+      + (x.reason ? ` <span class="acq-th-reason">· “${esc(x.reason)}”</span>` : '')
+      + (x.standing ? ' <span class="acq-th-standing">· stands</span>' : '') + '</li>';
+  }).join('');
+  return `<details class="acq-term-history"><summary>History (${h.length})</summary><ol class="acq-th-list">${items}</ol></details>`;
 }
 
 // ── Where a corrected document belongs (P4-3 remediation, Issue B) ───────────

@@ -427,7 +427,7 @@ t('every value the matrix and the header print into HTML is escaped', () => {
   for (const name of ['_acqLmCellHtml', '_acqLhValueHtml', '_acqLeaseMatrixHtml', '_acqLeaseholdHeadHtml', '_acqUnfiledListHtml']) {
     const B = fnBody(S, name);
     const raw = (B.match(/\$\{(?!esc\()[^}]*\}/g) || [])
-      .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|_acqMatrixToolbarHtml\(\)|title|mark|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|x\.key \?|fams\.map|done\.length|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
+      .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|_acqMatrixToolbarHtml\(\)|title|mark|warn\}|flagAttr\}|rows|n\b|n ===|_acqLmCellHtml|attn|heading \?|_acqUnfiledListHtml|m\.unfiled\.length|e\.structure\.parts\.length|m\.unfiled\.map|e\.attention\.map|_ACQ_LH_OVERVIEW\.map|_acqLhValueHtml|heading\s|resolved \?|e\.unverified\.length\s|dueText \?|due\.length\s|due\.map|g\.terms\.map|x\.key \?|fams\.map|done\.length|groups\.map|t\.groups\.map|sections\.map|\(t\.counts\.contested \|\| _acqLhOtherOpen\[familyId\]\) \? ' open' : ''|g\.rows\.map|docs\.length|opener|overview|terms|documents|attn)/.test(s));
     deq(raw, [], name + ' interpolates without esc()');
   }
 });

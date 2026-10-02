@@ -206,15 +206,16 @@ const MUTANTS = [
   { id: 'D04', file: A, why: 'a correction leaves a derived figure flagged derived',
     from: "      term.support = 'stated';\n      term.derived = false;",
     to:   "      term.support = 'stated';" },
+  // Step C: the reading leaves the value on purpose; it must survive as rejectedReading.
   { id: 'D05', file: A, why: 'a rejection deletes what the document said',
-    from: "      term.state = 'unclear';\n      term.note = 'A person rejected this reading.",
-    to:   "      term.state = 'unclear';\n      term.value = null;\n      term.note = 'A person rejected this reading." },
+    from: "      term.rejectedReading = _reading(term);",
+    to:   "      term.rejectedReading = null;" },
   { id: 'D06', file: DS, why: 'a decision on one field settles every field',
     from: '      return r && r.field_key === field && DECISION_ACTIONS.indexOf(r.action) >= 0;',
     to:   '      return r && DECISION_ACTIONS.indexOf(r.action) >= 0;' },
   { id: 'D07', file: A, why: 'a decision erases the contradiction it was made against',
-    from: "    if (d.action === 'correct') {\n      var quote = _str(d.source_quote, QUOTE_MAX);",
-    to:   "    if (d.action === 'correct') {\n      term.contradictions = [];\n      var quote = _str(d.source_quote, QUOTE_MAX);" },
+    from: "      term.replacedReading = _reading(term);\n      term.value = corrected;",
+    to:   "      term.replacedReading = _reading(term);\n      term.contradictions = [];\n      term.value = corrected;" },
 
   // ── lineage ──────────────────────────────────────────────────────────────
   { id: 'P01', file: A, why: "the reasoner's answer is never cross-checked against the documents",

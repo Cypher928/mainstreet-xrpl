@@ -2442,6 +2442,63 @@ Tested by `test-e2e-acquisition-controls.js` at 1366, 768 and 375 wide;
 - The buyer's report is titled **Acquisition Report** — no "v2" — on the
   button, the report's header and footer, and its window title.
 
+### Manual entry and how a decision resolves a term (Step C)
+
+No migration: every act is still one INSERT into
+`acquisition_term_decisions` (026, append-only; 036 refuses it on a
+converted review), and no document's evidence is written.
+
+- **The inline editor.** Correct, Enter and Keep open an editor in the term's
+  row instead of a browser prompt: a control for the term's type (a date
+  picker, an amount with $ or %, Yes / No, the allowed values, text), a hint,
+  an optional **Reason**, and a preview of exactly what will be recorded.
+  Save is enabled only for a value the type can hold; Escape closes it and
+  focus returns to the control that opened it. A converted review draws no
+  editor and every act refuses before asking.
+- **Invalid input is refused before it is saved** —
+  `AcquisitionTerms.validateTermInput` in the editor, and
+  `buildDecisionPayload` for every correction and entry (it used to check
+  entries only). The value is stored in the field's own form ("1300000",
+  "2031-12-31"). A stored decision the type cannot hold (older rows) is not
+  applied: the document's reading stands and the term says why — never
+  "verified" with no value.
+- **A rejected reading is kept and used nowhere.** The reading — value,
+  clause, page, document — is kept as `rejectedReading` and labelled
+  **Rejected by a person**; the term has no value, so the Summary, the
+  Acquisition Matrix, the record, the rent roll and its CSV, the analysis,
+  conversion, both matrix CSVs and the Acquisition Report all read it as
+  having none. Reopen or Confirm takes the reading back; Correct records it
+  as what it replaced. (The Pilot holds two standing rejections, read-only
+  checked: one on a draft review with no stored analysis, where only what
+  is shown changes; and one on Maple Plaza's audit rights — a converted
+  review, whose stored analysis stands as it was at acquisition, and audit
+  rights are not in the freshness fingerprint, so it is not flagged.)
+- **An entered value is never silently overwritten.** When a document later
+  speaks to an entered term, the entered value stands and stays marked
+  entered; what the document now reads is kept beside it
+  (`documentReading`), and if it differs the term is flagged — ⚠ in the
+  matrices, "entered value to review" in the row's status, a line in Needs
+  attention, a warning in the record — until a person decides: **Reopen**
+  hands the term to the document's reading; **Keep my value** records the
+  same entered value with the reading it was kept over as its previous
+  value, which clears the warning for that reading only. An entered decision
+  is a correction with no source document whose note begins with the
+  entered note (on the Pilot, all five sourceless corrections; the ten
+  others cite a document).
+- **A correction names what it replaced.** The corrected value carries only
+  a clause the correction itself cites; the document's reading is kept as
+  `replacedReading` and shown as **Replaced reading** with its value, file,
+  page and clause — never under the new value as its support.
+- **History and reason.** Each term lists every decision on it, oldest
+  first — what was done, the value, what it replaced, the reason, which one
+  stands (`AcquisitionTerms.decisionHistory`). The sources CSV gains
+  **Previous value**, **Origin** and **Reason** columns.
+
+Tested by `test-acquisition-term-safeguards.js` (the four gaps written as
+failing tests first: 22 of 27 failed on the code before the change) and
+`test-e2e-acquisition-term-entry.js`; `tools/acquisition-term-entry-mutation.js`
+undoes each rule.
+
 ### Verified
 
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);

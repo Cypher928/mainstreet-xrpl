@@ -238,7 +238,7 @@ t('every value the thirteen-column view prints into HTML is escaped', () => {
   for (const name of ['_acqLeaseMatrix13Html', '_acqM13DetailHtml', '_acqM13CellHtml', '_acqMatrixViewSwitchHtml', '_acqMatrixToolbarHtml']) {
     const B = fnBody(S, name);
     const raw = (B.match(/\$\{(?!esc\()[^}]*\}/g) || [])
-      .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|_acqMatrixToolbarHtml\(\)|_acqLmCellHtml\(c\)|_acqM13CellHtml\(c\)|_acqUnfiledListHtml|sub\}|none\}|head\}|body\}|n\}|n ===|m\.unfiled\}|dueText \?|open \?|i === 0 \?|l\.cells\.slice|m\.leaseholds\.map|m\.columns\.map|gov\}|decided\}|readings\}|priorHtml\}|s\.note &&|s\.quote \?|s\.docStatus|s\.readings\.map|prior\.length\}|prior\.length\s|prior\.map|p\.quote \?|r\.quote \?|_acqMatrixView === v|v\}|label\}|tab\(|c\.state === 'contested' \? 'Ranked first|c\.state === 'entered' \? 'None — entered|s\.decision\.decidedAt \? ' on ' \+ esc\()/.test(s));
+      .filter(s => !/^\$\{(_acqMatrixViewSwitchHtml\(\)|_acqMatrixToolbarHtml\(\)|_acqLmCellHtml\(c\)|_acqM13CellHtml\(c\)|_acqUnfiledListHtml|sub\}|none\}|head\}|body\}|n\}|n ===|m\.unfiled\}|dueText \?|open \?|i === 0 \?|l\.cells\.slice|m\.leaseholds\.map|m\.columns\.map|gov\}|decided\}|setAsideHtml\}|readings\}|priorHtml\}|s\.note &&|s\.quote \?|s\.docStatus|s\.readings\.map|prior\.length\}|prior\.length\s|prior\.map|p\.quote \?|r\.quote \?|_acqMatrixView === v|v\}|label\}|tab\(|c\.state === 'contested' \? 'Ranked first|c\.state === 'entered' \? 'None — entered|s\.decision\.decidedAt \? ' on ' \+ esc\()/.test(s));
     deq(raw, [], name + ' interpolates without esc()');
   }
 });

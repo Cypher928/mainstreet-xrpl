@@ -248,7 +248,7 @@ const NEW_TERMS = { fields: {
   const csv2 = fs.readFileSync(await dl2.path(), 'utf8').replace(/^\uFEFF/, '');
   const lines2 = csv2.trim().split(/\r\n/);
   check('the sources CSV: one row per leasehold × column, with the governing document and clause',
-        lines2[0] === 'Tenant,Column,Value,State,Governing document,Document type,Document date,Page,Confidence,Clause,Earlier readings,Decision'
+        lines2[0] === 'Tenant,Column,Value,State,Governing document,Document type,Document date,Page,Confidence,Clause,Earlier readings,Decision,Previous value,Origin,Reason'
         && lines2.length === 1 + 4 * 13 && /Maple_Plaza_Test_Lease_Amendment\.pdf/.test(csv2), String(lines2.length));
 
   // ── 6 · Read the new terms: merge-only ───────────────────────────────────

@@ -300,6 +300,7 @@ const DB = `
              label: q('.acq-term-label'), chip: q('.acq-term-state'), value: q('.acq-term-value'),
              src: q('.acq-term-src'), quote: q('.acq-term-quote'), decided: q('.acq-term-decided'),
              conflict: q('.acq-term-conflict'), missing: q('.acq-term-missing'),
+             replaced: q('.acq-term-replaced'), rejected: q('.acq-term-rejected'), directSrc: q(':scope > .acq-term-main > .acq-term-src'),
              buttons: [].map.call(r.querySelectorAll('.acq-term-actions button'), b => b.textContent.trim() + (b.disabled ? '(off)' : '')) };
   }, field);
 
@@ -546,9 +547,12 @@ const DB = `
   // ── 4 · the evidence, intact ─────────────────────────────────────────────
   const sq = await termRow('leased_sqft');
   check('Verified — 67,000', sq && sq.state === 'verified' && /verified/i.test(sq.chip) && sq.value === '67,000', sq && `${sq.chip} / ${sq.value}`);
-  check('the document behind it, and what it said: 65,000 — with its confidence',
-        sq && /Maple_Plaza_Test_Lease_Amendment\.pdf/.test(sq.src) && /confidence 0\.99/.test(sq.src) && /65,000 rentable square feet/.test(sq.quote),
-        sq && `${sq.src} | ${sq.quote.slice(0, 60)}`);
+  // Step C: the document's 65,000 is the reading the correction REPLACED —
+  // shown as such, never directly under 67,000 as its support.
+  check('the document behind it, and what it said: 65,000 — with its confidence, as the replaced reading',
+        sq && /^Replaced reading 65,000/.test(sq.replaced) && /Maple_Plaza_Test_Lease_Amendment\.pdf/.test(sq.replaced) && /confidence 0\.99/.test(sq.replaced)
+        && /65,000 rentable square feet/.test(sq.replaced) && !sq.directSrc,
+        sq && `${sq.replaced.slice(0, 140)} | direct: ${sq.directSrc}`);
   check('the person\'s correction is on the row, and it can be reopened',
         sq && /Corrected by a person/.test(sq.decided) && sq.buttons.includes('Reopen') && !sq.origin, sq && `${sq.decided} | ${sq.buttons.join(',')}`);
   const st = await termRow('start_date');
@@ -559,7 +563,7 @@ const DB = `
   check('Security deposit (entered, then reopened): missing, and it offers Enter',
         dep && dep.state === 'missing' && /No document on file establishes this/.test(dep.missing) && dep.buttons.join(',') === 'Enter', dep && dep.buttons.join(','));
   const au = await termRow('audit_rights');
-  check('Audit rights: Unclear, with the person\'s rejection on the row', au && au.state === 'unclear' && /rejected/.test(au.decided), au && au.decided);
+  check('Audit rights: Unclear, with the person\'s rejection on the row', au && au.state === 'unclear' && /Rejected by a person/.test(au.rejected), au && au.rejected);
   const bc = await termRow('base_rent');
   check('Base rent: Verified — $1,251,250, from the amendment, p.1', bc && bc.state === 'verified' && bc.value === '$1,251,250' && /p\.1/.test(bc.src), bc && bc.src);
   check('Base rent, chosen by a person after the documents disagreed: Verified — Confirmed by a person, and never "Nothing has been chosen"',

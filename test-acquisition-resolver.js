@@ -730,8 +730,11 @@ t('a correction of a DERIVED figure clears the derived flag — a person vouched
 t('a rejection keeps what the document said and stops presenting it as an answer', () => {
   const r = resolve([CONFIRMABLE], [decision({ action: 'reject' })]);
   eq(r.terms.cap.state, 'unclear');
-  eq(r.terms.cap.value, 4, 'a rejection deleted the document’s reading');
-  ok(/rejected this reading/.test(r.terms.cap.note), r.terms.cap.note);
+  // Step C: the reading is kept whole as the rejected reading, and is no
+  // longer the value — nothing downstream can use it.
+  ok(r.terms.cap.rejectedReading && r.terms.cap.rejectedReading.value === 4, 'a rejection deleted the document’s reading');
+  eq(r.terms.cap.value, null, 'a rejected reading is still presented as the answer');
+  ok(/Rejected by a person/.test(r.terms.cap.note), r.terms.cap.note);
 });
 
 t('the LATEST decision is the one in force', () => {
