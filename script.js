@@ -32507,9 +32507,90 @@ function _acqConversionBlock(review) {
   if (!_acqLeaseholdsOnly(_acqCanonicalRows(id)).length) {
     return 'MainStreet’s Record has no leaseholds, so there is no tenant to create.';
   }
+  const docless = _acqUnacknowledgedDocumentless(id);
+  if (docless.length) {
+    return docless.length + (docless.length === 1 ? ' leasehold has' : ' leaseholds have') + ' no lease document on file: '
+      + docless.map(l => l.label).join(', ') + '. Each would become a tenant with no lease terms established by any document. '
+      + 'Acknowledge each one below to continue — an acknowledgement records that the lease is missing; it does not verify any term.';
+  }
   const stale = _acqAnalysisStale(review);
   if (stale) return stale + ' Refresh the analysis from MainStreet’s Record before acquiring.';
   return '';
+}
+
+// ── Leaseholds with no lease on file (AcquisitionLeasehold.documentlessLeaseholds)
+//
+// A leasehold no live document is filed into has no lease term established by
+// a document. Acquiring the property would make it a permanent tenant with
+// none, so before conversion each one is named, and a person acknowledges it.
+// The acknowledgement is kept on the review (data.leaseholdAcknowledgements,
+// keyed by leasehold, beside extractionResolutions and documentDispositions)
+// and in its activity history. It records that the lease is missing; it never
+// changes a term's state and never verifies one.
+function _acqLeaseholdAcknowledgements(reviewId) {
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const a = review && review.data && review.data.leaseholdAcknowledgements;
+  return (a && typeof a === 'object' && !Array.isArray(a)) ? a : {};
+}
+function _acqDocumentlessLeaseholds(reviewId) {
+  const AL = _AL();
+  return AL ? AL.documentlessLeaseholds(_acqFamilyRows(reviewId), _acqDocRows(reviewId), _acqDocDispositions(reviewId)) : [];
+}
+function _acqUnacknowledgedDocumentless(reviewId) {
+  const AL = _AL();
+  return AL ? AL.unacknowledgedDocumentless(_acqFamilyRows(reviewId), _acqDocRows(reviewId),
+    _acqLeaseholdAcknowledgements(reviewId), _acqDocDispositions(reviewId)) : [];
+}
+
+const _ACQ_NO_DOCUMENT_TEXT = 'No lease document is filed into this leasehold. None of its lease terms is established by a document.';
+const _ACQ_ACK_NOT_VERIFIED = 'Acknowledged that no lease is on file — this does not verify any lease term; its terms remain not established.';
+
+// A person acknowledges that one leasehold has no lease on file.
+async function acqAcknowledgeDocumentless(familyId) {
+  const AL = _AL();
+  const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  if (!AL || !review || !familyId) return false;
+  if (_acqRefuseFrozen(review)) return false;   // P5-6A
+  const l = _acqDocumentlessLeaseholds(reviewId).find(x => x.familyId === familyId);
+  if (!l) return false;                          // it has a document: nothing to acknowledge
+  const acks = _acqLeaseholdAcknowledgements(reviewId);
+  if (acks[familyId] && acks[familyId].condition === AL.NO_DOCUMENT_ON_FILE) return false;
+  const { data: { user } } = await db.auth.getUser();
+  const at = new Date().toISOString();
+  const next = Object.assign({}, acks);
+  next[familyId] = { condition: AL.NO_DOCUMENT_ON_FILE, label: l.label, verifiesTerms: false,
+                     by: (user && user.id) || null, at };
+  review.data = Object.assign({}, review.data || {}, { leaseholdAcknowledgements: next });
+  _acqRecord(review, { type: 'leasehold_acknowledged',
+    summary: 'Acknowledged: no lease document is on file for “' + l.label + '”. Its lease terms are not established by any document; this acknowledgement does not verify them.',
+    meta: { familyId, condition: AL.NO_DOCUMENT_ON_FILE, verifiesTerms: false } });
+  const ok = await _saveAcqReview(review);
+  if (_activeAcqId === reviewId) { _renderAcqConvertAction(review); _renderAcqDocuments(); }
+  _renderAcqSection(_acqReviews);
+  return ok;
+}
+
+// Every leasehold with no lease on file, before conversion: named, with the
+// condition, and acknowledged or not. '' when there is none.
+function _acqDocumentlessHtml(review) {
+  const list = _acqDocumentlessLeaseholds(review.id);
+  if (!list.length) return '';
+  const acks = _acqLeaseholdAcknowledgements(review.id);
+  const frozen = _acqFrozen(review);
+  return '<div class="acq-docless" data-documentless="' + list.length + '">'
+    + '<div class="acq-docless-head">No lease on file</div>'
+    + '<ul>' + list.map(l => {
+        const a = acks[l.familyId];
+        const done = a && a.condition === _AL().NO_DOCUMENT_ON_FILE;
+        return '<li class="acq-docless-item" data-family="' + esc(l.familyId) + '" data-acknowledged="' + (done ? 'true' : 'false') + '">'
+          + '<span class="acq-docless-name">' + esc(l.label) + '</span> — ' + esc(_ACQ_NO_DOCUMENT_TEXT)
+          + (done
+              ? ' <span class="acq-docless-ack">' + esc(_ACQ_ACK_NOT_VERIFIED) + '</span>'
+              : (frozen ? '' : ' <button type="button" class="acq-docless-ack-btn" data-family="' + esc(l.familyId) + '"'
+                  + ' onclick="acqAcknowledgeDocumentless(this.getAttribute(\'data-family\'))">Acknowledge — no lease on file</button>'))
+          + '</li>';
+      }).join('') + '</ul></div>';
 }
 
 // ── What the rest of MainStreet may read from an acquisition review ─────────
@@ -32562,9 +32643,34 @@ async function _acqPreloadForConsumers() {
   try { if (Array.isArray(_props) && _props.length && typeof renderActionCenter === 'function') renderActionCenter(_props, _acqReviewsForConsumers()); } catch (_) {}
 }
 
+// The acquisition's own names — the review's, and its property's — that an
+// extraction's lease property is compared with.
+function _acqAcquisitionNames(review) {
+  const names = [];
+  if (review && review.name) names.push(String(review.name));
+  const p = review && review.property_id && Array.isArray(_props) ? _props.find(x => x && x.id === review.property_id) : null;
+  if (p && p.name && names.indexOf(String(p.name)) < 0) names.push(String(p.name));
+  return names;
+}
+
+// What a person should see before matching this extraction to this leasehold
+// (AcquisitionLeasehold.matchConcerns). [] when nothing calls for a look.
+function _acqMatchConcerns(reviewId, rowKey, familyId) {
+  const AL = _AL();
+  const review = _acqReviews.find(r => r && r.id === reviewId);
+  const entry = _acqUnmatched(reviewId).find(x => x.key === rowKey);
+  const fam = _acqFamilyRows(reviewId).find(f => f && f.id === familyId);
+  if (!AL || !review || !entry || !fam) return [];
+  return AL.matchConcerns(entry.row, fam, { acquisitionNames: _acqAcquisitionNames(review) });
+}
+
 // A person resolves one unmatched extraction. `action` is one of
-// AL.RESOLUTION; `familyId` names the leasehold for a match.
-async function acqResolveExtraction(rowKey, action, familyId) {
+// AL.RESOLUTION; `familyId` names the leasehold for a match. A match the
+// names or the property argue against (matchConcerns) is written only when
+// `opts.confirmed` says the person saw the concerns, and — for a material
+// mismatch — with the person's `opts.reason`; both are kept on the
+// resolution and in the activity entry.
+async function acqResolveExtraction(rowKey, action, familyId, opts) {
   const AL = _AL();
   const reviewId = _activeAcqId;   // before any await — see "Cross-review isolation"
   const review = _acqReviews.find(r => r && r.id === reviewId);
@@ -32579,9 +32685,20 @@ async function acqResolveExtraction(rowKey, action, familyId) {
 
   const name = entry.row.tenant_name || entry.row.tenantName || null;
   let fam = null;
+  let concerns = [], reason = null;
   if (action === R.MATCHED) {
     fam = _acqFamilyRows(reviewId).find(f => f && f.id === familyId) || null;
     if (!fam) return false;
+    // The concerns are worked out here, from the record, whatever the caller
+    // passed: a concerning match is never written unconfirmed, and a material
+    // mismatch never without a reason.
+    concerns = AL.matchConcerns(entry.row, fam, { acquisitionNames: _acqAcquisitionNames(review) });
+    if (concerns.length) {
+      const o = opts || {};
+      reason = typeof o.reason === 'string' && o.reason.trim() ? o.reason.trim().slice(0, 1000) : null;
+      if (o.confirmed !== true) return false;
+      if (AL.requiresReason(concerns) && !reason) return false;
+    }
   }
   if (action === R.NEW_LEASEHOLD) {
     fam = await _acqSaveFamily(reviewId, { label: name || 'Unnamed leasehold', tenantHint: name, familyKind: 'lease' });
@@ -32597,6 +32714,12 @@ async function acqResolveExtraction(rowKey, action, familyId) {
     tenantName: name, fileName: entry.row._fileName || entry.row.fileName || null,
     by: (user && user.id) || null, at: new Date().toISOString(),
   };
+  // A match made over a concern says so, in the resolution itself: what was
+  // flagged, and the person's reason for proceeding.
+  if (concerns.length) {
+    res[rowKey].concerns = concerns.map(c => ({ kind: c.kind, level: c.level, extracted: c.extracted, selected: c.selected, text: c.text }));
+    res[rowKey].reason = reason;
+  }
   // Its document, when it has one on file, is the same source: saying the
   // extraction is not a tenant says the document is not relevant, in one act.
   let docs = null;
@@ -32613,8 +32736,12 @@ async function acqResolveExtraction(rowKey, action, familyId) {
   const what = action === R.DISMISSED ? 'marked not a tenant'
              : action === R.MATCHED   ? 'matched to ' + (fam.label || 'a leasehold')
              : 'established as a new leasehold';
-  _acqRecord(review, { type: 'extraction_resolved', summary: 'Extracted entry “' + (name || 'Unnamed') + '” ' + what,
-    meta: { rowId: rowKey, action, familyId: fam ? fam.id : null } });
+  const over = concerns.length
+    ? ' — confirmed by a person despite: ' + concerns.map(c => c.text).join(' ') + (reason ? ' Reason: ' + reason : '')
+    : '';
+  _acqRecord(review, { type: 'extraction_resolved', summary: 'Extracted entry “' + (name || 'Unnamed') + '” ' + what + over,
+    meta: Object.assign({ rowId: rowKey, action, familyId: fam ? fam.id : null },
+      concerns.length ? { concerns: res[rowKey].concerns, reason } : {}) });
   const ok = await _saveAcqReview(review);
   if (_activeAcqId === reviewId) _renderAcqDocuments();
   _renderAcqSection(_acqReviews);
@@ -33457,6 +33584,94 @@ const _ACQ_UNFILED_WHY = {
   unfiled_document: 'its document is not yet matched to a tenant',
 };
 
+// A match the names or the property argue against waits here, shown in its
+// row for a person to confirm or cancel. Nothing is written while it waits.
+let _acqPendingMatch = null;   // { reviewId, rowKey, familyId }
+// The review whose extraction list stays open across a redraw: the person is
+// in the middle of matching there (asked, or just cancelled).
+let _acqUnfiledOpenFor = null;
+
+// A person picked a leasehold for an extraction. With nothing to question the
+// match is recorded at once, as it always was; otherwise the row asks first.
+async function acqRequestMatch(rowKey, familyId) {
+  const reviewId = _activeAcqId;
+  if (!rowKey || !familyId || _acqRefuseFrozen(reviewId)) return false;
+  const concerns = _acqMatchConcerns(reviewId, rowKey, familyId);
+  if (!concerns.length) return acqResolveExtraction(rowKey, _AL().RESOLUTION.MATCHED, familyId);
+  _acqPendingMatch = { reviewId, rowKey, familyId };
+  _acqUnfiledOpenFor = reviewId;
+  _renderAcqDocuments();
+  const box = document.querySelector('.acq-um-confirm[data-row="' + CSS.escape(rowKey) + '"]');
+  const focus = box && (box.querySelector('.acq-um-reason') || box.querySelector('.acq-um-cancel'));
+  if (focus) focus.focus();
+  return 'pending';
+}
+
+// Cancel: the match is not made, and nothing is written.
+function acqCancelPendingMatch() {
+  _acqUnfiledOpenFor = _acqPendingMatch ? _acqPendingMatch.reviewId : _acqUnfiledOpenFor;
+  _acqPendingMatch = null;
+  _renderAcqDocuments();
+}
+
+// Match anyway: recorded with the concerns and — required for a material
+// mismatch — the person's reason.
+async function acqConfirmPendingMatch(reason) {
+  const p = _acqPendingMatch;
+  if (!p || p.reviewId !== _activeAcqId) return false;
+  const AL = _AL();
+  const concerns = _acqMatchConcerns(p.reviewId, p.rowKey, p.familyId);
+  const why = typeof reason === 'string' ? reason.trim() : '';
+  const box = document.querySelector('.acq-um-confirm[data-row="' + CSS.escape(p.rowKey) + '"]');
+  if (AL.requiresReason(concerns) && !why) {
+    const err = box && box.querySelector('.acq-um-confirm-error');
+    if (err) err.textContent = 'Give a reason for matching despite the mismatch. It is kept with the match.';
+    const r = box && box.querySelector('.acq-um-reason');
+    if (r) r.focus();
+    return false;
+  }
+  _acqPendingMatch = null;
+  const ok = await acqResolveExtraction(p.rowKey, AL.RESOLUTION.MATCHED, p.familyId, { confirmed: true, reason: why });
+  if (!ok) {
+    _acqPendingMatch = p;
+    _renderAcqDocuments();
+    showToast('⚠️ The match could not be recorded — nothing was changed.', { color: '#92400e', textColor: '#fef3c7', duration: 5000 });
+  }
+  return ok;
+}
+
+// The confirmation, in the extraction's row: what was extracted, what was
+// chosen, where it came from, and why it is being questioned.
+function _acqMatchConfirmHtml(reviewId, x) {
+  const AL = _AL();
+  const p = _acqPendingMatch;
+  const fam = _acqFamilyRows(reviewId).find(f => f && f.id === p.familyId) || {};
+  const review = _acqReviews.find(r => r && r.id === reviewId) || {};
+  const concerns = _acqMatchConcerns(reviewId, p.rowKey, p.familyId);
+  const need = AL.requiresReason(concerns);
+  const file = x.row._fileName || x.row.fileName || '';
+  const prop = x.row.property_name || x.row.propertyName || '';
+  const fact = (k, label, v) => '<dt>' + esc(label) + '</dt><dd data-fact="' + k + '">'
+    + (v ? esc(v) : '<span class="acq-um-none">not recorded</span>') + '</dd>';
+  return '<div class="acq-um-confirm" role="group" aria-label="Confirm this match" data-row="' + esc(p.rowKey) + '" data-family="' + esc(p.familyId) + '"'
+    + ' data-requires-reason="' + (need ? 'true' : 'false') + '">'
+    + '<div class="acq-um-confirm-head">Check this match before it is recorded</div>'
+    + '<dl class="acq-um-confirm-facts">'
+    + fact('extracted', 'Extracted tenant', x.row.tenant_name || x.row.tenantName || '')
+    + fact('selected', 'Selected leasehold', fam.label || fam.tenant_hint || '')
+    + fact('file', 'Source file', file)
+    + fact('property', 'Property named in the lease', prop)
+    + fact('acquisition', 'This acquisition', _acqAcquisitionNames(review).join(' / '))
+    + '</dl>'
+    + '<ul class="acq-um-concerns">' + concerns.map(c => '<li data-kind="' + esc(c.kind) + '" data-level="' + esc(c.level) + '">' + esc(c.text) + '</li>').join('') + '</ul>'
+    + '<label class="acq-um-reason-label">' + (need ? 'Reason for matching anyway (required)' : 'Reason (optional)')
+    + '<textarea class="acq-um-reason" rows="2" maxlength="1000"></textarea></label>'
+    + '<div class="acq-um-confirm-error" role="alert"></div>'
+    + '<div class="acq-um-confirm-actions"><button type="button" class="acq-um-cancel">Cancel</button>'
+    + ' <button type="button" class="acq-um-confirm-btn">Match anyway</button></div>'
+    + '</div>';
+}
+
 function _acqUnfiledListHtml(reviewId) {
   const AL = _AL();
   const all = _acqUnmatched(reviewId);
@@ -33474,7 +33689,8 @@ function _acqUnfiledListHtml(reviewId) {
       + (file ? ` <span class="acq-lm-unfiled-file">Source: ${esc(file)}</span>` : '')
       + (_ACQ_UNFILED_WHY[x.why] ? ` <span class="acq-lm-unfiled-why">· ${esc(_ACQ_UNFILED_WHY[x.why])}</span>` : '');
   };
-  const controls = (x) => frozen ? '' : x.why === 'no_document'
+  const pending = (x) => !frozen && _acqPendingMatch && _acqPendingMatch.reviewId === reviewId && x.key && _acqPendingMatch.rowKey === x.key;
+  const controls = (x) => frozen ? '' : pending(x) ? _acqMatchConfirmHtml(reviewId, x) : x.why === 'no_document'
     ? `<span class="acq-um-actions">
         <select class="acq-um-match" data-row="${esc(x.key || '')}" aria-label="Match to a leasehold"${x.key ? '' : ' disabled'}>
           <option value="">Match to a leasehold…</option>
@@ -33493,12 +33709,20 @@ function _acqUnfiledListHtml(reviewId) {
     const what = e.action === R.DISMISSED ? 'Not a tenant'
                : e.action === R.MATCHED   ? 'Matched to ' + ((fam && fam.label) || 'a leasehold')
                : 'New leasehold: ' + ((fam && fam.label) || 'established');
+    // A match confirmed over a concern carries it, and the reason, wherever it is shown.
+    const over = Array.isArray(e.concerns) && e.concerns.length
+      ? ` <span class="acq-um-over" data-concerns="${esc(e.concerns.length)}">⚠ matched despite: ${esc(e.concerns.map(c => c && c.text).filter(Boolean).join(' '))}`
+        + (e.reason ? ` Reason: ${esc(e.reason)}` : '') + '</span>'
+      : '';
     return `<li class="acq-um-resolved" data-row="${esc(x.key || '')}" data-action="${esc(e.action)}"><span class="acq-lm-unfiled-name">${esc(x.row.tenant_name || x.row.tenantName || 'Unnamed')}</span>`
-      + ` — <span class="acq-um-what">${esc(what)}</span>`
+      + ` — <span class="acq-um-what">${esc(what)}</span>` + over
       + (e.action !== R.NEW_LEASEHOLD && !frozen ? ` <button type="button" class="acq-um-reopen" data-row="${esc(x.key || '')}">Undo</button>` : '')
       + '</li>';
   };
-  return `<details class="acq-lm-unfiled" data-unresolved="${n}">
+  // A match awaiting confirmation keeps the list open: the question must be seen.
+  const asking = !frozen && n > 0 && (_acqUnfiledOpenFor === reviewId
+    || (_acqPendingMatch && _acqPendingMatch.reviewId === reviewId && open.some(x => x.key === _acqPendingMatch.rowKey)));
+  return `<details class="acq-lm-unfiled" data-unresolved="${n}"${asking ? ' open' : ''}>
       <summary>${n
         ? `${n} extracted ${n === 1 ? 'entry is' : 'entries are'} not matched to a tenant — as extracted from the file, not reviewed`
         : `Every extracted entry is resolved (${done.length})`}</summary>
@@ -33881,6 +34105,15 @@ function _acqBindLeaseMatrixControls(el) {
     if (t.closest && t.closest('.acq-lh-back')) { ev.preventDefault(); acqBackToLeaseMatrix(); return; }
     const item = t.closest && (t.closest('.acq-lh-attn-item') || t.closest('.acq-lh-term'));
     if (item) { ev.preventDefault(); _acqRevealTerm(item.getAttribute('data-field')); return; }
+    if (t.closest && t.closest('.acq-um-cancel')) { ev.preventDefault(); acqCancelPendingMatch(); return; }
+    const confirmBtn = t.closest && t.closest('.acq-um-confirm-btn');
+    if (confirmBtn) {
+      ev.preventDefault();
+      const box = confirmBtn.closest('.acq-um-confirm');
+      const r = box && box.querySelector('.acq-um-reason');
+      acqConfirmPendingMatch(r ? r.value : '');
+      return;
+    }
     const um = t.closest && t.closest('.acq-um-new, .acq-um-dismiss, .acq-um-reopen, .acq-um-docs');
     if (um) {
       ev.preventDefault();
@@ -33904,7 +34137,7 @@ function _acqBindLeaseMatrixControls(el) {
   el.addEventListener('change', (ev) => {
     const sel = ev.target;
     if (!sel || !sel.classList || !sel.classList.contains('acq-um-match') || !sel.value) return;
-    acqResolveExtraction(sel.getAttribute('data-row'), _AL().RESOLUTION.MATCHED, sel.value);
+    acqRequestMatch(sel.getAttribute('data-row'), sel.value);
   });
   el.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && _acqM13Open) { ev.preventDefault(); acqCloseMatrixCell(); return; }
@@ -35113,12 +35346,13 @@ function _renderAcqConvertAction(review) {
       Converted ✓ — Open Property →</span>${archivedBadge}`;
   } else if (review.status === 'complete') {
     const why = _acqConversionBlock(review);
-    el.innerHTML = why
+    const docless = _acqRecordLoaded(review.id) ? _acqDocumentlessHtml(review) : '';
+    el.innerHTML = (why
       ? `<button class="acq-convert-btn" disabled aria-describedby="acqConvertBlocked">&#x1F3E2; Acquire Property</button>
          <div class="acq-convert-blocked" id="acqConvertBlocked">${esc(why)}</div>`
       : `<button class="acq-convert-btn" onclick="_showAcqConvertModal()"
       title="Create a managed property from this acquisition review">
-      &#x1F3E2; Acquire Property</button>`;
+      &#x1F3E2; Acquire Property</button>`) + docless;
   } else {
     el.innerHTML = '';
   }
@@ -35145,6 +35379,18 @@ function _showAcqConvertModal() {
     repairEl.style.display = orphan ? 'block' : 'none';
     repairEl.textContent = orphan
       ? 'The property built from this review was deleted. Converting again rebuilds it from the same analysis — a new property is created, and the record of the previous one is kept on this review.'
+      : '';
+  }
+  // Every leasehold converting with no lease on file — each acknowledged by a
+  // person, none verified by it.
+  const doclessEl = document.getElementById('acqConvertModalDocless');
+  if (doclessEl) {
+    const docless = _acqDocumentlessLeaseholds(review.id);
+    doclessEl.style.display = docless.length ? 'block' : 'none';
+    doclessEl.textContent = docless.length
+      ? 'Converting with no lease on file for ' + docless.map(l => l.label).join(', ')
+        + '. ' + (docless.length === 1 ? 'Its' : 'Their') + ' lease terms are not established by any document; '
+        + 'the acknowledgement does not verify them.'
       : '';
   }
   document.getElementById('acqConvertModal').style.display = 'flex';
@@ -36888,6 +37134,9 @@ const _ASYNC_USER_ACTIONS = [
   'archiveActiveProperty', 'restoreProperty', 'toggleArchivedProperties',
   'runAllocation', 'handleBulkLeases', 'handleBatchInvoices', 'generateTenantStatement',
   'loadDemo', 'openReviewItem', 'markTenantReviewAcknowledged', 'openLeaseBlockerFix', 'openReviewItemFix',
+  // Acquisition Review: acknowledging that a leasehold has no lease on file
+  // writes the review; a failure must reach the person, not the console.
+  'acqAcknowledgeDocumentless',
   // The audit panel's partial-period confirmation: an async click that
   // writes an evidence row. It catches and restores its own button, but a
   // rethrow still has to reach the manager rather than dying in the console.
@@ -36900,6 +37149,7 @@ const _ACTION_LABEL = {
   addNewProperty: 'create the property', confirmDeleteProperty: 'delete the property',
   archiveActiveProperty: 'archive the property', restoreProperty: 'restore the property',
   toggleArchivedProperties: 'open the archived properties',
+  acqAcknowledgeDocumentless: 'record the missing-lease acknowledgement',
   confirmPartialBasisFromAudit: 'record that confirmation',
   handleBulkLeases: 'upload those leases', handleBatchInvoices: 'upload those invoices',
   runAllocation: 'run the reconciliation', confirmAllocation: 'run the reconciliation',

@@ -557,6 +557,15 @@ const DB = `
   }
   const d4 = await docState();
   check('Confirm leasehold settles each AI filing — nothing left in Documents for a person', d4.pending.length === 0, JSON.stringify(d4.pending));
+  // Sunrise Cafe's new leasehold has no lease on file: the gate names it, and a
+  // person acknowledges that before anything else (the safeguard added after
+  // the Pilot's Maple Plaza converted Sunrise with no lease and no warning).
+  const gDocless = await page.evaluate((m) => _acqConversionBlock(_acqReviews.find(r => r.id === m)), MAPLE);
+  check('a leasehold with no lease on file — Sunrise Cafe — is named by the gate until acknowledged',
+        /no lease document on file: Sunrise Cafe & Bakery LLC/.test(gDocless) && /does not verify any term/.test(gDocless), gDocless);
+  const sunId = await page.evaluate((m) => (__store.acquisition_document_families.find(f => f.review_id === m && /Sunrise/.test(f.label)) || {}).id, MAPLE);
+  await page.evaluate((id) => acqAcknowledgeDocumentless(id), sunId);
+  await page.waitForTimeout(600);
   const g1 = await page.evaluate((m) => _acqConversionBlock(_acqReviews.find(r => r.id === m)), MAPLE);
   check('a new leasehold makes the analysis out of date — conversion waits for a refresh', /lease terms have changed since this analysis was run\. Refresh the analysis/.test(g1), g1);
   const c4 = await consumers();

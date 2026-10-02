@@ -540,6 +540,8 @@ const SUITES = [
   { label: 'Acquisition controls — buttons, CSVs in both views (e2e)', cmd: 'node test-e2e-acquisition-controls.js' },
   { label: 'Acquisition term safeguards — entry, rejection, re-read', cmd: 'node test-acquisition-term-safeguards.js' },
   { label: 'Acquisition term entry walk — one value everywhere (e2e)', cmd: 'node test-e2e-acquisition-term-entry.js' },
+  { label: 'Acquisition matching & conversion safeguards', cmd: 'node test-acquisition-match-safeguards.js' },
+  { label: 'Acquisition matching & conversion safeguards walk (e2e)', cmd: 'node test-e2e-acquisition-match-safeguards.js' },
   // §4n (Option B) — only a canonical leasehold is a tenant: the analysis, the
   // Rent Roll, the Decision Report and conversion read leaseholds only, and an
   // unmatched extraction waits for a person. Walked with Maple Plaza.

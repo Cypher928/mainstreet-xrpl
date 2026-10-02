@@ -301,6 +301,179 @@
     return unmatchedEntries(projection, resolutions, families).filter(function (x) { return !x.resolution; }).length;
   }
 
+  // ── Matching concerns: is this extraction plausibly this leasehold? ────────
+  //
+  // A person matches an extracted entry to a leasehold by hand. Nothing used to
+  // compare the two, and "SafeShield Security, LLC" (read from a lease naming
+  // "500 Main Street") was matched to "Sunrise Cafe & Bakery LLC" on a closed
+  // acquisition. This compares what can be compared and says what it found. It
+  // never decides: a MISMATCH is a material conflict a person must explain to
+  // proceed past; UNCERTAIN is a comparison too weak to call either way, shown
+  // for a look. Harmless differences — case, punctuation, "&" for "and", legal
+  // suffixes, words every such business shares — are not differences.
+  var CONCERN = { TENANT_NAME: 'tenant_name', PROPERTY_NAME: 'property_name' };
+  var CONCERN_LEVEL = { MISMATCH: 'mismatch', UNCERTAIN: 'uncertain' };
+  var LEGAL_SUFFIX = { llc: 1, inc: 1, incorporated: 1, corp: 1, corporation: 1, co: 1, company: 1, ltd: 1,
+                       limited: 1, lp: 1, llp: 1, plc: 1, pllc: 1, pc: 1, pa: 1, dba: 1 };
+  var FILLER = { and: 1, of: 1, the: 1, a: 1, an: 1, at: 1, by: 1 };
+  // Words that describe a kind of business, not which one: sharing "cafe" is not
+  // evidence that two names are the same tenant.
+  var GENERIC_TENANT = { cafe: 1, coffee: 1, bakery: 1, restaurant: 1, grill: 1, kitchen: 1, bar: 1, pizza: 1, deli: 1,
+    shop: 1, shops: 1, store: 1, stores: 1, market: 1, markets: 1, supermarket: 1, supermarkets: 1, salon: 1, spa: 1,
+    nails: 1, studio: 1, services: 1, service: 1, group: 1, holdings: 1, enterprises: 1, partners: 1, associates: 1,
+    international: 1, retail: 1, center: 1, wellness: 1, security: 1, insurance: 1, bank: 1, pharmacy: 1,
+    fitness: 1, gym: 1, dental: 1, medical: 1, clinic: 1, health: 1 };
+  var GENERIC_PROPERTY = { plaza: 1, center: 1, centre: 1, shopping: 1, mall: 1, retail: 1, square: 1, commons: 1,
+    marketplace: 1, village: 1, crossing: 1, station: 1, property: 1, properties: 1, building: 1,
+    street: 1, st: 1, avenue: 1, ave: 1, road: 1, rd: 1, boulevard: 1, blvd: 1, drive: 1, dr: 1, lane: 1, ln: 1,
+    way: 1, suite: 1, ste: 1, highway: 1, hwy: 1, parkway: 1, pkwy: 1 };
+
+  // A name as comparable words: lower case, "&" read as "and", apostrophes and
+  // punctuation gone, spelled-out letters joined ("L.L.C." → "llc"), legal
+  // suffixes and filler dropped.
+  function _nameTokens(s) {
+    var raw = String(s == null ? '' : s).toLowerCase().replace(/&/g, ' and ').replace(/['’]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!raw) return [];
+    var parts = raw.split(/\s+/), out = [], run = '';
+    parts.forEach(function (p) {
+      if (p.length === 1 && /[a-z]/.test(p)) { run += p; return; }
+      if (run) { out.push(run); run = ''; }
+      out.push(p);
+    });
+    if (run) out.push(run);
+    return out.filter(function (t) { return !LEGAL_SUFFIX[t] && !FILLER[t]; });
+  }
+  function _distinct(tokens, generic) {
+    return tokens.filter(function (t) { return !generic[t] && !/^\d+$/.test(t); });
+  }
+  function _same(a, b) { return a.length === b.length && a.every(function (t, i) { return t === b[i]; }); }
+  function _shared(a, b) { return a.filter(function (t) { return b.indexOf(t) >= 0; }); }
+
+  /**
+   * Compare two tenant names. Returns null when they name the same tenant once
+   * harmless differences are set aside, else { level, why }.
+   */
+  function compareTenantNames(extracted, selected) {
+    var a = _nameTokens(extracted), b = _nameTokens(selected);
+    if (!a.length || !b.length) return { level: CONCERN_LEVEL.UNCERTAIN, why: 'one of the names is blank' };
+    if (_same(a, b) || a.join('') === b.join('')) return null;
+    var da = _distinct(a, GENERIC_TENANT), db = _distinct(b, GENERIC_TENANT);
+    if (!da.length || !db.length) return { level: CONCERN_LEVEL.UNCERTAIN, why: 'the names are too generic to compare' };
+    var common = _shared(da, db);
+    if (!common.length) return { level: CONCERN_LEVEL.MISMATCH, why: 'the names share no distinguishing word' };
+    // The same distinguishing words: the same tenant when one name only adds
+    // descriptive words to the other ("Sunrise Cafe" / "Sunrise Cafe & Bakery");
+    // a look when each describes a different business ("SafeShield Security" /
+    // "SafeShield Insurance").
+    if (_same(da.slice().sort(), db.slice().sort())) {
+      var aInB = a.every(function (x) { return b.indexOf(x) >= 0; });
+      var bInA = b.every(function (x) { return a.indexOf(x) >= 0; });
+      return (aInB || bInA) ? null
+        : { level: CONCERN_LEVEL.UNCERTAIN, why: 'the names share a distinguishing word but describe different businesses' };
+    }
+    return { level: CONCERN_LEVEL.UNCERTAIN, why: 'the names only partly agree' };
+  }
+
+  // The name part of a property line: what precedes the first comma.
+  function _propertyName(s) { return String(s == null ? '' : s).split(',')[0]; }
+
+  /**
+   * Compare the property an extraction's lease names with the acquisition's
+   * own names (the review's name, its property's name). Returns null when they
+   * agree or there is nothing to compare, else { level, why }. A lease that
+   * names only a street address cannot be told apart from a property recorded
+   * by name: that is UNCERTAIN, never proof of a mismatch.
+   */
+  function compareProperty(sourceProperty, acquisitionNames) {
+    var src = String(sourceProperty == null ? '' : sourceProperty).trim();
+    var names = _arr(acquisitionNames).map(function (n) { return String(n).trim(); }).filter(Boolean);
+    if (!src || !names.length) return null;
+    var srcName = _propertyName(src);
+    var st = _nameTokens(srcName), sd = _distinct(st, GENERIC_PROPERTY);
+    var addressOnly = /^\s*\d+[a-z]?\b/i.test(srcName);
+    var best = null;
+    for (var i = 0; i < names.length; i++) {
+      var nt = _nameTokens(_propertyName(names[i])), nd = _distinct(nt, GENERIC_PROPERTY);
+      if (_same(st, nt) || (sd.length && nd.length && _shared(sd, nd).length)) return null;
+      var nameHasNumber = /\d/.test(names[i]);
+      var r = (addressOnly && !nameHasNumber)
+        ? { level: CONCERN_LEVEL.UNCERTAIN, why: 'the lease names a street address, and the acquisition records no address to compare it with' }
+        : (!sd.length || !nd.length)
+          ? { level: CONCERN_LEVEL.UNCERTAIN, why: 'the property names are too generic to compare' }
+          : { level: CONCERN_LEVEL.MISMATCH, why: 'the lease names a different property' };
+      if (!best || (best.level === CONCERN_LEVEL.MISMATCH && r.level === CONCERN_LEVEL.UNCERTAIN)) best = r;
+    }
+    return best;
+  }
+
+  /**
+   * What a person should know before matching `row` (an unmatched extraction)
+   * to `family` (a leasehold). `opts.acquisitionNames` are the acquisition's
+   * own names. Returns [{ kind, level, extracted, selected, text }] — [] when
+   * nothing calls for a look.
+   */
+  function matchConcerns(row, family, opts) {
+    var r = row || {}, f = family || {}, o = opts || {};
+    var out = [];
+    var extracted = r.tenant_name || r.tenantName || '';
+    var selected  = f.label || f.tenant_hint || '';
+    var t = compareTenantNames(extracted, selected);
+    if (t) out.push({ kind: CONCERN.TENANT_NAME, level: t.level, extracted: extracted || null, selected: selected || null,
+      text: (t.level === CONCERN_LEVEL.MISMATCH ? 'Tenant names do not match' : 'Tenant names may not match')
+        + ': the extracted entry is “' + (extracted || 'unnamed') + '” and the leasehold is “' + (selected || 'unnamed') + '” — ' + t.why + '.' });
+    var source = r.property_name || r.propertyName || '';
+    var names = _arr(o.acquisitionNames);
+    var p = compareProperty(source, names);
+    if (p) out.push({ kind: CONCERN.PROPERTY_NAME, level: p.level, extracted: source || null, selected: names.join(' / ') || null,
+      text: (p.level === CONCERN_LEVEL.MISMATCH ? 'Property does not match' : 'Property may not match')
+        + ': the lease names “' + source + '” and this acquisition is “' + names.join(' / ') + '” — ' + p.why + '.' });
+    return out;
+  }
+
+  /** A match with a material conflict can proceed only with a person's reason. */
+  function requiresReason(concerns) {
+    return _arr(concerns).some(function (c) { return c.level === CONCERN_LEVEL.MISMATCH; });
+  }
+
+  // ── Leaseholds with no lease on file ──────────────────────────────────────
+  //
+  // A leasehold a person established from an extraction can have no document
+  // at all (Sunrise Cafe & Bakery LLC on Maple Plaza). Every one of its terms
+  // is then "not established", and acquiring the property makes it a permanent
+  // tenant with none. Before conversion that is said, leasehold by leasehold,
+  // and a person acknowledges it. An acknowledgement records that the lease is
+  // missing; it never verifies a term — the terms stay not established.
+  var NO_DOCUMENT_ON_FILE = 'no_document_on_file';
+
+  /**
+   * The leaseholds no live document is filed into. A document counts when it
+   * is filed into the leasehold, has not been replaced by a newer upload, and
+   * has not been set aside as not relevant or a duplicate.
+   * Returns [{ familyId, label }] in the families' order.
+   */
+  function documentlessLeaseholds(families, documents, dispositions) {
+    var disp = (dispositions && typeof dispositions === 'object') ? dispositions : {};
+    var live = {};
+    _arr(documents).forEach(function (d) {
+      if (!d.family_id || d.superseded_by_document_id) return;
+      var x = disp[d.id];
+      if (x && (x.action === 'not_relevant' || x.action === 'duplicate')) return;
+      live[d.family_id] = true;
+    });
+    return _arr(families).filter(function (f) { return f.id && !live[f.id]; })
+      .map(function (f) { return { familyId: f.id, label: f.label || f.tenant_hint || 'Unnamed leasehold' }; });
+  }
+
+  /** Those of them no person has acknowledged. Conversion waits for []. */
+  function unacknowledgedDocumentless(families, documents, acknowledgements, dispositions) {
+    var acks = (acknowledgements && typeof acknowledgements === 'object') ? acknowledgements : {};
+    return documentlessLeaseholds(families, documents, dispositions).filter(function (l) {
+      var a = acks[l.familyId];
+      return !(a && typeof a === 'object' && a.condition === NO_DOCUMENT_ON_FILE);
+    });
+  }
+
   var api = {
     SOURCE: SOURCE,
     UNFILED_NOTE: UNFILED_NOTE,
@@ -312,6 +485,15 @@
     attachStates: attachStates,
     cellState: cellState,
     RESOLUTION: RESOLUTION,
+    CONCERN: CONCERN,
+    CONCERN_LEVEL: CONCERN_LEVEL,
+    compareTenantNames: compareTenantNames,
+    compareProperty: compareProperty,
+    matchConcerns: matchConcerns,
+    requiresReason: requiresReason,
+    NO_DOCUMENT_ON_FILE: NO_DOCUMENT_ON_FILE,
+    documentlessLeaseholds: documentlessLeaseholds,
+    unacknowledgedDocumentless: unacknowledgedDocumentless,
     analysisRows: analysisRows,
     unmatchedEntries: unmatchedEntries,
     unresolvedCount: unresolvedCount,

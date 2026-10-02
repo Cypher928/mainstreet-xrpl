@@ -1833,6 +1833,108 @@ mutation.js` (22 mutants). The Decision Report's v1 pin
 (`test-acquisition-report-view.js`) allows the one marked call under Lease
 Stability.
 
+## 4p. Matching and conversion safeguards (built; local, awaiting review)
+
+### Why
+
+On the Pilot's Maple Plaza (converted 2026-09-27) an extracted entry for
+"SafeShield Security, LLC" — read from a lease naming "500 Main Street" — was
+matched to the leasehold "Sunrise Cafe & Bakery LLC" (resolution `1f89d42e…`,
+2026-09-26 00:13:25Z). The match control was a dropdown that wrote on change;
+nothing compared the names. Sunrise itself had been made a new leasehold from
+an extraction whose file was never kept as a document, so it converted with
+no lease on file and every term not established, and nothing said so before
+the property was created. Neither record is changed by this work.
+
+### Matching concerns (`AcquisitionLeasehold.matchConcerns`)
+
+Before a match is recorded the extracted entry is compared with the chosen
+leasehold:
+
+- **Tenant name.** Case, punctuation, "&"/"and", apostrophes, legal suffixes
+  (LLC, Inc., Co., Ltd., L.L.C. …) and filler words are set aside. Words that
+  describe a kind of business ("cafe", "spa", "security", "insurance" …) do
+  not count as agreement. Names sharing no distinguishing word are a
+  **mismatch**. One name only adding descriptive words to the other ("Sunrise
+  Cafe" / "Sunrise Cafe & Bakery LLC") is the same tenant. Anything in
+  between — a partial overlap, the same mark on different businesses
+  ("SafeShield Security" / "SafeShield Insurance"), a blank or wholly generic
+  name — is **uncertain**: shown for a look, never treated as proof.
+- **Property.** The property the extraction's lease names (its text before the
+  first comma) is compared with the acquisition's names (the review's and its
+  property's). A different named property is a **mismatch**. A lease naming
+  only a street address, when the acquisition records no address, is
+  **uncertain** — an address cannot be told from a name.
+
+With no concern the match is recorded at once, exactly as before. With any
+concern the row asks first, in place: the extracted tenant, the selected
+leasehold, the source file, the property the lease names, the acquisition's
+name, and each concern in words, with **Cancel** and **Match anyway**. A
+mismatch requires a reason; an uncertain concern does not. Cancel writes
+nothing. `acqResolveExtraction` works the concerns out again from the record
+and refuses an unconfirmed concerning match, or a mismatch without a reason,
+whoever calls it.
+
+**Where it is kept — the existing mechanism, extended.** The resolution in
+`review.data.extractionResolutions[rowId]` gains `concerns` (kind, level,
+the compared values, the sentence) and `reason`; the `extraction_resolved`
+activity entry carries the same in its `meta` and says "confirmed by a person
+despite …" in its summary. Nothing else reads these fields (the gate in 035
+reads only `action` and `familyId`), so no stored resolution changes meaning.
+
+### Leaseholds with no lease on file
+
+`AcquisitionLeasehold.documentlessLeaseholds` names every leasehold no live
+document is filed into (a document replaced by a newer upload, or set aside as
+not relevant or a duplicate, does not count). Before conversion each one is
+listed by the Acquire control with the condition — "No lease document is
+filed into this leasehold. None of its lease terms is established by a
+document." — and `_acqConversionBlock` refuses conversion until a person
+acknowledges each one. The convert dialog says it again at the moment of
+conversion.
+
+The acknowledgement is kept in `review.data.leaseholdAcknowledgements`,
+keyed by leasehold, beside `extractionResolutions` and `documentDispositions`
+(`{ condition: 'no_document_on_file', label, verifiesTerms: false, by, at }`),
+and in a `leasehold_acknowledged` activity entry. It changes no term, decision,
+document or leasehold, and every place it is shown says it does not verify
+any lease term. A leasehold that has its lease cannot be acknowledged; a
+converted (frozen) acquisition offers none of this and writes nothing.
+
+### Server-side enforcement: not added (proposal only)
+
+The safeguards are enforced in the page. `acquire_property` (migration 035)
+still checks only what it checked before: a `matched`/`new_leasehold`
+resolution naming one of the review's leaseholds settles an extraction, and a
+leasehold with no document does not stop acquisition. A client that bypasses
+the page could still convert a review with an unacknowledged documentless
+leasehold, or record a concerning match with no reason. Closing that needs a
+new migration, which has **not** been written or applied. Proposed, for a
+separate approval:
+
+- in `acquire_property`, after step 5b: refuse when any leasehold of the
+  review has no live document (`acquisition_documents.family_id = f.id`,
+  `superseded_by_document_id is null`, not disposed `not_relevant`/`duplicate`)
+  and `review.data->'leaseholdAcknowledgements'->(f.id::text)->>'condition'`
+  is not `no_document_on_file` — same errcode (`check_violation`), naming the
+  leaseholds;
+- name comparison stays in the page (a SQL port of `matchConcerns` would be a
+  second implementation to keep in step); the server can at most require that
+  a resolution carrying `concerns` with a `mismatch` also carries a non-empty
+  `reason`.
+
+### Verified
+
+`test-acquisition-match-safeguards.js` (pure comparison, the resolution and
+acknowledgement paths run against the real functions, the gate) and
+`test-e2e-acquisition-match-safeguards.js` (Maple Plaza as the Pilot holds it,
+walked: SafeShield → Sunrise asked, cancelled, refused without a reason,
+recorded with one; Luxe, Maple Coffee and Prime matched at once; Sunrise
+blocks Acquire until acknowledged; a converted copy offers nothing);
+`tools/acquisition-match-safeguards-mutation.js` undoes each rule.
+`test-e2e-acquisition-leaseholds-only.js` now acknowledges Sunrise's missing
+lease where its walk converts.
+
 ## 5. Verification
 
 - `test-acquisition-workspace.js` — the module for real (upgrade, stage,

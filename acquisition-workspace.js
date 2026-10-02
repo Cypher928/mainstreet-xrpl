@@ -74,6 +74,7 @@
     'extraction_reopened',
     'document_disposed',     // a person marked a source document not relevant, or a duplicate
     'document_reopened',
+    'leasehold_acknowledged', // a person acknowledged a leasehold has no lease on file — not a verification of its terms
   ];
   // History is kept, not trimmed, until it is genuinely large. When the cap is
   // hit the oldest entries go and `activityDropped` says how many, so the

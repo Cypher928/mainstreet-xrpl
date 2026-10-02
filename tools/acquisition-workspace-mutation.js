@@ -153,7 +153,7 @@ const MUTANTS = [
   { id: 'F09', file: S, why: 'the documents panel still offers confirm-leasehold / match / dispose',
     from: "        + (frozen ? '' :\n            (aiFiled ?", to: "        + (false ? '' :\n            (aiFiled ?" },
   { id: 'F10', file: S, why: 'the unmatched list still offers match / new / not-a-tenant',
-    from: "  const controls = (x) => frozen ? '' : x.why === 'no_document'", to: "  const controls = (x) => x.why === 'no_document'" },
+    from: "  const controls = (x) => frozen ? '' : pending(x)", to: "  const controls = (x) => pending(x)" },
   { id: 'F11', file: S, why: 'Delete still asks and deletes',
     from: '  // delete_prospect_acquisition refused it already).\n  if (_acqRefuseFrozen(review)) return;', to: '  // delete_prospect_acquisition refused it already).' },
   { id: 'F12', file: S, why: 'Run Analysis still runs',

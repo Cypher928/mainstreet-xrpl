@@ -6505,6 +6505,35 @@
     .acq-um-what { color: var(--text-3); }
     .acq-convert-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .acq-convert-blocked { margin-top: 6px; max-width: 34em; font-size: 0.74rem; color: var(--c-fbbf24, #fbbf24); }
+    /* A match the names or the property argue against: asked before it is recorded. */
+    .acq-um-confirm { flex-basis: 100%; margin: 6px 0 4px; padding: 8px 10px; border: 1px solid rgba(251, 191, 36, 0.45);
+      border-radius: 6px; background: rgba(251, 191, 36, 0.06); font-size: 0.72rem; color: var(--text-2); }
+    .acq-um-confirm-head { font-weight: 700; margin-bottom: 4px; }
+    .acq-um-confirm-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0 0 6px; }
+    .acq-um-confirm-facts dt { color: var(--text-4); }
+    .acq-um-confirm-facts dd { margin: 0; overflow-wrap: anywhere; }
+    .acq-um-none { color: var(--text-4); font-style: italic; }
+    .acq-um-concerns { margin: 0 0 6px; padding-left: 16px; color: var(--c-fbbf24, #fbbf24); }
+    .acq-um-reason-label { display: block; color: var(--text-3); }
+    .acq-um-reason { display: block; width: 100%; box-sizing: border-box; margin-top: 2px; font: inherit; min-height: 44px;
+      background: var(--theme-surface, #0f172a); color: var(--text-1); border: 1px solid #334155; border-radius: 5px; padding: 4px 6px; }
+    .acq-um-confirm-error { color: var(--c-f87171, #f87171); min-height: 1em; margin: 2px 0; }
+    .acq-um-confirm-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .acq-um-confirm-actions button { min-height: 36px; font-size: 0.72rem; padding: 4px 12px; border-radius: 5px; border: 1px solid #334155;
+      background: var(--theme-surface, #0f172a); color: var(--text-2); cursor: pointer; }
+    .acq-um-confirm-actions .acq-um-confirm-btn { border-color: rgba(251, 191, 36, 0.6); color: var(--c-fbbf24, #fbbf24); }
+    .acq-um-over { color: var(--c-fbbf24, #fbbf24); font-size: 0.68rem; }
+    /* Leaseholds with no lease on file: named and acknowledged before conversion. */
+    .acq-docless { margin-top: 8px; max-width: 40em; padding: 8px 10px; border: 1px dashed rgba(251, 191, 36, 0.5); border-radius: 6px;
+      font-size: 0.72rem; color: var(--text-3); }
+    .acq-docless-head { font-weight: 700; color: var(--c-fbbf24, #fbbf24); margin-bottom: 4px; }
+    .acq-docless ul { margin: 0; padding-left: 16px; }
+    .acq-docless-item { padding: 2px 0; }
+    .acq-docless-name { font-weight: 600; color: var(--text-2); }
+    .acq-docless-ack { color: var(--text-4); font-style: italic; }
+    .acq-docless-ack-btn { margin-left: 4px; font-size: 0.7rem; padding: 2px 8px; border-radius: 5px; border: 1px solid #334155;
+      background: var(--theme-surface, #0f172a); color: var(--text-2); cursor: pointer; }
+    .acq-modal-docless { margin-top: 10px; font-size: 0.8rem; color: var(--c-fbbf24, #fbbf24); }
     .acq-card-unmatched { margin-top: 6px; font-size: 0.72rem; color: var(--c-fbbf24, #fbbf24); }
     /* Source documents: what each still needs from a person (Option B). */
     .acq-doc-place { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; }
@@ -8055,6 +8084,9 @@
         <!-- Shown only when repairing an orphaned conversion; the copy above
              describes a first conversion and is wrong for that case. -->
         <div class="acq-modal-repair" id="acqConvertModalRepair" style="display:none"></div>
+        <!-- Leaseholds converted with no lease on file, each acknowledged by a
+             person. Said again here, at the moment of conversion. -->
+        <div class="acq-modal-docless" id="acqConvertModalDocless" style="display:none"></div>
       </div>
       <div class="acq-modal-actions">
         <button class="acq-modal-cancel" onclick="_hideAcqConvertModal()">Cancel</button>
