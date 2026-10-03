@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (43 rows as of 043, in applied order; 040 and 041 are unused)
+## Recorded history (44 rows as of 044, in applied order; 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -73,8 +73,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260930003001` | `037_leasehold_lifecycle` | `migrations/037_leasehold_lifecycle.sql` (committed on `pilot` together with this entry) — applied 2026-09-30 through the Supabase MCP `apply_migration`; the recorded text is the file verbatim (md5 `150d7cfe…` on both sides). Applied after 039 and 042: the number 037 was reserved for this layer | identical |
 | `20260930181412` | `038_leasehold_protection` | `migrations/038_leasehold_protection.sql` @ `b560762b` (commit `a7750cc`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, after `a7750cc` was live on Pilot; the recorded text is the file verbatim (md5 `00055957…` on both sides) | identical |
 | `20260930235937` | `043_leasehold_absorption` | `migrations/043_leasehold_absorption.sql` @ `daea15ec` (commit `938db31`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, before `938db31` was pushed (043 changes no product file, so no client had to be live first); the recorded text is the file verbatim (md5 `f79fc081…` on both sides) | identical |
+| `20261003173521` | `044_acquisition_conversion_safeguards` | `migrations/044_acquisition_conversion_safeguards.sql` @ `a8bd444f` (commit `07654ce`, unchanged at `58a390b`) — applied 2026-10-03 through the Supabase Management API (`POST /v1/projects/{ref}/database/migrations`, the endpoint the MCP `apply_migration` tool uses), sent once from the operator's machine with `Idempotency-Key` `a058abd0-dca7-4636-853b-3a07930806c7`, which this row records in `idempotency_key` (every earlier row has null there); applied before the four `pilot` commits carrying it were pushed; the recorded text is the file verbatim (md5 `4dbff7aa…` on both sides, 44,504 characters) | identical |
 
-Tally (43 rows as of 043): 33 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (44 rows as of 044): 34 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -400,6 +401,75 @@ These files were applied through the SQL editor or the bundle
    No real leasehold was absorbed, restored, ended or discarded. The rollback
    restores 038's three bodies byte for byte and 037's two checks, and refuses
    while any leasehold is absorbed.
+16. **Since 044, the server enforces the matching and missing-lease safeguards
+   before an acquisition is converted.** `acquisition_conversion_attestations`
+   exists (10 columns: id, review_id, property_id, family_id, kind, row_key,
+   reason, verifies_terms, acted_by, created_at; 8 constraints, among them
+   `acq_attestations_verifies_nothing` (`verifies_terms = false`),
+   `acq_attestations_row_key_check` and the composite foreign key
+   `(family_id, property_id)` → `acquisition_document_families(id, property_id)`
+   ON DELETE CASCADE). It is append-only (`acq_attestations_append_only`
+   BEFORE UPDATE OR DELETE; a delete passes only one trigger level down, from
+   a cascade), stamped and scoped by `acq_attestations_guard` (BEFORE INSERT:
+   `acted_by` and `created_at` are set by the database; only the property's
+   owner or an active, non-`read_only` member may insert; only an open review;
+   `no_document_on_file` is refused while a live lease document is filed;
+   `match_confirmed` names a real extracted entry and needs a reason when the
+   server's own comparison finds a material mismatch), and carries 034's
+   `acq_attestations_property_bind` and 036's `acq_children_frozen`. Indexes:
+   pkey, `idx_acq_attestations_review`, `idx_acq_attestations_family` and the
+   partial unique `acq_attestations_one_ack_per_leasehold` (review_id,
+   family_id) WHERE kind = 'no_document_on_file'. RLS on; `authenticated` may
+   SELECT and INSERT rows of properties in `member_property_ids()`; `anon` has
+   nothing. (`service_role` holds the platform's default full table
+   privileges on this table, as it does on `acquisition_documents`; it never
+   serves the browser, bypasses RLS everywhere, and the append-only trigger
+   fires for it too.) Five pure, immutable, locale-independent functions port
+   the page's comparison: `acq_js_trim` `e5a7c4f6…`, `acq_name_tokens`
+   `5e56edb2…`, `acq_compare_tenant_names` `1b58b9b8…`, `acq_compare_property`
+   `c5e91951…`, `acq_match_requires_reason` `96ea9213…`; the two trigger
+   functions are `acq_attestations_guard` `8bb1df25…` and
+   `acq_attestations_append_only` `11eff35d…`; all seven `search_path=""`,
+   executable by `authenticated` and `service_role` only. `acquire_property`
+   is 035's body verbatim with steps 5c (every leasehold with no live lease
+   document needs a `no_document_on_file` row for THIS review) and 5d (every
+   `matched` resolution the server itself finds materially mismatched needs a
+   `match_confirmed` row with a reason for THIS entry) inserted after 5b; its
+   body is `3ba209b9…` (21,617 characters), SECURITY DEFINER, `search_path=""`,
+   one overload, authorisation still first. `review.data.leaseholdAcknowledgements`
+   and resolution `concerns` / `reason` keys are not read by the server. Not
+   grandfathered: no acknowledgement was invented for any existing review.
+   Applied 2026-10-03 with no data change:
+   - every data count and fingerprint (reviews 11, documents 16, families 12,
+     term decisions 40, properties 49, tenants 149, property events 84),
+     storage objects 198 and auth users 13 identical before and after;
+   - the 108 functions 044 does not touch, and the 72 pre-existing policies,
+     fingerprint-identical before and after; constraints outside the new
+     table 216 → 216;
+   - columns 460 → 470, constraints 216 → 224, functions 109 → 116,
+     indexes 150 → 154, policies 72 → 74, tables 31 → 32, triggers 37 → 41;
+   - 0 attestation rows; 0 reviews carry a client-side acknowledgement map.
+
+   Verified live the same day, read-only:
+   - the comparison on Pilot's ICU `en-US` locale behaves as the page's does
+     (`SafeShield Security, LLC` vs `Sunrise Cafe & Bakery LLC` → mismatch;
+     `LUXE NAILS, L.L.C.` vs `Luxe Nails` → same tenant, also when padded with
+     NBSP, ideographic space and tab; a blank acquisition name cannot soften a
+     mismatch; an NBSP-wrapped street address → uncertain; `İSTANBUL` →
+     `{i,stanbul}`; a reason of only NBSP, ideographic space and U+FEFF trims
+     to empty);
+   - a read-only mirror of 5c/5d over the six open reviews found 0
+     unacknowledged document-less leaseholds and 0 unreasoned mismatches, so
+     no open review is blocked by the new gate.
+
+   Until the `pilot` commits carrying 044's client (which records
+   acknowledgements through this table) are deployed, the live page still
+   writes `leaseholdAcknowledgements` into `review.data`, which the server
+   ignores: a conversion needing an acknowledgement would be refused by 5c
+   until then. No open review needs one today. The rollback
+   (`abd99d7f…`) restores 035's `acquire_property` verbatim and drops the
+   table and the seven functions; dropping the table discards every
+   acknowledgement and recorded reason.
 
 ## Decisions this manifest does not make
 

@@ -1921,7 +1921,7 @@ blocks Acquire until acknowledged; a converted copy offers nothing);
 `test-e2e-acquisition-leaseholds-only.js` now acknowledges Sunrise's missing
 lease where its walk converts.
 
-## 4q. Server-side acquisition safeguards (migration 044; local, NOT applied)
+## 4q. Server-side acquisition safeguards (migration 044; applied to Pilot 2026-10-03 as `20261003173521`, see `migrations/APPLIED.md` fact 16)
 
 ### The gap
 
