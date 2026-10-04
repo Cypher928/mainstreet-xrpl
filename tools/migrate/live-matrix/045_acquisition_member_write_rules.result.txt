@@ -1,0 +1,50 @@
+MATRIX RESULTS 2026-10-04 ~18:50Z (everything rolled back) — 046 pre-check lines omitted
+FX begin_acquisition as owner: property fa82d3dc org ed52e3d6 stage prospect, review 49036d56 status draft
+FX owner filed family + document on deal A
+R1 owner sees property/review: 1/1 ok
+R2 editor sees property/review/document: 1/1/1 ok
+R3 read-only member sees property/review/document: 1/1/1 ok (reads kept)
+R4 stranger sees property/review: 0/0 ok
+R5 anon read of properties refused: 42501 permission denied for table properties ok
+W1 owner updates review: 1 row ok
+W2 editor updates review: 1 row ok
+W3 read-only member updates review: 0 rows ok (refused)
+W4 stranger updates review: 0 rows ok (refused)
+D1 editor insert in own name: 23503 composite FK (pre-existing; not a 045 rule)
+D2 read-only member insert refused: 42501 RLS ok
+D3 stranger insert refused: 42501 RLS ok
+D4 forged author (document user_id = owner) refused: 42501 author guard ok
+D5 changing a document's user_id refused: 42501 ok
+RV1 forged author (review user_id = owner) refused: 42501 ok
+F1 editor family in own name: 23503 composite FK (pre-existing)
+F2 read-only member family refused: 42501 ok
+T1 editor decision in own name: 23503 composite FK (pre-existing)
+T2 forged decided_by refused: 42501 ok
+T3 read-only member decision refused: 42501 ok
+S1 owner sets storage_path the first time: 1 row ok
+S2 re-pointing storage_path refused: 42501 ok
+S3 clearing storage_path refused: 42501 ok
+S4 re-pointing refused even without a signed-in person: 42501 ok
+C1 direct conversion by owner refused: 42501 ok
+C2 stamping converted_at refused: 42501 ok
+C3 direct conversion without a signed-in person refused: 42501 ok
+C4 creating a review already converted refused: 42501 ok
+P1 editor updates property: 1 row ok
+P2 read-only member updates property: 0 rows ok (refused)
+P3 editor's save tried to take ownership: 1 row touched; owner kept=true org kept=true ok
+U1 TRUNCATE acquisition_documents by a signed-in person refused: 42501 ok
+U2 TRUNCATE properties refused: 42501 ok
+L1 direct insert into financial_sources refused: 42501 ok
+L2 direct insert into gl_entries refused: 42501 ok
+V1 revoked member sees property: 0 ok | V2 revoked member insert refused: 42501 ok
+V3 unaccepted member sees property: 0 ok | V4 unaccepted member insert refused: 42501 ok
+V5 accepted property_manager insert in own name: 23503 composite FK (pre-existing)
+RA1 real owner account reads properties/reviews: visible 9/5 vs owned 9/5 ok
+C5 acquire_property as owner: converted|true|acquired|tenants=1 ok (conversion guard admits the real path)
+C6 converted review stays frozen (036): 23000 ok
+X1 editor deletes review: 0 rows ok (refused)
+X2 read-only member deletes review: 0 rows ok (refused)
+X3 editor deletes property: 0 rows ok (refused)
+X4 delete_prospect_acquisition by read-only member refused: 42501 "Only an administrator of the property may delete its acquisition" ok
+X5 before the owner deletes deal A: documents 1, families 1, decisions 0
+X6 owner deletes deal A through delete_prospect_acquisition: review 0, property 0, documents 0, families 0, decisions 0 ok (cascade complete)

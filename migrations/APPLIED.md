@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (44 rows as of 044, in applied order; 040 and 041 are unused)
+## Recorded history (45 rows as of 045, in applied order; 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -74,8 +74,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260930181412` | `038_leasehold_protection` | `migrations/038_leasehold_protection.sql` @ `b560762b` (commit `a7750cc`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, after `a7750cc` was live on Pilot; the recorded text is the file verbatim (md5 `00055957…` on both sides) | identical |
 | `20260930235937` | `043_leasehold_absorption` | `migrations/043_leasehold_absorption.sql` @ `daea15ec` (commit `938db31`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, before `938db31` was pushed (043 changes no product file, so no client had to be live first); the recorded text is the file verbatim (md5 `f79fc081…` on both sides) | identical |
 | `20261003173521` | `044_acquisition_conversion_safeguards` | `migrations/044_acquisition_conversion_safeguards.sql` @ `a8bd444f` (commit `07654ce`, unchanged at `58a390b`) — applied 2026-10-03 through the Supabase Management API (`POST /v1/projects/{ref}/database/migrations`, the endpoint the MCP `apply_migration` tool uses), sent once from the operator's machine with `Idempotency-Key` `a058abd0-dca7-4636-853b-3a07930806c7`, which this row records in `idempotency_key` (every earlier row has null there); applied before the four `pilot` commits carrying it were pushed; the recorded text is the file verbatim (md5 `4dbff7aa…` on both sides, 44,504 characters) | identical |
+| `20261004184427` | `045_acquisition_member_write_rules` | `migrations/045_acquisition_member_write_rules.sql` (uncommitted at apply time; md5 `5ee57195…`, 19,462 bytes) — applied 2026-10-04 by the operator from her Mac with `apply-045-pilot.sh` (now `tools/migrate/apply-migration.sh`) through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `82ffaede-02cb-497e-9bd5-ab8f1d490b87` (recorded in `idempotency_key`), HTTP 200 at 18:44:27Z; the token was a scoped personal access token holding only Database → Migrations read-write on Pilot; two earlier `apply_migration` calls through the Supabase connector timed out at 60 s with no effect (the connector's destructive-SQL confirmation cannot be shown in this client); the recorded text is the file verbatim (md5 `5ee57195…` on both sides, 19,462 bytes) | identical |
 
-Tally (44 rows as of 044): 34 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (45 rows as of 045): 35 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -470,6 +471,42 @@ These files were applied through the SQL editor or the bundle
    (`abd99d7f…`) restores 035's `acquire_property` verbatim and drops the
    table and the seven functions; dropping the table discards every
    acknowledgement and recorded reason.
+
+17. **Since 045, members read and only people who may edit write.** The FOR
+   ALL member policies 034 and phase0/024 left on `acquisition_reviews`,
+   `acquisition_documents`, `acquisition_document_families`,
+   `acquisition_term_decisions` and `properties` are split: SELECT keeps the
+   member predicate (read-only members still see everything they saw); INSERT
+   and UPDATE need `can_edit_property` (the owner, or an accepted, unrevoked
+   organisation member whose role is not `read_only`); review deletion needs
+   `is_property_admin`, property deletion likewise. Four guard triggers: a
+   review becomes converted only inside `acquire_property`
+   (`acq_reviews_conversion_guard`); a review, document, family or decision is
+   written by the person it names and `user_id` never changes
+   (`acq_children_author_guard`, also `decided_by`); a document's
+   `storage_path` is set once (`acq_documents_storage_path_guard`); a signed-in
+   save never moves `properties.user_id` or `organization_id`
+   (`properties_identity_guard`). `authenticated` lost TRUNCATE on the three
+   tables and INSERT on `financial_sources`/`gl_entries` (the 029 member-insert
+   policies are dropped); `anon` lost everything on `properties`. No row
+   changed. Applied 2026-10-04 (row above) with every table hash identical
+   before and after; the catalog diff against the saved item-level inventory
+   was 13 removals and 35 additions, all 045's. Verified live the same day in
+   one rolled-back transaction with the four test accounts (46 checks,
+   `tools/migrate/live-matrix/045_acquisition_member_write_rules.result.txt`):
+   reads kept for every member, writes refused for read-only members,
+   strangers, revoked and unaccepted members, forged authorship refused,
+   direct conversion refused for everyone including the database owner,
+   storage path immutable, ownership never moved by an editor's save, TRUNCATE
+   and direct ledger inserts refused, `acquire_property` still converts and the
+   converted review stays frozen, `delete_prospect_acquisition` cascades.
+   **Known limitation, unchanged by 045:** the composite keys
+   `(review_id, user_id) → acquisition_reviews(id, user_id)` from 023/024/026
+   mean a non-owner cannot file a document, family or decision in their own
+   name, and 045 now refuses filing them in the owner's name; an editor
+   therefore cannot file child records on a review they do not own by any
+   path. The deferred authorship migration (034 fact 8) owns this.
+   Procedure: `docs/MIGRATION_RUNBOOK.md`.
 
 ## Decisions this manifest does not make
 

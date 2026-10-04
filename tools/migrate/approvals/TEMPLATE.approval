@@ -1,0 +1,20 @@
+# Copy to <migration_name>.approval ONLY after the person responsible has approved
+# the exact file in writing. tools/migrate/prepare-migration.js --approve fills
+# this in from the file on disk. Never put a token or secret here.
+migration_name=
+project_ref=bhmktujbxdbvdmpybmad
+project_name=mainstreet-pilot
+sql_md5=
+sql_sha256=
+sql_bytes=
+rollback_file=
+rollback_sha256=
+rollback_md5=
+approved_on=
+approved_by=
+local_verification=
+# Filled in after the apply:
+applied_on=
+applied_version=
+idempotency_key=
+applied_by=

@@ -1,0 +1,20 @@
+# Approval record — read by tools/migrate/apply-migration.sh. One file per migration.
+# The script refuses to send unless the .sql file hashes to sql_md5/sql_bytes and
+# project_ref is the Pilot project. Never put a token or secret in this file.
+migration_name=045_acquisition_member_write_rules
+project_ref=bhmktujbxdbvdmpybmad
+project_name=mainstreet-pilot
+sql_md5=5ee571956613b4cf0beab2a36bbbcd2b
+sql_sha256=39311540872b645d0565b684442b4da455eb464634cddf4890929c36ffd6d656
+sql_bytes=19462
+rollback_file=045_acquisition_member_write_rules_rollback.sql
+rollback_sha256=1efe39384004cffe8c6d8484e9f7c6a7aa6acba2ad54d43c7cde4de7b71ace54
+rollback_md5=d6901a59cf454ff9191d70e530f93661
+approved_on=2026-10-04
+approved_by=Lynn (chat: "I approve Phase 4 Stage 2a only", then "Proceed with Option 1 only")
+local_verification=tools/verify-migration-045-member-write-rules.js 136/136 (PG 16 and 17.6), mutation harness 25/25
+# Outcome, filled in after the apply (informational; the script does not read these):
+applied_on=2026-10-04T18:44:27Z
+applied_version=20261004184427
+idempotency_key=82ffaede-02cb-497e-9bd5-ab8f1d490b87
+applied_by=Lynn, from her Mac, apply-045-pilot.sh (the per-migration ancestor of apply-migration.sh), HTTP 200
