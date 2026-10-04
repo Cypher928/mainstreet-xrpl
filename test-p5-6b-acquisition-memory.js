@@ -502,7 +502,8 @@ sec('D. The hydrator: read as the caller, only after the checks');
     // P5-6B itself added no migration. Later, separately approved migrations
     // (037, the leasehold lifecycle; 038, leasehold protection; 039, the
     // register's leasehold link; 042, the 53-row register relink; 043,
-    // leasehold absorption) are not P5-6B's and are listed here by name, so an
+    // leasehold absorption; 044, conversion safeguards; 045, member write
+    // rules) are not P5-6B's and are listed here by name, so an
     // unexplained new file still fails this check.
     const MIG = fs.readdirSync('./migrations').filter(f => /^03[7-9]|^0[4-9]\d/.test(f))
       .filter(f => !/^037_leasehold_lifecycle(_rollback)?\.sql$/.test(f))
@@ -510,7 +511,8 @@ sec('D. The hydrator: read as the caller, only after the checks');
       .filter(f => !/^039_register_leasehold_link(_rollback)?\.sql$/.test(f))
       .filter(f => !/^042_register_relink_deterministic(_rollback)?\.sql$/.test(f))
       .filter(f => !/^043_leasehold_absorption(_rollback)?\.sql$/.test(f))
-      .filter(f => !/^044_acquisition_conversion_safeguards(_rollback)?\.sql$/.test(f));
+      .filter(f => !/^044_acquisition_conversion_safeguards(_rollback)?\.sql$/.test(f))
+      .filter(f => !/^045_acquisition_member_write_rules(_rollback)?\.sql$/.test(f));
     eq(MIG, [], 'G9 no migration was added for P5-6B');
     const CS = strip(fs.readFileSync('./api/_mcp-capabilities.js', 'utf8'));
     is(/userToken: c\.token/.test(CS) && (CS.match(/c\.token/g) || []).length >= 2, 'G10 the token is handed to the hydrator — and to nothing new');
