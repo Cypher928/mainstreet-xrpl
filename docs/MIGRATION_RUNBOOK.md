@@ -11,6 +11,10 @@ paste one line into Terminal, Claude verifies again and reports.** Nothing is
 applied without your written approval of the exact file, and nothing is ever
 retried blindly.
 
+This runbook is the migration-specific part of `docs/WORKING_AGREEMENT.md`.
+Which migrations are applied, and what the next approved action is, is recorded
+in `docs/HANDOFF.md` and `migrations/APPLIED.md`.
+
 ---
 
 ## 1. How 045 was actually applied (the procedure this runbook is built on)

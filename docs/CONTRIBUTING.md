@@ -137,3 +137,9 @@ arguments, logs, or chat — hidden interactive prompts only.
   the gate was run.
 - Ship in stages: land the engine + tests, then the UI, then polish — each
   stage green.
+- Roles, approvals, environment boundaries and the states of work (implemented,
+  locally tested, committed, pushed, deployed, applied, live DB verified,
+  deployed API verified, browser verified) are set
+  out in `docs/WORKING_AGREEMENT.md`; the current state and the next approved
+  action are in `docs/HANDOFF.md`. Database migrations follow
+  `docs/MIGRATION_RUNBOOK.md`.

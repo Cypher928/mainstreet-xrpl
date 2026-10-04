@@ -1,5 +1,11 @@
 # Acquisition Review — Phase 1
 
+> This document is the detailed history of the acquisition work, section by
+> section, and is kept as written. The **current** state of the product, the
+> environments and the next approved action lives in `docs/HANDOFF.md`; the way
+> of working in `docs/WORKING_AGREEMENT.md`. Where a status line here is older
+> than the hand-off, the hand-off is right.
+
 **Status:** in progress on `pilot`. Increments **P1-1, P1-2 and P1-3 are
 shipped**, with migrations 023 and 024 applied to the Pilot project. **P1-4 is
 in progress under the approved plan in §4d. Increment P4-1 is CLOSED — built,
