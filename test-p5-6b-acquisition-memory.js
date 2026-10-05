@@ -503,7 +503,8 @@ sec('D. The hydrator: read as the caller, only after the checks');
     // (037, the leasehold lifecycle; 038, leasehold protection; 039, the
     // register's leasehold link; 042, the 53-row register relink; 043,
     // leasehold absorption; 044, conversion safeguards; 045, member write
-    // rules; 046, the acquisition general ledger) are not P5-6B's and are listed here by name, so an
+    // rules; 046, the acquisition general ledger; 047, the remaining member write
+    // rules; 048, the operating tables, proposed) are not P5-6B's and are listed here by name, so an
     // unexplained new file still fails this check.
     const MIG = fs.readdirSync('./migrations').filter(f => /^03[7-9]|^0[4-9]\d/.test(f))
       .filter(f => !/^037_leasehold_lifecycle(_rollback)?\.sql$/.test(f))
@@ -513,7 +514,9 @@ sec('D. The hydrator: read as the caller, only after the checks');
       .filter(f => !/^043_leasehold_absorption(_rollback)?\.sql$/.test(f))
       .filter(f => !/^044_acquisition_conversion_safeguards(_rollback)?\.sql$/.test(f))
       .filter(f => !/^045_acquisition_member_write_rules(_rollback)?\.sql$/.test(f))
-      .filter(f => !/^046_acquisition_general_ledger(_rollback)?\.sql$/.test(f));
+      .filter(f => !/^046_acquisition_general_ledger(_rollback)?\.sql$/.test(f))
+      .filter(f => !/^047_member_write_rules_remaining(_rollback)?\.sql$/.test(f))
+      .filter(f => !/^048_operating_tables_member_write_rules(_rollback)?\.sql$/.test(f));
     eq(MIG, [], 'G9 no migration was added for P5-6B');
     const CS = strip(fs.readFileSync('./api/_mcp-capabilities.js', 'utf8'));
     is(/userToken: c\.token/.test(CS) && (CS.match(/c\.token/g) || []).length >= 2, 'G10 the token is handed to the hydrator — and to nothing new');

@@ -580,6 +580,8 @@ const SUITES = [
   { label: 'Migration 046 acquisition general ledger (Financial Intake)', cmd: 'node tools/verify-migration-046.js' },
   { label: 'Ledger import / reversal (served by api/upload.js) against a local Supabase stand-in', cmd: 'node tools/verify-ledger-import-endpoint.js' },
   { label: 'Ledger imports and reversals that overlap in time (046)', cmd: 'node tools/verify-ledger-concurrency.js' },
+  { label: 'Migration 047 member write rules — the register, storage folders, grants', cmd: 'node tools/verify-migration-047.js' },
+  { label: 'Migration 048 operating tables member write rules (append-only evidence/audit, admin invites)', cmd: 'node tools/verify-migration-048.js' },
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },
   { label: 'Leasehold lifecycle plumbing + no deletes (A-1)', cmd: 'node test-lifecycle-plumbing.js' },
   { label: 'Lease upload identity: held proposals, durable document id (A-2)', cmd: 'node test-lease-upload-identity.js' },
