@@ -196,10 +196,16 @@ function fakeHttps(log, reply) {
     },
   };
 }
-/** api/upload.js as last committed (before 046), from git — the reference for "an upload behaves as before". */
+/**
+ * api/upload.js as it was before the ledger operations, from git — the
+ * reference for "an upload behaves as before". Pinned to e47a504, the last
+ * commit before they were added (30fb242): once that commit exists, HEAD
+ * already serves them and can no longer be the "before".
+ */
+const UPLOAD_BASELINE = 'e47a504';
 function headUploadSource() {
   const where = process.env.LEDGER_GIT_ROOT || ROOT;
-  return require('child_process').execFileSync('git', ['show', 'HEAD:api/upload.js'], { cwd: where, encoding: 'utf8' });
+  return require('child_process').execFileSync('git', ['show', UPLOAD_BASELINE + ':api/upload.js'], { cwd: where, encoding: 'utf8' });
 }
 
 async function main() {
@@ -434,11 +440,11 @@ async function main() {
   res = await call(UPLOAD, 'tok-A', { documentId: f1.id, preview: previewOf(f1.buf) });
   check('…and a ledger body sent without ?op is an upload request missing its file — nothing is imported',
     res.statusCode === 400 && /Missing fileName or fileBase64/.test(res.body.error) && !calls.some(c => /rpc/.test(c)), short(res.body));
-  section('9 · a normal upload behaves exactly as the committed api/upload.js did');
+  section('9 · a normal upload behaves exactly as api/upload.js did before the ledger operations (' + UPLOAD_BASELINE + ')');
   {
     let HEAD_SRC = null;
     try { HEAD_SRC = headUploadSource(); } catch (e) { HEAD_SRC = null; }
-    check('the committed api/upload.js is read from git (the reference)', !!HEAD_SRC && !/LEDGER_OPS/.test(HEAD_SRC), HEAD_SRC ? 'it already serves ledger operations' : 'git show HEAD:api/upload.js failed');
+    check('the pre-ledger api/upload.js (' + UPLOAD_BASELINE + ') is read from git (the reference)', !!HEAD_SRC && !/LEDGER_OPS/.test(HEAD_SRC), HEAD_SRC ? 'it already serves ledger operations' : 'git show ' + UPLOAD_BASELINE + ':api/upload.js failed');
     let storageReply = () => ({ status: 200, body: '{"Key":"x"}' });
     const logNow = [], logHead = [];
     const ops = { imp: importEndpoint.createHandler({ target, rate: allow }), rev: reverseEndpoint.createHandler({ target, rate: allow }) };

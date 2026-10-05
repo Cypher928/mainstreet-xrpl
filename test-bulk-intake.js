@@ -640,15 +640,20 @@ const CLS = (docType, extra) => Object.assign({ docType, confidence: 0.9, eviden
     };
     const verdict = SCOPE.scopeVerdict(tree);
     is(verdict.ok, '9.2 no migration and no API file is changed, beyond the approved Financial Intake changes', verdict.why + ' — ' + tree.changed.concat(tree.added).filter(f => /^(api|migrations)\//.test(f)).join(', '));
-    // …and the check still sees what it is for. Each case is the real tree with one thing added.
-    const UP_HEAD = tree.head('api/upload.js');
-    const withUpload = (text) => ({ ...tree, changed: [...new Set([...tree.changed, 'api/upload.js'])], read: (f) => f === 'api/upload.js' ? text : tree.read(f) });
-    const approvedUpload = SCOPE.UPLOAD_JS_HUNKS.reduce((t, h) => t.replace(h.original, h.approved), UP_HEAD);
+    // …and the check still sees what it is for. Each case is the real tree with
+    // one thing added, judged against api/upload.js as it was BEFORE the
+    // approved change — pinned to e47a504, the last commit before the ledger
+    // operations landed (30fb242). HEAD already carries the change, so it can
+    // no longer stand in for the "before".
+    const UPLOAD_BASELINE = 'e47a504';
+    const UP_BASE = git(['show', UPLOAD_BASELINE + ':api/upload.js']);
+    const withUpload = (text) => ({ ...tree, changed: [...new Set([...tree.changed, 'api/upload.js'])], read: (f) => f === 'api/upload.js' ? text : tree.read(f), head: (f) => f === 'api/upload.js' ? UP_BASE : tree.head(f) });
+    const approvedUpload = SCOPE.UPLOAD_JS_HUNKS.reduce((t, h) => t.replace(h.original, h.approved), UP_BASE);
     is(SCOPE.scopeVerdict(withUpload(approvedUpload)).ok, '9.2a the approved api/upload.js change on its own passes');
     is(!SCOPE.scopeVerdict(withUpload(approvedUpload + '\n// an unrelated edit\n')).ok, '9.2b one more line in api/upload.js fails');
     is(!SCOPE.scopeVerdict(withUpload(approvedUpload.replace("isAcquisitionOriginal ? 'false' : 'true'", "'true'"))).ok, '9.2c an edit INSIDE an approved hunk fails');
     is(!SCOPE.scopeVerdict(withUpload(approvedUpload.replace("const ALLOWED_BUCKETS = ['invoices', 'leases'];", "const ALLOWED_BUCKETS = ['invoices', 'leases', 'public'];"))).ok, '9.2d an edit outside the hunks (another bucket allowed) fails');
-    is(!SCOPE.scopeVerdict(withUpload(UP_HEAD.replace("'x-upsert':      'true',", "'x-upsert':      'false',"))).ok, '9.2e a different change in place of the approved one fails');
+    is(!SCOPE.scopeVerdict(withUpload(UP_BASE.replace("'x-upsert':      'true',", "'x-upsert':      'false',"))).ok, '9.2e a different change in place of the approved one fails');
     is(!SCOPE.scopeVerdict({ ...tree, changed: [...tree.changed, 'api/lease-documents.js'] }).ok, '9.2f another tracked API file changed fails');
     is(!SCOPE.scopeVerdict({ ...tree, added: [...tree.added, 'api/ledger-import.js'] }).ok, '9.2g a new API file not approved by name (a thirteenth function) fails');
     is(!SCOPE.scopeVerdict({ ...tree, changed: [...tree.changed, 'migrations/039_register_leasehold_link.sql'] }).ok
