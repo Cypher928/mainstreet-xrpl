@@ -32,6 +32,13 @@ const { execFileSync, spawn } = require('child_process');
 const PGBIN = ['/usr/lib/postgresql/16/bin', '/usr/lib/postgresql/15/bin', '/usr/pgsql-16/bin', '/usr/local/bin']
   .find(d => { try { return fs.existsSync(path.join(d, 'initdb')) && fs.existsSync(path.join(d, 'postgres')); } catch (_) { return false; } });
 
+// MS_PG_SERVER_BIN (optional) runs the cluster on another server build — e.g.
+// PostgreSQL 17, to match Pilot — while psql, createdb and pg_isready still come
+// from PGBIN (a newer server accepts an older client). Unset, nothing changes.
+const SERVER_BIN = process.env.MS_PG_SERVER_BIN || null;
+const SERVER_TOOLS = ['initdb', 'postgres', 'pg_ctl'];
+const binPath = (bin) => path.join(SERVER_BIN && SERVER_TOOLS.includes(bin) ? SERVER_BIN : PGBIN, bin);
+
 const PRIVS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
 
 const DEFAULTS = {
@@ -86,7 +93,8 @@ function startCluster(label) {
     try { execFileSync('id', ['-u', 'postgres'], { stdio: 'ignore' }); AS_PG = ['setpriv', ['--reuid=postgres', '--regid=postgres', '--clear-groups']]; }
     catch (_) { skip('running as root and there is no `postgres` user to drop to.'); }
   }
-  const pgArgs = (bin, args) => AS_PG ? [AS_PG[0], [...AS_PG[1], path.join(PGBIN, bin), ...args]] : [path.join(PGBIN, bin), args];
+  if (SERVER_BIN && !SERVER_TOOLS.every(b => fs.existsSync(path.join(SERVER_BIN, b)))) skip('MS_PG_SERVER_BIN=' + SERVER_BIN + ' does not hold initdb, postgres and pg_ctl.');
+  const pgArgs = (bin, args) => AS_PG ? [AS_PG[0], [...AS_PG[1], binPath(bin), ...args]] : [binPath(bin), args];
   const pgRun = (bin, args, opts) => { const [c, a] = pgArgs(bin, args); return execFileSync(c, a, opts); };
   const pgSpawn = (bin, args, opts) => { const [c, a] = pgArgs(bin, args); return spawn(c, a, opts); };
 
@@ -124,6 +132,17 @@ function startCluster(label) {
     catch (e) { return { ok: false, out: String((e.stdout || '') + (e.stderr || '')).trim() }; }
   }
   const psqlFile = (file, db) => psqlText(fs.readFileSync(file, 'utf8'), db, path.basename(file));
+  /** psqlText in its own session, without waiting: a Promise of { ok, out }. For tests where two sessions must overlap. */
+  function psqlTextAsync(text, db, name) {
+    const staged = path.join(tmp, 'sql-' + (name || 'async') + '-' + Math.random().toString(36).slice(2) + '.sql');
+    fs.writeFileSync(staged, text);
+    if (AS_PG) { try { execFileSync('chown', ['postgres:postgres', staged]); } catch (_) {} }
+    const child = pgSpawn('psql', ['-h', SOCK, '-U', 'postgres', '-d', db, '-v', 'ON_ERROR_STOP=1', '-X', '-q', '-f', staged], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { out += c; });
+    return new Promise((ok) => child.on('close', (code) => ok({ ok: code === 0, out: out.trim() })));
+  }
 
   /** A fresh database with the Supabase pieces migrations assume, under the given default-privilege model. */
   function database(name, model) {
@@ -176,7 +195,8 @@ function startCluster(label) {
     return psql(DEFAULTS[model], db);
   };
 
-  return { psql, psqlText, psqlFile, database, as, privs, canExecute, setModel, PGBIN, DATA };
+  const serverVersion = () => { try { return pgRun('postgres', ['--version'], { encoding: 'utf8' }).trim(); } catch (_) { return 'unknown'; } };
+  return { psql, psqlText, psqlTextAsync, psqlFile, database, as, privs, canExecute, setModel, PGBIN, SERVER_BIN: SERVER_BIN || PGBIN, serverVersion, DATA };
 }
 
 /** True when a statement was refused for lack of a privilege (SQLSTATE 42501), not for any other reason. */

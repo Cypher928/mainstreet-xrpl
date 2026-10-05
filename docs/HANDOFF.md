@@ -1,6 +1,6 @@
 # Hand-off — current state
 
-**Updated:** 2026-10-04 (after the 045 Pilot apply, the reconciliation review and commit A).
+**Updated:** 2026-10-04 (after the 045 Pilot apply, the reconciliation review and commits A, D and B).
 **Rules:** `docs/WORKING_AGREEMENT.md`. **Migrations:** `docs/MIGRATION_RUNBOOK.md`
 and `migrations/APPLIED.md`. **History and detail:** `docs/ACQUISITION_REVIEW.md`
 (kept as written; this file is canonical when the two disagree).
@@ -61,12 +61,12 @@ Anything read after that time is **unverified** until the next read-only check.
 |---|---|---|---|---|---|---|---|---|---|
 | Migration tooling and runbook (`tools/migrate/`, `docs/MIGRATION_RUNBOOK.md`) | yes | 28 + 25 offline checks | **yes, `54fecd4`** | **no** | n/a | n/a | n/a | n/a | n/a |
 | Migration 045 member write rules | yes | 136/136 on PG 16 and 17.6 (re-run before the commit); mutation harness | **yes, `0317644`** (file byte-identical to the applied text, blob `42f0f046`) | **no** | n/a | **yes, 2026-10-04 18:44:27Z** | **yes**: 46-check rolled-back matrix, 2026-10-04 (`tools/migrate/live-matrix/`) | n/a (no endpoint) | **no** |
-| GL parser (`gl-import.js`) | yes | `test-gl-import.js`, in regression | no | no | n/a | n/a | n/a | n/a | no |
-| Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue | no | no | **no — never run on Vercel** | n/a (needs 046) | no | **no** | no |
-| Migration 046 acquisition general ledger | yes | verifier; mutation 58/60 in the saved run + the 2 re-based mutants killed 2026-10-04 (log in scratchpad `phase6/`) | no | no | n/a | **no** | no (no live matrix yet) | n/a | no |
+| GL parser (`gl-import.js`) | yes | 142/142 (`test-gl-import.js`, re-run 2026-10-04 before commit B), in regression | **yes, commit B** (this file is part of that commit, so it cannot cite the hash; see `git log`) | **no** | n/a | n/a | n/a | n/a | no |
+| Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue (re-run 2026-10-04 before commit B); Bulk Intake scope suite 86/86 | **yes, commit B** | **no** | **no — never run on Vercel** | n/a (needs 046) | no | **no** | no |
+| Migration 046 acquisition general ledger | yes | verifier 130/130; mutation 60/60 non-equivalent mutants killed, 1 equivalent (L08) — both re-run 2026-10-04 before commit B (logs in scratchpad `phase6/commitB/`) | **yes, commit B** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes; rollback md5 `74dd6285912cb5725f808434b181b766`) | **no** | n/a | **no** | no (no live matrix yet) | n/a | no |
 | Migration 047 remaining member write rules | yes | 76/76; mutation 21/21 | no | no | n/a | **no** | no (no live matrix yet) | n/a | no |
 | Migration 048 operating tables | yes | 50/50 on PG 16 and 17.6; mutation 21/21 | no | no | n/a | **no** | no (no live matrix yet) | n/a | no |
-| Full regression (`node test-regression.js`) | — | 251 suites passed, 6 failed = the same six pre-existing baseline failures (saved log, 2026-10-04 14:15 UTC) | — | — | — | — | — | — | — |
+| Full regression (`node test-regression.js`) | — | 251 suites passed, 6 failed = the same six pre-existing baseline failures (re-run 2026-10-04 before commit B, on the working tree's 257-suite list = commit B's 255 suites plus the 047 and 048 verifiers; every commit B suite passed) | — | — | — | — | — | — | — |
 
 Locally tested means throwaway PostgreSQL clusters and local stand-ins. The only
 live verification of any kind so far is the 045 rolled-back SQL matrix, which is
@@ -75,11 +75,14 @@ Vercel, against the deployed API, or in a browser.
 
 ## 5. Outstanding
 
-1. **Commit the rest of the Phase 2/3 work** in the agreed grouping: B (GL
-   parser, 046, ledger endpoints), C (047, 048), D (this documentation). A
-   (045 and its tests) is committed as `0317644`.
-2. **Decide about pushing `pilot`** (`54fecd4`, `0317644` and the commits to
-   come). A push *may* trigger a Vercel deployment of the Pilot site; the actual
+1. **Commit the rest of the Phase 2/3 work**: C (047, 048 with their rollbacks,
+   verifiers and mutation harnesses, their regression lines and allow-list
+   entries, and §7e of the acquisition document). A (045 and its tests,
+   `0317644`), D (the documentation, `e47a504`) and B (GL parser, 046, ledger
+   endpoints, §7d) are committed.
+2. **Decide about pushing `pilot`** (`54fecd4`, `0317644`, `e47a504`, commit B
+   and the commits to come). A push *may* trigger a Vercel deployment of the
+   Pilot site; the actual
    Vercel branch and deployment configuration must be verified, read-only,
    before any push. If a push does deploy, the ledger endpoints would exist on
    Vercel without deployed API verification.
@@ -116,12 +119,21 @@ Vercel, against the deployed API, or in a browser.
 
 ## 7. Next approved action
 
-**Current approved scope (before commit D): review of this documentation and of
-the Phase 2/3 commit plan.** Commit A (045 and its tests, `0317644`) is done and
-accepted. Nothing else is authorised.
+**Nothing is currently approved beyond keeping this hand-off accurate.** Commit A
+(045 and its tests, `0317644`), commit D (the documentation, `e47a504`) and
+commit B (GL parser, 046, ledger endpoints, §7d; the commit this file is part
+of) are done, locally, on `pilot`. Nothing is pushed.
 
-Committing this documentation (commit D), when Lynn approves it, authorises
-nothing further. Commits B and C, any push of `pilot`, any deployment, Migration
-046 and Option B each require their own specific approval. Once D is committed,
-this section is updated to name the next specific action, which will itself
-still require Lynn's approval before anything is done.
+**Next proposed action, awaiting Lynn's approval:** commit C — migrations 047
+and 048 with their rollbacks, `tools/verify-migration-047.js`,
+`tools/verify-migration-048.js`, the two mutation harnesses, the matching lines
+in `test-regression.js`, their entries in the `test-p5-6b` allow-list, and §7e
+of `docs/ACQUISITION_REVIEW.md` — as one commit, with its message stating that
+both migrations are implemented and tested locally only (throwaway clusters),
+that neither is applied to any database, and that neither is ready to apply
+(no live matrix exists for either).
+
+Approval of commit C would authorise that commit and nothing else. Any push of
+`pilot` (after a read-only check of the Vercel branch and deployment
+configuration), any deployment, Migration 046 and Option B each need their own
+specific approval.

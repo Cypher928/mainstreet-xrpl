@@ -542,6 +542,7 @@ const SUITES = [
   { label: 'Acquisition term entry walk — one value everywhere (e2e)', cmd: 'node test-e2e-acquisition-term-entry.js' },
   { label: 'Acquisition matching & conversion safeguards', cmd: 'node test-acquisition-match-safeguards.js' },
   { label: 'Acquisition matching & conversion safeguards walk (e2e)', cmd: 'node test-e2e-acquisition-match-safeguards.js' },
+  { label: 'General ledger parser (Financial Intake, increment one)', cmd: 'node test-gl-import.js' },
   // §4n (Option B) — only a canonical leasehold is a tenant: the analysis, the
   // Rent Roll, the Decision Report and conversion read leaseholds only, and an
   // unmatched extraction waits for a person. Walked with Maple Plaza.
@@ -576,6 +577,9 @@ const SUITES = [
   { label: 'Migration 042 register relink (53 rows)',        cmd: 'node tools/verify-migration-042.js' },
   { label: 'Migration 044 server-side acquisition safeguards', cmd: 'node tools/verify-migration-044.js' },
   { label: 'Migration 045 member write rules (read-only reads, editors write)', cmd: 'node tools/verify-migration-045-member-write-rules.js' },
+  { label: 'Migration 046 acquisition general ledger (Financial Intake)', cmd: 'node tools/verify-migration-046.js' },
+  { label: 'Ledger import / reversal (served by api/upload.js) against a local Supabase stand-in', cmd: 'node tools/verify-ledger-import-endpoint.js' },
+  { label: 'Ledger imports and reversals that overlap in time (046)', cmd: 'node tools/verify-ledger-concurrency.js' },
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },
   { label: 'Leasehold lifecycle plumbing + no deletes (A-1)', cmd: 'node test-lifecycle-plumbing.js' },
   { label: 'Lease upload identity: held proposals, durable document id (A-2)', cmd: 'node test-lease-upload-identity.js' },

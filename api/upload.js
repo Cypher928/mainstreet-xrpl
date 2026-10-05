@@ -30,6 +30,17 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // brakes runaway loops and single-client hammering, not a determined attacker.
 const { checkRate, sendRateLimited } = require('./_rate-limit');
 
+// The general ledger import and its reversal (migration 046) are served from
+// this function, not functions of their own: Vercel's Hobby plan deploys twelve
+// and api/ holds twelve (docs/ACQUISITION_REVIEW.md §4b, §7d). A request naming
+// one of these operations goes to that module untouched — its own sign-in, rate
+// limit, checks and replies — and never reaches the upload below. Any other
+// operation is refused; a request naming none is an upload, exactly as before.
+const LEDGER_OPS = {
+  'ledger-import':  require('./_ledger-import'),
+  'ledger-reverse': require('./_ledger-reverse'),
+};
+
 async function _verifyUser(req, res) {
   const tok = (req.headers['authorization'] || '').replace(/^Bearer\s+/, '');
   if (!tok) { res.status(401).json({ error: 'Authentication required' }); return null; }
@@ -69,6 +80,16 @@ const ALLOWED_TYPES = {
   webp: 'image/webp',
 };
 
+/**
+ * An acquisition original — written once, never replaced (see the handler).
+ * Judged on the name as it will be STORED: the handler turns every character
+ * outside [A-Za-z0-9._-] into '_', so 'acq/…', 'acq\…', 'acq …' and 'acq:…'
+ * all land on the same 'acq_…' object, and every one of them is an original.
+ */
+export function isAcquisitionOriginalName(fileName) {
+  return /^acq_/.test(String(fileName || '').replace(/[^a-zA-Z0-9._-]/g, '_'));
+}
+
 // Returns an error string if the file is not allowed, or null if valid.
 function _validateUpload(fileName, fileType) {
   const ext = (fileName.split('.').pop() || '').toLowerCase();
@@ -107,6 +128,14 @@ function httpsPost(url, headers, body) {
 }
 
 export default async function handler(req, res) {
+  const op = req.query && req.query.op;
+  if (op !== undefined) {
+    if (typeof op !== 'string' || !Object.prototype.hasOwnProperty.call(LEDGER_OPS, op)) {
+      return res.status(400).json({ error: 'Unknown operation' });
+    }
+    return LEDGER_OPS[op](req, res);
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -144,6 +173,11 @@ export default async function handler(req, res) {
 
   const key      = _t.serviceRoleKey || SUPABASE_ANON_KEY;
   const buffer   = Buffer.from(fileBase64, 'base64');
+  // An acquisition original (script.js _acqStoreOriginal names it acq/<review>/…)
+  // is evidence — a general ledger may be imported from it (migration 046). It
+  // is written once: never with upsert, so a second upload under the same name
+  // is refused instead of silently replacing the file a ledger was read from.
+  const isAcquisitionOriginal = isAcquisitionOriginalName(fileName);
   const safeName = `${user.id}/${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${safeName}`;
 
@@ -155,7 +189,7 @@ export default async function handler(req, res) {
       'Authorization': `Bearer ${key}`,
       'apikey':        key,
       'Content-Type':  fileType || 'application/octet-stream',
-      'x-upsert':      'true',
+      'x-upsert':      isAcquisitionOriginal ? 'false' : 'true',
     }, buffer));
   } catch (e) {
     console.error('[api/upload] network error:', e.code, e.message);
@@ -168,6 +202,9 @@ export default async function handler(req, res) {
 
   console.log('[api/upload] response:', status, body);
 
+  if (isAcquisitionOriginal && (status === 409 || (status >= 400 && /Duplicate|already exists/i.test(String(body))))) {
+    return res.status(409).json({ error: 'An original with this name is already stored. Acquisition originals are never replaced; upload it again to file a new copy.' });
+  }
   if (status >= 300) {
     return res.status(status).json({ error: `Supabase Storage error (HTTP ${status}): ${body}` });
   }

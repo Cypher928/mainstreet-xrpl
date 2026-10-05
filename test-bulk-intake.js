@@ -19,7 +19,8 @@
  *   6  retry runs through the A-2 protections (B2)
  *   7  a successful retry is persisted, linked, and survives a reload (B4)
  *   8  a job not in memory is updated by id — never inserted, never moved (B3)
- *   9  nothing A-2 / 038 / 043 protect is touched
+ *   9  nothing A-2 / 038 / 043 protect is touched (beyond the approved changes
+ *      named in test-support/approved-api-changes.js)
  */
 const fs   = require('fs');
 const path = require('path');
@@ -622,8 +623,37 @@ const CLS = (docType, extra) => Object.assign({ docType, confidence: 0.9, eviden
     const LUI_SRC = fs.readFileSync(path.join(ROOT, 'lease-upload-identity.js'), 'utf8');
     const head = require('child_process').execFileSync('git', ['show', 'HEAD:lease-upload-identity.js'], { cwd: GIT_ROOT, encoding: 'utf8' });
     is(LUI_SRC === head, '9.1 lease-upload-identity.js (the A-2 rule) is byte-for-byte unchanged');
-    const diff = require('child_process').execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd: GIT_ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
-    is(!diff.some(f => /^migrations\//.test(f) || /^api\//.test(f)), '9.2 no migration and no API file is changed', diff.join(', '));
+    // 9.2 — Bulk Intake changed no migration and no API file. Later work that
+    // was separately approved may be in progress in the same tree (Financial
+    // Intake: migrations 045/046, the ledger handlers, and one change to
+    // api/upload.js); it is allowed by name and, for api/upload.js, hunk by
+    // hunk — test-support/approved-api-changes.js. Anything else under api/ or
+    // migrations/, changed or new, still fails here.
+    const SCOPE = require('./test-support/approved-api-changes.js');
+    const git = (args) => require('child_process').execFileSync('git', args, { cwd: GIT_ROOT, encoding: 'utf8' });
+    const lines = (t) => t.split('\n').filter(Boolean);
+    const tree = {
+      changed: lines(git(['diff', '--name-only', 'HEAD'])),
+      added:   lines(git(['ls-files', '--others', '--exclude-standard'])),
+      read:    (f) => fs.readFileSync(path.join(GIT_ROOT, f), 'utf8'),
+      head:    (f) => git(['show', 'HEAD:' + f]),
+    };
+    const verdict = SCOPE.scopeVerdict(tree);
+    is(verdict.ok, '9.2 no migration and no API file is changed, beyond the approved Financial Intake changes', verdict.why + ' — ' + tree.changed.concat(tree.added).filter(f => /^(api|migrations)\//.test(f)).join(', '));
+    // …and the check still sees what it is for. Each case is the real tree with one thing added.
+    const UP_HEAD = tree.head('api/upload.js');
+    const withUpload = (text) => ({ ...tree, changed: [...new Set([...tree.changed, 'api/upload.js'])], read: (f) => f === 'api/upload.js' ? text : tree.read(f) });
+    const approvedUpload = SCOPE.UPLOAD_JS_HUNKS.reduce((t, h) => t.replace(h.original, h.approved), UP_HEAD);
+    is(SCOPE.scopeVerdict(withUpload(approvedUpload)).ok, '9.2a the approved api/upload.js change on its own passes');
+    is(!SCOPE.scopeVerdict(withUpload(approvedUpload + '\n// an unrelated edit\n')).ok, '9.2b one more line in api/upload.js fails');
+    is(!SCOPE.scopeVerdict(withUpload(approvedUpload.replace("isAcquisitionOriginal ? 'false' : 'true'", "'true'"))).ok, '9.2c an edit INSIDE an approved hunk fails');
+    is(!SCOPE.scopeVerdict(withUpload(approvedUpload.replace("const ALLOWED_BUCKETS = ['invoices', 'leases'];", "const ALLOWED_BUCKETS = ['invoices', 'leases', 'public'];"))).ok, '9.2d an edit outside the hunks (another bucket allowed) fails');
+    is(!SCOPE.scopeVerdict(withUpload(UP_HEAD.replace("'x-upsert':      'true',", "'x-upsert':      'false',"))).ok, '9.2e a different change in place of the approved one fails');
+    is(!SCOPE.scopeVerdict({ ...tree, changed: [...tree.changed, 'api/lease-documents.js'] }).ok, '9.2f another tracked API file changed fails');
+    is(!SCOPE.scopeVerdict({ ...tree, added: [...tree.added, 'api/ledger-import.js'] }).ok, '9.2g a new API file not approved by name (a thirteenth function) fails');
+    is(!SCOPE.scopeVerdict({ ...tree, changed: [...tree.changed, 'migrations/039_register_leasehold_link.sql'] }).ok
+       && !SCOPE.scopeVerdict({ ...tree, added: [...tree.added, 'migrations/047_anything.sql'] }).ok, '9.2h a changed or unapproved new migration fails');
+    is(SCOPE.scopeVerdict({ changed: [], added: [], read: tree.read, head: tree.head }).ok, '9.2i once committed (the tree equals HEAD) nothing is consulted and it passes');
     const rf = fnSource(SCRIPT, 'resolveHeldLeaseUpload');
     is(/nowCandidates\.some\(c => c\.id === target\.id\)/.test(rf) && /LUI\.isKind\(o\.kind\)/.test(rf),
       '9.3 the held decision still attaches only to a current candidate, of a confirmed kind');

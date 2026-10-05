@@ -2844,3 +2844,41 @@ undoes each rule.
 `test-acquisition-matrix13.js`, `test-e2e-acquisition-matrix13.js` (new);
 `tools/acquisition-matrix13-mutation.js` (new); the resolver, terms, report,
 clarity, decisions, canonical and leaseholds harnesses re-run.
+## 7d. P1-5 increment one — the general ledger, imported by the server (045 applied to Pilot 2026-10-04; 046 built and verified locally, NOT applied)
+
+> Historical detail. The current state of every piece below — implemented, locally
+> tested, committed, pushed, deployed, applied, live-verified — is kept in
+> `docs/HANDOFF.md`, which is canonical when the two disagree.
+
+Two migrations, in order. **045 was applied to Pilot on 2026-10-04** (version
+`20261004184427`, the file verbatim, one send through the Management API; record
+in `migrations/APPLIED.md` fact 17, procedure in `docs/MIGRATION_RUNBOOK.md`,
+live matrix 46 checks in `tools/migrate/live-matrix/`). **046 is not applied to
+Pilot or Production.** Nothing has been applied to Production.
+
+- **045 `acquisition_member_write_rules`** — members read; only people who may edit write. Read-only members keep every read and lose every write on reviews, documents, leaseholds, term decisions and properties. A review is converted only by `acquire_property`. Families, documents and decisions are recorded by the signed-in person. A document's stored-file path is set once. An editor's save no longer moves a property's ownership. Signed-in users lose TRUNCATE, anon loses its grants on properties, and nobody but the server inserts ledger rows. Verified by `tools/verify-migration-045-member-write-rules.js` (PostgreSQL 16 and 17.6) and `tools/member-write-rules-mutation.js`.
+- **046 `acquisition_general_ledger`** — a CSV general ledger imported against an acquisition document **from its stored original**. `POST /api/upload?op=ledger-import` (handler `api/_ledger-import.js`) reads the document as the person, downloads the original with the service key, hashes it (sha256), parses it with `gl-import.js`, and refuses unless the preview the person saw has the same fingerprint, lines, totals and date order. `import_general_ledger` (service_role only) re-checks the person's rights, the open review, the stored object and the fingerprint, and imports every line or none. Verified by `tools/verify-migration-046.js`, `tools/verify-ledger-import-endpoint.js` and `tools/ledger-import-mutation.js`.
+
+### Decisions it carries
+- **No new serverless function.** `api/` still holds twelve — Vercel's Hobby plan deploys twelve (§4b). The import and the reversal are private modules (`api/_ledger-import.js`, `api/_ledger-reverse.js`) served by `api/upload.js` when a request names `?op=ledger-import` or `?op=ledger-reverse`; any other `op` is refused with 400, and a request naming none is an upload exactly as before. The ledger modules do their own sign-in, rate limit (10 a minute each) and checks; nothing upload.js does for an upload runs first. `vercel.json` is unchanged, so they share upload.js's 30 s: sign-in 4 s, document 4 s, download 8 s, database 10 s (the database itself stops at 8 s and rolls back). A request that outlives the wait is reported as an unknown outcome, not as "nothing imported"; re-importing the same file is safe.
+- **CSV only on the server.** The spreadsheet library the browser uses (SheetJS) is 0.18.5 on npm, which carries two high advisories (prototype pollution, fixed 0.19.3; ReDoS, fixed 0.20.2). The fixed builds are published only on SheetJS's own CDN, which this environment could not reach to verify, so no spreadsheet library runs on the server. CSV must be UTF-8; comma or tab; semicolon files are refused (decimal commas).
+- **Dates are never guessed.** An ambiguous file is refused until a person chooses month-first or day-first; the choice is recorded and must match the preview.
+- **Duplicates.** The same file again writes nothing. Overlapping files add only their new lines; every import's claim on every line is kept in `gl_entry_sources`. A line already present counts only if an active import holds it with the same content — a source-less or foreign line with a matching hash refuses the import instead of making a real line be skipped.
+- **Reversal, not deletion.** `reverse_general_ledger_import` — property admins only, a reason required, refused once the acquisition is converted. Lines no other import holds are archived in `gl_entries_reversed`; shared lines stay with the import that still holds them. A corrected re-import is then accepted.
+- **History.** `ledger_import_history` is append-only and has no foreign keys: imports, reversals and the removal of evidence when a prospect is deleted, with who, when, document, stored path, sha256, size, date order, counts, totals and reasons. Retention is provisional: seven years after a deleted property's last event, purged only by `purge_ledger_import_history()`.
+- **Evidence.** Two restrictive storage rules stop a signed-in person overwriting, moving or deleting an object an acquisition document points at; `/api/upload` writes acquisition originals without upsert. An imported (or reversed) document is not deleted on its own.
+- **Limits (provisional).** File ≤ 3,489,792 bytes (the upload limit); ≤ 10,000 lines per import. Locally 10,000 lines import in about 1.2–1.4 s under an 8 s statement limit; the real platform is not yet measured.
+- **The CAM tab's GL import is unchanged**, and nothing in this path reads or writes `properties.data`.
+
+### Hardening pass (local only)
+- **One ledger change at a time per property.** A reversal running while an overlapping import was still in flight removed the shared lines and the cascade dropped them from the import, which stayed active with lines missing (reproduced: 632 of 756). `import_general_ledger` and `reverse_general_ledger_import` now take a per-property transaction lock (`pg_advisory_xact_lock(46, …)`) before reading anything, waiting at most 5 s; a request that cannot get it is refused whole with 55P03 ("still running … try again"), told as 409. `tools/verify-ledger-concurrency.js` runs the races with two real sessions.
+- **An original is recognised by the name it is stored under.** `api/upload.js` turns every character outside `[A-Za-z0-9._-]` into `_`, so `acq\…`, `acq …` or `acq:…` landed on the same `acq_…` object as an original but were sent with upsert — an overwrite with the service key, which the storage rules do not restrain. `isAcquisitionOriginalName` now judges the stored name.
+- **The download is counted as it arrives.** A reply with no (or a wrong) Content-Length is cut off one byte past the limit instead of being read whole.
+- **Routing is tested as routing.** The endpoint verifier runs the real `api/upload.js` handler: twelve ordinary uploads and refusals behave exactly as the committed `api/upload.js` (same status, reply and storage write); twelve unsupported `op` values (unknown, empty, case or space variants, `__proto__`, `constructor`, repeated, objects) are refused with 400 before sign-in, with no storage write and no call.
+- **The Bulk Intake scope check** (test-bulk-intake.js 9.2) now allows exactly the approved changes — the new files by name, and `api/upload.js` hunk by hunk (`test-support/approved-api-changes.js`) — and still fails on any other API or migration change, with self-checks proving it does.
+- **Proposed, not built: 047.** Read-only members can still add, rename and delete `lease_documents` rows and put, overwrite or delete files in an organisation's storage folder; anon and signed-in users hold every grant (TRUNCATE included) on `organization_members`, `organizations` and `lease_documents`. A separate migration is proposed for review; 045 and 046 are not widened.
+
+### Not done
+- No browser preview, date-order prompt, import history view or Reverse button yet — the two operations have no caller in the app.
+- Nothing measured on Pilot (PostgREST, Storage, Vercel). The endpoint verifier runs the real handlers against a local stand-in of those services.
+- The `?op=` routing is tested by running the real `api/upload.js` handler locally; Vercel's own request object (`req.query`) and its 30 s limit have not been exercised on a deployment.
