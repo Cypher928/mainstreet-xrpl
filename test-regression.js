@@ -732,6 +732,7 @@ const SUITES = [
   { label: 'Mobile reports',                            cmd: 'node test-mobile-reports.js' },
   { label: 'Mobile sqft input',                         cmd: 'node test-mobile-sqft-input.js' },
   { label: 'XRPL RLUSD settlement config',      cmd: 'node test-rlusd.js' },
+  { label: 'XRPL network guard: pilot is testnet; the page names the server\'s network', cmd: 'node test-xrpl-network-guard.js' },
 ];
 
 let anyFailed = false;

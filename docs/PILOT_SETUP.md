@@ -53,18 +53,29 @@ exactly one variable:
 | `PILOT_SUPABASE_SERVICE_ROLE_KEY` | **Preview** only | pilot project's **secret** key (`sb_secret_…`, from pilot Supabase → Settings → API) |
 
 That's the whole required server config. `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-`XRPL_NETWORK`, etc. do **not** need Preview values anymore — the code supplies
-them for previews.
+etc. do **not** need Preview values — the code supplies the pilot's for previews.
 
-**Recommended hygiene (defense in depth):** the pilot code never reads the
-production `SUPABASE_SERVICE_ROLE_KEY` on a preview, but if that variable is
-currently scoped to Preview/"All Environments," edit it to **Production only** so
-the prod secret isn't even present in the pilot runtime. (We already did this for
-`XRPL_SETTLEMENT_WALLET_SEED` and `..._ADDRESS`.)
+**XRPL network.** Previews are pinned to **testnet** in code
+(`api/_pilot-target.js` does not read `XRPL_NETWORK` off production), so no
+setting can put the pilot on mainnet. This was not always so: until 2026-10-05
+the code used testnet only when `XRPL_NETWORK` was unset, Vercel had
+`XRPL_NETWORK=mainnet` scoped to Preview as well as Production, and the pilot
+showed the Production settlement wallet on mainnet. `test-xrpl-network-guard.js`
+holds the pin.
+
+**Keep production secrets out of Preview.** The pilot code never reads the
+production `SUPABASE_*` values, the settlement wallet address or its seed, but a
+variable scoped to Preview is present in every preview's runtime all the same.
+Scope them to **Production only**. (Done on 2026-10-05 for `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `XRPL_SETTLEMENT_WALLET_SEED`,
+`XRPL_SETTLEMENT_WALLET_ADDRESS`, `XRPL_NETWORK` and the unused `NEXT_PUBLIC_*`
+pair; Preview has its own `XRPL_NETWORK=testnet` row. An earlier version of this
+guide said the wallet rows had already been scoped; they had not been.)
 
 > The settlement endpoint (`api/rlusd-settlement.js`) is read-only and holds no
-> wallet seed, so pilot cannot move funds regardless; on preview it now reads
-> **testnet** automatically.
+> wallet seed, so pilot cannot move funds regardless. With no Preview wallet
+> address the pilot's settlement panel says settlement is not configured, on
+> XRPL Testnet.
 
 ## Step 4 — (done) pilot URL + publishable key are wired
 The pilot Project URL and publishable key are already embedded in
@@ -111,7 +122,7 @@ validation.
 - [ ] Sign in as Christy's pilot account; confirm data reads/writes.
 - [ ] In the pilot Supabase **Table editor**, confirm her rows appear **there**,
       and in the **production** project they do **not**.
-- [ ] Settlement panel shows **testnet** (not mainnet).
+- [ ] Settlement panel names **XRPL Testnet** ("not configured" while the pilot has no wallet), never mainnet.
 - [ ] Production (`mainstreetcam.com`) still shows
       `Supabase target = production` and behaves identically.
 

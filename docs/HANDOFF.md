@@ -1,6 +1,6 @@
 # Hand-off — current state
 
-**Updated:** 2026-10-05 (after the 045 Pilot apply, the reconciliation review, commits A, D and B, the test-reference fix `8fb42e8`, and the review of the proposed commit C).
+**Updated:** 2026-10-05 (after commits A, D, B, the test-reference fix and C; the Vercel environment separation and Pilot redeploy; and the XRPL network guard commit).
 **Rules:** `docs/WORKING_AGREEMENT.md`. **Migrations:** `docs/MIGRATION_RUNBOOK.md`
 and `migrations/APPLIED.md`. **History and detail:** `docs/ACQUISITION_REVIEW.md`
 (kept as written; this file is canonical when the two disagree).
@@ -29,7 +29,7 @@ The browser side of the import is deliberately not built yet.
 |---|---|---|---|
 | **Pilot** Supabase (`mainstreet-pilot`) | `bhmktujbxdbvdmpybmad` | the only target for approved Pilot migrations; read-only inspection through the Supabase connector | a migration only with Lynn's written approval of the exact file, applied by the runbook procedure |
 | **Production** Supabase | `zhsuhehgehbzkmzurzyf` | **protected and separate; never accessed, migrated, changed or deployed to in this programme** | nothing, without explicit, specific approval naming Production |
-| Vercel (Pilot site) | — | believed to deploy from `pilot` (**unverified in this session**); the ledger endpoints are **not deployed**. A push to `pilot` *may* trigger a deployment: the Vercel branch and deployment configuration must be verified, read-only, before any push | deploy only on approval |
+| Vercel (Pilot site) | project `mainstreet-xrpl` | **verified 2026-10-05:** every push to `pilot` deploys automatically as a Preview, and `www.mainstreet-review.com` follows the newest `pilot` deployment; Production is `main` → `www.mainstreetcam.com`. Serving `892bd0a` (redeployed 2026-10-05 as `dpl_2E73gK9gtaGcZvPrbhqdHWKzD2Et`). Environment separated 2026-10-05: the Production wallet seed/address and Production `SUPABASE_*` are Production-only; Preview has `XRPL_NETWORK=testnet` and no wallet. The ledger endpoints are **not deployed** | deploy only on approval |
 | Claude's cloud environment | — | no Supabase token, `api.supabase.com` denied by network policy; "Option B" (token + allow-list) is documented in the runbook and **not configured** | Lynn, in the environment settings |
 
 Every migration file refuses to run unless the Pilot marker property exists;
@@ -75,18 +75,16 @@ Vercel, against the deployed API, or in a browser.
 
 ## 5. Outstanding
 
-1. **Commit the rest of the Phase 2/3 work**: C (047, 048 with their rollbacks,
-   verifiers and mutation harnesses, their regression lines and allow-list
-   entries, and §7e of the acquisition document). A (045 and its tests,
-   `0317644`), D (the documentation, `e47a504`), B (GL parser, 046, ledger
-   endpoints, §7d; `30fb242`) and the test-reference fix (`8fb42e8`) are
-   committed.
-2. **Decide about pushing `pilot`** (`54fecd4`, `0317644`, `e47a504`, `30fb242`,
-   `8fb42e8` and the commits to come). A push *may* trigger a Vercel deployment of the
-   Pilot site; the actual
-   Vercel branch and deployment configuration must be verified, read-only,
-   before any push. If a push does deploy, the ledger endpoints would exist on
-   Vercel without deployed API verification.
+1. **Phase 2/3 work and the XRPL guard are committed, locally:** A (045 and
+   its tests, `0317644`), D (the documentation, `e47a504`), B (GL parser, 046,
+   ledger endpoints, §7d; `30fb242`), the test-reference fix (`8fb42e8`), C
+   (047, 048; `979306a`) and the XRPL network guard (the commit carrying this
+   line).
+2. **Decide about pushing `pilot`** (the seven commits above). A push to
+   `pilot` **does** deploy the Pilot site automatically (verified 2026-10-05),
+   and it runs the two CI gates that write disposable fixtures to Pilot (red
+   at `origin/pilot` for pre-existing reasons). After a push the ledger
+   endpoints would exist on Vercel without deployed API verification.
 3. **Live matrices for 046, 047, 048** (`tools/migrate/live-matrix/<name>.sql`),
    required by the runbook before each apply.
 4. **046 apply** — needs its own approval; then a real import with one small
@@ -141,36 +139,36 @@ Vercel, against the deployed API, or in a browser.
 - The composite-key authorship limitation above.
 - The ledger endpoints' Vercel behaviour (request object, 30 s limit) is
   untested.
+- **Pilot on XRPL mainnet — found and closed 2026-10-05.** The Pilot site
+  showed "live on XRPL mainnet" and linked the Production settlement wallet,
+  because `XRPL_NETWORK=mainnet` and the wallet address and seed were scoped to
+  Preview as well as Production, and the code used testnet only as a fallback.
+  No funds could move (the endpoint is read-only and no deployed code reads the
+  seed). Closed in two layers: the Vercel scoping above, and in code (the
+  guard commit) — `api/_pilot-target.js` pins non-production to testnet
+  whatever `XRPL_NETWORK` says, and the settlement UI names only the network
+  the server reports, saying "not configured" when there is no wallet.
+  `test-xrpl-network-guard.js` pins both. Until that commit is pushed and
+  deployed, the live Pilot page still carries the old hand-written "XRPL
+  Mainnet" copy (the server side is already testnet through the Vercel change).
 
 ## 7. Next approved action
 
-**Nothing is currently approved beyond keeping this hand-off accurate.** Commit A
-(045 and its tests, `0317644`), commit D (the documentation, `e47a504`) and
-commit B (GL parser, 046, ledger endpoints, §7d; `30fb242`) and the
-test-reference fix (`8fb42e8`, the two B suites pinned to the `e47a504`
-baseline) are done, locally, on `pilot`. Nothing is pushed.
+**Nothing is currently approved beyond keeping this hand-off accurate.** Seven
+commits are done, locally, on `pilot`, and none is pushed: `54fecd4` (migration
+tooling), `0317644` (A, 045), `e47a504` (D, documentation), `30fb242` (B, GL
+parser, 046, ledger endpoints), `8fb42e8` (test-reference fix), `979306a` (C,
+047 and 048, NOT applied) and the XRPL network guard (the commit carrying
+this text). On 2026-10-05 the Vercel environment was separated and the Pilot
+site was redeployed at the same commit `892bd0a`.
 
-**Next proposed action, awaiting Lynn's approval:** commit C — migrations 047
-and 048 with their rollbacks (each rollback now refuses to run without the
-Pilot marker, added in the 2026-10-05 ordering and rollback review, because its
-GRANT ALL restores Pilot's recorded pre-state and would widen permissions on any
-other database), `tools/verify-migration-047.js`,
-`tools/verify-migration-048.js`, the two mutation harnesses, the matching lines
-in `test-regression.js`, their entries in the `test-p5-6b` allow-list, §7e of
-`docs/ACQUISITION_REVIEW.md`, the one-bullet correction to §7d (the committed
-text says 047 is "proposed, not built"; it is built, and not applied), and this
-hand-off — as one commit, with its message stating that both migrations are
-implemented and tested locally only (throwaway clusters), that neither is
-applied to any database, and that neither is ready to apply (no live matrix
-exists for either). Commit C was reviewed and its tests re-run on 2026-10-05,
-including a throwaway-cluster check that 046, 047 and 048 apply in any order
-(045 → 047 without 046 included) to the same catalog, that neither 047 nor 048
-depends on 046, and that both rollbacks restore the prior catalog exactly in
-any order without touching a row. It is **not yet approved or staged**. The
-committed 045 and 046 rollbacks have no Pilot-marker guard; adding one is a
-separate, later change.
+**Next proposed action, awaiting Lynn's approval:** push `pilot`. That deploys
+the Pilot site automatically and runs the two Pilot CI gates. Afterwards: read
+the new deployment's commit through Vercel, and Lynn checks in a browser that
+the settlement panel says "not configured … XRPL Testnet" and that an ordinary
+lease upload still works.
 
-Approval of commit C would authorise that commit and nothing else. Any push of
-`pilot` (after a read-only check of the Vercel branch and deployment
-configuration), any deployment, Migration 046 and Option B each need their own
-specific approval.
+Approval of a push would authorise that push and nothing else. Any migration
+(046, 047, 048), live matrix, Production change, CI-gate change, Pilot testnet
+wallet, the Pilot-marker guard for the committed 045 and 046 rollbacks, and
+Option B each need their own specific approval.

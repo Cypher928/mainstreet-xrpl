@@ -833,12 +833,12 @@ console.log('\n── W2 · Settlement is claimed only when a transaction exists
       'nothing tells the tenant that no settlement has occurred');
   // THIS ASSERTION USED TO REQUIRE THE OPPOSITE, and that is why the stale copy
   // survived: it pinned "goes live once the settlement wallet is funded" in
-  // place. RLUSD settlement is live on XRPL Mainnet — it shipped and was
-  // demonstrated — so that caveat was describing a completed capability as
-  // forthcoming, and a test was holding it there.
+  // place. RLUSD settlement is live on XRPL Mainnet in production — it shipped
+  // and was demonstrated — so that caveat was describing a completed capability
+  // as forthcoming, and a test was holding it there.
   //
   // The two facts the copy must keep separate are unchanged in substance:
-  //   · whether the CAPABILITY exists          → it does, on Mainnet
+  //   · whether the CAPABILITY exists          → as the server reports it
   //   · whether THIS charge has settled        → only if a transaction exists
   // Neither is evidence for the other. An unsettled charge is not an unbuilt
   // feature, and a live capability is not a paid invoice.
@@ -846,9 +846,14 @@ console.log('\n── W2 · Settlement is claimed only when a transaction exists
      /going live on mainnet|goes live once|wallet is funded|intends to settle/i
        .test(scriptText.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n')),
      'the "not yet live" wording is back — RLUSD settlement is live on XRPL Mainnet');
-  yes('the capability is described as live on XRPL Mainnet',
-      /live on XRPL Mainnet/.test(scriptText),
-      'no surface states that RLUSD settlement is live');
+  // Which network the capability is live on is the SERVER's to say (2026-10-05:
+  // copy that said "live on XRPL Mainnet" by hand told the testnet pilot it was
+  // on mainnet). The capability wording must exist, and must be built from the
+  // network the server reported — test-xrpl-network-guard.js renders it both ways.
+  yes('the capability is described as live, on the network the server reports',
+      /live on XRPL \$\{net\}/.test(scriptText) && !/live on XRPL Mainnet/.test(
+        scriptText.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n')),
+      'the "live on XRPL …" wording is missing, or names a network by hand again');
   // The per-charge truth must survive the correction: making the capability
   // sound live must never make an unpaid charge sound settled.
   yes('an unsettled charge still says it has no settlement transaction',

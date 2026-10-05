@@ -4202,16 +4202,29 @@ function renderPropertySettlementPanel() {
   const slot = document.getElementById('rlusdSettlementPanel');
   if (!slot) return;
   const prop = currentProperty() || {};
+  const state = _getSettlementState(prop);
   slot.innerHTML =
-    _buildSettlementFlowHtml(_getSettlementState(prop), { showPayButton: false }) +
+    _buildSettlementFlowHtml(state, { showPayButton: false, rail: _rlusdRailStatus }) +
     '<div id="rlusdInfraStatus" class="stl-infra-status"></div>';
-  renderRlusdSettlementPanel('rlusdInfraStatus').catch(() => {});
+  renderRlusdSettlementPanel('rlusdInfraStatus',
+    (rail) => _repaintSettlementFlow(slot, state, { showPayButton: false, rail })).catch(() => {});
 }
 
 // ── RLUSD Settlement Wallet infra status (small secondary line) ──────────────
-// A neutral one-line status of the on-chain settlement rail (activating / funding /
-// live), shown beneath the prominent settlement flow. Fire-and-forget.
-async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') {
+// A neutral one-line status of the on-chain settlement rail (not configured /
+// funding / live), shown beneath the prominent settlement flow. Fire-and-forget.
+//
+// THE NETWORK IS THE SERVER'S. /api/rlusd-settlement replies with the network
+// api/_pilot-target.js resolved — mainnet on production, testnet everywhere else
+// — and every network this page names comes from that reply. Nothing here may
+// name a network on its own: the pilot is on testnet, and it used to be told it
+// was on mainnet by copy written into this file.
+//
+// The last reply is kept so surfaces drawn later in the session (the tenant
+// statement) can say the same thing without asking again; until a reply exists
+// they name no network at all.
+let _rlusdRailStatus = null;
+async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel', onStatus) {
   const slot = document.getElementById(containerId);
   if (!slot) return;
   try {
@@ -4223,33 +4236,48 @@ async function renderRlusdSettlementPanel(containerId = 'rlusdSettlementPanel') 
       body: JSON.stringify({ action: 'status' }),
     });
     const status = await resp.json();
+    _rlusdRailStatus = status;
     slot.innerHTML = _buildRlusdStatusHtml(status);
+    if (typeof onStatus === 'function') onStatus(status);
   } catch (e) {
     console.warn('[rlusd] status check failed:', e?.message);
     slot.innerHTML = '';
   }
 }
 
+// The XRPL network as a person reads it. Only the two networks the server can
+// report are named; anything else is not guessed at (null).
+function _xrplNetworkLabel(network) {
+  const n = String(network == null ? '' : network).trim().toLowerCase();
+  if (n === 'mainnet') return 'Mainnet';
+  if (n === 'testnet') return 'Testnet';
+  return null;
+}
+
 function _buildRlusdStatusHtml(status) {
   // Neutral "settlement rail" framing — this is a secondary infra line beneath the
-  // prominent settlement flow, so it states where the rail is in activation rather
-  // than reading as a broken/unavailable feature.
+  // prominent settlement flow. It says where the rail stands, on the network the
+  // server reported, and says plainly when no settlement wallet exists here.
   const pending = (txt) => `<div class="rlusd-status-panel rlusd-status--pending">
       <span class="rlusd-status-dot"></span>
       <span>${txt}</span>
     </div>`;
-  if (!status || !status.configured) {
-    return pending('RLUSD settlement rail &middot; activating on XRPL mainnet');
+  const net = _xrplNetworkLabel(status && status.network);
+  if (!status || status.error || !net) {
+    return pending('RLUSD settlement rail &middot; status unavailable');
+  }
+  if (!status.configured) {
+    return pending(`RLUSD settlement &middot; not configured in this environment &middot; no settlement wallet on XRPL ${net}`);
   }
   if (!status.exists) {
-    return pending('RLUSD settlement rail &middot; funding the XRPL mainnet wallet');
+    return pending(`RLUSD settlement rail &middot; funding the XRPL ${net} wallet`);
   }
   if (!status.trustLineEstablished) {
-    return pending('RLUSD settlement rail &middot; finalizing the RLUSD trust line');
+    return pending(`RLUSD settlement rail &middot; finalizing the RLUSD trust line on XRPL ${net}`);
   }
   return `<div class="rlusd-status-panel rlusd-status--live">
     <span class="rlusd-status-dot"></span>
-    <span>RLUSD settlement rail &middot; live on XRPL ${esc(status.network)} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD
+    <span>RLUSD settlement rail &middot; live on XRPL ${net} &middot; ${Number(status.rlusdBalance).toLocaleString()} RLUSD
       &middot; <a href="${esc((status.explorerBase || '').replace('/transactions/', '/accounts/'))}${esc(status.address)}" target="_blank" rel="noopener">view wallet</a></span>
   </div>`;
 }
@@ -4260,13 +4288,14 @@ function _buildRlusdStatusHtml(status) {
 // It is driven entirely by a property's settlement record and NEVER fabricates a
 // transaction hash.
 //
-// RLUSD settlement is LIVE on XRPL Mainnet. The pending state below is a
-// statement about THIS charge — no settlement transaction has been recorded
-// against it yet — and never about the capability, which the copy used to
-// describe as forthcoming ("going live on mainnet", "goes live once the
-// settlement wallet is funded"). Those two facts are independent and must stay
-// worded that way: an unsettled charge is not evidence of an unbuilt feature,
-// and a live capability is not evidence that this charge was paid.
+// The pending state below is a statement about THIS charge — no settlement
+// transaction has been recorded against it yet. What it says about the
+// CAPABILITY (live, being set up, not configured, and on which network) comes
+// only from the server's status reply (opts.rail, see _settlementRailPhrase);
+// with no reply it says nothing about the capability. Those two facts are
+// independent and must stay worded that way: an unsettled charge is not
+// evidence of an unbuilt feature, and a live capability is not evidence that
+// this charge was paid.
 //
 // The moment a real settlement is recorded on `property.settlement`
 // (status:'settled' + txHash), every place that calls this lights up with the
@@ -4306,9 +4335,34 @@ function _getSettlementState(property) {
   return { status: 'pending', amountUsd: (s && s.amountUsd) ?? null, txHash: null, explorerLink: null, network: 'mainnet', settledAt: null };
 }
 
+// What the server's settlement-rail status lets a page say about the capability.
+// null when there is no usable reply: the caller then names no network at all.
+function _settlementRailPhrase(rail) {
+  const net = _xrplNetworkLabel(rail && rail.network);
+  if (!rail || rail.error || !net) return null;
+  if (!rail.configured) {
+    return { head: `not configured on XRPL ${net}`,
+             note: `RLUSD settlement is not configured in this environment (XRPL ${net}).` };
+  }
+  if (!rail.exists || !rail.trustLineEstablished) {
+    return { head: `being set up on XRPL ${net}`,
+             note: `RLUSD settlement is being set up on XRPL ${net}.` };
+  }
+  return { head: `live on XRPL ${net}`, note: `RLUSD settlement is live on XRPL ${net}.` };
+}
+
+// Redraw only the flow card inside `container` once the rail status is known,
+// leaving the status line beside it untouched.
+function _repaintSettlementFlow(container, state, opts) {
+  const el = container && container.querySelector && container.querySelector('.stl-flow');
+  if (el) el.outerHTML = _buildSettlementFlowHtml(state, opts);
+}
+
 // Builds the 4-step settlement flow. opts.showPayButton renders the tenant-facing
-// "Pay Now" affordance; opts.amountUsd overrides the displayed amount.
+// "Pay Now" affordance; opts.amountUsd overrides the displayed amount; opts.rail
+// is the server's settlement-rail status (or null — then no network is named).
 function _buildSettlementFlowHtml(state, opts = {}) {
+  const rail = _settlementRailPhrase(opts.rail);
   const settled = state.status === 'settled';
   const amount  = opts.amountUsd ?? state.amountUsd;
   const amtTxt  = (amount != null && !isNaN(amount)) ? fmt(amount) : null;
@@ -4342,7 +4396,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
 
   const head = settled
     ? `<div class="stl-head stl-head--live"><span class="stl-dot"></span>Payment settled &amp; verified on the XRP Ledger (RLUSD)${amtTxt ? ' · ' + amtTxt : ''}</div>`
-    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD) — live on XRPL Mainnet</div>`;
+    : `<div class="stl-head stl-head--pending"><span class="stl-dot"></span>Verifiable payment settlement on the XRP Ledger (RLUSD)${rail ? ' — ' + rail.head : ''}</div>`;
 
   // opts.hideNote suppresses the explanatory paragraph for callers that already print
   // their own (e.g. the tenant statement section header) — avoids duplicated copy.
@@ -4350,7 +4404,7 @@ function _buildSettlementFlowHtml(state, opts = {}) {
     ? ''
     : settled
       ? `<p class="stl-note">This payment was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger — a public, permanent receipt that you and your tenant can each verify independently.</p>`
-      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. RLUSD settlement is live on XRPL Mainnet; this charge has no settlement transaction yet.</p>`;
+      : `<p class="stl-note">When a tenant pays, MainStreet settles the matching amount as RLUSD — a US-dollar stablecoin — on the XRP Ledger, creating a public receipt both you and your tenant can verify independently. ${rail ? rail.note + ' ' : ''}This charge has no settlement transaction yet.</p>`;
 
   return `<div class="stl-flow ${settled ? 'stl-flow--live' : 'stl-flow--pending'}">
     ${head}
@@ -4361,12 +4415,13 @@ function _buildSettlementFlowHtml(state, opts = {}) {
   </div>`;
 }
 
-// Honest "Pay Now" handler. There is no live payment processor or funded wallet yet,
-// so this explains the flow rather than faking a payment — clicking it must never
-// imply a real charge occurred.
+// Honest "Pay Now" handler. The app takes no payment itself (settlement runs
+// out-of-band), so this explains the flow rather than faking a payment — clicking
+// it must never imply a real charge occurred. It names no network: which one
+// applies is the server's to say, on the status line beside the button.
 function payRentNow() {
   showToast(
-    'RLUSD settlement on XRPL mainnet is launching soon. Once live, paying here settles on-chain instantly and posts a verifiable transaction link.',
+    'Paying here is not available yet, and nothing has been charged. When it is, your payment settles in RLUSD on the XRP Ledger and posts a verifiable transaction link.',
     { color: '#0E2A3A', textColor: '#bae6fd', duration: 6000 }
   );
 }
@@ -22443,21 +22498,23 @@ function generateTenantStatement(tenantName, opts = {}) {
       // settled on a public ledger.
       //
       // The caveat that used to sit here ("goes live once the settlement wallet
-      // is funded") is gone: RLUSD settlement is live on XRPL Mainnet. What
-      // remains true, and is what this paragraph says, is narrower and about
-      // THIS document — no settlement transaction has been recorded against
-      // this statement.
+      // is funded") is gone. What this paragraph says about the CAPABILITY, and
+      // on which network, comes only from the server's last settlement-rail
+      // reply (_rlusdRailStatus); without one it names no network. What it
+      // always says is narrower and about THIS document — no settlement
+      // transaction has been recorded against this statement.
       //
       // Say what is true of THIS statement: whether a settlement transaction
       // exists, and if not, that none has occurred.
       const _st = _getSettlementState(currentProperty() || {});
       const _settled = _st.status === 'settled';
+      const _rail = _settlementRailPhrase(_rlusdRailStatus);
       return `
     <div class="rpt-section-title">${_settled ? 'Settlement — RLUSD on the XRP Ledger' : 'How payment will settle'}</div>
     <p class="rpt-helper-text">${_settled
       ? `This charge was settled in RLUSD (a US-dollar stablecoin) on the XRP Ledger. The transaction below is public and permanent — you can verify it yourself without taking MainStreet's word for it.`
-      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet settles the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. RLUSD settlement is live on XRPL Mainnet; this statement simply has no settlement transaction yet.`}</p>
-    ${_buildSettlementFlowHtml(_st, { showPayButton: false, hideNote: true })}`;
+      : `<strong>No payment has been made and no settlement has occurred for this statement.</strong> When you do pay, MainStreet settles the matching amount in RLUSD (a US-dollar stablecoin) on the XRP Ledger, so that you can verify the transaction yourself. ${_rail ? _rail.note + ' ' : ''}This statement simply has no settlement transaction yet.`}</p>
+    ${_buildSettlementFlowHtml(_st, { showPayButton: false, hideNote: true, rail: _rlusdRailStatus })}`;
     })()}
 
     <div class="rpt-section-title">Expense Breakdown</div>
@@ -31451,7 +31508,7 @@ function _renderTenantPropertyView(property) {
       '<p class="tp-property-note">Your CAM reconciliation data is managed by your property manager. Contact them to request a detailed statement or to dispute a charge.</p>' +
     '</div>' +
     '<div class="tp-settlement-card" id="tpSettlementCard">' +
-      _buildSettlementFlowHtml(_getSettlementState(property), { showPayButton: true }) +
+      _buildSettlementFlowHtml(_getSettlementState(property), { showPayButton: true, rail: _rlusdRailStatus }) +
       '<div id="tpSettlementStatus" class="stl-infra-status"></div>' +
     '</div>';
   container.style.display = 'block';
@@ -31461,7 +31518,9 @@ function _renderTenantPropertyView(property) {
     ?.querySelector('.tenant-portal-welcome');
   if (welcome) welcome.style.display = 'none';
 
-  renderRlusdSettlementPanel('tpSettlementStatus').catch(() => {});
+  const _tpState = _getSettlementState(property);
+  renderRlusdSettlementPanel('tpSettlementStatus',
+    (rail) => _repaintSettlementFlow(document.getElementById('tpSettlementCard'), _tpState, { showPayButton: true, rail })).catch(() => {});
 }
 
 // ─── Acquisition Review ───────────────────────────────────────────────────────

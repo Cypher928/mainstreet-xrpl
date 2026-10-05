@@ -15,6 +15,12 @@
  * FAIL-SAFE: anything that is not explicitly VERCEL_ENV==='production' resolves
  * to pilot — a preview (or local dev) can never reach the production database.
  *
+ * XRPL: the pilot is pinned to TESTNET and does not read XRPL_NETWORK at all.
+ * It used to read it with testnet only as a fallback, so a Preview-scoped
+ * XRPL_NETWORK=mainnet (which Vercel had, until 2026-10-05) put the pilot on
+ * mainnet. A setting can no longer do that; only VERCEL_ENV==='production'
+ * reaches mainnet.
+ *
  * No production-secret handling changes: on production this reads exactly the
  * same process.env values the functions read before.
  */
@@ -37,7 +43,7 @@ var target = IS_PROD ? {
   url:            PILOT_URL,
   anonKey:        PILOT_ANON,
   serviceRoleKey: (process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY || '').trim(),
-  network:        (process.env.XRPL_NETWORK || 'testnet').trim(),
+  network:        'testnet',   // never configurable off production — see XRPL above
 };
 
 module.exports = target;
