@@ -46,7 +46,10 @@
  *
  * Usage:
  *   TEST_EMAIL=… TEST_PASSWORD=… TEST_PROP_ID=… TEST_TENANT_ID=… \
+ *   PILOT_SUPABASE_SERVICE_ROLE_KEY=… \
  *   node test-pilot-evidence-roundtrip.js
+ *   (the service-role key is used only by the step 8 mutation, which deletes
+ *   the evidence row this suite wrote — append-only for signed-in people since 048)
  *
  * Exit codes: 0 all passed · 1 assertion failed · 2 refused / cannot run.
  */
@@ -92,8 +95,13 @@ const EMAIL     = process.env.TEST_EMAIL;
 const PASSWORD  = process.env.TEST_PASSWORD;
 const PROP_ID   = process.env.TEST_PROP_ID;
 const TENANT_ID = process.env.TEST_TENANT_ID;
+// The pilot service-role key is used for exactly one statement: the step 8
+// mutation that deletes the evidence row this suite wrote. It is required up
+// front so a missing key aborts here, not after the fixture has been written.
+const SERVICE_KEY = (process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY || '').trim();
 for (const [k, v] of [['TEST_EMAIL', EMAIL], ['TEST_PASSWORD', PASSWORD],
-                      ['TEST_PROP_ID', PROP_ID], ['TEST_TENANT_ID', TENANT_ID]]) {
+                      ['TEST_PROP_ID', PROP_ID], ['TEST_TENANT_ID', TENANT_ID],
+                      ['PILOT_SUPABASE_SERVICE_ROLE_KEY', SERVICE_KEY]]) {
   if (!v) abort(k + ' is not set. This suite needs a disposable pilot fixture — see scripts/pilot-live-fixture.js setup.');
 }
 
@@ -376,10 +384,20 @@ function loadSupabaseJs() {
   // The whole suite is worth nothing unless deleting the thing D-2 added makes
   // it fail. The mutation is applied to the DATA, not the source: the evidence
   // row is deleted and the two reloads replayed. Both must come back wrong.
-  const { error: delErr } = await client
+  //
+  // The delete runs as the SERVER (service role), not as the signed-in
+  // landlord: since 048, tenant_field_evidence is append-only for signed-in
+  // people — no app path deletes evidence, and this test harness is not an app
+  // path. The service client is scoped to the one row this suite wrote (the
+  // fixture property, the fixture tenant, this field) and is used for nothing
+  // else; every product step above still runs under the landlord's JWT and RLS.
+  const service = createClient(TARGET.url, SERVICE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error: delErr } = await service
     .from('tenant_field_evidence').delete()
-    .eq('property_id', PROP_ID).eq('field_key', 'partial_period_basis');
-  if (delErr) abort('mutation: could not delete the evidence row: ' + delErr.message);
+    .eq('property_id', PROP_ID).eq('tenant_id', TENANT_ID).eq('field_key', 'partial_period_basis');
+  if (delErr) abort('mutation: could not delete the evidence row (service role): ' + delErr.message);
 
   // Blob with the value, no evidence — the original D-2 bug exactly.
   const { error: m1Err } = await client
