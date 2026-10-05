@@ -1,6 +1,6 @@
 # Hand-off — current state
 
-**Updated:** 2026-10-05 (after commits A, D, B, the test-reference fix and C; the Vercel environment separation and Pilot redeploy; and the XRPL network guard commit).
+**Updated:** 2026-10-05 (after migration 047 was applied to Pilot and verified; earlier the same day: commits A, D, B, the test-reference fix and C, the Vercel environment separation and Pilot redeploy, and the XRPL network guard commit).
 **Rules:** `docs/WORKING_AGREEMENT.md`. **Migrations:** `docs/MIGRATION_RUNBOOK.md`
 and `migrations/APPLIED.md`. **History and detail:** `docs/ACQUISITION_REVIEW.md`
 (kept as written; this file is canonical when the two disagree).
@@ -37,21 +37,23 @@ every migration tool hard-codes the Pilot ref and refuses any other.
 
 ## 3. Pilot database state (last read-only check)
 
-**Read 2026-10-04 21:09:52 UTC**, through the Supabase connector, read-only:
+**Read 2026-10-05 18:40:45 UTC**, through the Supabase connector, read-only:
 
-- 45 migration rows; newest `20261004184427 045_acquisition_member_write_rules`.
-- 045 recorded once; recorded text md5 `5ee571956613b4cf0beab2a36bbbcd2b`,
-  sha256 `39311540…ffd6d656`, 19,462 bytes = the file in `migrations/` and the
-  approval `tools/migrate/approvals/045_….approval`; idempotency key
-  `82ffaede-02cb-497e-9bd5-ab8f1d490b87`.
-- Nothing from 046, 047 or 048 recorded or present (functions, tables,
-  policies all absent).
-- Catalog fingerprint `1388 64950c2ba9d3ef2e676054f51d19c8b1` (post-045 value,
-  unchanged since 18:45 UTC); every data hash at its pre-045 baseline (no row
-  changed by 045 or by the live matrix, which was rolled back).
-- Evidence: `tools/migrate/live-matrix/045_*.result.txt`, the inventories
-  beside it, `migrations/APPLIED.md` fact 17, and the session notes under the
-  scratchpad `phase6/` folder (not in the repository).
+- 46 migration rows; newest `20261005183007 047_member_write_rules_remaining`.
+- 047 recorded once; recorded text md5 `2c6b8a07eab59c00afb6c7ba5a2f46a5`,
+  sha256 `a49725da…`, 8,941 bytes = the file in `migrations/` and the approval
+  `tools/migrate/approvals/047_….approval`; idempotency key
+  `473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b` (`check-record.js`: VERIFIED). 045 unchanged.
+- Nothing from 046 or 048 recorded or present.
+- Catalog fingerprint `1389 18dd4e16f2b149d6964834828a1e7260` (post-047 value);
+  the catalog diff against the pre-047 inventory is exactly 047's 10 removals and
+  11 additions (`check-inventory.js`: EXPLAINED). Every data hash identical to the
+  pre-047 record (no row changed by 047, by the rolled-back trial or by the live
+  matrix).
+- Evidence: `tools/migrate/live-matrix/047_*.result.txt` (46 ok, 0 FAIL) and the
+  inventories beside it, `migrations/APPLIED.md` fact 18, and the session notes
+  under the scratchpad `phase6/apply047/` and `phase6/trial047/` folders (not in
+  the repository).
 
 Anything read after that time is **unverified** until the next read-only check.
 
@@ -64,13 +66,13 @@ Anything read after that time is **unverified** until the next read-only check.
 | GL parser (`gl-import.js`) | yes | 142/142 (`test-gl-import.js`, re-run 2026-10-04 before commit B), in regression | **yes, `30fb242`** (commit B) | **no** | n/a | n/a | n/a | n/a | no |
 | Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue (re-run 2026-10-04 before commit B); Bulk Intake scope suite 86/86 | **yes, `30fb242`** | **no** | **no — never run on Vercel** | n/a (needs 046) | no | **no** | no |
 | Migration 046 acquisition general ledger | yes | verifier 130/130; mutation 60/60 non-equivalent mutants killed, 1 equivalent (L08) — both re-run 2026-10-04 before commit B (logs in scratchpad `phase6/commitB/`) | **yes, `30fb242`** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes; rollback md5 `74dd6285912cb5725f808434b181b766`) | **no** | n/a | **no** | no (no live matrix yet) | n/a | no |
-| Migration 047 remaining member write rules | yes | verifier 76/76 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05, logs in scratchpad `phase6/commitC/`) | **no** (proposed commit C, awaiting approval) | no | n/a | **no** | no (no live matrix yet) | n/a | no |
+| Migration 047 remaining member write rules | yes | verifier 76/76 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05, logs in scratchpad `phase6/commitC/`) | **yes, `979306a`** (C); its live matrix and apply records in the 047 completion commit | yes (`979306a` is in `origin/pilot`); the completion commit is not | n/a | **yes, 2026-10-05 18:30:07Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (047 + matrix 46/0 + rollback exact), and the 46-check matrix after it, 46 ok / 0 FAIL | n/a (no endpoint) | no |
 | Migration 048 operating tables | yes | verifier 50/50 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05) | **no** (proposed commit C) | no | n/a | **no** | no (no live matrix yet) | n/a | no |
 | Full regression (`node test-regression.js`) | — | **2026-10-05, after the test-fix commit `8fb42e8` (257 suites): 251 passed, 6 failed = the six pre-existing baseline failures only.** Between commit B and that fix the gate read 249 passed, 8 failed (see §6) | — | — | — | — | — | — | — |
 
 Locally tested means throwaway PostgreSQL clusters and local stand-ins. The only
-live verification of any kind so far is the 045 rolled-back SQL matrix, which is
-live database verification. None of the Phase 2/3 code has been exercised on
+live verification of any kind so far is the 045 and 047 rolled-back SQL matrices,
+which are live database verification. None of the Phase 2/3 code has been exercised on
 Vercel, against the deployed API, or in a browser.
 
 ## 5. Outstanding
@@ -85,8 +87,12 @@ Vercel, against the deployed API, or in a browser.
    and it runs the two CI gates that write disposable fixtures to Pilot (red
    at `origin/pilot` for pre-existing reasons). After a push the ledger
    endpoints would exist on Vercel without deployed API verification.
-3. **Live matrices for 046, 047, 048** (`tools/migrate/live-matrix/<name>.sql`),
-   required by the runbook before each apply.
+3. **Live matrices for 046 and 048** (`tools/migrate/live-matrix/<name>.sql`),
+   required by the runbook before each apply. 047's is done (applied and
+   verified 2026-10-05, 46/0). The Supabase connector cannot run these matrices
+   (it times out at 60 s on text containing DELETE/TRUNCATE); Lynn runs them in
+   the Pilot SQL editor, which turns line endings into CRLF — harmless for a
+   matrix, but a migration itself must go through the hand-off script.
 4. **046 apply** — needs its own approval; then a real import with one small
    synthetic CSV on a test property, and reversal.
 5. **Browser side of the import** (preview, date-order prompt, history view,
@@ -154,21 +160,20 @@ Vercel, against the deployed API, or in a browser.
 
 ## 7. Next approved action
 
-**Nothing is currently approved beyond keeping this hand-off accurate.** Seven
-commits are done, locally, on `pilot`, and none is pushed: `54fecd4` (migration
-tooling), `0317644` (A, 045), `e47a504` (D, documentation), `30fb242` (B, GL
-parser, 046, ledger endpoints), `8fb42e8` (test-reference fix), `979306a` (C,
-047 and 048, NOT applied) and the XRPL network guard (the commit carrying
-this text). On 2026-10-05 the Vercel environment was separated and the Pilot
-site was redeployed at the same commit `892bd0a`.
+**047 is complete** (approved complete by Lynn, 2026-10-05): applied to Pilot
+through the hand-off script, record verified, catalog diff explained, data
+unchanged, live matrix 46/0. Its records (approval with the after-apply lines,
+`migrations/APPLIED.md` row and fact 18, the live matrix with its result and
+inventories, and this file) are in the local 047 completion commit, **not
+pushed**. `origin/pilot` is at `d2ea524` (the XRPL guard), pushed and deployed
+to the Pilot site on 2026-10-05.
 
-**Next proposed action, awaiting Lynn's approval:** push `pilot`. That deploys
-the Pilot site automatically and runs the two Pilot CI gates. Afterwards: read
-the new deployment's commit through Vercel, and Lynn checks in a browser that
-the settlement panel says "not configured … XRPL Testnet" and that an ordinary
-lease upload still works.
+**Nothing further is currently approved.** Proposed next, each needing its own
+approval: push the 047 completion commit; then 048 through the same procedure
+(live matrix, rolled-back trial, hand-off apply, verification) before 046, which
+also creates the ledger tables and depends on endpoints that are not yet
+deployed-API or browser verified.
 
-Approval of a push would authorise that push and nothing else. Any migration
-(046, 047, 048), live matrix, Production change, CI-gate change, Pilot testnet
-wallet, the Pilot-marker guard for the committed 045 and 046 rollbacks, and
-Option B each need their own specific approval.
+Any migration (046, 048), live matrix run, push, Production change, CI-gate
+change, Pilot testnet wallet, the Pilot-marker guard for the committed 045 and
+046 rollbacks, and Option B each need their own specific approval.

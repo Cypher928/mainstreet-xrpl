@@ -1,0 +1,51 @@
+MATRIX RESULTS 2026-10-05 ~18:38Z, after the apply (everything rolled back). Run by Lynn in the Pilot SQL editor
+(the Supabase connector times out at 60 s on this text, as on the pre-apply trial). File md5 acc36247ac6a04b35aa04528adbe7816.
+K1 storage_object_writable: true|v|search_path=""|{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres} ok
+K2 lease_docs_owner_all gone: 0 ok
+K3 the register's four member rules exactly as 047 writes them ok
+K4 lease_docs_service_role_all kept: 1 ok
+K5 storage: the three write rules use storage_object_writable; docs_owner_read unchanged ok
+K6 grants: lease_documents:authenticated=DELETE,INSERT,SELECT,UPDATE ; lease_documents:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; organization_members:authenticated=SELECT ; organization_members:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; organizations:authenticated=SELECT ; organizations:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ok
+K7 the organisation tables' five rules kept: 5 ok
+FX property d1a5ce2c org ed52e3d6; editor and read-only members added; register row 5516f20e; two stored objects
+L1 owner/editor/read-only/stranger read the register row: 1/1/1/0 ok
+L2 read-only member add refused: 42501 ok
+L3 read-only member renames/re-points the row: 0 rows ok
+L4 read-only member deletes the row: 0 rows ok
+L5 stranger add refused: 42501 ok
+L6 anon read refused: 42501 ok
+L7 anon add refused: 42501 ok
+L8 TRUNCATE by a signed-in person refused: 42501 ok
+L9 the row after the refused writes: 047-matrix-lease.pdf| ok
+L10 editor adds, edits, deletes a register row: 1/1/1 ok
+L11 owner adds, edits, deletes a register row: 1/1/1 ok
+L12 editor filing on another organisation's property refused: 42501 ok
+L13 the server (service_role) reads, adds, edits, deletes as before: 1/1/1 ok
+S1 read-only member opens the organisation's file: 1 ok
+S2 read-only member put refused: 42501 ok
+S3 read-only member overwrites/moves/deletes the organisation's file, deletes the owner's: 0/0/0/0 rows; both intact=true ok
+S4 read-only member's own folder stays theirs (put/overwrite/delete): 1/1/1 ok
+S5 editor puts/overwrites/deletes in the organisation's folder: 1/1/1 ok
+S6 owner (admin) puts/deletes in the organisation's folder: 1/1 ok
+S7 stranger put refused: 42501 ok
+S8 stranger opens the organisation's file: 0 ok
+V1 revoked member add refused: 42501 ok
+V2 revoked member put refused: 42501 ok
+V3 unaccepted member add refused: 42501 ok
+V4 unaccepted member put refused: 42501 ok
+V5 the same account, once accepted as property_manager, writes both: ok (membership is what gates)
+G1 read-only member reads their membership and organisation: 1/1 ok
+G2 read-only member self-promotion refused: 42501 ok
+G3 read-only member adding a member refused: 42501 ok
+G4 owner removing a member through the API refused (the server writes membership): 42501 ok
+G5 owner updating the organisation through the API refused: 42501 ok
+G6 anon read of organization_members refused: 42501 ok
+G7 anon read of organizations refused: 42501 ok
+G8 the membership after the refused writes: read_only rows 1 ok
+W1 a signed-in person creates a property; the organisation is assigned by the SECURITY DEFINER trigger: org set=true ok
+W2 owner deletes a property; its register rows cascade away: deleted 1, register rows left 0 ok
+W3 editor still saves the property (045), read-only member still reads the review: 1/1 ok
+Z1 storage.protect_delete still refuses a direct delete: 42501 ok
+RA1 real owner account reads register rows/stored files: visible 3/25 vs allowed 3/25 ok
+SUMMARY 46 ok, 0 FAIL
+After the run (18:40:45Z, read-only): no fixture residue; every data hash identical; fingerprint 1389 18dd4e16f2b149d6964834828a1e7260 unchanged.

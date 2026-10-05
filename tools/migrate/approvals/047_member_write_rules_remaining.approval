@@ -1,0 +1,20 @@
+# Approval record — read by tools/migrate/apply-migration.sh. One file per migration.
+# The script refuses to send unless the .sql file hashes to sql_md5/sql_bytes and
+# project_ref is the Pilot project. Never put a token or secret in this file.
+migration_name=047_member_write_rules_remaining
+project_ref=bhmktujbxdbvdmpybmad
+project_name=mainstreet-pilot
+sql_md5=2c6b8a07eab59c00afb6c7ba5a2f46a5
+sql_sha256=a49725da2f30ce958ce40bcef023cec2d6378ba8705772e8838d5c07be9ff10a
+sql_bytes=8941
+rollback_file=047_member_write_rules_remaining_rollback.sql
+rollback_md5=088948e75b3c28f1bee1258685029a58
+rollback_sha256=da10387d929d5cd74f3d515988a835b5df8eb08a4b1f64232403f9b733533f9b
+approved_on=2026-10-05
+approved_by=Lynn, chat 2026-10-05: "Approved: proceed with the persistent 047 Pilot apply" (after the rolled-back live trial: matrix 46/0, rollback exact)
+local_verification=tools/verify-migration-047.js 76/76 (PG 16.13 and 17.6); live matrix rolled-back trial on Pilot 46 ok 0 FAIL
+# Filled in after the apply:
+applied_on=2026-10-05T18:30:07Z
+applied_version=20261005183007
+idempotency_key=473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b
+applied_by=Lynn, from her Mac, tools/migrate/apply-migration.sh, PROBE 200 then one POST, HTTP 200; check-record VERIFIED, check-inventory EXPLAINED, live matrix 46/0

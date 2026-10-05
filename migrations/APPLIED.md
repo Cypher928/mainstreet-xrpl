@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (45 rows as of 045, in applied order; 040 and 041 are unused)
+## Recorded history (46 rows as of 047, in applied order; 040 and 041 are unused; 046 is not applied)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -75,8 +75,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20260930235937` | `043_leasehold_absorption` | `migrations/043_leasehold_absorption.sql` @ `daea15ec` (commit `938db31`) — applied 2026-09-30 through the Supabase MCP `apply_migration`, before `938db31` was pushed (043 changes no product file, so no client had to be live first); the recorded text is the file verbatim (md5 `f79fc081…` on both sides) | identical |
 | `20261003173521` | `044_acquisition_conversion_safeguards` | `migrations/044_acquisition_conversion_safeguards.sql` @ `a8bd444f` (commit `07654ce`, unchanged at `58a390b`) — applied 2026-10-03 through the Supabase Management API (`POST /v1/projects/{ref}/database/migrations`, the endpoint the MCP `apply_migration` tool uses), sent once from the operator's machine with `Idempotency-Key` `a058abd0-dca7-4636-853b-3a07930806c7`, which this row records in `idempotency_key` (every earlier row has null there); applied before the four `pilot` commits carrying it were pushed; the recorded text is the file verbatim (md5 `4dbff7aa…` on both sides, 44,504 characters) | identical |
 | `20261004184427` | `045_acquisition_member_write_rules` | `migrations/045_acquisition_member_write_rules.sql` @ `42f0f046` (commit `0317644`; the file was uncommitted at apply time and was committed unchanged; md5 `5ee57195…`, sha256 `39311540…`, 19,462 bytes) — applied 2026-10-04 by the operator from her Mac with `apply-045-pilot.sh` (now `tools/migrate/apply-migration.sh`) through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `82ffaede-02cb-497e-9bd5-ab8f1d490b87` (recorded in `idempotency_key`), HTTP 200 at 18:44:27Z; the token was a scoped personal access token holding only Database → Migrations read-write on Pilot; two earlier `apply_migration` calls through the Supabase connector timed out at 60 s with no effect (the connector's destructive-SQL confirmation cannot be shown in this client); the recorded text is the file verbatim (md5 `5ee57195…` on both sides, 19,462 bytes) | identical |
+| `20261005183007` | `047_member_write_rules_remaining` | `migrations/047_member_write_rules_remaining.sql` (commit `979306a`; md5 `2c6b8a07…`, sha256 `a49725da…`, 8,941 bytes) — applied 2026-10-05 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b` (recorded in `idempotency_key`), HTTP 200 at 18:30:07Z; 046 was not applied before it (047 needs only 045 and phase0/024); the recorded text is the file verbatim (md5 `2c6b8a07…` on both sides, 8,941 bytes) | identical |
 
-Tally (45 rows as of 045): 35 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (46 rows as of 047): 36 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -507,6 +508,30 @@ These files were applied through the SQL editor or the bundle
    therefore cannot file child records on a review they do not own by any
    path. The deferred authorship migration (034 fact 8) owns this.
    Procedure: `docs/MIGRATION_RUNBOOK.md`.
+
+18. **Since 047, the lease document register and the organisation storage folders
+   follow 045's rule, and the latent grants on the organisation tables are gone.**
+   `lease_documents`: the FOR ALL member policy `lease_docs_owner_all` is replaced by
+   `lease_docs_member_select` (same member predicate) and `lease_docs_editor_insert` /
+   `_update` / `_delete` (`can_edit_property`); `lease_docs_service_role_all` is kept, so
+   the server (`api/lease-documents.js`, ask-lease, validate-lease) writes as before.
+   `storage.objects`: `docs_owner_insert` / `_update` / `_delete` now use the new
+   `storage_object_writable(name)` (your own folder, or an organisation you may edit:
+   accepted, unrevoked, not `read_only`; SECURITY DEFINER, empty search_path, executable by
+   `authenticated` and `service_role` only); `docs_owner_read` is unchanged. Grants: `anon`
+   has nothing on `organization_members`, `organizations`, `lease_documents`;
+   `authenticated` keeps SELECT only on the two organisation tables and
+   SELECT/INSERT/UPDATE/DELETE on the register. No row changed. The migration role creates
+   and drops policies on `storage.objects` (owned by `supabase_storage_admin`) through
+   `supautils.policy_grants`. Before the apply, 047, its rollback and this matrix were run on
+   Pilot in one transaction forced to abort (2026-10-05): rollback restored the catalog
+   exactly. After the apply: record verified, catalog diff 10 removed / 11 added (all 047's,
+   inventory digest equal to the prediction), every data hash identical, live matrix 46/0
+   (`tools/migrate/live-matrix/047_member_write_rules_remaining.result.txt`).
+   **Not closed by 047:** `anon`/`authenticated` still hold every privilege on
+   `storage.objects`/`storage.buckets` (latent under row security); 046's two RESTRICTIVE
+   rules on acquisition originals do not exist until 046 is applied. Rollback:
+   `047_member_write_rules_remaining_rollback.sql` (md5 `088948e7…`), which reopens every gap.
 
 ## Decisions this manifest does not make
 
