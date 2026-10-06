@@ -138,7 +138,7 @@ function fieldStorageSource(scriptSrc) {
   return m[0];
 }
 
-function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc) {
+function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc, fieldProvenanceSrc) {
   const bodies = PRODUCT_FNS.map(n => {
     try { return fnSource(scriptSrc, n); }
     catch (e) { abort('could not extract ' + n + ' from script.js: ' + e.message); }
@@ -154,22 +154,35 @@ function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc) {
     // makes _stripBlobs discard fieldEvidence, which is what makes the normalized
     // table the only surviving record. Turning it off would test a world the
     // product does not run in.
-    window: { ms_useNormalizedEvidence: true, ms_lastDualWrite: { errors: [] }, AuthService: null },
+    ms_useNormalizedEvidence: true, ms_lastDualWrite: { errors: [] }, AuthService: null,
     db: null,
     _updateDualWritePill() {},
   };
+  // In the browser `window` IS the global object, so a module that attaches
+  // itself to window is also reachable by its bare name — which is how
+  // getFieldConfidence calls FieldProvenance after testing window.FieldProvenance.
+  // The sandbox has the same shape: window and globalThis are the sandbox itself.
+  sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // lease-period.js and tenant-normalize.js are real modules and are loaded as
-  // such, not extracted; both attach themselves to window, as in the browser.
+  // lease-period.js, tenant-normalize.js and field-provenance.js are real
+  // modules and are loaded as such, not extracted; each attaches itself to
+  // window, as in the browser, in the order index.html loads them.
+  // getFieldConfidence and hasFieldQuote delegate to FieldProvenance when it is
+  // present and fall back to older rules when it is not; the browser always has
+  // it, so a sandbox without it tests a world the product does not run in.
   vm.runInContext(leaseSrc, sandbox);
   vm.runInContext(tenantNormalizeSrc, sandbox);
+  vm.runInContext(fieldProvenanceSrc, sandbox);
   vm.runInContext(fieldStorageSource(scriptSrc) + '\n\n' + bodies.join('\n\n'), sandbox);
   if (!sandbox.window.LeasePeriod || typeof sandbox.window.LeasePeriod.partialPeriodBasis !== 'function') {
     abort('lease-period.js did not expose LeasePeriod.partialPeriodBasis');
   }
   if (!sandbox.window.TenantNormalize || typeof sandbox.window.TenantNormalize.normalizeTenant !== 'function') {
     abort('tenant-normalize.js did not expose TenantNormalize.normalizeTenant');
+  }
+  if (!sandbox.window.FieldProvenance || typeof sandbox.window.FieldProvenance.fieldProvenance !== 'function') {
+    abort('field-provenance.js did not expose FieldProvenance.fieldProvenance');
   }
   return sandbox;
 }
@@ -216,9 +229,10 @@ function loadSupabaseJs() {
   const scriptSrc = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
   const leaseSrc  = fs.readFileSync(path.join(__dirname, 'lease-period.js'), 'utf8');
   const tnSrc     = fs.readFileSync(path.join(__dirname, 'tenant-normalize.js'), 'utf8');
+  const fpSrc     = fs.readFileSync(path.join(__dirname, 'field-provenance.js'), 'utf8');
 
   section('Step 0: the product functions this suite runs');
-  const P = loadProduct(scriptSrc, leaseSrc, tnSrc);
+  const P = loadProduct(scriptSrc, leaseSrc, tnSrc, fpSrc);
   assert(PRODUCT_FNS.every(n => typeof P[n] === 'function'),
     'all ' + PRODUCT_FNS.length + ' product functions extracted from script.js and callable');
   assertReadPathUnchanged(scriptSrc);
