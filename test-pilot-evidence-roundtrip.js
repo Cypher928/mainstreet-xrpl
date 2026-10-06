@@ -35,6 +35,7 @@
  *   product   _writeTenantFieldEvidence  builds the payload and issues the write
  *   product   _evidenceRowToSnapshot     turns the row back into a snapshot
  *   product   normalizeTenant            the allow-list a loaded tenant passes
+ *             (a delegate to TenantNormalize in tenant-normalize.js, loaded as a module)
  *   product   LeasePeriod.partialPeriodBasis   the verdict
  *   product   _stripBlobs                what the blob loses on save
  *   this file the SELECT that reloads the evidence — replicated from
@@ -110,7 +111,11 @@ for (const [k, v] of [['TEST_EMAIL', EMAIL], ['TEST_PASSWORD', PASSWORD],
 // signature change or an added comment cannot silently turn this suite into a
 // test of nothing. A name that stops resolving is a hard failure here.
 const PRODUCT_FNS = [
-  'toISODate', 'extractDatesFromText', 'cleanTenantName', '_dateWithRaw',
+  // Since M1a (tenant-normalize.js) these five are one-line delegates in
+  // script.js: each calls _TN(), which hands back window.TenantNormalize. So
+  // _TN is extracted with them and tenant-normalize.js is loaded as a module
+  // below — without both, the first normalizeTenant call throws.
+  '_TN', 'toISODate', 'extractDatesFromText', 'cleanTenantName', '_dateWithRaw',
   'getLatestFieldEvidence', 'hasFieldQuote', 'sqftConfidenceScore',
   'getFieldConfidence', 'getEffectiveLeaseField', '_extractionVersionTag',
   '_mkEvidenceSnapshot', 'normalizeTenant',
@@ -118,7 +123,7 @@ const PRODUCT_FNS = [
   '_writeTenantFieldEvidence', '_stripBlobs',
 ];
 
-function loadProduct(scriptSrc, leaseSrc) {
+function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc) {
   const bodies = PRODUCT_FNS.map(n => {
     try { return fnSource(scriptSrc, n); }
     catch (e) { abort('could not extract ' + n + ' from script.js: ' + e.message); }
@@ -140,11 +145,16 @@ function loadProduct(scriptSrc, leaseSrc) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // lease-period.js is a real module and is loaded as one, not extracted.
+  // lease-period.js and tenant-normalize.js are real modules and are loaded as
+  // such, not extracted; both attach themselves to window, as in the browser.
   vm.runInContext(leaseSrc, sandbox);
+  vm.runInContext(tenantNormalizeSrc, sandbox);
   vm.runInContext(bodies.join('\n\n'), sandbox);
   if (!sandbox.window.LeasePeriod || typeof sandbox.window.LeasePeriod.partialPeriodBasis !== 'function') {
     abort('lease-period.js did not expose LeasePeriod.partialPeriodBasis');
+  }
+  if (!sandbox.window.TenantNormalize || typeof sandbox.window.TenantNormalize.normalizeTenant !== 'function') {
+    abort('tenant-normalize.js did not expose TenantNormalize.normalizeTenant');
   }
   return sandbox;
 }
@@ -190,9 +200,10 @@ function loadSupabaseJs() {
 
   const scriptSrc = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
   const leaseSrc  = fs.readFileSync(path.join(__dirname, 'lease-period.js'), 'utf8');
+  const tnSrc     = fs.readFileSync(path.join(__dirname, 'tenant-normalize.js'), 'utf8');
 
   section('Step 0: the product functions this suite runs');
-  const P = loadProduct(scriptSrc, leaseSrc);
+  const P = loadProduct(scriptSrc, leaseSrc, tnSrc);
   assert(PRODUCT_FNS.every(n => typeof P[n] === 'function'),
     'all ' + PRODUCT_FNS.length + ' product functions extracted from script.js and callable');
   assertReadPathUnchanged(scriptSrc);
