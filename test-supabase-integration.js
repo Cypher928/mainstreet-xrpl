@@ -8,10 +8,14 @@
  *  3. Call window.ms_debug_dualwrite() to fire test inserts into tenant_field_evidence
  *     and tenant_review_audit, then read back the last 5 rows per table
  *  4. Assert row counts, IDs, and the absence of RLS / permission errors
- *  5. Delete the two __debug_test__ rows to leave the DB clean
+ *  5. Delete the two __debug_test__ rows to leave the DB clean — as the SERVER
+ *     (service role), since 048 made both tables append-only for signed-in people
  *
  * Usage:
- *   TEST_EMAIL=you@example.com TEST_PASSWORD=yourpassword node test-supabase-integration.js
+ *   TEST_EMAIL=you@example.com TEST_PASSWORD=yourpassword \
+ *   PILOT_SUPABASE_SERVICE_ROLE_KEY=… node test-supabase-integration.js
+ *   (the service-role key is used only by step 7, the clean-up of the two rows
+ *   this suite wrote; every step before it runs as the signed-in person)
  *
  * Optional:
  *   TEST_PROP_ID=<uuid>  — open a specific property instead of the first listed one
@@ -63,10 +67,42 @@ const PASSWORD  = process.env.TEST_PASSWORD;
 const TARGET_PROP = process.env.TEST_PROP_ID || null;
 const HEADLESS  = process.env.HEADLESS !== 'false';
 
-if (!EMAIL || !PASSWORD) {
-  console.error('ERROR: TEST_EMAIL and TEST_PASSWORD environment variables are required.');
-  console.error('Usage: TEST_EMAIL=you@example.com TEST_PASSWORD=yourpassword node test-supabase-integration.js');
+// The service-role key is used for exactly two statements: step 7's deletion of
+// the two debug rows this suite writes. Since 048, tenant_field_evidence and
+// tenant_review_audit are append-only for signed-in people — no app path deletes
+// them, and this harness is not an app path — so the clean-up runs as the
+// server. Required up front so a missing key stops the run before anything is
+// written; the pilot-live-verification job already provides it.
+const SERVICE_KEY = (process.env.PILOT_SUPABASE_SERVICE_ROLE_KEY || '').trim();
+
+if (!EMAIL || !PASSWORD || !SERVICE_KEY) {
+  console.error('ERROR: TEST_EMAIL, TEST_PASSWORD and PILOT_SUPABASE_SERVICE_ROLE_KEY environment variables are required.');
+  console.error('Usage: TEST_EMAIL=you@example.com TEST_PASSWORD=yourpassword PILOT_SUPABASE_SERVICE_ROLE_KEY=… node test-supabase-integration.js');
   process.exit(1);
+}
+
+/**
+ * Delete this suite's debug rows from one table as the server (service role),
+ * straight through PostgREST so no extra dependency is needed here. Scoped to
+ * the fixture property and the suite's own marker value; returns how many rows
+ * went, or 'ERROR: …'. The key travels only in the request headers.
+ */
+async function deleteDebugRowsAsServer(table, pid, markerColumn, markerValue) {
+  const url = TARGET.url + '/rest/v1/' + table +
+    '?property_id=eq.' + encodeURIComponent(pid) +
+    '&' + markerColumn + '=eq.' + encodeURIComponent(markerValue) + '&select=id';
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { apikey: SERVICE_KEY, Authorization: 'Bearer ' + SERVICE_KEY, Prefer: 'return=representation' },
+    });
+    const body = await res.text();
+    if (!res.ok) return 'ERROR: HTTP ' + res.status + ' ' + body.slice(0, 200);
+    const rows = JSON.parse(body);
+    return Array.isArray(rows) ? rows.length : 'ERROR: unexpected response ' + body.slice(0, 200);
+  } catch (e) {
+    return 'ERROR: ' + e.message;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -373,27 +409,16 @@ function assert(condition, label, detail) {
 
   // ── Step 7: Clean up debug rows ───────────────────────────────────────────────
   section('Step 7: Clean up __debug_test__ rows');
-  const cleanup = await page.evaluate(async (pid) => {
-    const results = {};
-    const { data: d1, error: e1 } = await db
-      .from('tenant_field_evidence')
-      .delete()
-      .eq('property_id', pid)
-      .eq('field_key', '__debug_test__');
-    results.tfe = e1 ? 'ERROR: ' + e1.message : 'deleted';
+  // As the server, not through the page's signed-in client: since 048 a
+  // signed-in person cannot delete evidence or audit rows (append-only), and the
+  // inserts above were the point — the clean-up is housekeeping.
+  const cleanup = {
+    tfe: await deleteDebugRowsAsServer('tenant_field_evidence', propId, 'field_key', '__debug_test__'),
+    tra: await deleteDebugRowsAsServer('tenant_review_audit', propId, 'action', 'debug_test'),
+  };
 
-    const { data: d2, error: e2 } = await db
-      .from('tenant_review_audit')
-      .delete()
-      .eq('property_id', pid)
-      .eq('action', 'debug_test');
-    results.tra = e2 ? 'ERROR: ' + e2.message : 'deleted';
-
-    return results;
-  }, propId).catch(e => ({ tfe: 'exception: ' + e.message, tra: 'exception: ' + e.message }));
-
-  assert(cleanup.tfe === 'deleted', 'TFE debug row cleaned up', cleanup.tfe);
-  assert(cleanup.tra === 'deleted', 'TRA debug row cleaned up', cleanup.tra);
+  assert(typeof cleanup.tfe === 'number' && cleanup.tfe >= 1, 'TFE debug row cleaned up (service role)', String(cleanup.tfe));
+  assert(typeof cleanup.tra === 'number' && cleanup.tra >= 1, 'TRA debug row cleaned up (service role)', String(cleanup.tra));
 
   // ── Verdict ───────────────────────────────────────────────────────────────────
   await browser.close();
