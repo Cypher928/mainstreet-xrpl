@@ -121,7 +121,22 @@ const PRODUCT_FNS = [
   '_mkEvidenceSnapshot', 'normalizeTenant',
   '_evidenceValStr', '_dwStatus', '_evidenceRowToSnapshot',
   '_writeTenantFieldEvidence', '_stripBlobs',
+  // Two helpers the functions above call without a fallback:
+  // _writeTenantFieldEvidence projects the snapshot's status through
+  // _evidenceDbStatus while building its payload, and _mkEvidenceSnapshot /
+  // getFieldConfidence resolve a canonical key's storage name through
+  // _fieldStore, which reads the _FIELD_STORAGE map loaded below.
+  '_evidenceDbStatus', '_fieldStore',
 ];
+
+// _fieldStore's lookup table is a module-level const, not a function, so
+// fn-source cannot extract it; it is taken from script.js by its declaration
+// line, and a line that stops matching is a hard failure like a missing name.
+function fieldStorageSource(scriptSrc) {
+  const m = /^const _FIELD_STORAGE\s*=\s*\{[^\n]*\};$/m.exec(scriptSrc);
+  if (!m) abort('could not extract the _FIELD_STORAGE map from script.js');
+  return m[0];
+}
 
 function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc) {
   const bodies = PRODUCT_FNS.map(n => {
@@ -149,7 +164,7 @@ function loadProduct(scriptSrc, leaseSrc, tenantNormalizeSrc) {
   // such, not extracted; both attach themselves to window, as in the browser.
   vm.runInContext(leaseSrc, sandbox);
   vm.runInContext(tenantNormalizeSrc, sandbox);
-  vm.runInContext(bodies.join('\n\n'), sandbox);
+  vm.runInContext(fieldStorageSource(scriptSrc) + '\n\n' + bodies.join('\n\n'), sandbox);
   if (!sandbox.window.LeasePeriod || typeof sandbox.window.LeasePeriod.partialPeriodBasis !== 'function') {
     abort('lease-period.js did not expose LeasePeriod.partialPeriodBasis');
   }
