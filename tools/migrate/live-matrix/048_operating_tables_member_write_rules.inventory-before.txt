@@ -1,0 +1,410 @@
+fn|_absorb_eligibility(uuid,uuid)|06c8666154f047ae4b56a091ccafce73|postgres=X/postgres
+fn|_acq_episode_frozen(uuid)|a0d48f61b3b2c06c294ab2b0f17d9797|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_is_demo_property(uuid)|1235ae7934d380a4554bc6325dec1f1b|postgres=X/postgres
+fn|_lease_provisions_immutable_guard()|f7ec3e9dd0e9f1bb2adb72f6becccc5d|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_leasehold_tombstoned(uuid)|d976c6933105ee588dfd82bf8912d577|postgres=X/postgres
+fn|_p05_safe_ts(text)|026fe8338944c5a2e0e19e5f108b9893|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_payment_assert_owner(uuid)|b4f40f12a988daf6dccbfba9d4c4de07|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_payment_derive_state(uuid)|1e9aba785ffe301bb915c104086e8d3e|postgres=X/postgres
+fn|_payment_replay(uuid,uuid)|480168c8b9e2cc649b4f89f1856d8c61|postgres=X/postgres
+fn|_payment_settled_total(uuid)|66e007933363329561508223cddcbf54|postgres=X/postgres
+fn|_payments_immutable_guard()|576ec6e4ed0ae7989573ad309e074081|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_property_events_append_only()|14dbb2c7037d71c2c400f6dea20f961b|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_property_events_derive()|90c987c42e68eb881b8a02373753a87d|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_property_events_no_truncate()|73fff51c465b2e6b3998d9cef6f59848|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|_property_events_stamp()|cc84ad924377d16a352b5776e8be5a94|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|absorb_leasehold(uuid,uuid,text,uuid[],text,bigint)|feb3a1aee5b2998921d763049dfd3e9a|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|absorb_leasehold_preflight(uuid,uuid)|03632aac3d202a3abd218070d188a6b1|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_attestations_append_only()|90346b9edc4e3199f207f81a449c8590|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_attestations_guard()|a701b72b1eb52d84866b65ec9177eb46|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_child_property_bind()|e045dc90dc2659394c3e201c8e0faac9|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_children_author_guard()|858a1c5fc1b7e919ec3ffd3405336772|postgres=X/postgres,service_role=X/postgres
+fn|acq_children_frozen()|91145fa0c3bc4928ab94fdda2271636c|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_compare_property(text,text[])|86d8c6b30172ded6325824da37a9cb51|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_compare_tenant_names(text,text)|4d1427a3ee6671214cf6692ada28edcd|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_doc_families_review_immutable()|ad6f999640736c91a02aba11838342e1|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_docs_coherence()|f91fd4f1dfec7435a35ce6c9b55883fc|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_documents_storage_path_guard()|4db3213c1ec6227133a83e10666a3f36|postgres=X/postgres,service_role=X/postgres
+fn|acq_js_trim(text)|73c651a515d277541a71172926137b65|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_match_requires_reason(jsonb,text,text[])|9ec6ff1dafd52d41827861054647be88|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_name_tokens(text)|d17fb098b12ed98194898536f03bd291|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_reviews_conversion_guard()|d0001cc3b7f3c87873c7fbe549a2ad09|postgres=X/postgres,service_role=X/postgres
+fn|acq_reviews_frozen()|613c5819463570cac38cddcb82ccd2ab|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_reviews_insert_guard()|90da563200b3267328477d81d96ea886|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_reviews_property_immutable()|5e7e716475c5e1c74c3d8c6b9cc6adf0|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_term_decisions_actor()|017b9ac7dd65d713593f30d907c2b10a|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acq_term_decisions_append_only()|ed350e99599ed74aba3c97d71510f53e|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|acquire_property(uuid,uuid,jsonb)|c5da9bc8e728d0d99fa860511a424a84|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|begin_acquisition(text,jsonb,uuid,uuid)|5fb39189c839b96e624bd6f3998da79e|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|can_edit_property(uuid)|e4fff65a02a019fbc2ba8b1db433981c|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|citext(boolean)|5f47450e1e4001eaec8dd4008d28c2b1|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext(character)|95fc4b404c293e038e72c914b3663e0d|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext(inet)|d92e647c1e4790ae75d2798c696e0077|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_cmp(citext,citext)|1959abdb545acf68eb1115149f9a5b84|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_eq(citext,citext)|481b9ff7fc066977bc1d5781eee16bdd|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_ge(citext,citext)|5bc1f0051a73d16deca9aeb02e89ecd8|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_gt(citext,citext)|2c9f35e4cb12827e157bd022f519340d|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_hash(citext)|91b3e57a5f15b3725a880f27e97fc6f9|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_hash_extended(citext,bigint)|9fdadd5ff4383f2c80dea52c366b1435|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_larger(citext,citext)|2c64b33e19ce0e0d33d5ebab50f5ba8e|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_le(citext,citext)|cf8586e7eec670a5382b6b8c3786646a|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_lt(citext,citext)|332b0d9238eee3679c4eccd56dc28d64|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_ne(citext,citext)|5e9b80f2db3f2b5c6c2b201a26406027|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_pattern_cmp(citext,citext)|790abca60d0aa6f715dcb7b556e19a5c|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_pattern_ge(citext,citext)|af602462451befaf23c3a80f14bedddf|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_pattern_gt(citext,citext)|f490f8d52b09468451c290ef54b0ede4|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_pattern_le(citext,citext)|9c603a076c76e40c87ecdb69cd1c85c7|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_pattern_lt(citext,citext)|7cc78c2fac15778e8e21b3f45bad2ee1|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citext_smaller(citext,citext)|0f0632ac66c0e1426b1baff489a440e6|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citextin(cstring)|74a2a825b426dee6aa77e33e5e5aab84|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citextout(citext)|3d99c3af353fccf913cdab7487890f18|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citextrecv(internal)|356a17930dad76131cea13921d3f0d5a|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|citextsend(citext)|b4d0a4a118d9563fc0420e3e02def495|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|delete_prospect_acquisition(uuid)|18dbdf7c82121ff2724605b9625cbe4b|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|discard_leasehold(uuid,text)|dc153caa09f40140aa314c70256c8294|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|end_leasehold(uuid,date,text,text)|119745b288676617032e6ade5a1c01f7|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|has_meaningful_history(uuid)|6de6241f6c3f253026f2f3763bff2b87|postgres=X/postgres
+fn|is_active_editor_of_org(uuid)|eeb8d2bb067b104f5913a23fdd656a91|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|is_active_member_of_org(uuid)|bc1768f5fd2a69aaf0c64d813ee01da1|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|is_member_of_property(uuid)|c57add5c172a867692e4b1c75c2a4f68|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|is_property_admin(uuid)|1e62052947aef6e4648a90f574178744|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|lease_jobs_set_updated_at()|abbeb82fa5e63c27b421c1ffab6c8924|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|leasehold_history(uuid)|6687e9ccadc0f3fa8db15671aa69b6c8|postgres=X/postgres
+fn|member_property_ids()|4c4ef9a3e62318b2a13181d618146ea1|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_authorize(uuid,uuid,text,text)|9e7be24619976c5d21b889d2dc379dbf|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_cancel(uuid,uuid,text,text)|9e2e1e22922ba91401973ac5054a9a26|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_create(uuid,uuid,integer,uuid,numeric,text,uuid,text,text,integer)|ac3d720487876a8594391fc1de4313ed|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_dispute_open(uuid,uuid,text,text)|06f539e5f2354a08ba7602390c08b87b|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_dispute_resolve(uuid,uuid,text,text)|925cb97550b5e8be2857b7e19cc583bb|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_issue(uuid,uuid,text,text,date,text)|3b0c1781da389cea573656d9ed9e78c2|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_record_settlement(uuid,uuid,numeric,timestamp with time zone,text,text,text,text)|7e9fe9651805f6feaf779c40c0e54a52|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|payment_void_settlement(uuid,uuid,text,text)|51272c56a3ed04613dffd1f3b63ba4c5|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|properties_data_revision()|c5bb4a0913b1607151b28a0aaa3f3e21|postgres=X/postgres
+fn|properties_default_organization()|2adccedebbdfa148a33b6fa4ff6141b4|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|properties_identity_guard()|ee67618377d36640ac351d1895ad5d95|postgres=X/postgres,service_role=X/postgres
+fn|properties_insert_stage_guard()|e18591931c1f91ad6ffd68e7a7614d19|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|properties_stage_transition()|7fa9afeaa23c4b0b0439b16c4f0d0aa4|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|publish_tenant_statement(uuid,uuid,integer,numeric,numeric,numeric,numeric,numeric,jsonb,uuid,text,uuid)|506cf017c0ecbb2fad7238ab93bd7e6b|postgres=X/postgres,service_role=X/postgres
+fn|reactivate_leasehold(uuid,text)|569d13ae56d0f84b8ae9acd381ae7e6e|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|regexp_match(citext,citext)|c1ce877de36839b91582a63c90a22e23|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_match(citext,citext,text)|6e153caa9710f5f4bf47adbb5feb2f45|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_matches(citext,citext)|eccf94856f36a639e7ca67471a21135d|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_matches(citext,citext,text)|687e5763166c408d40037330d843af05|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_replace(citext,citext,text)|d6506a43ec30d3bfdbc196f399bd13b4|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_replace(citext,citext,text,text)|0d4965e163a8a116eb818bc2604cab99|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_split_to_array(citext,citext)|ecace3b6ef08759cec5cc3ab345c15ea|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_split_to_array(citext,citext,text)|7ffe5b63175196ae4f5e39dc5b4260b8|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_split_to_table(citext,citext)|7a645031c366fe0c7d7d5c687cbf0294|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|regexp_split_to_table(citext,citext,text)|11560673aec7bb1895ceb3437a2fe21c|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|replace(citext,citext,citext)|faf9c02fbcc8ec44893b314fc0c0502c|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|restore_absorbed_leasehold(uuid,text)|1586c88a73d087099f120a0212be61f6|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|resync_property_tenants(uuid,jsonb)|a49ca4a304e34edc46a4cd14b1eebb7f|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|set_updated_at()|4d6804d5850641a33867814c9e76a714|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|split_part(citext,citext,integer)|3215e59b72fb7d32c94860f95d0c2e07|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|storage_object_accessible(text)|bfdd7d2b96ea364683ff62b524c0ccdb|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|storage_object_writable(text)|7899f040e9d14b2ba67538cddf3dcbe1|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|strpos(citext,citext)|5cba1f663a9b827bef283d68f0bcaa87|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|tenant_ids_for_current_user()|5c14a6676e75e5d831255e3b57bac2f6|postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|tenants_absorbed_freeze()|be12d208aae36b7a7622322ce569863a|postgres=X/postgres
+fn|tenants_delete_guard()|eac723c12cdec4de39b5ae895fb297d1|postgres=X/postgres
+fn|tenants_lifecycle_guard()|6c6c50ff3fb5eb8b52df75d11ac4777e|postgres=X/postgres
+fn|tenants_property_immutable()|326189da4c90c710a4e52b80d2bec75b|=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres
+fn|tenants_tombstone_guard()|3236fcf3b0406a91b7c0d96d6f194960|postgres=X/postgres
+fn|texticlike(citext,citext)|27c63598a6bda8eae10a21427dab2291|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticlike(citext,text)|7bf6520ed61b693503591cfdf136563b|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticnlike(citext,citext)|a70a06013a22d14d15862087f139dbc9|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticnlike(citext,text)|d7b17c7f4225deb57015c9dcda0a1480|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticregexeq(citext,citext)|538d33e257dc2d4827efdc08efaebab8|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticregexeq(citext,text)|1fca77bcf209e0f709c457e3db2d7da0|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticregexne(citext,citext)|44903d284495688af6ec459bc6028556|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|texticregexne(citext,text)|fc488754e5e3894cbb0ea85013d04048|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+fn|translate(citext,citext,text)|30839fc5578f8fcb3749487882b74ac2|=X/supabase_admin,supabase_admin=X/supabase_admin,postgres=X/supabase_admin,anon=X/supabase_admin,authenticated=X/supabase_admin,service_role=X/supabase_admin
+pol|public.acquisition_conversion_attestations|acq_attestations_member_insert|INSERT|PERMISSIVE|authenticated||(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.acquisition_conversion_attestations|acq_attestations_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.acquisition_document_families|acq_doc_families_editor_insert|INSERT|PERMISSIVE|authenticated||can_edit_property(property_id)
+pol|public.acquisition_document_families|acq_doc_families_editor_update|UPDATE|PERMISSIVE|authenticated|can_edit_property(property_id)|can_edit_property(property_id)
+pol|public.acquisition_document_families|acq_doc_families_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.acquisition_document_families|acq_doc_families_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.acquisition_documents|acq_docs_editor_delete|DELETE|PERMISSIVE|authenticated|can_edit_property(property_id)|
+pol|public.acquisition_documents|acq_docs_editor_insert|INSERT|PERMISSIVE|authenticated||can_edit_property(property_id)
+pol|public.acquisition_documents|acq_docs_editor_update|UPDATE|PERMISSIVE|authenticated|can_edit_property(property_id)|can_edit_property(property_id)
+pol|public.acquisition_documents|acq_docs_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.acquisition_documents|acq_docs_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.acquisition_reviews|acq_reviews_admin_delete|DELETE|PERMISSIVE|authenticated|(is_property_admin(property_id) OR ((property_id IS NULL) AND (user_id = auth.uid())))|
+pol|public.acquisition_reviews|acq_reviews_editor_insert|INSERT|PERMISSIVE|authenticated||(can_edit_property(property_id) OR ((property_id IS NULL) AND (user_id = auth.uid())))
+pol|public.acquisition_reviews|acq_reviews_editor_update|UPDATE|PERMISSIVE|authenticated|(can_edit_property(property_id) OR ((property_id IS NULL) AND (user_id = auth.uid())))|(can_edit_property(property_id) OR ((property_id IS NULL) AND (user_id = auth.uid())))
+pol|public.acquisition_reviews|acq_reviews_member_select|SELECT|PERMISSIVE|authenticated|((property_id IN ( SELECT member_property_ids() AS member_property_ids)) OR ((property_id IS NULL) AND (user_id = auth.uid())))|
+pol|public.acquisition_reviews|acq_reviews_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.acquisition_term_decisions|acq_term_decisions_editor_insert|INSERT|PERMISSIVE|authenticated||can_edit_property(property_id)
+pol|public.acquisition_term_decisions|acq_term_decisions_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.acquisition_term_decisions|acq_term_decisions_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.cam_reconciliations|cam_recon_owner_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.cam_reconciliations|cam_recon_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.financial_sources|financial_sources_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.financial_sources|financial_sources_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.gl_entries|gl_entries_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.gl_entries|gl_entries_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.lease_documents|lease_docs_editor_delete|DELETE|PERMISSIVE|authenticated|can_edit_property(property_id)|
+pol|public.lease_documents|lease_docs_editor_insert|INSERT|PERMISSIVE|authenticated||can_edit_property(property_id)
+pol|public.lease_documents|lease_docs_editor_update|UPDATE|PERMISSIVE|authenticated|can_edit_property(property_id)|can_edit_property(property_id)
+pol|public.lease_documents|lease_docs_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.lease_documents|lease_docs_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.lease_jobs|lease_jobs_owner_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.lease_jobs|lease_jobs_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.lease_provisions|lease_provisions_member_insert|INSERT|PERMISSIVE|authenticated||(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.lease_provisions|lease_provisions_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.lease_provisions|lease_provisions_member_update|UPDATE|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.lease_provisions|lease_provisions_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.organization_members|organization_members_org_select|SELECT|PERMISSIVE|authenticated|is_active_member_of_org(organization_id)|
+pol|public.organization_members|organization_members_self_select|SELECT|PERMISSIVE|authenticated|(user_id = auth.uid())|
+pol|public.organization_members|organization_members_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.organizations|organizations_member_select|SELECT|PERMISSIVE|authenticated|is_active_member_of_org(id)|
+pol|public.organizations|organizations_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.payment_events|payment_events_landlord_select|SELECT|PERMISSIVE|public|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.payment_events|payment_events_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.payment_settlements|payment_settlements_landlord_select|SELECT|PERMISSIVE|public|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.payment_settlements|payment_settlements_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.payment_settlements|payment_settlements_tenant_select|SELECT|PERMISSIVE|public|(payment_id IN ( SELECT payments.id
+   FROM payments
+  WHERE ((payments.tenant_id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user)) AND (payments.state = ANY (ARRAY['instructed'::text, 'partially_settled'::text, 'settled'::text])))))|
+pol|public.payment_sources|payment_sources_landlord_select|SELECT|PERMISSIVE|public|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.payment_sources|payment_sources_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.payments|payments_landlord_select|SELECT|PERMISSIVE|public|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.payments|payments_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.payments|payments_tenant_select|SELECT|PERMISSIVE|public|((tenant_id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user)) AND (state = ANY (ARRAY['instructed'::text, 'partially_settled'::text, 'settled'::text])))|
+pol|public.properties|properties_admin_delete|DELETE|PERMISSIVE|authenticated|is_property_admin(id)|
+pol|public.properties|properties_editor_insert|INSERT|PERMISSIVE|authenticated||((user_id = auth.uid()) AND ((organization_id IS NULL) OR is_active_editor_of_org(organization_id)))
+pol|public.properties|properties_editor_update|UPDATE|PERMISSIVE|authenticated|((user_id = auth.uid()) OR ((organization_id IS NOT NULL) AND is_active_editor_of_org(organization_id)))|((user_id = auth.uid()) OR ((organization_id IS NOT NULL) AND is_active_editor_of_org(organization_id)))
+pol|public.properties|properties_member_select|SELECT|PERMISSIVE|authenticated|((user_id = auth.uid()) OR ((organization_id IS NOT NULL) AND is_active_member_of_org(organization_id)))|
+pol|public.properties|properties_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.property_events|property_events_member_insert|INSERT|PERMISSIVE|authenticated||(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.property_events|property_events_member_select|SELECT|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|
+pol|public.property_events|property_events_service_role_insert|INSERT|PERMISSIVE|service_role||true
+pol|public.property_events|property_events_service_role_select|SELECT|PERMISSIVE|service_role|true|
+pol|public.tenant_document_sources|tenant_document_sources_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))
+pol|public.tenant_document_sources|tenant_document_sources_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_documents|tenant_documents_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))
+pol|public.tenant_documents|tenant_documents_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_documents|tenant_documents_tenant_select|SELECT|PERMISSIVE|authenticated|((tenant_id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user)) AND (status = 'published'::text))|
+pol|public.tenant_field_evidence|tfe_owner_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenant_field_evidence|tfe_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_invitations|tenant_invitations_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenant_invitations|tenant_invitations_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_review_audit|tra_owner_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenant_review_audit|tra_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_space_profile_sources|tenant_space_profile_sources_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))
+pol|public.tenant_space_profile_sources|tenant_space_profile_sources_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_space_profiles|tenant_space_profiles_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))
+pol|public.tenant_space_profiles|tenant_space_profiles_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_space_profiles|tenant_space_profiles_tenant_select|SELECT|PERMISSIVE|authenticated|((tenant_id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user)) AND (status = 'published'::text))|
+pol|public.tenant_statement_sources|tenant_statement_sources_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))|(property_id IN ( SELECT p.id
+   FROM properties p
+  WHERE (p.user_id = auth.uid())))
+pol|public.tenant_statement_sources|tenant_statement_sources_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_statements|tenant_statements_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenant_statements|tenant_statements_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenant_statements|tenant_statements_tenant_select|SELECT|PERMISSIVE|authenticated|((tenant_id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user)) AND (status = 'published'::text))|
+pol|public.tenant_users|tenant_users_landlord_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenant_users|tenant_users_self_select|SELECT|PERMISSIVE|authenticated|((user_id = auth.uid()) AND (accepted_at IS NOT NULL) AND (revoked_at IS NULL))|
+pol|public.tenant_users|tenant_users_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenants|tenants_owner_all|ALL|PERMISSIVE|authenticated|(property_id IN ( SELECT member_property_ids() AS member_property_ids))|(property_id IN ( SELECT member_property_ids() AS member_property_ids))
+pol|public.tenants|tenants_service_role_all|ALL|PERMISSIVE|service_role|true|true
+pol|public.tenants|tenants_tenant_self_select|SELECT|PERMISSIVE|authenticated|(id IN ( SELECT tenant_ids_for_current_user() AS tenant_ids_for_current_user))|
+pol|storage.objects|docs_owner_delete|DELETE|PERMISSIVE|authenticated|((bucket_id = ANY (ARRAY['leases'::text, 'invoices'::text])) AND storage_object_writable(name))|
+pol|storage.objects|docs_owner_insert|INSERT|PERMISSIVE|authenticated||((bucket_id = ANY (ARRAY['leases'::text, 'invoices'::text])) AND storage_object_writable(name))
+pol|storage.objects|docs_owner_read|SELECT|PERMISSIVE|authenticated|((bucket_id = ANY (ARRAY['leases'::text, 'invoices'::text])) AND storage_object_accessible(name))|
+pol|storage.objects|docs_owner_update|UPDATE|PERMISSIVE|authenticated|((bucket_id = ANY (ARRAY['leases'::text, 'invoices'::text])) AND storage_object_writable(name))|((bucket_id = ANY (ARRAY['leases'::text, 'invoices'::text])) AND storage_object_writable(name))
+pri|public.acquisition_conversion_attestations|authenticated|INSERT,SELECT
+pri|public.acquisition_conversion_attestations|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_conversion_attestations|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_document_families|authenticated|INSERT,SELECT,UPDATE
+pri|public.acquisition_document_families|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_documents|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,UPDATE
+pri|public.acquisition_documents|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_documents|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_reviews|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,UPDATE
+pri|public.acquisition_reviews|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_reviews|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.acquisition_term_decisions|authenticated|INSERT,SELECT
+pri|public.acquisition_term_decisions|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.cam_reconciliations|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.cam_reconciliations|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.cam_reconciliations|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.cam_reconciliations|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.financial_sources|authenticated|SELECT
+pri|public.financial_sources|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.financial_sources|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.gl_entries|authenticated|SELECT
+pri|public.gl_entries|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.gl_entries|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_documents|authenticated|DELETE,INSERT,SELECT,UPDATE
+pri|public.lease_documents|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_documents|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_jobs|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_jobs|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_jobs|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_jobs|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_provisions|authenticated|INSERT,SELECT,UPDATE
+pri|public.lease_provisions|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.lease_provisions|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.organization_members|authenticated|SELECT
+pri|public.organization_members|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.organization_members|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.organizations|authenticated|SELECT
+pri|public.organizations|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.organizations|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_balances|authenticated|SELECT
+pri|public.payment_balances|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_balances|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_events|authenticated|SELECT
+pri|public.payment_events|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_events|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_settlements|authenticated|SELECT
+pri|public.payment_settlements|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_settlements|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_sources|authenticated|SELECT
+pri|public.payment_sources|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payment_sources|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payments|authenticated|SELECT
+pri|public.payments|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.payments|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.pilot_requests|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.pilot_requests|service_role|INSERT
+pri|public.properties|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,UPDATE
+pri|public.properties|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.properties|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_documents|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_documents|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_documents|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_documents|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_events_watermark|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_events|authenticated|INSERT,SELECT
+pri|public.property_events|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.property_events|service_role|INSERT,SELECT
+pri|public.tenant_document_sources|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_document_sources|service_role|INSERT,SELECT
+pri|public.tenant_documents|authenticated|SELECT
+pri|public.tenant_documents|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_documents|service_role|INSERT,SELECT,UPDATE
+pri|public.tenant_field_evidence|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_field_evidence|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_field_evidence|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_field_evidence|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_invitations|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_invitations|service_role|SELECT,UPDATE
+pri|public.tenant_review_audit|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_review_audit|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_review_audit|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_review_audit|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_space_profile_sources|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_space_profiles|authenticated|SELECT
+pri|public.tenant_space_profiles|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_space_profiles|service_role|INSERT,SELECT
+pri|public.tenant_statement_sources|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_statement_sources|service_role|INSERT,SELECT
+pri|public.tenant_statements|authenticated|SELECT
+pri|public.tenant_statements|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_statements|service_role|INSERT,SELECT,UPDATE
+pri|public.tenant_users|authenticated|SELECT
+pri|public.tenant_users|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenant_users|service_role|DELETE,INSERT,SELECT,UPDATE
+pri|public.tenants|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenants|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenants|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|public.tenants|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets_analytics|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets_analytics|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets_analytics|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets_vectors|anon|SELECT
+pri|storage.buckets_vectors|authenticated|SELECT
+pri|storage.buckets_vectors|service_role|SELECT
+pri|storage.buckets|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.buckets|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.objects|anon|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.objects|authenticated|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.objects|postgres|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.objects|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.s3_multipart_uploads_parts|anon|SELECT
+pri|storage.s3_multipart_uploads_parts|authenticated|SELECT
+pri|storage.s3_multipart_uploads_parts|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.s3_multipart_uploads|anon|SELECT
+pri|storage.s3_multipart_uploads|authenticated|SELECT
+pri|storage.s3_multipart_uploads|service_role|DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+pri|storage.vector_indexes|anon|SELECT
+pri|storage.vector_indexes|authenticated|SELECT
+pri|storage.vector_indexes|service_role|SELECT
+trg|acquisition_conversion_attestations|acq_attestations_append_only|CREATE TRIGGER acq_attestations_append_only BEFORE DELETE OR UPDATE ON public.acquisition_conversion_attestations FOR EACH ROW EXECUTE FUNCTION acq_attestations_append_only()
+trg|acquisition_conversion_attestations|acq_attestations_guard|CREATE TRIGGER acq_attestations_guard BEFORE INSERT ON public.acquisition_conversion_attestations FOR EACH ROW EXECUTE FUNCTION acq_attestations_guard()
+trg|acquisition_conversion_attestations|acq_attestations_property_bind|CREATE TRIGGER acq_attestations_property_bind BEFORE INSERT ON public.acquisition_conversion_attestations FOR EACH ROW EXECUTE FUNCTION acq_child_property_bind()
+trg|acquisition_conversion_attestations|acq_children_frozen|CREATE TRIGGER acq_children_frozen BEFORE INSERT OR DELETE OR UPDATE ON public.acquisition_conversion_attestations FOR EACH ROW EXECUTE FUNCTION acq_children_frozen()
+trg|acquisition_document_families|acq_children_frozen|CREATE TRIGGER acq_children_frozen BEFORE INSERT OR DELETE OR UPDATE ON public.acquisition_document_families FOR EACH ROW EXECUTE FUNCTION acq_children_frozen()
+trg|acquisition_document_families|acq_doc_families_author_guard|CREATE TRIGGER acq_doc_families_author_guard BEFORE INSERT OR UPDATE OF user_id ON public.acquisition_document_families FOR EACH ROW EXECUTE FUNCTION acq_children_author_guard()
+trg|acquisition_document_families|acq_doc_families_property_bind|CREATE TRIGGER acq_doc_families_property_bind BEFORE INSERT OR UPDATE ON public.acquisition_document_families FOR EACH ROW EXECUTE FUNCTION acq_child_property_bind()
+trg|acquisition_document_families|acq_doc_families_review_immutable|CREATE TRIGGER acq_doc_families_review_immutable BEFORE UPDATE OF review_id ON public.acquisition_document_families FOR EACH ROW EXECUTE FUNCTION acq_doc_families_review_immutable()
+trg|acquisition_document_families|trg_acq_doc_families_updated_at|CREATE TRIGGER trg_acq_doc_families_updated_at BEFORE UPDATE ON public.acquisition_document_families FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|acquisition_documents|acq_children_frozen|CREATE TRIGGER acq_children_frozen BEFORE INSERT OR DELETE OR UPDATE ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION acq_children_frozen()
+trg|acquisition_documents|acq_docs_property_bind|CREATE TRIGGER acq_docs_property_bind BEFORE INSERT OR UPDATE ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION acq_child_property_bind()
+trg|acquisition_documents|acq_documents_author_guard|CREATE TRIGGER acq_documents_author_guard BEFORE INSERT OR UPDATE OF user_id ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION acq_children_author_guard()
+trg|acquisition_documents|acq_documents_storage_path_guard|CREATE TRIGGER acq_documents_storage_path_guard BEFORE UPDATE OF storage_path ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION acq_documents_storage_path_guard()
+trg|acquisition_documents|acq_documents_updated_at|CREATE TRIGGER acq_documents_updated_at BEFORE UPDATE ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|acquisition_documents|trg_acq_docs_coherence|CREATE TRIGGER trg_acq_docs_coherence BEFORE INSERT OR UPDATE ON public.acquisition_documents FOR EACH ROW EXECUTE FUNCTION acq_docs_coherence()
+trg|acquisition_reviews|acq_reviews_author_guard|CREATE TRIGGER acq_reviews_author_guard BEFORE INSERT OR UPDATE OF user_id ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION acq_children_author_guard()
+trg|acquisition_reviews|acq_reviews_conversion_guard|CREATE TRIGGER acq_reviews_conversion_guard BEFORE INSERT OR UPDATE OF status, converted_at ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION acq_reviews_conversion_guard()
+trg|acquisition_reviews|acq_reviews_frozen|CREATE TRIGGER acq_reviews_frozen BEFORE DELETE OR UPDATE ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION acq_reviews_frozen()
+trg|acquisition_reviews|acq_reviews_insert_guard|CREATE TRIGGER acq_reviews_insert_guard BEFORE INSERT ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION acq_reviews_insert_guard()
+trg|acquisition_reviews|acq_reviews_property_immutable|CREATE TRIGGER acq_reviews_property_immutable BEFORE UPDATE OF property_id ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION acq_reviews_property_immutable()
+trg|acquisition_reviews|acq_reviews_updated_at|CREATE TRIGGER acq_reviews_updated_at BEFORE UPDATE ON public.acquisition_reviews FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|acquisition_term_decisions|acq_children_frozen|CREATE TRIGGER acq_children_frozen BEFORE INSERT OR DELETE OR UPDATE ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_children_frozen()
+trg|acquisition_term_decisions|acq_term_decisions_author_guard|CREATE TRIGGER acq_term_decisions_author_guard BEFORE INSERT ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_children_author_guard()
+trg|acquisition_term_decisions|acq_term_decisions_property_bind|CREATE TRIGGER acq_term_decisions_property_bind BEFORE INSERT ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_child_property_bind()
+trg|acquisition_term_decisions|trg_acq_term_decisions_actor|CREATE TRIGGER trg_acq_term_decisions_actor BEFORE INSERT ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_term_decisions_actor()
+trg|acquisition_term_decisions|trg_acq_term_decisions_no_delete|CREATE TRIGGER trg_acq_term_decisions_no_delete BEFORE DELETE ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_term_decisions_append_only()
+trg|acquisition_term_decisions|trg_acq_term_decisions_no_update|CREATE TRIGGER trg_acq_term_decisions_no_update BEFORE UPDATE ON public.acquisition_term_decisions FOR EACH ROW EXECUTE FUNCTION acq_term_decisions_append_only()
+trg|financial_sources|financial_sources_updated_at|CREATE TRIGGER financial_sources_updated_at BEFORE UPDATE ON public.financial_sources FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|lease_documents|lease_documents_updated_at|CREATE TRIGGER lease_documents_updated_at BEFORE UPDATE ON public.lease_documents FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|lease_jobs|lease_jobs_updated_at|CREATE TRIGGER lease_jobs_updated_at BEFORE UPDATE ON public.lease_jobs FOR EACH ROW EXECUTE FUNCTION lease_jobs_set_updated_at()
+trg|lease_provisions|lease_provisions_immutable|CREATE TRIGGER lease_provisions_immutable BEFORE UPDATE ON public.lease_provisions FOR EACH ROW EXECUTE FUNCTION _lease_provisions_immutable_guard()
+trg|organization_members|organization_members_updated_at|CREATE TRIGGER organization_members_updated_at BEFORE UPDATE ON public.organization_members FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|organizations|organizations_updated_at|CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+trg|payments|payments_immutable|CREATE TRIGGER payments_immutable BEFORE UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION _payments_immutable_guard()
+trg|properties|properties_data_revision|CREATE TRIGGER properties_data_revision BEFORE INSERT OR UPDATE ON public.properties FOR EACH ROW EXECUTE FUNCTION properties_data_revision()
+trg|properties|properties_default_organization|CREATE TRIGGER properties_default_organization BEFORE INSERT ON public.properties FOR EACH ROW EXECUTE FUNCTION properties_default_organization()
+trg|properties|properties_identity_guard|CREATE TRIGGER properties_identity_guard BEFORE UPDATE OF user_id, organization_id ON public.properties FOR EACH ROW EXECUTE FUNCTION properties_identity_guard()
+trg|properties|properties_insert_stage_guard|CREATE TRIGGER properties_insert_stage_guard BEFORE INSERT ON public.properties FOR EACH ROW EXECUTE FUNCTION properties_insert_stage_guard()
+trg|properties|properties_stage_transition|CREATE TRIGGER properties_stage_transition BEFORE UPDATE OF lifecycle_stage ON public.properties FOR EACH ROW EXECUTE FUNCTION properties_stage_transition()
+trg|properties|property_events_derive|CREATE TRIGGER property_events_derive AFTER INSERT OR UPDATE OF data ON public.properties FOR EACH ROW EXECUTE FUNCTION _property_events_derive()
+trg|property_events|property_events_append_only|CREATE TRIGGER property_events_append_only BEFORE DELETE OR UPDATE ON public.property_events FOR EACH ROW EXECUTE FUNCTION _property_events_append_only()
+trg|property_events|property_events_no_truncate|CREATE TRIGGER property_events_no_truncate BEFORE TRUNCATE ON public.property_events FOR EACH STATEMENT EXECUTE FUNCTION _property_events_no_truncate()
+trg|property_events|property_events_stamp|CREATE TRIGGER property_events_stamp BEFORE INSERT ON public.property_events FOR EACH ROW EXECUTE FUNCTION _property_events_stamp()
+trg|storage.buckets|enforce_bucket_name_length_trigger|CREATE TRIGGER enforce_bucket_name_length_trigger BEFORE INSERT OR UPDATE OF name ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.enforce_bucket_name_length()
+trg|storage.buckets|protect_bucket_control_insert|CREATE TRIGGER protect_bucket_control_insert BEFORE INSERT ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.protect_bucket_control_columns('service_role')
+trg|storage.buckets|protect_bucket_control_update_role|CREATE TRIGGER protect_bucket_control_update_role AFTER UPDATE OF lifecycle_configuration, lifecycle_configuration_generation ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.enforce_bucket_lifecycle_service_role('service_role')
+trg|storage.buckets|protect_bucket_control_update|CREATE TRIGGER protect_bucket_control_update BEFORE UPDATE OF lifecycle_configuration, lifecycle_configuration_generation ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.protect_bucket_control_columns()
+trg|storage.buckets|protect_buckets_delete|CREATE TRIGGER protect_buckets_delete BEFORE DELETE ON storage.buckets FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete()
+trg|storage.objects|protect_objects_delete|CREATE TRIGGER protect_objects_delete BEFORE DELETE ON storage.objects FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete()
+trg|storage.objects|update_objects_updated_at|CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.update_updated_at_column()
+trg|tenants|tenants_absorbed_freeze|CREATE TRIGGER tenants_absorbed_freeze BEFORE UPDATE ON public.tenants FOR EACH ROW EXECUTE FUNCTION tenants_absorbed_freeze()
+trg|tenants|tenants_delete_guard|CREATE TRIGGER tenants_delete_guard BEFORE DELETE ON public.tenants FOR EACH ROW EXECUTE FUNCTION tenants_delete_guard()
+trg|tenants|tenants_lifecycle_guard|CREATE TRIGGER tenants_lifecycle_guard BEFORE INSERT OR UPDATE OF leasehold_status, ended_at, ended_reason, absorbed_into, absorbed_reason, absorbed_at ON public.tenants FOR EACH ROW EXECUTE FUNCTION tenants_lifecycle_guard()
+trg|tenants|tenants_property_immutable|CREATE TRIGGER tenants_property_immutable BEFORE UPDATE OF property_id ON public.tenants FOR EACH ROW EXECUTE FUNCTION tenants_property_immutable()
+trg|tenants|tenants_tombstone_guard|CREATE TRIGGER tenants_tombstone_guard BEFORE INSERT ON public.tenants FOR EACH ROW EXECUTE FUNCTION tenants_tombstone_guard()

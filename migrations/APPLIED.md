@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (46 rows as of 047, in applied order; 040 and 041 are unused; 046 is not applied)
+## Recorded history (47 rows as of 048, in applied order; 040 and 041 are unused; 046 is not applied)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -76,8 +76,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20261003173521` | `044_acquisition_conversion_safeguards` | `migrations/044_acquisition_conversion_safeguards.sql` @ `a8bd444f` (commit `07654ce`, unchanged at `58a390b`) — applied 2026-10-03 through the Supabase Management API (`POST /v1/projects/{ref}/database/migrations`, the endpoint the MCP `apply_migration` tool uses), sent once from the operator's machine with `Idempotency-Key` `a058abd0-dca7-4636-853b-3a07930806c7`, which this row records in `idempotency_key` (every earlier row has null there); applied before the four `pilot` commits carrying it were pushed; the recorded text is the file verbatim (md5 `4dbff7aa…` on both sides, 44,504 characters) | identical |
 | `20261004184427` | `045_acquisition_member_write_rules` | `migrations/045_acquisition_member_write_rules.sql` @ `42f0f046` (commit `0317644`; the file was uncommitted at apply time and was committed unchanged; md5 `5ee57195…`, sha256 `39311540…`, 19,462 bytes) — applied 2026-10-04 by the operator from her Mac with `apply-045-pilot.sh` (now `tools/migrate/apply-migration.sh`) through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `82ffaede-02cb-497e-9bd5-ab8f1d490b87` (recorded in `idempotency_key`), HTTP 200 at 18:44:27Z; the token was a scoped personal access token holding only Database → Migrations read-write on Pilot; two earlier `apply_migration` calls through the Supabase connector timed out at 60 s with no effect (the connector's destructive-SQL confirmation cannot be shown in this client); the recorded text is the file verbatim (md5 `5ee57195…` on both sides, 19,462 bytes) | identical |
 | `20261005183007` | `047_member_write_rules_remaining` | `migrations/047_member_write_rules_remaining.sql` (commit `979306a`; md5 `2c6b8a07…`, sha256 `a49725da…`, 8,941 bytes) — applied 2026-10-05 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b` (recorded in `idempotency_key`), HTTP 200 at 18:30:07Z; 046 was not applied before it (047 needs only 045 and phase0/024); the recorded text is the file verbatim (md5 `2c6b8a07…` on both sides, 8,941 bytes) | identical |
+| `20261006130728` | `048_operating_tables_member_write_rules` | `migrations/048_operating_tables_member_write_rules.sql` (commit `979306a`; md5 `3c5675e0…`, sha256 `74af8e55…`, 14,599 bytes) — applied 2026-10-06 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `f14a19d6-bb2f-4ee7-9266-b791bf943941` (recorded in `idempotency_key`), HTTP 200 at 13:07:26Z; 046 was not applied before it (048 needs 045, 034, phase0/024 and 038; 047 is the tested order); the recorded text is the file verbatim (md5 `3c5675e0…` on both sides, 14,599 bytes) | identical |
 
-Tally (46 rows as of 047): 36 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (47 rows as of 048): 37 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -532,6 +533,38 @@ These files were applied through the SQL editor or the bundle
    `storage.objects`/`storage.buckets` (latent under row security); 046's two RESTRICTIVE
    rules on acquisition originals do not exist until 046 is applied. Rollback:
    `047_member_write_rules_remaining_rollback.sql` (md5 `088948e7…`), which reopens every gap.
+
+19. **Since 048, the eight operating tables follow 045's rule: members read, editors
+   write, evidence and audit are append-only for signed-in people, invitations are
+   admin-only.** `tenants`, `lease_jobs`, `cam_reconciliations`: the FOR ALL member rules
+   (`tenants_owner_all`, `lease_jobs_owner_all`, `cam_recon_owner_all`) are replaced by
+   `*_member_select` (same member predicate) and `*_editor_insert` / `_update` / `_delete`
+   (`can_edit_property`). `tenant_field_evidence`, `tenant_review_audit`: `tfe_owner_all` /
+   `tra_owner_all` are replaced by `*_member_select` and `*_editor_insert` only; the
+   `authenticated` grant is narrowed to SELECT, INSERT, so no signed-in person — owner
+   included — can rewrite or delete evidence or audit rows (the browser's
+   `INSERT … ON CONFLICT DO NOTHING` still works; the server, `service_role`, still corrects
+   and removes). `tenant_users`: `tenant_users_landlord_all` → `tenant_users_landlord_select`
+   (015b's SELECT-only grant was already the real limit; the server writes memberships).
+   `tenant_invitations`: `tenant_invitations_landlord_all` → `tenant_invitations_admin_all`
+   (`is_property_admin`; dormant until a grant exists, which 015b never gave).
+   `tenant_statements`: `tenant_statements_landlord_all` → `*_member_select` and
+   `*_editor_insert` / `_update` / `_delete` (018b's SELECT-only grant keeps them dormant;
+   publication stays with the server). Grants on the five older tables: `anon` loses
+   everything (it held ALL, TRUNCATE included, latent under row security); `authenticated`
+   keeps SELECT/INSERT/UPDATE/DELETE on `tenants`, `lease_jobs`, `cam_reconciliations` and
+   SELECT/INSERT on evidence and audit. The eight `*_service_role_all` rules, the three
+   tenant-side read rules (`tenants_tenant_self_select`, `tenant_users_self_select`,
+   `tenant_statements_tenant_select`) and 038/043's five guards on `tenants` are untouched;
+   no function, column, constraint, index or row changed. Before the apply, 048, its
+   rollback and the 64-check matrix were run on Pilot in one transaction forced to abort
+   (2026-10-06): 048 removed exactly the 18 and added exactly the 27 predicted catalog rows,
+   matrix 64/0, rollback restored the catalog exactly, data identical. After the apply:
+   record verified, catalog diff 18 removed / 27 added (all 048's), fingerprint
+   `1398 03475fe38a565017c662374c70fcf9a2` as the trial predicted, every data hash identical,
+   live matrix 64/0 (`tools/migrate/live-matrix/048_operating_tables_member_write_rules.result.txt`).
+   Rollback: `048_operating_tables_member_write_rules_rollback.sql` (md5 `6f81d5ee…`), which
+   restores every 024 rule and grant exactly (proven in the trial).
 
 ## Decisions this manifest does not make
 

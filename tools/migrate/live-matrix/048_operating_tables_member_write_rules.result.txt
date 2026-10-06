@@ -1,0 +1,70 @@
+MATRIX RESULTS 2026-10-06 ~13:12Z, after the apply (everything rolled back). Run by Lynn in the Pilot SQL editor
+(the Supabase connector times out at 60 s on this text, as on the pre-apply trial). File md5 822503c9117069eee9de9a71168a40b7.
+MATRIX RESULTS (everything rolled back)
+K1 the eight 024 FOR ALL member rules gone: 0 ok
+K2 the 22 rules exactly as 048 writes them ok
+K3 the eight service-role rules kept: 8 ok
+K4 the three tenant-side read rules kept: 3 ok
+K5 grants: cam_reconciliations:authenticated=DELETE,INSERT,SELECT,UPDATE ; cam_reconciliations:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; lease_jobs:authenticated=DELETE,INSERT,SELECT,UPDATE ; lease_jobs:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_field_evidence:authenticated=INSERT,SELECT ; tenant_field_evidence:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_invitations:service_role=SELECT,UPDATE ; tenant_review_audit:authenticated=INSERT,SELECT ; tenant_review_audit:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_statements:authenticated=SELECT ; tenant_statements:service_role=INSERT,SELECT,UPDATE ; tenant_users:authenticated=SELECT ; tenant_users:service_role=DELETE,INSERT,SELECT,UPDATE ; tenants:authenticated=DELETE,INSERT,SELECT,UPDATE ; tenants:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ok
+K6 038's five leasehold guards still on tenants: 5 ok
+FX property 422d54db org ed52e3d6; leaseholds 9072d3b7 02310ea4; editor, read-only member and a tenant user added; one row on each of the other six tables
+L1 owner/editor/read-only/tenant-user read the leaseholds: 2/2/2/1 ok
+L2 read-only member renames a leasehold: 0 rows ok
+L3 read-only member adding a leasehold refused: 42501 ok
+L4 editor edits a leasehold: 1 row ok
+L5 owner adds a leasehold: ok
+L6 editor's direct delete of a leasehold refused by 038: 23000 ok
+L7 tenant user (no membership) renames their own leasehold: 0 rows ok
+L8 anon read of leaseholds refused: 42501 ok
+L9 TRUNCATE tenants by a signed-in person refused: 42501 ok
+J1 owner/read-only/stranger read the lease job: 1/1/0 ok
+J2 read-only member filing a lease job refused: 42501 ok
+J3 read-only member updates/deletes the job: 0/0 rows ok
+J4 editor: the job upsert (script.js) 1, the update-by-id 1, add and delete 1 ok
+J5 anon filing a lease job refused: 42501 ok
+E1 owner/read-only/stranger read the evidence row: 1/1/0 ok
+E2 read-only member adding evidence refused: 42501 ok
+E3 editor's evidence write as the browser makes it (insert, ignore duplicates): new row 1, duplicate ignored 0 ok
+E4 owner rewriting evidence refused outright: 42501 ok
+E5 owner deleting evidence refused outright: 42501 ok
+E6 editor rewriting evidence refused outright: 42501 ok
+E7 the server (service_role) still corrects and removes evidence: 1/1 ok
+E8 the fixture evidence row is intact after every refused write: 1 ok
+A1 read-only member reads the audit row: 1 ok
+A2 read-only member adding an audit row refused: 42501 ok
+A3 editor's audit write as the browser makes it: new row 1, duplicate ignored 0 ok
+A4 owner rewriting the audit trail refused outright: 42501 ok
+A5 owner deleting audit rows refused outright: 42501 ok
+A6 the server (service_role) still removes an audit row: 1 ok
+A7 the fixture audit row is intact after every refused write: 1 ok
+C1 read-only member reads the CAM result: 1 ok
+C2 read-only member writing a CAM result refused: 42501 ok
+C3 read-only member changes/deletes the CAM result: 0/0 rows ok
+C4 editor adds, changes, deletes a CAM result: 1/1/1 ok
+C5 the CAM proxy's writes (service_role: delete the year, insert the rows): 1/1 ok
+C6 anon read of CAM results refused: 42501 ok
+U1 owner/read-only member read the tenant membership: 1/1 ok
+U2 owner writing a membership refused outright (the server writes memberships): 42501 ok
+U3 owner revoking a membership refused outright: 42501 ok
+U4 accept-invite's membership upsert (service_role) still works: 1 ok
+I1 signed-in read of invitations refused outright (no grant yet): 42501 ok
+I2 signed-in creating an invitation refused outright (the admin rule is dormant until a grant): 42501 ok
+I3 accept-invite's read-then-patch of the invitation (service_role): 1/1 ok
+S1 owner/read-only member read both statements: 2/2 ok
+S2 owner creating a statement refused outright: 42501 ok
+S3 owner voiding a statement refused outright: 42501 ok
+S4 statement publication (service_role, as publish_tenant_statement writes) still works: 1 ok
+T1 tenant user reads their leasehold, their membership and their published statements, nothing else: 1/1/2; jobs+evidence+audit+CAM 0; drafts 0 ok
+T2 tenant user granting themselves another space refused: 42501 ok
+T3 tenant user voiding a statement refused: 42501 ok
+V1 revoked member filing a lease job refused: 42501 ok
+V2 unaccepted member adding evidence refused: 42501 ok
+V3 the same account, once accepted as property_manager, files a job and an evidence row: ok (membership is what gates)
+W1 resync_property_tenants (SECURITY DEFINER) still runs for the owner; leaseholds kept: 3 ok
+W2 end_leasehold (038) still runs for the owner; the leasehold is kept as ended ok
+W3 the owner's direct delete of a leasehold is still refused by 038: 23000 ok
+W4 the browser's leasehold upsert (resync fallback, demo seeds) by the owner: 1 ok
+W5 deleting a property still removes its evidence and audit rows (the cascade runs as the owner): deleted 1, rows left 0 ok
+RA1 real owner account reads leaseholds/jobs/evidence/audit/CAM 17/3/0/2/14 vs allowed 17/3/0/2/14 ok
+SUMMARY 64 ok, 0 FAIL
+After the run (13:14:07Z, read-only): no fixture residue; every data hash identical; fingerprint 1398 03475fe38a565017c662374c70fcf9a2 unchanged.
