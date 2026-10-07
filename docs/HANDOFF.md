@@ -1,6 +1,6 @@
 # Hand-off — current state
 
-**Updated:** 2026-10-07 (after the 015c completion commit was pushed and both CI gates passed on it, B1 66/66 for the first time since 015b; the CI fixture organisation leak was found, fixed in `8395f41` and pushed, and the 88 orphan organisations it had left on Pilot were removed by a one-off, verified cleanup, 101 → 13; earlier that day 015c applied to Pilot and verified; 2026-10-06: 048 applied and verified, its completion commit and four test-only fixes pushed, the Pilot live verification gate green again; 2026-10-05: 047 applied and verified, its completion commit pushed, the CI test fix committed locally; earlier that day: commits A, D, B, the test-reference fix and C, the Vercel environment separation and Pilot redeploy, and the XRPL network guard commit).
+**Updated:** 2026-10-07 (046 pre-apply validation completed and the 046 rolled-back trial run on Pilot — successful, 046 **not applied**; before that, after the 015c completion commit was pushed and both CI gates passed on it, B1 66/66 for the first time since 015b; the CI fixture organisation leak was found, fixed in `8395f41` and pushed, and the 88 orphan organisations it had left on Pilot were removed by a one-off, verified cleanup, 101 → 13; earlier that day 015c applied to Pilot and verified; 2026-10-06: 048 applied and verified, its completion commit and four test-only fixes pushed, the Pilot live verification gate green again; 2026-10-05: 047 applied and verified, its completion commit pushed, the CI test fix committed locally; earlier that day: commits A, D, B, the test-reference fix and C, the Vercel environment separation and Pilot redeploy, and the XRPL network guard commit).
 **Rules:** `docs/WORKING_AGREEMENT.md`. **Migrations:** `docs/MIGRATION_RUNBOOK.md`
 and `migrations/APPLIED.md`. **History and detail:** `docs/ACQUISITION_REVIEW.md`
 (kept as written; this file is canonical when the two disagree).
@@ -74,6 +74,15 @@ every migration tool hard-codes the Pilot ref and refuses any other.
   cleanup's evidence is `tools/ci-fixture-orphan-cleanup/pilot-2026-10-07.sql` (the
   exact text run, md5 `d8542491…`) and `pilot-2026-10-07.result.txt` beside it.
 
+**Re-read 2026-10-07 11:01:06Z, 11:17:17Z and 11:46:50Z** (before and after the 046
+rolled-back trial, §4, §5.3), read-only: still 48 migration rows, newest 015c; 046
+recorded 0 times and none of its tables, functions, columns or storage rules present;
+fingerprint `1398 64458394045bd877f0e1fe5ffdfbb123`; `financial_sources` / `gl_entries`
+0 / 0; every data hash identical; no fixture residue, open transaction or lock left
+by the trial. **The trial returned Pilot exactly to its pre-046 state.** One
+pre-existing function, `lease_jobs_set_updated_at()`, already holds CRLF line endings
+(1 of 121; it predates 046 and 046 does not touch it).
+
 Anything read after that time is **unverified** until the next read-only check.
 
 ## 4. Work and its state
@@ -84,7 +93,7 @@ Anything read after that time is **unverified** until the next read-only check.
 | Migration 045 member write rules | yes | 136/136 on PG 16 and 17.6 (re-run before the commit); mutation harness | **yes, `0317644`** (file byte-identical to the applied text, blob `42f0f046`) | **no** | n/a | **yes, 2026-10-04 18:44:27Z** | **yes**: 46-check rolled-back matrix, 2026-10-04 (`tools/migrate/live-matrix/`) | n/a (no endpoint) | **no** |
 | GL parser (`gl-import.js`) | yes | 142/142 (`test-gl-import.js`, re-run 2026-10-04 before commit B), in regression | **yes, `30fb242`** (commit B) | **no** | n/a | n/a | n/a | n/a | no |
 | Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue (re-run 2026-10-04 before commit B); Bulk Intake scope suite 86/86 | **yes, `30fb242`** | **no** | **no — never run on Vercel** | n/a (needs 046) | no | **no** | no |
-| Migration 046 acquisition general ledger | yes | verifier 130/130; mutation 60/60 non-equivalent mutants killed, 1 equivalent (L08) — both re-run 2026-10-04 before commit B (logs in scratchpad `phase6/commitB/`) | **yes, `30fb242`** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes; rollback md5 `74dd6285912cb5725f808434b181b766`) | **no** | n/a | **no** | no (no live matrix yet) | n/a | no |
+| Migration 046 acquisition general ledger | yes | verifier **131/131 on PG 16.13 and 17.6** (2026-10-07; the new check: the rollback refuses a database without the Pilot marker); mutation 61/61 non-equivalent mutants killed, 1 equivalent (L08), incl. L41 (rollback marker guard); endpoint 68/68, concurrency 22/22, gl-import 142/142; live matrix (31 checks) and rolled-back trial local-tested on both (55/55 each with the line-ending correction) | **migration yes, `30fb242`** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes — unchanged). **Rollback corrected, not yet committed:** the Pilot marker guard was added 2026-10-07; rollback md5 is now `56d3a92bf11070b67390ad1bbfaec5d0` (sha256 `553339ea…0f09`, 6,155 bytes), replacing the committed `74dd6285912cb5725f808434b181b766`. The verifier, mutation harness and live matrix (`tools/migrate/live-matrix/046_*.sql`, md5 `589e651d…`) are likewise in the working tree, uncommitted | **no** | n/a | **no — 046 remains unapplied** | **rolled-back trial only**, 2026-10-07: 046 + live matrix 31 ok / 0 FAIL + rollback exact (0 rows differ, fingerprint identical) + matrix 2 ok / 29 FAIL (the pre-046 set), data identical, forced abort; no post-apply matrix yet | **no** (endpoints need 046) | no |
 | Migration 047 remaining member write rules | yes | verifier 76/76 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05, logs in scratchpad `phase6/commitC/`) | **yes, `979306a`** (C); its live matrix and apply records in `396cf29` | yes (`979306a` and `396cf29` are in `origin/pilot`) | n/a | **yes, 2026-10-05 18:30:07Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (047 + matrix 46/0 + rollback exact), and the 46-check matrix after it, 46 ok / 0 FAIL | n/a (no endpoint) | no |
 | Migration 048 operating tables | yes | verifier 50/50 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05); live matrix 64 checks local-tested on both; trial 21/21 on both | **yes, `979306a`** (C); its live matrix and apply records in the 048 completion commit | yes (`979306a` and the completion commit `147e0b5` are in `origin/pilot`) | n/a | **yes, 2026-10-06 13:07:26Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (048 + matrix 64/0 + rollback exact, 2026-10-06), and the 64-check matrix after it, 64 ok / 0 FAIL | n/a (no endpoint) | no |
 | Migration 015c service-role INSERT on `tenant_invitations` (B1 gate fix) | yes | `tools/verify-migration-015b.js` (015b + 015c) 213/213 on PG 16.13 and 17.6; `tools/data-api-grants-mutation.js` 49/49 killed on both (5 new 015c mutants); live matrix 14 checks and trial 26/26 local-tested on both | **yes, the 015c completion commit** (migration, rollback, verifier, mutation harness, matrix, approval and apply records together) | yes, `34f4ed5` (2026-10-07 00:49:48Z); both gates green on it — B1 run 208 66 passed / 0 failed (T17–T21 reached for the first time since 015b), live verification run 289 all suites | n/a | **yes, 2026-10-07 00:30:20Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (015c + matrix 14/0 + rollback exact + matrix 9/5, 2026-10-06), and the 14-check matrix after it, 14 ok / 0 FAIL | n/a (no endpoint) | no |
@@ -93,7 +102,7 @@ Anything read after that time is **unverified** until the next read-only check.
 
 Locally tested means throwaway PostgreSQL clusters and local stand-ins. The only
 live verification of any kind so far is the 045, 047, 048 and 015c rolled-back SQL
-matrices, which are live database verification, the CI gates' live suites (§5), and
+matrices and the 046 rolled-back trial, which are live database verification, the CI gates' live suites (§5), and
 the read-only checks around the organisation cleanup. The cleanup is a data
 correction, not a migration: it is recorded here and under
 `tools/ci-fixture-orphan-cleanup/`, not in `migrations/APPLIED.md`. None of the
@@ -128,18 +137,51 @@ browser.
    209 and 290 each created and removed one and left none. The 88 historic orphans
    were removed 2026-10-07 02:16:36Z by the one-off cleanup (§3, §6): 101 → 13, the
    remaining 13 byte-identical, 0 orphans.
-3. **Live matrix for 046** (`tools/migrate/live-matrix/<name>.sql`), required by
-   the runbook before its apply. 047's, 048's and 015c's are done (applied and verified
-   2026-10-05, 46/0; 2026-10-06, 64/0; 2026-10-07, 14/0). The Supabase connector cannot run
-   these matrices or the rolled-back trials (it times out at 60 s on text
-   containing DELETE/TRUNCATE); Lynn runs them in the Pilot SQL editor, which
-   turns line endings into CRLF — harmless for a matrix or a trial (the trial's
-   hash guard reads the executable text), but a migration itself must go through
-   the hand-off script. Lesson from 048: paste into a **new** editor tab with
-   nothing selected; the editor runs a selection on its own, and an edited tab
-   is refused by the trial's hash guard, as designed.
-4. **046 apply** — needs its own approval; then a real import with one small
-   synthetic CSV on a test property, and reversal.
+3. **046 pre-apply validation and rolled-back trial — complete (2026-10-07); 046
+   not applied.** The live matrix (31 checks: catalog, import, stored-file
+   evidence, reversal, integrity and maintenance, deletion, a real account
+   read-only) and a self-aborting trial (046, matrix, rollback, matrix, then a
+   forced RAISE) were local-tested on PG 16.13 and 17.6. The trial was run once by
+   Lynn in the Pilot SQL editor and **was successful**:
+   - every check held except T3;
+   - M1 31 ok / 0 FAIL;
+   - R1 the rollback exact;
+   - M2 2 ok / 29 FAIL;
+   - D2 data identical;
+   - Pilot unchanged before and after (§3).
+
+   **T3 printed false because of line endings, not a schema or behaviour
+   difference.** The editor sends the pasted file with CRLF line endings. The
+   CRs land inside the 13 dollar-quoted function bodies and change
+   `md5(pg_get_functiondef)`. All other 113 added rows matched exactly; the 13
+   function rows matched in name and permissions. Reproduced offline: the same
+   13 function hashes, 13/13.
+
+   **The trial tooling is corrected (in the scratchpad, `phase6/prep046/`):**
+   - it reads CRLF as LF, then requires the exact file bytes;
+   - function text is compared with CRLF read as LF;
+   - substantive function changes are still caught;
+   - raw fingerprints are unchanged.
+
+   **Fingerprints:**
+   - **CRLF fingerprint observed in the trial (T4): `1524 537a044d48185e97410b74b6fd3587ef`**;
+   - **expected LF post-apply fingerprint for the hand-off apply: `1524 a103e168cc737262258e745ebcda0530`**.
+     It was computed read-only on Pilot (current rows plus the 126 predicted rows), and the same
+     method reproduces the CRLF T4 exactly.
+
+   Paste a trial or matrix into a **new** editor tab with nothing selected (lesson
+   from 048). A migration itself always goes through the hand-off script, never
+   the editor.
+4. **046 — remaining, each needing its own approval:**
+   - the permanent apply through the hand-off script (expect the fingerprint
+     `1524 a103e168…` above);
+   - the post-apply live matrix (31 ok / 0 FAIL expected);
+   - a deployed-endpoint test: a real import of one small synthetic CSV on a test
+     property, then its reversal;
+   - final verification: record, catalog diff and data, as for 047, 048 and 015c.
+
+   The rollback correction, verifier, mutation harness and live matrix also need
+   committing.
 5. **Browser side of the import** (preview, date-order prompt, history view,
    Reverse button) — not started.
 6. **pg_cron** for `run_ledger_maintenance()` — available on Pilot, not
@@ -182,13 +224,18 @@ browser.
   re-read) the grant is latent rather than exploitable through the API — the
   same shape the 047/048 tables had before those migrations. 047 does not
   revoke it; a separate small migration would.
-  (b) *Ownership.* 011 recorded that `alter table storage.objects enable row
-  level security` failed with "must be owner of table objects", yet the 011 and
-  024 policies on that table were accepted on Pilot, and 046 and 047 each
-  create more. Whether the migration role may create a trigger there (the only
-  way to guard against a service-key overwrite) is unknown until the read-only
-  queries listed in `docs/ACQUISITION_REVIEW.md` §7e are run on Pilot. Until
-  then 046's integrity check detects a replaced original; nothing prevents one.
+  (b) *Ownership — read on Pilot 2026-10-07 (read-only).* `storage.objects` is
+  owned by `supabase_storage_admin`, and `postgres` cannot act as that role. That
+  is why 011's `enable row level security` failed with "must be owner".
+  - Pilot's `supautils.policy_grants` lists `storage.objects` for `postgres`. That
+    is how the 011, 024 and 047 policies were accepted, and the 046 trial created
+    and dropped 046's two policies there.
+  - `postgres` holds TRIGGER on the table, so a guard trigger against a service-key
+    overwrite looks possible, but none exists and none is designed or approved.
+  - Until then, 046's integrity check detects a replaced original; nothing
+    prevents one.
+  - Also read 2026-10-07: 16/16 acquisition originals are stored with a numeric
+    size and a quoted 32-hex eTag, matching what 046 reads.
 - The composite-key authorship limitation above.
 - The ledger endpoints' Vercel behaviour (request object, 30 s limit) is
   untested.
@@ -228,12 +275,25 @@ matrix 14/0; completion commit `34f4ed5` pushed 00:49:48Z, both gates green, B1
 02:49:06Z; both gates green, 0 orphans left by the runs) and the 88 historic
 orphans are gone (101 → 13, verified). `origin/pilot` is at `8395f41`.
 
+**046 pre-apply validation and the rolled-back Pilot trial are complete (2026-10-07):**
+- the trial was successful;
+- T3's false was the editor's CRLF line endings in the function bodies, and the
+  tooling is corrected;
+- Pilot was returned exactly to its pre-046 state;
+- **046 remains unapplied.**
+
 **Nothing further is currently approved.** Proposed next, each needing its own
-approval: 046 through the same procedure (live matrix, rolled-back trial, hand-off
-apply, verification), which also creates the ledger tables and depends on
-endpoints that are not yet deployed-API or browser verified; the Pilot-marker
-guard for the committed 045 and 046 rollbacks; the storage anon grants (§5.7).
+approval:
+- commit the 046 rollback correction (marker guard, md5 `56d3a92b…`), verifier,
+  mutation harness and live matrix;
+- the permanent 046 apply through the hand-off script (expected fingerprint
+  `1524 a103e168cc737262258e745ebcda0530`);
+- the post-apply live matrix;
+- the deployed-endpoint test;
+- final verification;
+- the Pilot-marker guard for the committed 045 rollback;
+- the storage anon grants (§5.7).
 
 Any migration (046), live matrix run, push, Production change, CI-gate change,
-Pilot testnet wallet, the Pilot-marker guard for the committed 045 and 046
-rollbacks, and Option B each need their own specific approval.
+Pilot testnet wallet, the Pilot-marker guard for the committed 045 rollback, and
+Option B each need their own specific approval.
