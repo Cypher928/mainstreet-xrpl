@@ -584,6 +584,15 @@ r = pg.psqlFile(R046, DB);
 check('the rollback runs a second time harmlessly', r.ok, short(r.out));
 r = pg.psqlFile(M046, DB);
 check('046 applies again, to the same catalog', r.ok && inventory(DB).join('\n') === after.join('\n'), short(r.out));
+// The rollback carries the same Pilot marker guard as 046 itself, and it fires first:
+// on a database that has 046 but no marker, nothing is counted or dropped.
+r = build('rbnomark', 'legacy', true);
+r = r.ok ? pg.psqlFile(M046, 'rbnomark') : r;
+q(`delete from public.properties where id='${MARKER}';`, 'rbnomark');
+const invNoMark = inventory('rbnomark');
+r = pg.psqlFile(R046, 'rbnomark');
+check('the rollback refuses a database without the Pilot marker, before it drops anything',
+  !r.ok && /REFUSING TO RUN: pilot marker property not found/.test(r.out) && inventory('rbnomark').join('\n') === invNoMark.join('\n'), short(r.out));
 
 // ── 11 · post-2026-10-30 defaults ────────────────────────────────────────────
 section('11 · under Supabase\'s post-2026-10-30 default privileges');

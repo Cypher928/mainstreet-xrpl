@@ -13,9 +13,19 @@
 -- would discard evidence and audit history without anyone choosing to. Removing
 -- a disposable prospect removes its ledger; history is removed only by
 -- purge_ledger_import_history() once its retention has passed.
+--
+-- TARGET: PILOT PROJECT (bhmktujbxdbvdmpybmad) ONLY. Refuses to run unless the
+-- Pilot marker property exists, before it counts or drops anything.
 -- ============================================================================
 
 begin;
+
+do $$
+begin
+  if not exists (select 1 from public.properties where id = 'fd9c09b1-b657-4c58-9999-c3cce28e7600') then
+    raise exception 'REFUSING TO RUN: pilot marker property not found. This does not appear to be the pilot project (bhmktujbxdbvdmpybmad). The 046 rollback must never be run on production.';
+  end if;
+end $$;
 
 do $$
 declare
