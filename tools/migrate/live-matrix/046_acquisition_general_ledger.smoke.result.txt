@@ -1,0 +1,81 @@
+046 deployed-endpoint smoke test on Pilot bhmktujbxdbvdmpybmad, its cleanup, and the final read-only check. 2026-10-07.
+Scripts as run, byte-identical: 046_acquisition_general_ledger.smoke.js (md5 ee5ef1232fc142205df8a126864b18f5) and
+046_acquisition_general_ledger.smoke-cleanup.js (md5 f27d54dc08ed48b08e016eef1f86f367), beside this file. Both run from Lynn's
+Mac (Node 24.21.0) against the deployed Pilot site https://www.mainstreet-review.com (deployment dpl_CajFS8D8R4H1eo6xWREiboWRBanh,
+origin/pilot aa95e33) and Pilot's own auth/REST/storage APIs with the publishable key. They hold no secret: the test account's
+temporary password was read from a file beside the script and never printed; no token is logged.
+
+ACCOUNT. pilot-tenant-a@mainstreet-test.local (1c682d8e-0fcb-42c9-9d91-95b9524bb113), a fixture account created by hand and never
+signed in. A temporary password was set by the established mechanism (bcrypt hash written to auth.users.encrypted_password as
+postgres, 14:10:24Z), used for the smoke test and the cleanup, and replaced at 15:48:25Z by the hash of a random password that was
+generated, hashed and discarded (conditional on the temporary hash; 1 row). The account is back to "exists, nobody can sign in".
+Three sign-in attempts before the successful run (14:xxZ, 15:22:55Z, 15:23:21Z) were rejected with invalid_credentials because the
+Mac ran the original script (no password-file support) with a stale FIXTURE_PASSWORD shell variable; sign-in is the first call,
+so those attempts sent nothing else.
+
+SYNTHETIC INPUT. A 189-byte CSV, sha256 b1640e4856a97f64b34fd4771d38c2189904d2e93c203c6ccfd860dd8e2eb666: two balanced lines
+(6100 Repairs debit 123.45; 1000 Cash credit 123.45; 2025-01-15; ISO dates), parsed by the repository's gl-import.js to the same
+numbers before the run.
+
+SMOKE TEST 15:32:10-15:32:19Z (every call HTTP 200 unless noted).
+ sign-in as 1c682d8e… ; pre-state: owner properties 0, visible import history 0
+ rpc/begin_acquisition → property 31a00b6c-0642-462c-8e79-ab134a7424c1, review 1e0d6aca-bfb6-4e6c-8bd5-eae0a9b31789
+ POST /api/upload (bucket leases, fileName acq/<review>/<ts>-smoke.csv) → stored
+   leases/1c682d8e-0fcb-42c9-9d91-95b9524bb113/acq_1e0d6aca-bfb6-4e6c-8bd5-eae0a9b31789_1791387133796-smoke.csv (the sanitised acquisition-original shape)
+ REST insert acquisition_documents → 5231a1ce-c5d8-4946-93fd-e5333e37d15d (HTTP 201)
+ POST /api/upload?op=ledger-import → import_general_ledger(): {"lines":2,"balanced":true,"inserted":2,"source_id":"8847494f-3812-41e8-a62b-86942f9413fb",
+   "history_id":"627e8e25-b756-4c69-9c43-0c8594f6ec7c","period_start":"2025-01-15","period_end":"2025-01-15","debit_cents":12345,"credit_cents":12345,
+   "already_present":0,"already_imported":false}
+ read-backs as the user: source import_status active, file_sha256/file_bytes/storage_path/kind general_ledger/acquisition_document_id all as
+   expected; 2 lines [6100 123.45 debit row 2; 1000 123.45 credit row 3]; 2 links; history [import, actor 1c682d8e…, lines 2, inserted 2,
+   189 B, sha b1640e48…, balanced]; events [ledger_imported]
+ POST ?op=ledger-import again → {"inserted":0,"already_imported":true, same source_id} (idempotent)
+ POST /api/upload?op=ledger-reverse → reverse_general_ledger_import(): {"lines_kept":0,"lines_removed":2,"lines_handed_over":0,
+   "history_id":"29190318-8e14-450c-ac44-3793f15e9478"}
+ read-backs: source import_status reversed, reversed_by = the actor, reversal_reason "046 deployed smoke test: reversal"; lines 0;
+   archived 2; history import,reverse; events ledger_imported,ledger_import_reversed
+ rpc/delete_prospect_acquisition → as the user: property 0, document 0, source 0
+ script STOP at its own step 8 (see SCRIPT DEFECT): "the history after removal is not import,reverse,evidence_removed — saw: []".
+ Step 9 (DELETE the stored CSV + list) was therefore not reached by this script.
+
+SCRIPT DEFECT (documented; the database behaviour is intended and was not changed). Step 8 re-read ledger_import_history AS THE
+TEST USER after delete_prospect_acquisition and expected import,reverse,evidence_removed. The policy
+ledger_import_history_member_select shows a person only rows whose property_id is in member_property_ids(); the deleted property
+has no row in properties, so its former owner is shown 0 rows. The database retained all 3 rows. The check should have been a
+privileged read, or the expectation "0 visible to the former owner; 3 present". Product fact: after a prospect is deleted, its
+former owner sees none of its import history through the normal API; the records remain, retained append-only, and are visible
+to privileged verification (postgres; purge only by purge_ledger_import_history()).
+
+READ-ONLY VERIFICATION AFTER THE SMOKE TEST (postgres, 15:34-15:36Z). ledger_import_history 3 rows, all for 31a00b6c…, in order
+import@15:32:20.055 | reverse@15:32:21.770 | evidence_removed@15:32:22.630 (actor 1c682d8e…, source 8847494f…, document 5231a1ce…;
+evidence_removed reason "The prospect was deleted; its documents, ledger and lines went with it.", detail import_status=reversed,
+storage_path and sha recorded); 0 rows for any other property. properties/acquisition_reviews/acquisition_documents/financial_sources/
+gl_entries/gl_entry_sources/gl_entries_reversed/property_events for the smoke ids: all 0; ledger tables 0/0/0/0/0; owner properties 0.
+Data digest identical to the 13:43:19Z pre-smoke baseline in every table except storage.objects: 200 rows (baseline 199) — the
+stored smoke CSV (189 B, text/csv, created 15:32:18.888Z) remained because step 9 was not reached. Fingerprint 1524 a103e168… unchanged;
+49 migrations, 046 once; 0 other-session locks on 046 tables; 0 idle-in-transaction; 0 temp functions.
+
+CLEANUP (approved separately) 15:47:17-15:47:21Z, smoke-cleanup.js = step 9 on its own: sign-in HTTP 200 as 1c682d8e…; the owner's
+folder in bucket leases listed exactly the one smoke object (189 B, text/csv); DELETE /storage/v1/object/leases/<name> HTTP 200
+{"message":"Successfully deleted"} (permitted: the document row was gone, so acq_evidence_no_delete no longer applied, and 047's
+docs_owner_delete allows the owner's own folder); the folder listed 0 objects after. Nothing else touched.
+15:47:57Z: storage.objects 199, md5 d7ee8ea4c32f2d2a234489bf0f17d907 = baseline; owner objects 0; smoke-named objects 0.
+15:48:25Z: temporary credential invalidated (above).
+
+FINAL READ-ONLY CHECK 15:49:02-15:49:16Z.
+ storage.objects 199, hash d7ee8ea4… = the 13:43:19Z baseline; smoke/owner objects 0
+ smoke properties / reviews / documents / sources / entries / links / archived lines / events: 0 / 0 / 0 / 0 / 0 / 0 / 0 / 0
+ ledger tables financial_sources/gl_entries/gl_entry_sources/gl_entries_reversed/ledger_maintenance_runs: 0/0/0/0/0
+ ledger_import_history: 3 rows, import,reverse,evidence_removed — INTENTIONAL, append-only, retained by design (046 fact 21)
+ data digest identical to baseline in every table (acquisition_documents 16 5bd02644 ; acquisition_reviews 12 dc097d57 ; auth.users 13 ;
+   financial_sources 0 ; gl_entries 0 ; lease_documents 93 237d7527 ; lease_jobs 111 52d92dad ; organization_members 13 1b1da760 ;
+   organizations 13 b33b1115 ; properties 50 6a8a7bf5 ; property_events 87 487f09df ; storage.objects 199 d7ee8ea4 ; tenants 149 884551c9)
+ catalog fingerprint 1524 a103e168cc737262258e745ebcda0530 (unchanged since the apply)
+ 046 recorded exactly once (20261007132007); 49 migrations, newest 046
+ 0 ungranted locks, 0 other-session locks on 046 tables, 0 idle-in-transaction sessions, 0 other active clients
+ 0 temp functions, 0 temp tables; storage rules = 047's four + 046's two; temporary credential no longer valid; auth.users 13
+
+RESULT: SMOKE TEST PASSED on the deployed endpoints — import_general_ledger() and reverse_general_ledger_import() were reached through
+POST /api/upload?op=ledger-import / ?op=ledger-reverse as a signed-in owner; records were created, archived and removed as designed;
+the one storage object was removed by the follow-up cleanup; Pilot matches the pre-smoke baseline except the three intentional
+history rows. What this does not show: the browser workflow (not built), files larger than two lines, or the Vercel 30 s limit.

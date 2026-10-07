@@ -1,0 +1,20 @@
+# Approval record — read by tools/migrate/apply-migration.sh. One file per migration.
+# The script refuses to send unless the .sql file hashes to sql_md5/sql_bytes and
+# project_ref is the Pilot project. Never put a token or secret in this file.
+migration_name=046_acquisition_general_ledger
+project_ref=bhmktujbxdbvdmpybmad
+project_name=mainstreet-pilot
+sql_md5=5c8af9624927c3c275d46526bfc4c05f
+sql_sha256=d8acceaa4bc4bfd94dd6c06b01d33e49f265efb1e959cf41cf8147a0afd42e94
+sql_bytes=56369
+rollback_file=046_acquisition_general_ledger_rollback.sql
+rollback_md5=56d3a92bf11070b67390ad1bbfaec5d0
+rollback_sha256=553339eaaae963f4418d1f01864eddba4b2989b2ea1daf923ed84dbdb52f0f09
+approved_on=2026-10-07
+approved_by=Lynn, chat 2026-10-07: "Approved: permanently apply migration 046 to Pilot. This approval is for 046 only and the required immediate verification." After the rolled-back trial on Pilot (2026-10-07, successful; T3 was the CRLF representation only).
+local_verification=verify-migration-046.js 131/131 on PG 16.13 and 17.6; ledger-import-mutation.js 61/61 killed + L08 equivalent; live matrix 31 checks; rolled-back trial on Pilot 2026-10-07: M1 31/0, rollback exact, M2 2/29, data identical; expected LF post-apply fingerprint 1524 a103e168cc737262258e745ebcda0530
+# Filled in after the apply:
+applied_on=2026-10-07T13:20:07Z
+applied_version=20261007132007
+idempotency_key=8f79de8f-81e5-45bb-9f27-43802575b64a
+applied_by=Lynn, from her Mac, tools/migrate/apply-migration.sh (md5 ca5a844fd1124bdcee96e7c62e07e519), PROBE 200 (48 rows, newest 015c, 046 absent) then one POST, HTTP 200 ACCEPTED at 13:20:03-13:20:05Z. Read-only verification 13:21-13:28Z: 046 recorded once as version 20261007132007 (newest of 49), statements 1, md5/sha256/bytes equal to this record, created_by set, idempotency_key equal to the key the script printed; inventory 0 removed / 36 added (fn 13, pol 6, pri 11, trg 6), check-inventory.js EXPLAINED; fingerprint 1524 a103e168cc737262258e745ebcda0530 = the predicted LF value; every data hash identical. Live matrix 31 ok / 0 FAIL (046_acquisition_general_ledger.result.txt). Deployed smoke test 15:32Z (import 2 lines, idempotent re-import, reversal, prospect deletion) passed; cleanup and the final read-only check 15:49Z (046_acquisition_general_ledger.smoke.result.txt).

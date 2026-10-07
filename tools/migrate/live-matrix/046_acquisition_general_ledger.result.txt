@@ -1,0 +1,57 @@
+046_acquisition_general_ledger on Pilot bhmktujbxdbvdmpybmad — apply, record, catalog, live matrix. 2026-10-07.
+(The deployed-endpoint smoke test and its cleanup are in 046_acquisition_general_ledger.smoke.result.txt beside this file.)
+
+APPLY. Run by Lynn from her Mac with tools/migrate/apply-migration.sh (md5 ca5a844fd1124bdcee96e7c62e07e519) from the
+hand-off bundle (migration md5 5c8af9624927c3c275d46526bfc4c05f, sha256 d8acceaa4bc4bfd94dd6c06b01d33e49f265efb1e959cf41cf8147a0afd42e94,
+56,369 bytes; approval file as committed here), 13:20:03-13:20:05Z: PROBE HTTP 200 (48 history rows, newest 20261007003020 015c,
+046 present=0); ONE POST with Idempotency-Key 8f79de8f-81e5-45bb-9f27-43802575b64a; curl exit 0, HTTP 200, ACCEPTED.
+Before it (13:07:44Z, read-only): marker true; 48 rows, newest 015c; 045=1 046=0 047=1 048=1 015c=1; none of 046's tables,
+functions, columns or storage rules present; fingerprint 1398 64458394045bd877f0e1fe5ffdfbb123; no fixture residue, no open
+transaction, no CI gate running; origin/pilot aa95e33.
+
+RECORD (read-only through the connector, 13:21:29-13:28:01Z). 046 recorded exactly once, version 20261007132007, the newest of
+49 rows; statements=1; recorded text md5 5c8af9624927c3c275d46526bfc4c05f, sha256 d8acceaa…42e94, 56,369 bytes, no CR;
+created_by set; idempotency_key 8f79de8f-81e5-45bb-9f27-43802575b64a = the key the script printed; rollback null; previous
+newest 015c, its md5 886a689c… unchanged. (The same facts check-record.js requires; the checks were run as SQL.)
+
+CATALOG. inventory-before.txt = the post-015c inventory (byte-identical to 015c_….inventory-after.txt; per-category
+fn 121 ddf5f9be, pol 105 8c2e7cdb, pri 116 168b0deb, trg 55 c74ab2ec = the 13:07:44Z pre-apply read). inventory-after.txt read
+2026-10-07 15:5xZ after the smoke test and its cleanup (per-category fn 134 6a682b6a, pol 111 70dd6ef9, pri 127 d015a9b8,
+trg 61 7848b8c9 = the 13:2xZ post-apply read, so nothing in these categories moved between the apply and this record).
+check-inventory.js: removed 0, added 36 (fn 13, pol 6, pri 11, trg 6), EXPLAINED. Over all eight fingerprint categories 046 added
+exactly the 126 predicted rows (+60 col, +15 con, +13 fn, +11 idx, +6 pol, +11 pri, +4 rls, +6 trg) and removed or changed
+none: current rows MINUS the 126 = 1398 64458394045bd877f0e1fe5ffdfbb123, the pre-apply fingerprint exactly.
+Fingerprint after: 1524 a103e168cc737262258e745ebcda0530 = the LF post-apply value predicted before the apply, exactly
+(by category col 603 a4a01fc1, con 259 1ae88f98, fn 134 6a682b6a, idx 185 7df1ee1f, pol 111 70dd6ef9, pri 127 d015a9b8,
+rls 44 d310f3d9, trg 61 7848b8c9). Data digest identical to pre-apply in every table (acquisition_documents 16, acquisition_reviews 12,
+auth.users 13, lease_documents 93, lease_jobs 111, organization_members 13, organizations 13, properties 50, property_events 87,
+storage.objects 199, tenants 149). 046's four tables all 0 rows. storage.objects rules: 047's four docs_owner_* plus 046's
+acq_evidence_no_update / acq_evidence_no_delete; triggers protect_objects_delete, update_objects_updated_at unchanged.
+047/048/015c intact (tenant_invitations service_role INSERT,SELECT,UPDATE; 28 member policies; 105 pre-existing public policies + 6 new = 111).
+Pre-existing, not 046's: one function with CRLF in its body (lease_jobs_set_updated_at) and anon TRUNCATE on public.property_documents
+(the inventory diff shows no pri row changed). GET /api/upload?op=ledger-import on the Pilot alias → 405, Allow: POST (the ?op=
+dispatch deployed on dpl_CajFS8D8R4H1eo6xWREiboWRBanh); service_role may execute import/reverse, authenticated and anon may not.
+
+MATRIX RESULTS 2026-10-07 ~13:30Z, after the apply (everything rolled back). Run by Lynn in the Pilot SQL editor
+(tools/migrate/live-matrix/046_acquisition_general_ledger.sql, md5 589e651d4158da4fb5c9536474972235; a new tab, nothing selected).
+K1 4/4 ok; K2 grants exact ok; K3 13/13, 7/7, 6/6 ok; K4 4/4, 2/2 ok; K5 2/2, 4/4 ok; K6 10/10, 3/3 ok; K7 financial_sources=SELECT;gl_entries=SELECT ok
+FX owner began acquisition cd020483 (review e1453f98, draft), editor + read-only added, CSV original filed as document 3b2bf32e
+I1 42501 ok; I2 42501 ok; I3 23514 fingerprints differ ok; I4 23514 ok; I5a 0 sources ok; I5 inserted 2, lines 2, links 2, history 1, events 1, etag recorded ok;
+I6 already_imported=true, sources 1, lines 2 ok; I7 1/2 and 0/0 ok; I8 42501 ok; I9 4/4, lines still 2 ok
+S1 original true, control false ok; S2 0 / 1 ok; S3 0 rows ok; S4 0 / 1, original still stored 1 ok
+V1 42501 ok; V2 23514 ok; V3 removed 2, lines left 0, archived 2, history 1, events 1, reversed|true ok; V4 inserted 2, lines 2 ok
+E1 checked 2, flagged 0 ok; E2 flagged 2, mismatch rows 2 ok; E3 purged 0, recorded 1 ok
+X1 23001 ok; X2 property 0, sources 0, lines 0; history kept 7 (was 5) incl. evidence_removed 2 ok
+RA1 visible 0 vs its own 0 ok
+SUMMARY 31 ok, 0 FAIL
+CONTEXT: PL/pgSQL function inline_code_block line 295 at RAISE
+Every line as in the rolled-back trial's M1 (2026-10-07 morning), which ran 046 + this matrix + the rollback + the matrix again
+(2 ok / 29 FAIL, the pre-046 set) in one aborted transaction: M1 31/0, rollback exact, data identical.
+After the matrix (13:33:39Z, read-only): fingerprint 1524 a103e168… unchanged; 49 migration rows, 046 once; fixture residue
+0 properties / 0 documents / 0 objects / 0 test-account properties / 4 pre-existing test-account memberships; ledger tables
+0/0/0/0/0/0; ledger events 0; pg_temp functions 0; 0 sessions in a transaction; 0 running matrix text; 0 ungranted locks;
+0 other-session locks on 046 tables; storage rules unchanged; data digest identical to pre-apply (the one "orphan review" the
+residue query surfaced is pre-existing: acquisition_reviews 12 dc097d57… byte-identical to pre-apply).
+
+RESULT: 046 APPLIED AND VERIFIED on Pilot — record once and exact, catalog diff exactly the predicted rows, fingerprint as
+predicted, data identical, live matrix 31/0. The deployed-endpoint smoke test followed (smoke.result.txt).

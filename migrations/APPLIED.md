@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (48 rows as of 015c, in applied order; 040 and 041 are unused; 046 is not applied)
+## Recorded history (49 rows as of 046, in applied order; 040 and 041 are unused)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -78,8 +78,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20261005183007` | `047_member_write_rules_remaining` | `migrations/047_member_write_rules_remaining.sql` (commit `979306a`; md5 `2c6b8a07…`, sha256 `a49725da…`, 8,941 bytes) — applied 2026-10-05 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b` (recorded in `idempotency_key`), HTTP 200 at 18:30:07Z; 046 was not applied before it (047 needs only 045 and phase0/024); the recorded text is the file verbatim (md5 `2c6b8a07…` on both sides, 8,941 bytes) | identical |
 | `20261006130728` | `048_operating_tables_member_write_rules` | `migrations/048_operating_tables_member_write_rules.sql` (commit `979306a`; md5 `3c5675e0…`, sha256 `74af8e55…`, 14,599 bytes) — applied 2026-10-06 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `f14a19d6-bb2f-4ee7-9266-b791bf943941` (recorded in `idempotency_key`), HTTP 200 at 13:07:26Z; 046 was not applied before it (048 needs 045, 034, phase0/024 and 038; 047 is the tested order); the recorded text is the file verbatim (md5 `3c5675e0…` on both sides, 14,599 bytes) | identical |
 | `20261007003020` | `015c_tenant_invitations_service_insert` | `migrations/015c_tenant_invitations_service_insert.sql` (committed unchanged with this entry; md5 `886a689c…`, sha256 `a8fdf8b9…`, 3,877 bytes) — a forward-only companion to 015b, applied 2026-10-07 after 048 (the number is 015c because it amends 015b's grant set, not because it ran early; it needs only 014 and 015b) by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `0fa8cc70-bb85-48c0-a023-c2f83f627781` (recorded in `idempotency_key`), HTTP 200 at 00:30:20Z; 046 was not applied before it; the recorded text is the file verbatim (md5 `886a689c…` on both sides, 3,877 bytes) | identical |
+| `20261007132007` | `046_acquisition_general_ledger` | `migrations/046_acquisition_general_ledger.sql` (commit `30fb242`, unchanged since; md5 `5c8af9624927c3c275d46526bfc4c05f`, sha256 `d8acceaa…42e94`, 56,369 bytes) — applied 2026-10-07 after 015c (it builds on 045; 047 and 048 were already in place) by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `8f79de8f-81e5-45bb-9f27-43802575b64a` (recorded in `idempotency_key`), HTTP 200 at 13:20:07Z, after a rolled-back trial of 046 + its matrix + its rollback on Pilot the same morning; the recorded text is the file verbatim (md5 `5c8af962…` on both sides, 56,369 bytes, no CR). Rollback `046_acquisition_general_ledger_rollback.sql` (commit `aa95e33`, md5 `56d3a92b…`) | identical |
 
-Tally (48 rows as of 015c): 38 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (49 rows as of 046): 39 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -589,6 +590,48 @@ These files were applied through the SQL editor or the bundle
    (`tools/migrate/live-matrix/015c_tenant_invitations_service_insert.result.txt`).
    Rollback: `015c_tenant_invitations_service_insert_rollback.sql` (md5 `c6f5fd78…`),
    which revokes exactly this INSERT (proven in the trial).
+
+21. **Since 046, Pilot holds the acquisition general-ledger import.** Four new tables
+   (`gl_entry_sources`, `gl_entries_reversed`, `ledger_import_history`,
+   `ledger_maintenance_runs`), 13 columns on `financial_sources`, `gl_entries` and the new
+   tables, 15 constraints, 11 indexes, 13 functions, 6 policies, 11 grant rows, 6 triggers
+   and two restrictive `storage.objects` rules (`acq_evidence_no_update`,
+   `acq_evidence_no_delete`): 126 catalog rows added, none removed or changed (current
+   rows minus the 126 = the pre-apply fingerprint `1398 64458394…` exactly). Only
+   `service_role` may execute `import_general_ledger()` and
+   `reverse_general_ledger_import()`; the server calls them from `POST /api/upload`
+   (`?op=ledger-import`, `?op=ledger-reverse`) after verifying the person and reading the
+   stored original itself; `authenticated` holds SELECT on the new tables through
+   member-scoped policies and no write; an unbalanced import needs an admin's override.
+   **`ledger_import_history` is append-only and retained**: its trigger refuses UPDATE,
+   DELETE and TRUNCATE, it has no foreign key to `properties`, and
+   `financial_sources_acq_removed` writes an `evidence_removed` row when a prospect is
+   deleted — so every import, reversal and removal stays on record after the property, its
+   documents, ledger and lines are gone; only `purge_ledger_import_history()` (7 years,
+   provisional) removes rows. Pilot therefore carries **three intentional rows** from the
+   2026-10-07 deployed smoke test (import, reverse, evidence_removed for the deleted
+   synthetic property `31a00b6c…`); they are not residue and are not to be removed.
+   **Visibility:** `ledger_import_history_member_select` shows a person only rows whose
+   `property_id` is in `member_property_ids()`, so after a prospect is deleted its former
+   owner sees 0 of its history rows through the normal API, while the rows remain and are
+   visible to privileged verification (postgres). This is the intended behaviour; the
+   smoke-test script's final check assumed otherwise and is documented as a script defect,
+   not a database one. Before the apply, 046, its 31-check matrix and its rollback were run
+   on Pilot in one transaction forced to abort (2026-10-07): matrix 31/0, rollback exact,
+   matrix after it 2/29 (the pre-046 set), data identical; the one false check (T3) was the
+   SQL editor's CRLF inside the 13 function bodies, reproduced offline and corrected in the
+   tooling. After the apply: record verified (once, exact text, key equal), catalog diff
+   0 removed / 36 added in the four inventory categories (all 046's), fingerprint
+   `1524 a103e168cc737262258e745ebcda0530` as predicted, every data hash identical, live
+   matrix 31/0 (`tools/migrate/live-matrix/046_acquisition_general_ledger.result.txt`);
+   then the deployed-endpoint smoke test — a signed-in owner's synthetic two-line CSV
+   imported through the deployed site, re-imported idempotently, reversed, and the prospect
+   deleted; the stored CSV removed by a follow-up cleanup; Pilot identical to the pre-smoke
+   baseline except the three history rows
+   (`tools/migrate/live-matrix/046_acquisition_general_ledger.smoke.result.txt`).
+   Rollback: `046_acquisition_general_ledger_rollback.sql` (md5 `56d3a92b…`), which refuses
+   a database without the Pilot marker and a database holding ledger data, and otherwise
+   removes exactly the 126 rows (proven in the trial). Not run.
 
 ## Decisions this manifest does not make
 

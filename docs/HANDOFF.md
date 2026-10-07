@@ -1,6 +1,6 @@
 # Hand-off — current state
 
-**Updated:** 2026-10-07 (046 pre-apply validation completed and the 046 rolled-back trial run on Pilot — successful, 046 **not applied**; before that, after the 015c completion commit was pushed and both CI gates passed on it, B1 66/66 for the first time since 015b; the CI fixture organisation leak was found, fixed in `8395f41` and pushed, and the 88 orphan organisations it had left on Pilot were removed by a one-off, verified cleanup, 101 → 13; earlier that day 015c applied to Pilot and verified; 2026-10-06: 048 applied and verified, its completion commit and four test-only fixes pushed, the Pilot live verification gate green again; 2026-10-05: 047 applied and verified, its completion commit pushed, the CI test fix committed locally; earlier that day: commits A, D, B, the test-reference fix and C, the Vercel environment separation and Pilot redeploy, and the XRPL network guard commit).
+**Updated:** 2026-10-07 (**046 applied to Pilot 13:20:07Z and verified**: record, catalog diff, fingerprint as predicted, data identical, live matrix 31/0; the deployed-endpoint smoke test passed at 15:32Z — import, idempotent re-import, reversal, prospect deletion through the deployed site — its one storage object removed by the approved cleanup at 15:47Z and the temporary test credential invalidated; final read-only check 15:49Z identical to the pre-smoke baseline except the three intentional history rows; earlier that day the 046 pre-apply validation and the rolled-back trial on Pilot, then commits `2646894` and `aa95e33` pushed 12:45:22Z; before that, after the 015c completion commit was pushed and both CI gates passed on it, B1 66/66 for the first time since 015b; the CI fixture organisation leak was found, fixed in `8395f41` and pushed, and the 88 orphan organisations it had left on Pilot were removed by a one-off, verified cleanup, 101 → 13; earlier that day 015c applied to Pilot and verified; 2026-10-06: 048 applied and verified, its completion commit and four test-only fixes pushed, the Pilot live verification gate green again; 2026-10-05: 047 applied and verified, its completion commit pushed, the CI test fix committed locally; earlier that day: commits A, D, B, the test-reference fix and C, the Vercel environment separation and Pilot redeploy, and the XRPL network guard commit).
 **Rules:** `docs/WORKING_AGREEMENT.md`. **Migrations:** `docs/MIGRATION_RUNBOOK.md`
 and `migrations/APPLIED.md`. **History and detail:** `docs/ACQUISITION_REVIEW.md`
 (kept as written; this file is canonical when the two disagree).
@@ -29,7 +29,7 @@ The browser side of the import is deliberately not built yet.
 |---|---|---|---|
 | **Pilot** Supabase (`mainstreet-pilot`) | `bhmktujbxdbvdmpybmad` | the only target for approved Pilot migrations; read-only inspection through the Supabase connector | a migration only with Lynn's written approval of the exact file, applied by the runbook procedure |
 | **Production** Supabase | `zhsuhehgehbzkmzurzyf` | **protected and separate; never accessed, migrated, changed or deployed to in this programme** | nothing, without explicit, specific approval naming Production |
-| Vercel (Pilot site) | project `mainstreet-xrpl` | **verified 2026-10-05:** every push to `pilot` deploys automatically as a Preview, and `www.mainstreet-review.com` follows the newest `pilot` deployment; Production is `main` → `www.mainstreetcam.com`. `origin/pilot` is `8395f41` (pushed 2026-10-07 02:49:06Z, after `34f4ed5` at 00:49:48Z the same day); its automatic deployment `dpl_HFgLY61smztXgGCqoZi5agkwjviA` was read back READY (ready 02:49:26Z), serving `8395f412`, aliased to `www.mainstreet-review.com` and `mainstreet-xrpl-git-pilot-cypher928s-projects.vercel.app`. Environment separated 2026-10-05: the Production wallet seed/address and Production `SUPABASE_*` are Production-only; Preview has `XRPL_NETWORK=testnet` and no wallet. The ledger endpoints are **not deployed** | deploy only on approval |
+| Vercel (Pilot site) | project `mainstreet-xrpl` | **verified 2026-10-05:** every push to `pilot` deploys automatically as a Preview, and `www.mainstreet-review.com` follows the newest `pilot` deployment; Production is `main` → `www.mainstreetcam.com`. `origin/pilot` is `aa95e33` (pushed 2026-10-07 12:45:22Z with `2646894`, after `8395f41` at 02:49:06Z); its automatic deployment `dpl_CajFS8D8R4H1eo6xWREiboWRBanh` was read back READY, aliased to `www.mainstreet-review.com`; CI runs 210 (B1 66/66) and 291 (live verification) passed on it. Environment separated 2026-10-05: the Production wallet seed/address and Production `SUPABASE_*` are Production-only; Preview has `XRPL_NETWORK=testnet` and no wallet. The ledger endpoints are **deployed and were exercised once** against 046 (the 2026-10-07 smoke test, §4, §5.3) | deploy only on approval |
 | Claude's cloud environment | — | no Supabase token, `api.supabase.com` denied by network policy; "Option B" (token + allow-list) is documented in the runbook and **not configured** | Lynn, in the environment settings |
 
 Every migration file refuses to run unless the Pilot marker property exists;
@@ -83,6 +83,40 @@ by the trial. **The trial returned Pilot exactly to its pre-046 state.** One
 pre-existing function, `lease_jobs_set_updated_at()`, already holds CRLF line endings
 (1 of 121; it predates 046 and 046 does not touch it).
 
+**Read 2026-10-07 15:49:02Z** (after the 046 apply, its live matrix, the deployed smoke
+test and the smoke-test cleanup), read-only through the connector — the current state:
+
+- **49 migration rows; newest `20261007132007 046_acquisition_general_ledger`**, recorded
+  once; recorded text md5 `5c8af9624927c3c275d46526bfc4c05f`, sha256 `d8acceaa…42e94`,
+  56,369 bytes, no CR = the committed file and the approval; idempotency key
+  `8f79de8f-81e5-45bb-9f27-43802575b64a` = the key the hand-off script printed; created_by
+  set; previous newest 015c unchanged.
+- Catalog fingerprint **`1524 a103e168cc737262258e745ebcda0530`** — exactly the LF
+  post-apply value predicted before the apply; unchanged since 13:21Z through the matrix,
+  the smoke test and the cleanup. 046 added exactly the 126 predicted rows and removed or
+  changed none (current rows minus the 126 = the pre-apply `1398 64458394…`); in the four
+  inventory categories 0 removed / 36 added (fn 13, pol 6, pri 11, trg 6),
+  `check-inventory.js` EXPLAINED (`tools/migrate/live-matrix/046_*.inventory-*.txt`).
+- 046's tables: `financial_sources` / `gl_entries` / `gl_entry_sources` /
+  `gl_entries_reversed` / `ledger_maintenance_runs` 0/0/0/0/0; **`ledger_import_history`
+  3 rows** (import, reverse, evidence_removed for the deleted synthetic smoke-test
+  property `31a00b6c…`) — **intentional, append-only, retained by design**
+  (`migrations/APPLIED.md` fact 21); not residue.
+- `storage.objects` 199, md5 `d7ee8ea4…` = the pre-smoke baseline; rules = 047's four +
+  046's two (`acq_evidence_no_update`, `acq_evidence_no_delete`).
+- Every other data hash identical to the 13:43:19Z pre-smoke baseline and to the
+  pre-apply read (acquisition_documents 16, acquisition_reviews 12, auth.users 13,
+  lease_documents 93, lease_jobs 111, organization_members 13, organizations 13,
+  properties 50, property_events 87, tenants 149). No smoke-test property, review,
+  document, source, line, link, archived line, event or storage object remains. 0 locks,
+  0 idle transactions, 0 other clients, 0 temp objects. The temporary password set on the
+  fixture account `pilot-tenant-a@…` for the smoke test is invalidated (hash replaced
+  by that of a discarded random password at 15:48:25Z).
+- Evidence: `tools/migrate/live-matrix/046_acquisition_general_ledger.result.txt` (apply,
+  record, catalog, matrix 31/0) and `….smoke.result.txt` (smoke test, cleanup, final
+  check) with the two scripts as run beside them; `migrations/APPLIED.md` row and fact 21;
+  approval `tools/migrate/approvals/046_….approval` with the apply fields filled.
+
 Anything read after that time is **unverified** until the next read-only check.
 
 ## 4. Work and its state
@@ -92,22 +126,23 @@ Anything read after that time is **unverified** until the next read-only check.
 | Migration tooling and runbook (`tools/migrate/`, `docs/MIGRATION_RUNBOOK.md`) | yes | 28 + 25 offline checks | **yes, `54fecd4`** | **no** | n/a | n/a | n/a | n/a | n/a |
 | Migration 045 member write rules | yes | 136/136 on PG 16 and 17.6 (re-run before the commit); mutation harness | **yes, `0317644`** (file byte-identical to the applied text, blob `42f0f046`) | **no** | n/a | **yes, 2026-10-04 18:44:27Z** | **yes**: 46-check rolled-back matrix, 2026-10-04 (`tools/migrate/live-matrix/`) | n/a (no endpoint) | **no** |
 | GL parser (`gl-import.js`) | yes | 142/142 (`test-gl-import.js`, re-run 2026-10-04 before commit B), in regression | **yes, `30fb242`** (commit B) | **no** | n/a | n/a | n/a | n/a | no |
-| Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue (re-run 2026-10-04 before commit B); Bulk Intake scope suite 86/86 | **yes, `30fb242`** | **no** | **no — never run on Vercel** | n/a (needs 046) | no | **no** | no |
-| Migration 046 acquisition general ledger | yes | verifier **131/131 on PG 16.13 and 17.6** (2026-10-07; the new check: the rollback refuses a database without the Pilot marker); mutation 61/61 non-equivalent mutants killed, 1 equivalent (L08), incl. L41 (rollback marker guard); endpoint 68/68, concurrency 22/22, gl-import 142/142; live matrix (31 checks) and rolled-back trial local-tested on both (55/55 each with the line-ending correction) | **migration yes, `30fb242`** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes — unchanged). **Rollback corrected, not yet committed:** the Pilot marker guard was added 2026-10-07; rollback md5 is now `56d3a92bf11070b67390ad1bbfaec5d0` (sha256 `553339ea…0f09`, 6,155 bytes), replacing the committed `74dd6285912cb5725f808434b181b766`. The verifier, mutation harness and live matrix (`tools/migrate/live-matrix/046_*.sql`, md5 `589e651d…`) are likewise in the working tree, uncommitted | **no** | n/a | **no — 046 remains unapplied** | **rolled-back trial only**, 2026-10-07: 046 + live matrix 31 ok / 0 FAIL + rollback exact (0 rows differ, fingerprint identical) + matrix 2 ok / 29 FAIL (the pre-046 set), data identical, forced abort; no post-apply matrix yet | **no** (endpoints need 046) | no |
+| Ledger endpoints (`api/_ledger-*.js`, `?op=` in `api/upload.js`) | yes | 68 endpoint + 22 concurrency checks against a **local stand-in** of Storage/PostgREST/GoTrue (re-run 2026-10-04 before commit B); Bulk Intake scope suite 86/86 | **yes, `30fb242`** | yes (2026-10-05) | yes — on every Pilot deployment since; current `dpl_CajFS8D8…` | n/a (046 applied 2026-10-07) | via the 046 matrix | **yes, 2026-10-07 15:32Z**: the smoke test from a signed-in owner's Mac — `?op=ledger-import` reached `import_general_ledger()` (2 lines inserted), re-import idempotent, `?op=ledger-reverse` reached `reverse_general_ledger_import()` (2 removed, 2 archived), every read-back as expected (`tools/migrate/live-matrix/046_*.smoke.result.txt`). One synthetic two-line CSV only | no |
+| Migration 046 acquisition general ledger | yes | verifier **131/131 on PG 16.13 and 17.6** (2026-10-07; the new check: the rollback refuses a database without the Pilot marker); mutation 61/61 non-equivalent mutants killed, 1 equivalent (L08), incl. L41 (rollback marker guard); endpoint 68/68, concurrency 22/22, gl-import 142/142; live matrix (31 checks) and rolled-back trial local-tested on both (55/55 each with the line-ending correction) | **migration yes, `30fb242`** (file md5 `5c8af9624927c3c275d46526bfc4c05f`, 56,369 bytes — unchanged, byte-identical to the applied text). **Rollback with the Pilot marker guard, verifier, mutation harness and live matrix in `aa95e33`** (rollback md5 `56d3a92bf11070b67390ad1bbfaec5d0`, sha256 `553339ea…0f09`, 6,155 bytes; matrix `tools/migrate/live-matrix/046_*.sql` md5 `589e651d…`). Approval, apply and matrix records, inventories and smoke-test artifacts in the 046 completion commit | yes (`30fb242` 2026-10-05; `aa95e33` 2026-10-07 12:45:22Z; the completion commit not yet) | n/a | **yes, 2026-10-07 13:20:07Z** (hand-off script, PROBE then one send, HTTP 200, key `8f79de8f…`) | **yes**: rolled-back trial on Pilot before the apply (046 + matrix 31/0 + rollback exact + matrix 2/29, data identical), then after it: record once and exact, catalog diff 0 removed / 36 added all 046's, fingerprint `1524 a103e168…` as predicted, data identical, the 31-check matrix 31 ok / 0 FAIL | **yes, 2026-10-07 15:32Z** (the smoke test, see the endpoints row) | no |
 | Migration 047 remaining member write rules | yes | verifier 76/76 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05, logs in scratchpad `phase6/commitC/`) | **yes, `979306a`** (C); its live matrix and apply records in `396cf29` | yes (`979306a` and `396cf29` are in `origin/pilot`) | n/a | **yes, 2026-10-05 18:30:07Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (047 + matrix 46/0 + rollback exact), and the 46-check matrix after it, 46 ok / 0 FAIL | n/a (no endpoint) | no |
 | Migration 048 operating tables | yes | verifier 50/50 on PG 16.13 and 17.6; mutation 21/21 killed (re-run 2026-10-05); live matrix 64 checks local-tested on both; trial 21/21 on both | **yes, `979306a`** (C); its live matrix and apply records in the 048 completion commit | yes (`979306a` and the completion commit `147e0b5` are in `origin/pilot`) | n/a | **yes, 2026-10-06 13:07:26Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (048 + matrix 64/0 + rollback exact, 2026-10-06), and the 64-check matrix after it, 64 ok / 0 FAIL | n/a (no endpoint) | no |
 | Migration 015c service-role INSERT on `tenant_invitations` (B1 gate fix) | yes | `tools/verify-migration-015b.js` (015b + 015c) 213/213 on PG 16.13 and 17.6; `tools/data-api-grants-mutation.js` 49/49 killed on both (5 new 015c mutants); live matrix 14 checks and trial 26/26 local-tested on both | **yes, the 015c completion commit** (migration, rollback, verifier, mutation harness, matrix, approval and apply records together) | yes, `34f4ed5` (2026-10-07 00:49:48Z); both gates green on it — B1 run 208 66 passed / 0 failed (T17–T21 reached for the first time since 015b), live verification run 289 all suites | n/a | **yes, 2026-10-07 00:30:20Z** (hand-off script, one send, HTTP 200) | **yes**: rolled-back trial on Pilot before the apply (015c + matrix 14/0 + rollback exact + matrix 9/5, 2026-10-06), and the 14-check matrix after it, 14 ok / 0 FAIL | n/a (no endpoint) | no |
 | CI fixture organisation teardown (`scripts/b1-ci-fixture.js`, `scripts/pilot-live-fixture.js`) and the one-off orphan cleanup tool (`tools/ci-fixture-orphan-cleanup.js`) — **test and CI code only; no application file, migration, policy or grant** | yes | `test-ci-fixture-teardown.js` 79/79 (both scripts, seven mutants each killed, offline); `tools/verify-ci-fixture-organizations.js` 62/62 on PG 16.13 and 17.6 (leak reproduced from the 024 text, fix, order, predicate vs five decoys, cleanup template's every refusal and its rollback); both in regression | **yes, `8395f41`** | yes (2026-10-07 02:49:06Z) | yes, `dpl_HFgLY6…` READY — incidental: the deployment carries no application change | **n/a — not a migration.** The one-off cleanup ran on Pilot 2026-10-07 02:16:36Z as a data correction: organisations 101 → 13 | **yes**: read-only 02:17:51Z (0 orphans, protected 13 byte-identical, fingerprint and every other hash unchanged) and 02:50:59Z after gate runs 209 and 290, which created and removed one organisation each and left 0 | n/a | n/a |
 | Full regression (`node test-regression.js`) | — | **2026-10-07, before the fixture-fix commit `8395f41` (260 suites): 254 passed, 6 failed = the six pre-existing baseline failures only, each on the same assertion as before.** 2026-10-05 after `8fb42e8` (257 suites): 251 passed, 6 failed, the same six. Between commit B and that fix the gate read 249 passed, 8 failed (see §6) | — | — | — | — | — | — | — |
 
-Locally tested means throwaway PostgreSQL clusters and local stand-ins. The only
-live verification of any kind so far is the 045, 047, 048 and 015c rolled-back SQL
-matrices and the 046 rolled-back trial, which are live database verification, the CI gates' live suites (§5), and
-the read-only checks around the organisation cleanup. The cleanup is a data
-correction, not a migration: it is recorded here and under
-`tools/ci-fixture-orphan-cleanup/`, not in `migrations/APPLIED.md`. None of the
-Phase 2/3 code has been exercised on Vercel, against the deployed API, or in a
-browser.
+Locally tested means throwaway PostgreSQL clusters and local stand-ins. Live
+verification so far: the 045, 047, 048, 015c and 046 SQL matrices and the 046
+rolled-back trial (live database verification), the CI gates' live suites (§5), the
+read-only checks around the organisation cleanup, and — the first deployed API
+verification in this programme — the 046 smoke test of 2026-10-07, which drove the
+deployed ledger endpoints once with a synthetic two-line CSV from a signed-in test
+owner. The cleanup is a data correction, not a migration: it is recorded here and
+under `tools/ci-fixture-orphan-cleanup/`, not in `migrations/APPLIED.md`. Nothing has
+been exercised in a browser; the browser side of the import is not built.
 
 ## 5. Outstanding
 
@@ -119,9 +154,12 @@ browser.
    (`a39a528` tenant-normalize.js, `233cc0c` evidence helpers and field storage,
    `bd15488` FieldProvenance); on 2026-10-07 the 015c completion commit (`34f4ed5`,
    00:49:48Z) and the CI fixture teardown fix with the orphan cleanup record
-   (`8395f41`, 02:49:06Z). Every push deployed the Pilot site; each deployment
-   was read back READY. The ledger endpoints exist on Vercel **without deployed API
-   verification**.
+   (`8395f41`, 02:49:06Z), then the HANDOFF update (`2646894`) and the 046 rollback
+   guard, verifier, mutation harness and live matrix (`aa95e33`) at 12:45:22Z,
+   deployment `dpl_CajFS8D8…` READY, CI runs 210 (B1 66/66) and 291 green. Every push
+   deployed the Pilot site; each deployment was read back READY. The ledger endpoints
+   on that deployment were **verified against the deployed API once** by the 046
+   smoke test (§5.3). The 046 completion commit (records only) is local, not pushed.
 2. **CI gates — both green on `8395f41`.** B1 authorization: run 209, 66 passed /
    0 failed (run 208 on `34f4ed5` was the first to pass since 015b narrowed the
    grant on 2026-09-24 — up from 40 passed / 3 failed on run 207 — and the first to
@@ -137,51 +175,62 @@ browser.
    209 and 290 each created and removed one and left none. The 88 historic orphans
    were removed 2026-10-07 02:16:36Z by the one-off cleanup (§3, §6): 101 → 13, the
    remaining 13 byte-identical, 0 orphans.
-3. **046 pre-apply validation and rolled-back trial — complete (2026-10-07); 046
-   not applied.** The live matrix (31 checks: catalog, import, stored-file
-   evidence, reversal, integrity and maintenance, deletion, a real account
-   read-only) and a self-aborting trial (046, matrix, rollback, matrix, then a
-   forced RAISE) were local-tested on PG 16.13 and 17.6. The trial was run once by
-   Lynn in the Pilot SQL editor and **was successful**:
-   - every check held except T3;
-   - M1 31 ok / 0 FAIL;
-   - R1 the rollback exact;
-   - M2 2 ok / 29 FAIL;
-   - D2 data identical;
-   - Pilot unchanged before and after (§3).
-
-   **T3 printed false because of line endings, not a schema or behaviour
-   difference.** The editor sends the pasted file with CRLF line endings. The
-   CRs land inside the 13 dollar-quoted function bodies and change
-   `md5(pg_get_functiondef)`. All other 113 added rows matched exactly; the 13
-   function rows matched in name and permissions. Reproduced offline: the same
-   13 function hashes, 13/13.
-
-   **The trial tooling is corrected (in the scratchpad, `phase6/prep046/`):**
-   - it reads CRLF as LF, then requires the exact file bytes;
-   - function text is compared with CRLF read as LF;
-   - substantive function changes are still caught;
-   - raw fingerprints are unchanged.
-
-   **Fingerprints:**
-   - **CRLF fingerprint observed in the trial (T4): `1524 537a044d48185e97410b74b6fd3587ef`**;
-   - **expected LF post-apply fingerprint for the hand-off apply: `1524 a103e168cc737262258e745ebcda0530`**.
-     It was computed read-only on Pilot (current rows plus the 126 predicted rows), and the same
-     method reproduces the CRLF T4 exactly.
+3. **046 — applied to Pilot and verified (2026-10-07).** In order, each step on its
+   own approval:
+   - **Pre-apply validation and rolled-back trial (morning).** Verifier 131/131 on PG
+     16.13 and 17.6, mutation 61/61 + L08 equivalent, endpoint 68/68, concurrency
+     22/22, gl-import 142/142; the 31-check live matrix and the self-aborting trial
+     (046, matrix, rollback, matrix, forced RAISE) local-tested on both. The trial,
+     run once by Lynn in the Pilot SQL editor: M1 31 ok / 0 FAIL, R1 rollback exact,
+     M2 2 ok / 29 FAIL (the pre-046 set), D2 data identical, Pilot unchanged. T3
+     printed false because the editor sends CRLF, which lands inside the 13
+     dollar-quoted function bodies and changes `md5(pg_get_functiondef)` (the other
+     113 rows matched exactly; reproduced offline 13/13); the tooling now compares
+     function text with CRLF read as LF and still catches a substantive change. CRLF
+     fingerprint seen in the trial `1524 537a044d…`; LF fingerprint predicted for the
+     hand-off apply `1524 a103e168cc737262258e745ebcda0530`.
+   - **Commits and push (12:45:22Z):** `2646894` (HANDOFF) and `aa95e33` (rollback
+     marker guard md5 `56d3a92b…`, verifier, mutation harness, live matrix);
+     deployment READY, CI 210 and 291 green, Pilot unchanged.
+   - **Apply (13:20:03–13:20:05Z):** hand-off script from Lynn's Mac, PROBE 200 (48
+     rows, 046 absent), one POST, HTTP 200, key `8f79de8f-81e5-45bb-9f27-43802575b64a`.
+     Verified read-only: recorded once as `20261007132007`, exact text, key equal;
+     exactly the 126 predicted catalog rows added, nothing removed or changed;
+     fingerprint `1524 a103e168…` **exactly as predicted**; every data hash identical;
+     no residue, lock or open transaction.
+   - **Post-apply live matrix (~13:30Z, SQL editor):** 31 ok / 0 FAIL, every line as
+     in the trial's M1; residue check clean, fingerprint and data unchanged.
+   - **Deployed-endpoint smoke test (15:32:10–15:32:19Z):** from Lynn's Mac as the
+     fixture owner `pilot-tenant-a@…` with a temporary password set by the
+     established admin mechanism: `begin_acquisition`, upload of a 189-byte
+     synthetic CSV, document filed, `POST /api/upload?op=ledger-import` →
+     `import_general_ledger()` inserted 2 balanced lines; re-import answered
+     `already_imported`; `?op=ledger-reverse` → `reverse_general_ledger_import()`
+     removed 2 and archived 2; `delete_prospect_acquisition` removed property,
+     document and source. Every read-back as expected. The script stopped at its own
+     last check (below), so its storage delete was not reached.
+   - **Smoke-test visibility finding (documented, not a defect):** the script
+     re-read `ledger_import_history` as the test user after the prospect was deleted
+     and expected 3 rows; the member-scoped policy correctly shows a former owner 0
+     rows for a property that no longer exists, while **the 3 rows (import, reverse,
+     evidence_removed) remain, append-only, visible to privileged verification**. The
+     database behaviour is intended and unchanged; the script's expectation was wrong
+     (`046_*.smoke.result.txt`, APPLIED.md fact 21).
+   - **Cleanup (15:47Z) and credential:** the one remaining storage object (the
+     189-byte smoke CSV) deleted through the Storage API as the owner, the Storage
+     call the script's last step intended; storage back to 199 / `d7ee8ea4…`; the
+     temporary password replaced by the hash of a discarded random password.
+   - **Final read-only check (15:49Z):** identical to the pre-smoke baseline in every
+     table except the three intentional history rows; fingerprint unchanged; 046 once;
+     no locks, transactions or residue (§3).
 
    Paste a trial or matrix into a **new** editor tab with nothing selected (lesson
    from 048). A migration itself always goes through the hand-off script, never
    the editor.
-4. **046 — remaining, each needing its own approval:**
-   - the permanent apply through the hand-off script (expect the fingerprint
-     `1524 a103e168…` above);
-   - the post-apply live matrix (31 ok / 0 FAIL expected);
-   - a deployed-endpoint test: a real import of one small synthetic CSV on a test
-     property, then its reversal;
-   - final verification: record, catalog diff and data, as for 047, 048 and 015c.
-
-   The rollback correction, verifier, mutation harness and live matrix also need
-   committing.
+4. **046 — remaining:** push the completion commit (this record-keeping commit:
+   approval fields, apply/matrix/smoke records, inventories, APPLIED.md, this file);
+   needs its own approval. Nothing else of 046 is outstanding. Larger ledgers, the
+   Vercel 30 s limit and the browser workflow are untested (§6).
 5. **Browser side of the import** (preview, date-order prompt, history view,
    Reverse button) — not started.
 6. **pg_cron** for `run_ledger_maintenance()` — available on Pilot, not
@@ -237,8 +286,14 @@ browser.
   - Also read 2026-10-07: 16/16 acquisition originals are stored with a numeric
     size and a quoted 32-hex eTag, matching what 046 reads.
 - The composite-key authorship limitation above.
-- The ledger endpoints' Vercel behaviour (request object, 30 s limit) is
+- The ledger endpoints ran on Vercel once (the 046 smoke test: a two-line CSV, each
+  operation answered in about a second). Larger files and the 30 s limit are
   untested.
+- **After a prospect is deleted, its former owner cannot see its import history
+  through the API** (the member-scoped select on `ledger_import_history` finds no
+  property to be a member of), although the rows are retained. Intended; recorded in
+  APPLIED.md fact 21. A history view for deleted prospects, if ever wanted, would be
+  a product decision.
 - **Pilot on XRPL mainnet — found and closed 2026-10-05.** The Pilot site
   showed "live on XRPL mainnet" and linked the Production settlement wallet,
   because `XRPL_NETWORK=mainnet` and the wallet address and seed were scoped to
@@ -273,27 +328,29 @@ explained — one privilege row — fingerprint as predicted, data unchanged, li
 matrix 14/0; completion commit `34f4ed5` pushed 00:49:48Z, both gates green, B1
 66/66). **The CI fixture organisation leak is fixed and pushed** (`8395f41`,
 02:49:06Z; both gates green, 0 orphans left by the runs) and the 88 historic
-orphans are gone (101 → 13, verified). `origin/pilot` is at `8395f41`.
+orphans are gone (101 → 13, verified). `origin/pilot` is at `aa95e33` (pushed
+12:45:22Z).
 
-**046 pre-apply validation and the rolled-back Pilot trial are complete (2026-10-07):**
-- the trial was successful;
-- T3's false was the editor's CRLF line endings in the function bodies, and the
-  tooling is corrected;
-- Pilot was returned exactly to its pre-046 state;
-- **046 remains unapplied.**
+**046 is applied to Pilot and verified (2026-10-07):** rolled-back trial, apply
+13:20:07Z through the hand-off script (record once and exact, exactly the predicted
+126 catalog rows, fingerprint `1524 a103e168cc737262258e745ebcda0530` as predicted,
+data identical), live matrix 31/0, the deployed-endpoint smoke test (import,
+idempotent re-import, reversal, deletion through the deployed site), the cleanup of
+its one storage object and the invalidation of the temporary test credential, and a
+final read-only check identical to the pre-smoke baseline except the three
+intentional, append-only `ledger_import_history` rows. The smoke-test script's final
+check was wrong (it read history as the deleted property's former owner and expected
+3 rows where the API correctly shows 0 and the database retains 3); documented, the
+database unchanged. The 046 completion commit (records only) is **local, not pushed**.
 
 **Nothing further is currently approved.** Proposed next, each needing its own
 approval:
-- commit the 046 rollback correction (marker guard, md5 `56d3a92b…`), verifier,
-  mutation harness and live matrix;
-- the permanent 046 apply through the hand-off script (expected fingerprint
-  `1524 a103e168cc737262258e745ebcda0530`);
-- the post-apply live matrix;
-- the deployed-endpoint test;
-- final verification;
+- push the 046 completion commit;
+- the browser side of the import (§5.5);
+- pg_cron for `run_ledger_maintenance()` (§5.6);
 - the Pilot-marker guard for the committed 045 rollback;
-- the storage anon grants (§5.7).
+- the storage anon grants and bucket size limit (§5.7).
 
-Any migration (046), live matrix run, push, Production change, CI-gate change,
+Any migration, live matrix run, push, Production change, CI-gate change,
 Pilot testnet wallet, the Pilot-marker guard for the committed 045 rollback, and
 Option B each need their own specific approval.
