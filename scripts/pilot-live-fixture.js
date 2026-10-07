@@ -27,6 +27,24 @@
  * both, and the whole value of the marker probe is that it is a fact about THIS
  * key at THIS moment rather than a claim inherited from somewhere else.
  *
+ * THE ORGANISATION NOBODY ASKED FOR
+ * ---------------------------------
+ * Inserting the first property for a fresh landlord fires migration 024's
+ * properties_default_organization trigger, which creates an organisation named
+ * after the landlord's email plus an admin membership. Teardown used to delete
+ * the property and the users and stop: the membership went with the user
+ * (ON DELETE CASCADE) but the organisation did not (created_by is ON DELETE
+ * SET NULL), so every run left one creator-less, member-less, property-less
+ * organisation behind — 88 of them on Pilot between 2026-09-18 and 2026-10-07,
+ * one per run of this gate and of the b1 gate. The organisation is now recorded
+ * the moment the property insert returns it, deleted after the property
+ * (properties.organization_id is ON DELETE RESTRICT) and BEFORE the users (so
+ * created_by is still set and is restated in the DELETE), and re-read
+ * afterwards like everything else. Only a row whose name has the fixture shape
+ * and whose creator is one of this run's users is ever deleted, and a DELETE
+ * that matches anything but exactly one row fails the step. Landlord B owns no
+ * property, so the trigger never runs for B and B has no organisation.
+ *
  * PILOT ONLY. This script both reads and WRITES, so it refuses to run anywhere
  * else and stops before the first insert if it cannot prove where it is.
  */
@@ -51,6 +69,13 @@ const PILOT_MARKER_PROPERTY = 'fd9c09b1-b657-4c58-9999-c3cce28e7600';
 const FIXTURE_EMAIL_DOMAIN = 'pilot.invalid';
 const FIXTURE_PREFIX       = 'plci-';
 
+// The organisation the 024 trigger creates is named after the landlord's email,
+// so a fixture organisation is exactly `<prefix><runId>-<tag>@pilot.invalid`.
+// Nothing with any other name is ever deleted by this script. The run id is
+// GITHUB_RUN_ID in CI and `local<millis>` by hand, hence [a-z0-9]+.
+const FIXTURE_ORG_NAME = new RegExp(`^${FIXTURE_PREFIX}[a-z0-9]+-[a-z]+@${FIXTURE_EMAIL_DOMAIN.replace(/\./g, '\\.')}$`);
+function isFixtureOrgName(name) { return typeof name === 'string' && FIXTURE_ORG_NAME.test(name); }
+
 const STATE_FILE = path.join(process.cwd(), '.pilot-live-state.json');
 
 // Teardown can only remove what state knows about, so state is recorded the
@@ -58,10 +83,16 @@ const STATE_FILE = path.join(process.cwd(), '.pilot-live-state.json');
 // b1 gate proved why: setup failed part-way and teardown reported "nothing to
 // tear down" while nine objects sat in the database. Cleanup that only works on
 // the happy path is not cleanup.
-function remember(key, id) {
-  let s = { runId: null, userIds: [], propertyIds: [] };
-  if (fs.existsSync(STATE_FILE)) s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  if (!s[key].includes(id)) s[key].push(id);
+//
+// `organizations` entries are objects — { id, createdBy, name } — because the
+// DELETE restates all three. A state file written before that key existed is
+// read without it.
+function remember(key, value) {
+  let s = { runId: null, userIds: [], propertyIds: [], organizations: [] };
+  if (fs.existsSync(STATE_FILE)) s = Object.assign(s, JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')));
+  if (!Array.isArray(s[key])) s[key] = [];
+  const idOf = (v) => (v && typeof v === 'object') ? v.id : v;
+  if (!s[key].some(v => idOf(v) === idOf(value))) s[key].push(value);
   fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
 }
 
@@ -153,14 +184,47 @@ async function sweep() {
   if (!stale.length) { log('✓ no stale fixtures'); return; }
   log(`sweeping ${stale.length} stale fixture account(s)`);
 
-  for (const u of stale) {
-    // Properties cascade to tenants, tenant_users, tenant_invitations,
-    // cam_reconciliations, lease_documents, lease_jobs, tenant_field_evidence
-    // and tenant_review_audit — verified against the live schema.
-    await rest(`/properties?user_id=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
-    await admin(`/admin/users/${u.id}`, { method: 'DELETE' });
+  const io = { rest, admin, warn: (m) => console.error(`::warning::${m}`) };
+  let swept = 0;
+  for (const u of stale) if ((await sweepUser(u, io)).swept) swept++;
+  log(`✓ sweep complete — ${swept} of ${stale.length} stale account(s) removed`);
+}
+
+// One stale account, in the same order teardown uses: properties, then the
+// organisation(s) the account created, then the account. Properties cascade to
+// tenants, tenant_users, tenant_invitations, cam_reconciliations,
+// lease_documents, lease_jobs, tenant_field_evidence and tenant_review_audit —
+// verified against the live schema. The organisation cascades from nothing, so
+// it is deleted here, under the same three-filter guard teardown uses, and
+// BEFORE the user: deleting the user first would null created_by and leave the
+// row behind for good. An organisation this script cannot explain — one whose
+// name is not a fixture name, or whose delete does not match exactly one row —
+// leaves the account in place too, so the next sweep (or a person) sees it
+// again rather than finding an orphan.
+async function sweepUser(u, io) {
+  await io.rest(`/properties?user_id=eq.${u.id}`, { method: 'DELETE', prefer: 'return=minimal' });
+  const orgs = await io.rest(`/organizations?created_by=eq.${u.id}&select=id,name`);
+  if (!orgs.ok || !Array.isArray(orgs.body)) {
+    io.warn(`could not list organisations created by stale ${u.email} (http ${orgs.status}); leaving the account for the next sweep`);
+    return { swept: false };
   }
-  log('✓ sweep complete');
+  for (const o of orgs.body) {
+    if (!isFixtureOrgName(o.name)) {
+      io.warn(`stale ${u.email} created organisation ${o.id} named "${o.name}", which is not a fixture name — leaving account and organisation alone`);
+      return { swept: false };
+    }
+  }
+  for (const o of orgs.body) {
+    const r = await io.rest(`/organizations?id=eq.${o.id}&created_by=eq.${u.id}&name=eq.${encodeURIComponent(o.name)}`, { method: 'DELETE' });
+    const n = r.ok && Array.isArray(r.body) ? r.body.length : -1;
+    if (n !== 1) {
+      io.warn(`organisation ${o.id}: delete matched ${n < 0 ? 'nothing (http ' + r.status + ')' : n + ' row(s)'}, expected exactly 1 — leaving the account for the next sweep`);
+      return { swept: false };
+    }
+  }
+  const d = await io.admin(`/admin/users/${u.id}`, { method: 'DELETE' });
+  if (!d.ok) io.warn(`could not delete stale user ${u.id} (http ${d.status})`);
+  return { swept: d.ok };
 }
 
 // ── setup ───────────────────────────────────────────────────────────────────
@@ -209,6 +273,12 @@ async function setup() {
   if (!props.ok || props.body.length !== 1) die(`could not create fixture property: ${JSON.stringify(props.body)}`);
   const propA = props.body[0];
   remember('propertyIds', propA.id);
+
+  // The row comes back with organization_id already set: the 024 trigger ran
+  // before the insert and, A being new, created the organisation it points at.
+  // Recorded now, as the property was, because teardown can only remove what
+  // state knows about (see the header).
+  if (propA.organization_id) remember('organizations', { id: propA.organization_id, createdBy: userA.id, name: userA.email });
 
   const tenants = await rest('/tenants', {
     method: 'POST',
@@ -279,7 +349,8 @@ async function setup() {
     console.log(Object.entries(env).map(([k, v]) => `export ${k}='${v}'`).join('\n'));
   }
 
-  log(`✓ fixtures created — 2 landlords, 1 property, 1 tenant (blob + table) (run ${runId})`);
+  const orgCount = (JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')).organizations || []).length;
+  log(`✓ fixtures created — 2 landlords, ${orgCount} organisation(s), 1 property, 1 tenant (blob + table) (run ${runId})`);
 }
 
 // ── teardown ────────────────────────────────────────────────────────────────
@@ -290,35 +361,100 @@ async function teardown() {
   if (!fs.existsSync(STATE_FILE)) { log('no fixture state — nothing to tear down'); return; }
   const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
 
-  let failed = 0;
-  for (const id of state.propertyIds || []) {
-    const r = await rest(`/properties?id=eq.${id}`, { method: 'DELETE', prefer: 'return=minimal' });
-    if (!r.ok) { failed++; console.error(`::warning::could not delete property ${id} (http ${r.status})`); }
-  }
-  for (const id of state.userIds || []) {
-    const r = await admin(`/admin/users/${id}`, { method: 'DELETE' });
-    if (!r.ok) { failed++; console.error(`::warning::could not delete user ${id} (http ${r.status})`); }
-  }
-
-  // Not a formality. teardown deletes by id, and a property row that survived
-  // the DELETE would take its tenant_field_evidence rows with it — so the run
-  // reports what is actually left rather than what it asked for.
-  let residue = 0;
-  for (const id of state.propertyIds || []) {
-    const r = await rest(`/properties?id=eq.${id}&select=id`);
-    if (r.ok && Array.isArray(r.body) && r.body.length) { residue++; console.error(`::warning::property ${id} still present after delete`); }
-  }
-  for (const id of state.userIds || []) {
-    const r = await admin(`/admin/users/${id}`);
-    if (r.ok && r.body && r.body.id === id) { residue++; console.error(`::warning::user ${id} still present after delete`); }
-  }
+  const io = { rest, admin, warn: (m) => console.error(`::warning::${m}`) };
+  const organizations = await discoverOrganizations(state, io);
+  const plan = teardownPlan({ ...state, organizations });
+  const { failed, residue } = await executePlan(plan, io);
 
   fs.unlinkSync(STATE_FILE);
-  if (failed || residue) die(`teardown left ${failed + residue} object(s) behind — sweep will retry on the next run`);
-  log(`✓ fixtures removed — ${(state.propertyIds || []).length} propert(ies), ${(state.userIds || []).length} user(s); re-read confirms none remain`);
+  if (failed || residue) {
+    die(`teardown left ${failed + residue} object(s) behind — sweep retries stale accounts on the next run; ` +
+        `an organisation whose creator is already gone is not something the sweep can reach`);
+  }
+  const n = (k) => plan.filter(s => s.kind === k).length;
+  log(`✓ fixtures removed — ${n('delete-property')} propert(ies), ${n('delete-organization')} organisation(s), ` +
+      `${n('delete-user')} user(s); re-read confirms none remain`);
 }
 
-const verb = process.argv[2];
-const verbs = { 'verify-target': verifyTarget, sweep, setup, teardown };
-if (!verbs[verb]) die(`usage: pilot-live-fixture.js <verify-target|sweep|setup|teardown>`);
-verbs[verb]().catch(e => die(e && e.stack ? e.stack : String(e)));
+// ── Teardown as a plan and an executor ──────────────────────────────────────
+// teardownPlan is pure: from the state file it returns the ordered steps, so
+// test-ci-fixture-teardown.js can assert the order and the guards without a
+// network. executePlan carries the steps out through this file's own rest()
+// and admin() — the target stays hard-coded — and the test hands it a recorder
+// instead.
+function teardownPlan(state) {
+  const props = state.propertyIds || [], users = state.userIds || [], orgs = state.organizations || [];
+  const steps = [];
+  for (const id of props) steps.push({ kind: 'delete-property', id });
+  // Organisations after the properties (properties.organization_id is ON
+  // DELETE RESTRICT) and BEFORE the users: once the user is gone created_by is
+  // null and can no longer be restated in the DELETE.
+  for (const o of orgs) {
+    if (!isFixtureOrgName(o.name))         steps.push({ kind: 'refuse-organization', id: o.id, name: o.name, why: 'not a fixture organisation name' });
+    else if (!users.includes(o.createdBy)) steps.push({ kind: 'refuse-organization', id: o.id, name: o.name, why: 'not created by one of this run\'s users' });
+    else                                    steps.push({ kind: 'delete-organization', id: o.id, createdBy: o.createdBy, name: o.name });
+  }
+  for (const id of users) steps.push({ kind: 'delete-user', id });
+  // Not a formality. Deletes are by id, and a property row that survived the
+  // DELETE would take its tenant_field_evidence rows with it — so the run
+  // reports what is actually left rather than what it asked for.
+  for (const id of props) steps.push({ kind: 'verify-absent', table: 'properties', id });
+  for (const s of steps.filter(x => x.kind === 'delete-organization')) steps.push({ kind: 'verify-absent', table: 'organizations', id: s.id });
+  for (const id of users) steps.push({ kind: 'verify-absent-user', id });
+  return steps;
+}
+
+// Every organisation this run's users created, recorded or not — a setup that
+// died between the property insert and the state write still created one.
+// Read while the users exist, so created_by is still on the row.
+async function discoverOrganizations(state, io) {
+  const known = (state.organizations || []).slice();
+  for (const uid of state.userIds || []) {
+    const r = await io.rest(`/organizations?created_by=eq.${uid}&select=id,name,created_by`);
+    if (!r.ok || !Array.isArray(r.body)) {
+      io.warn(`could not list organisations created by ${uid} (http ${r.status}); tearing down the recorded ones only`);
+      continue;
+    }
+    for (const o of r.body) if (!known.some(k => k.id === o.id)) known.push({ id: o.id, createdBy: o.created_by, name: o.name });
+  }
+  return known;
+}
+
+async function executePlan(plan, io) {
+  let failed = 0, residue = 0;
+  for (const s of plan) {
+    if (s.kind === 'delete-property') {
+      const r = await io.rest(`/properties?id=eq.${s.id}`, { method: 'DELETE', prefer: 'return=minimal' });
+      if (!r.ok) { failed++; io.warn(`could not delete property ${s.id} (http ${r.status})`); }
+    } else if (s.kind === 'delete-organization') {
+      // Three filters, all restated: the id this run recorded, the user that
+      // created it, and the exact fixture name. The DELETE returns the rows it
+      // removed and exactly one is required — a filter that matched nothing
+      // is a failure, not a no-op.
+      const r = await io.rest(`/organizations?id=eq.${s.id}&created_by=eq.${s.createdBy}&name=eq.${encodeURIComponent(s.name)}`, { method: 'DELETE' });
+      const n = r.ok && Array.isArray(r.body) ? r.body.length : -1;
+      if (n !== 1) { failed++; io.warn(`organisation ${s.id}: delete matched ${n < 0 ? 'nothing (http ' + r.status + ')' : n + ' row(s)'}, expected exactly 1`); }
+    } else if (s.kind === 'refuse-organization') {
+      residue++; io.warn(`not deleting organisation ${s.id} (${s.name}): ${s.why}`);
+    } else if (s.kind === 'delete-user') {
+      const r = await io.admin(`/admin/users/${s.id}`, { method: 'DELETE' });
+      if (!r.ok) { failed++; io.warn(`could not delete user ${s.id} (http ${r.status})`); }
+    } else if (s.kind === 'verify-absent') {
+      const r = await io.rest(`/${s.table}?id=eq.${s.id}&select=id`);
+      if (r.ok && Array.isArray(r.body) && r.body.length) { residue++; io.warn(`${s.table} row ${s.id} still present after delete`); }
+    } else if (s.kind === 'verify-absent-user') {
+      const r = await io.admin(`/admin/users/${s.id}`);
+      if (r.ok && r.body && r.body.id === s.id) { residue++; io.warn(`user ${s.id} still present after delete`); }
+    }
+  }
+  return { failed, residue };
+}
+
+module.exports = { PILOT_REF, FIXTURE_PREFIX, FIXTURE_EMAIL_DOMAIN, isFixtureOrgName, teardownPlan, discoverOrganizations, executePlan, sweepUser };
+
+if (require.main === module) {
+  const verb = process.argv[2];
+  const verbs = { 'verify-target': verifyTarget, sweep, setup, teardown };
+  if (!verbs[verb]) die(`usage: pilot-live-fixture.js <verify-target|sweep|setup|teardown>`);
+  verbs[verb]().catch(e => die(e && e.stack ? e.stack : String(e)));
+}

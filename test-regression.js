@@ -582,6 +582,15 @@ const SUITES = [
   { label: 'Ledger imports and reversals that overlap in time (046)', cmd: 'node tools/verify-ledger-concurrency.js' },
   { label: 'Migration 047 member write rules — the register, storage folders, grants', cmd: 'node tools/verify-migration-047.js' },
   { label: 'Migration 048 operating tables member write rules (append-only evidence/audit, admin invites)', cmd: 'node tools/verify-migration-048.js' },
+  // The CI fixture scripts leaked one organisation per gate run for three weeks
+  // (88 on Pilot): the 024 trigger created it, teardown deleted the landlord,
+  // and created_by is ON DELETE SET NULL. The first suite drives the scripts'
+  // exported plan/executor/sweep with a recorder — order, the three-filter
+  // DELETE, refusals, mutants. The second reproduces the leak and the fix on a
+  // throwaway cluster from the 024 text and proves the one-off cleanup deletes
+  // exactly its list and rolls back on any surprise.
+  { label: 'CI fixture organisation teardown (plan, executor, sweep — offline)', cmd: 'node test-ci-fixture-teardown.js' },
+  { label: 'CI fixture organisation leak closed; one-off orphan cleanup (throwaway cluster)', cmd: 'node tools/verify-ci-fixture-organizations.js' },
   { label: 'Leasehold lifecycle predicate + consumers (A-1)', cmd: 'node test-leasehold-status.js' },
   { label: 'Leasehold lifecycle plumbing + no deletes (A-1)', cmd: 'node test-lifecycle-plumbing.js' },
   { label: 'Lease upload identity: held proposals, durable document id (A-2)', cmd: 'node test-lease-upload-identity.js' },

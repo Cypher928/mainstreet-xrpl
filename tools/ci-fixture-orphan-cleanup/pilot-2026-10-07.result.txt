@@ -1,0 +1,42 @@
+One-off cleanup of the organisations the CI fixture scripts leaked on Pilot (bhmktujbxdbvdmpybmad)
+=================================================================================================
+
+What was deleted: 88 organisations, each created by migration 024's properties_default_organization
+trigger for a CI fixture landlord (33 b1ci-<run>-landlord@pilot.invalid, 55 plci-<run>-a@pilot.invalid,
+2026-09-18 01:51Z .. 2026-10-07 00:50Z) and left behind when the fixture user was deleted
+(organizations.created_by ON DELETE SET NULL). Every one had no creator, no membership, no property,
+no property_events row, and no auth user with its name. Mechanism and fix: scripts/b1-ci-fixture.js header.
+
+SQL: pilot-2026-10-07.sql — the exact text run, byte for byte.
+  md5    d8542491541e8a6b6c8dff775e3499cf
+  sha256 486365bf2d65a016aaec96b03001448e543325ef30bfca50a6bc27289d590360
+  8,606 bytes, 165 lines, 88 ids; built 2026-10-07T02:03:53Z by ../ci-fixture-orphan-cleanup.js from the
+  id list read read-only at 01:07:54Z (ids md5 9a200f61ce25abe84db34af6c10264c2). The same template was
+  proved on a throwaway cluster by ../verify-ci-fixture-organizations.js (62/62 on PostgreSQL 16.13 and 17.6).
+
+Pre-check (read-only, the tool's --precheck query), 02:03:54Z and again 02:10:22Z — identical:
+  orphans 88, ids md5 9a200f61ce25abe84db34af6c10264c2
+  protected (every other organisation) 13, ids md5 faff4c993fce0ebb0c76869dc13b5ed3,
+  rows md5 b33b11158cb59059f7929b63085e44ed; organizations 101, organization_members 13.
+
+Run: by Lynn in the Pilot SQL editor as postgres. An earlier paste of an abbreviated copy (~02:13Z)
+failed at parse time ("trailing junk after numeric literal") and executed nothing. The complete file
+committed at 2026-10-07 02:16:36.711714+00. After-state rows returned by the SQL:
+  a organizations remaining                    13
+  b remaining ids md5                          faff4c993fce0ebb0c76869dc13b5ed3
+  c remaining rows md5                         b33b11158cb59059f7929b63085e44ed
+  d orphans matching the predicate (expect 0)  0
+  e organization_members                       13
+  f now                                        2026-10-07 02:16:36.711714+00
+
+Read-only verification, 02:17:51Z (Supabase connector):
+  organizations 13 / organization_members 13 / orphans 0; ids md5 faff4c99… rows md5 b33b1115… (the protected
+  set, unchanged); 13 of 13 remaining organisations have a living creator, a membership and name = creator
+  email; 0 properties without an organisation; 0 auth users without an organisation; migrations 48, newest
+  015c_tenant_invitations_service_insert; catalog fingerprint ALL 1398 64458394045bd877f0e1fe5ffdfbb123
+  (unchanged); row-hash digest of every other checked table a536646f90f0320a6315d6071eac8c06 (= baseline);
+  acquisition 12/16/12/40/0, ledger 0/0, storage objects 199; 0 other sessions in a transaction, 0 ungranted
+  locks, 0 sessions holding the cleanup text.
+
+Not a migration: no row in supabase_migrations.schema_migrations. organizations 101 -> 13 is the only change.
+Production (zhsuhehgehbzkmzurzyf) was not contacted.
