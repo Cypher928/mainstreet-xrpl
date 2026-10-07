@@ -39,6 +39,22 @@
  *   8  NOTHING ELSE MOVED — columns, constraints, indexes, policies, functions
  *      and every row are byte-identical across 015b
  *   9  the rollback restores Pilot's observed grants; 015b applies again after
+ *
+ * 015c — the forward-only companion that grants service_role INSERT on
+ * tenant_invitations (the B1 authorization gate issues invitations as the
+ * service role; 015b's premise that nothing creates one overlooked it):
+ *
+ *  10  before 015c the service-role INSERT is refused (42501) in both databases
+ *  11  015c applies, and applies again; the matrices gain exactly INSERT for
+ *      service_role on tenant_invitations and nothing else changes; columns,
+ *      constraints, indexes, policies, functions and rows are byte-identical
+ *      across 015c
+ *  12  the B1 suite's issue call works (insert returning the row, as the
+ *      service role); authenticated and anon still cannot insert; service_role
+ *      still cannot delete
+ *  13  015c's rollback restores 015b's exact set and the refusal; 015c applies
+ *      again after; 015b re-run after 015c removes the grant (documented
+ *      order), and 015c re-run restores it
  */
 const path = require('path');
 const { startCluster, tally, show, denied } = require('./_pg-throwaway');
@@ -47,6 +63,8 @@ const ROOT = path.join(__dirname, '..');
 const MIG  = path.join(ROOT, 'migrations');
 const M015B = path.join(MIG, '015b_tenant_access_privileges.sql');
 const R015B = path.join(MIG, '015b_tenant_access_privileges_rollback.sql');
+const M015C = path.join(MIG, '015c_tenant_invitations_service_insert.sql');
+const R015C = path.join(MIG, '015c_tenant_invitations_service_insert_rollback.sql');
 
 const T = tally();
 const { check, section } = T;
@@ -74,6 +92,11 @@ const TENANT_MIGS   = ['012_tenant_users_phase_a.sql', '013_tenant_users_revoke_
 const EXPECT = {
   tenant_users:       { anon: '', authenticated: 'SELECT', service_role: 'DELETE,INSERT,SELECT,UPDATE' },
   tenant_invitations: { anon: '', authenticated: '',       service_role: 'SELECT,UPDATE' },
+};
+// After 015c: one privilege more, for one role, on one table. Everything else identical.
+const EXPECT_015C = {
+  tenant_users:       EXPECT.tenant_users,
+  tenant_invitations: { anon: '', authenticated: '',       service_role: 'INSERT,SELECT,UPDATE' },
 };
 const ALL = 'DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE';
 // What Pilot holds today (read-only catalog query), which the rollback restores.
@@ -147,6 +170,12 @@ const closeInvite = (db) => pg.as('service_role', null,
   `update public.tenant_invitations set accepted_at = now(), accepted_by = '${UN}'
     where token_hash = '${TOKEN}' and accepted_at is null and revoked_at is null
    returning id, accepted_by;`, db);
+// test-tenant-authz.js issueInvitation(): POST /tenant_invitations, Prefer: return=representation,
+// as the service role — the landlord's invitation until an invite screen exists.
+const issueInvite = (db, hash) => pg.as('service_role', null,
+  `insert into public.tenant_invitations (tenant_id, property_id, email, token_hash, invited_by, expires_at)
+     values ('${T1}','${P1}','z@example.com','${hash}','${UL}', now() + interval '7 days')
+   returning id, tenant_id, property_id;`, db);
 
 function fingerprint(db) {
   return pg.psql(`
@@ -214,7 +243,31 @@ for (const db of ['pilotlike', 'post']) {
   check(`${db}: every row byte-identical across 015b`, rows(db) === rowsBefore[db] && rowsBefore[db].length > 0);
 }
 
-// ── 4–7 · behaviour, in both databases ───────────────────────────────────────
+// ── 10–11 · 015c: the server may create an invitation ────────────────────────
+section('10 · before 015c the service-role INSERT on tenant_invitations is refused');
+for (const db of ['pilotlike', 'post']) {
+  const r = issueInvite(db, 'ef'.repeat(32));
+  check(`${db}: before 015c, service_role cannot INSERT an invitation (42501 — the B1 gate\'s failure since 2026-09-24)`,
+    denied(r), r.ok ? 'NOT refused' : r.out.split('\n')[0].slice(0, 80));
+}
+section('11 · 015c applies, and applies again; exactly one privilege moves');
+const fp015c = { pilotlike: fingerprint('pilotlike'), post: fingerprint('post') };
+const rows015c = { pilotlike: rows('pilotlike'), post: rows('post') };
+for (const db of ['pilotlike', 'post']) {
+  const a = pg.psqlFile(M015C, db);
+  check(`${db}: 015c applies`, a.ok, a.ok ? '' : a.out.slice(0, 300));
+  const b = pg.psqlFile(M015C, db);
+  check(`${db}: 015c applies a second time`, b.ok, b.ok ? '' : b.out.slice(0, 300));
+  matrix(db, EXPECT_015C, 'after 015c:');
+  check(`${db}: columns, constraints, indexes, policies, functions byte-identical across 015c`,
+    fingerprint(db) === fp015c[db] && fp015c[db].length > 0);
+  check(`${db}: every row byte-identical across 015c`, rows(db) === rows015c[db] && rows015c[db].length > 0);
+}
+for (const t of Object.keys(EXPECT_015C)) {
+  check(`${t}: PUBLIC still holds nothing after 015c`, pg.privs('public.' + t, 'public', 'post') === '' && pg.privs('public.' + t, 'public', 'pilotlike') === '');
+}
+
+// ── 4–7 (and 12) · behaviour, in both databases ──────────────────────────────
 function behaviour(db) {
   section(`${db}: 4 · the app's calls still work`);
   const own = portalRead(db, UT);
@@ -248,6 +301,13 @@ function behaviour(db) {
                                             values ('${UN}','${T1}','${P1}', now()) returning id;`, db);
   check(`${db}: fixture re-insert returning the row (service_role)`, ins.ok && /^[0-9a-f-]{36}$/.test(ins.out), ins.out.slice(0, 100));
 
+  section(`${db}: 12 · the B1 gate issues an invitation as the service role (015c)`);
+  const iss = issueInvite(db, 'ef'.repeat(32));
+  check(`${db}: test-tenant-authz.js issueInvitation — INSERT returning the row (service_role)`,
+    iss.ok && iss.out.includes(`|${T1}|${P1}`), iss.out.slice(0, 120));
+  check(`${db}: the issued invitation is open and findable the way accept-invite looks it up`,
+    pg.psql(`select count(*) from public.tenant_invitations where token_hash='${'ef'.repeat(32)}' and accepted_at is null and revoked_at is null;`, db).out === '1');
+
   section(`${db}: 5 · refusals are refusals at the grant (42501)`);
   const refusals = [
     ['authenticated tenant cannot INSERT a membership for itself', 'authenticated', UT,
@@ -262,10 +322,10 @@ function behaviour(db) {
       `insert into public.tenant_invitations (tenant_id, property_id, email, token_hash, invited_by)
        values ('${T1}','${P1}','z@example.com','${'ef'.repeat(32)}','${UL}');`],
     ['authenticated tenant cannot read invitations', 'authenticated', UT, `select count(*) from public.tenant_invitations;`],
-    ['service_role cannot INSERT an invitation (nothing creates one)', 'service_role', null,
+    ['service_role cannot DELETE an invitation (015c grants INSERT only)', 'service_role', null, `delete from public.tenant_invitations;`],
+    ['anon cannot create an invitation', 'anon', null,
       `insert into public.tenant_invitations (tenant_id, property_id, email, token_hash, invited_by)
-       values ('${T1}','${P1}','z@example.com','${'ef'.repeat(32)}','${UL}');`],
-    ['service_role cannot DELETE an invitation', 'service_role', null, `delete from public.tenant_invitations;`],
+       values ('${T1}','${P1}','z@example.com','${'01'.repeat(32)}','${UL}');`],
     ['anon cannot read tenant_users', 'anon', null, `select count(*) from public.tenant_users;`],
     ['anon cannot write tenant_users', 'anon', null,
       `insert into public.tenant_users (user_id, tenant_id, property_id) values ('${UN}','${T2}','${P2}');`],
@@ -291,13 +351,39 @@ function behaviour(db) {
 behaviour('pilotlike');
 behaviour('post');
 
+// ── 13 · 015c rollback, and the 015b/015c order ──────────────────────────────
+section('13 · 015c\'s rollback restores 015b\'s exact set; the order of the two is what the files say');
+for (const db of ['pilotlike', 'post']) {
+  const rc = pg.psqlFile(R015C, db);
+  check(`${db}: 015c rollback runs`, rc.ok, rc.ok ? '' : rc.out.slice(0, 300));
+  matrix(db, EXPECT, 'after 015c rollback (= 015b):');
+  const r = issueInvite(db, '23'.repeat(32));
+  check(`${db}: after the 015c rollback the service-role INSERT is refused again (42501)`, denied(r), r.ok ? 'NOT refused' : r.out.split('\n')[0].slice(0, 80));
+  const rc2 = pg.psqlFile(R015C, db);
+  check(`${db}: 015c rollback runs a second time (nothing further to revoke)`, rc2.ok, rc2.ok ? '' : rc2.out.slice(0, 300));
+  const ac = pg.psqlFile(M015C, db);
+  check(`${db}: 015c applies again after its rollback`, ac.ok, ac.ok ? '' : ac.out.slice(0, 300));
+  matrix(db, EXPECT_015C, 'after 015c re-apply:');
+}
+// 015b revokes everything before granting, so 015b re-run AFTER 015c removes 015c's grant. The
+// files say so; this pins it so the order is never assumed.
+const reB = pg.psqlFile(M015B, 'post');
+check('post: 015b re-run after 015c applies', reB.ok, reB.ok ? '' : reB.out.slice(0, 300));
+matrix('post', EXPECT, 'after 015b re-run (015c\'s INSERT is gone — 015c must follow 015b):');
+const reC = pg.psqlFile(M015C, 'post');
+check('post: 015c re-run after that restores the grant', reC.ok, reC.ok ? '' : reC.out.slice(0, 300));
+matrix('post', EXPECT_015C, 'after 015c re-run:');
+
 // ── 9 · rollback ─────────────────────────────────────────────────────────────
-section('9 · the rollback restores Pilot\'s observed grants');
+section('9 · the 015b rollback restores Pilot\'s observed grants');
 const rb = pg.psqlFile(R015B, 'pilotlike');
 check('pilotlike: rollback runs', rb.ok, rb.ok ? '' : rb.out.slice(0, 300));
 matrix('pilotlike', PILOT_OBSERVED, 'after rollback:');
 const again = pg.psqlFile(M015B, 'pilotlike');
 check('pilotlike: 015b applies again after the rollback', again.ok, again.ok ? '' : again.out.slice(0, 300));
 matrix('pilotlike', EXPECT, 'after re-apply:');
+const againC = pg.psqlFile(M015C, 'pilotlike');
+check('pilotlike: 015c applies again after 015b (the documented order)', againC.ok, againC.ok ? '' : againC.out.slice(0, 300));
+matrix('pilotlike', EXPECT_015C, 'after 015b then 015c:');
 
 T.finish();

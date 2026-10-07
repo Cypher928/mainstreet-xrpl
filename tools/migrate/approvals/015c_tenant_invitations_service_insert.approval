@@ -1,0 +1,20 @@
+# Approval record — read by tools/migrate/apply-migration.sh. One file per migration.
+# The script refuses to send unless the .sql file hashes to sql_md5/sql_bytes and
+# project_ref is the Pilot project. Never put a token or secret in this file.
+migration_name=015c_tenant_invitations_service_insert
+project_ref=bhmktujbxdbvdmpybmad
+project_name=mainstreet-pilot
+sql_md5=886a689c5e5445b4a9986eccd44f5743
+sql_sha256=a8fdf8b981e96c53082bc368638051a699f91cfc98b6a4a7c2662c5b7f51691b
+sql_bytes=3877
+rollback_file=015c_tenant_invitations_service_insert_rollback.sql
+rollback_md5=c6f5fd789b3644ede5c05af275a627c9
+rollback_sha256=f0972d60e6b0403677d303c920df954614d0da6c0381abdadd10f9f0ee907d07
+approved_on=2026-10-06
+approved_by=Lynn, chat 2026-10-06: "Approved: proceed to build the 015c live matrix, rolled-back Pilot trial, and hand-off bundle. This approval is for pre-apply validation only." The persistent apply awaits her separate approval after the rolled-back live trial.
+local_verification=tools/verify-migration-015b.js (015b+015c) 213/213 on PG 16.13 and 17.6; tools/data-api-grants-mutation.js 49/49 killed on both; trial-local 26/26 on both; rolled-back live trial on Pilot 2026-10-06 (SQL editor): 015c removed/added exactly the 1 predicted row, matrix 14 ok 0 FAIL, rollback 0 rows differ, matrix after rollback 9/5 (pinned), data identical; the persistent apply was approved separately by Lynn after it
+# Filled in after the apply:
+applied_on=2026-10-07T00:30:20Z
+applied_version=20261007003020
+idempotency_key=0fa8cc70-bb85-48c0-a023-c2f83f627781
+applied_by=Lynn, from her Mac, tools/migrate/apply-migration.sh, PROBE 200 then one POST, HTTP 200; check-record VERIFIED, check-inventory EXPLAINED (1 removed / 1 added), fingerprint 1398 64458394045bd877f0e1fe5ffdfbb123 = the trial prediction, data hashes identical, live matrix 14/0

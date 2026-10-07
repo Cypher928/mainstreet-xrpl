@@ -26,7 +26,7 @@ all remote branches (88 distinct blobs).
 Blob hashes below are the first 8 characters of the git blob id of the file that
 matched, so the match can be re-checked with `git cat-file -p`.
 
-## Recorded history (47 rows as of 048, in applied order; 040 and 041 are unused; 046 is not applied)
+## Recorded history (48 rows as of 015c, in applied order; 040 and 041 are unused; 046 is not applied)
 
 | version | recorded name | source text | match |
 |---|---|---|---|
@@ -77,8 +77,9 @@ matched, so the match can be re-checked with `git cat-file -p`.
 | `20261004184427` | `045_acquisition_member_write_rules` | `migrations/045_acquisition_member_write_rules.sql` @ `42f0f046` (commit `0317644`; the file was uncommitted at apply time and was committed unchanged; md5 `5ee57195…`, sha256 `39311540…`, 19,462 bytes) — applied 2026-10-04 by the operator from her Mac with `apply-045-pilot.sh` (now `tools/migrate/apply-migration.sh`) through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `82ffaede-02cb-497e-9bd5-ab8f1d490b87` (recorded in `idempotency_key`), HTTP 200 at 18:44:27Z; the token was a scoped personal access token holding only Database → Migrations read-write on Pilot; two earlier `apply_migration` calls through the Supabase connector timed out at 60 s with no effect (the connector's destructive-SQL confirmation cannot be shown in this client); the recorded text is the file verbatim (md5 `5ee57195…` on both sides, 19,462 bytes) | identical |
 | `20261005183007` | `047_member_write_rules_remaining` | `migrations/047_member_write_rules_remaining.sql` (commit `979306a`; md5 `2c6b8a07…`, sha256 `a49725da…`, 8,941 bytes) — applied 2026-10-05 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `473bd7a4-9ea6-4dbc-8cee-075e1edb8e3b` (recorded in `idempotency_key`), HTTP 200 at 18:30:07Z; 046 was not applied before it (047 needs only 045 and phase0/024); the recorded text is the file verbatim (md5 `2c6b8a07…` on both sides, 8,941 bytes) | identical |
 | `20261006130728` | `048_operating_tables_member_write_rules` | `migrations/048_operating_tables_member_write_rules.sql` (commit `979306a`; md5 `3c5675e0…`, sha256 `74af8e55…`, 14,599 bytes) — applied 2026-10-06 by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `f14a19d6-bb2f-4ee7-9266-b791bf943941` (recorded in `idempotency_key`), HTTP 200 at 13:07:26Z; 046 was not applied before it (048 needs 045, 034, phase0/024 and 038; 047 is the tested order); the recorded text is the file verbatim (md5 `3c5675e0…` on both sides, 14,599 bytes) | identical |
+| `20261007003020` | `015c_tenant_invitations_service_insert` | `migrations/015c_tenant_invitations_service_insert.sql` (committed unchanged with this entry; md5 `886a689c…`, sha256 `a8fdf8b9…`, 3,877 bytes) — a forward-only companion to 015b, applied 2026-10-07 after 048 (the number is 015c because it amends 015b's grant set, not because it ran early; it needs only 014 and 015b) by the operator from her Mac with `tools/migrate/apply-migration.sh` through the Supabase Management API `POST /v1/projects/{ref}/database/migrations`, sent once with `Idempotency-Key` `0fa8cc70-bb85-48c0-a023-c2f83f627781` (recorded in `idempotency_key`), HTTP 200 at 00:30:20Z; 046 was not applied before it; the recorded text is the file verbatim (md5 `886a689c…` on both sides, 3,877 bytes) | identical |
 
-Tally (47 rows as of 048): 37 identical, 9 equivalent with every delta listed below, 1 with no file
+Tally (48 rows as of 015c): 38 identical, 9 equivalent with every delta listed below, 1 with no file
 of its own (D7). No recorded statement is unexplained.
 
 ## Deltas (every differing span, after normalisation)
@@ -565,6 +566,29 @@ These files were applied through the SQL editor or the bundle
    live matrix 64/0 (`tools/migrate/live-matrix/048_operating_tables_member_write_rules.result.txt`).
    Rollback: `048_operating_tables_member_write_rules_rollback.sql` (md5 `6f81d5ee…`), which
    restores every 024 rule and grant exactly (proven in the trial).
+
+20. **Since 015c, the server may create an invitation.** `service_role` holds INSERT,
+   SELECT, UPDATE on `tenant_invitations` (015b had narrowed it to SELECT, UPDATE on the
+   premise that nothing creates one; the B1 authorization gate, `test-tenant-authz.js`,
+   has issued invitations as the service role since 2026-08-16 — T17, T19, T20c — and
+   failed those three lines with 42501 from 2026-09-24, the first gate run after 015b).
+   014's `tenant_invitations_service_role_all` (FOR ALL, true/true) always permitted it
+   at the row level. Nothing else moved: `authenticated` and `anon` still hold nothing on
+   the table (048's admin rule stays dormant until a landlord invite screen grants
+   authenticated INSERT), `service_role` still has no DELETE (cascades run as the
+   owner), and `tenant_users` keeps 015b's set. **Order:** 015b revokes everything
+   before granting, so re-running 015b after 015c silently removes this INSERT; 015c
+   must follow 015b (pinned by `tools/verify-migration-015b.js` §13). Before the apply,
+   015c, its rollback and the 14-check matrix were run on Pilot in one transaction
+   forced to abort (2026-10-06, SQL editor): 015c removed exactly the 1 and added
+   exactly the 1 predicted catalog row, matrix 14/0, rollback restored the catalog
+   exactly, matrix after it 9/5 (the pinned pre-015c set), data identical. After the
+   apply: record verified, catalog diff 1 removed / 1 added (`pri|public.tenant_invitations|service_role`),
+   fingerprint `1398 64458394045bd877f0e1fe5ffdfbb123` as the trial predicted, every
+   data hash identical, live matrix 14/0
+   (`tools/migrate/live-matrix/015c_tenant_invitations_service_insert.result.txt`).
+   Rollback: `015c_tenant_invitations_service_insert_rollback.sql` (md5 `c6f5fd78…`),
+   which revokes exactly this INSERT (proven in the trial).
 
 ## Decisions this manifest does not make
 

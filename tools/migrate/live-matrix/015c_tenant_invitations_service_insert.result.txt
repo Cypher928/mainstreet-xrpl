@@ -1,0 +1,22 @@
+MATRIX RESULTS 2026-10-07 ~00:40Z, after the apply (everything rolled back). Run by Lynn in the Pilot SQL editor, role postgres
+(the Supabase connector times out at 60 s on this text, as on the pre-apply trial). File md5 a4331ba81a7ef9b9d0ee2432f766951a.
+Post-matrix read-only check 00:41:19Z: no residue, 0 open transactions, fingerprint 1398 64458394045bd877f0e1fe5ffdfbb123 and data unchanged.
+
+Failed to run sql query: ERROR:  P0001: MATRIX RESULTS (everything rolled back)
+G1 tenant_invitations grants: service_role=INSERT,SELECT,UPDATE ok
+G2 the two invitation rules exactly as 048 and 014 wrote them ok
+G3 tenant_users grants untouched (015b): authenticated=SELECT ; service_role=DELETE,INSERT,SELECT,UPDATE ok
+G4 PUBLIC holds nothing on tenant_invitations: 0 ok
+G5 the eight operating tables' grants = 048's, plus the one INSERT: cam_reconciliations:authenticated=DELETE,INSERT,SELECT,UPDATE ; cam_reconciliations:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; lease_jobs:authenticated=DELETE,INSERT,SELECT,UPDATE ; lease_jobs:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_field_evidence:authenticated=INSERT,SELECT ; tenant_field_evidence:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_invitations:service_role=INSERT,SELECT,UPDATE ; tenant_review_audit:authenticated=INSERT,SELECT ; tenant_review_audit:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ; tenant_statements:authenticated=SELECT ; tenant_statements:service_role=INSERT,SELECT,UPDATE ; tenant_users:authenticated=SELECT ; tenant_users:service_role=DELETE,INSERT,SELECT,UPDATE ; tenants:authenticated=DELETE,INSERT,SELECT,UPDATE ; tenants:service_role=DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE ok
+FX property dcf7d47b org ed52e3d6; leasehold 37a5bab3; editor, read-only member and a tenant user added
+I1 the server issues an invitation (test-tenant-authz.js issueInvitation, service_role INSERT … returning): e3d7fa81 ok
+I2 accept-invite finds it open by token_hash (service_role): 1 ok
+I3 accept-invite closes it once (service_role PATCH): 1, a second redeem affects 0 ok
+I4 service_role still cannot delete an invitation: 42501 ok
+I5 the owner (admin of the org) still cannot read invitations — no grant to authenticated: 42501 ok
+I6 the owner still cannot create an invitation (048's admin rule stays dormant): 42501 ok
+I7 editor, read-only member and tenant user each refused at the grant (42501): 3/3 ok
+I8 anonymous read and insert both refused at the grant (42501): 2/2 ok
+RA1 the real owner account still cannot read invitations: 42501 ok
+SUMMARY 14 ok, 0 FAIL
+CONTEXT:  PL/pgSQL function inline_code_block line 154 at RAISE

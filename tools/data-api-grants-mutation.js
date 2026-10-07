@@ -35,6 +35,13 @@
  *     T10  anon gains SELECT on tenant_users
  *     T11  the rollback forgets tenant_invitations
  *
+ *   015c — service_role INSERT on tenant_invitations (the B1 gate's issue call)
+ *     I01  015c grants nothing (the grant line is gone)
+ *     I02  015c grants INSERT to authenticated as well
+ *     I03  015c grants DELETE as well
+ *     I04  015c grants INSERT to anon as well
+ *     I05  the 015c rollback forgets to revoke
+ *
  *   024b — acquisition_document_families
  *     F01  authenticated loses UPDATE (the upsert's conflict path)
  *     F02  authenticated loses INSERT
@@ -79,6 +86,8 @@ const A = 'migrations/022b_payment_access_scope.sql';
 const AR = 'migrations/022b_payment_access_scope_rollback.sql';
 const TB = 'migrations/015b_tenant_access_privileges.sql';
 const TR = 'migrations/015b_tenant_access_privileges_rollback.sql';
+const TC = 'migrations/015c_tenant_invitations_service_insert.sql';
+const TCR = 'migrations/015c_tenant_invitations_service_insert_rollback.sql';
 const F = 'migrations/024b_acquisition_document_families_privileges.sql';
 const C = 'migrations/026c_acquisition_term_decisions_privileges.sql';
 const P = 'migrations/031_pilot_requests.sql';
@@ -143,6 +152,18 @@ const MUTANTS = [
     from: TU_AUTH, to: TU_AUTH + '\ngrant select on public.tenant_users to anon;' },
   { id: 'T11', file: TR, suites: [S015B], why: 'the rollback forgets tenant_invitations',
     from: 'grant all  on public.tenant_invitations to authenticated, service_role;\n', to: '' },
+
+  // ── 015c ─────────────────────────────────────────────────────────────────
+  { id: 'I01', file: TC, suites: [S015B], why: '015c grants nothing',
+    from: 'grant insert on public.tenant_invitations to service_role;\n', to: '' },
+  { id: 'I02', file: TC, suites: [S015B], why: '015c grants INSERT to authenticated as well',
+    from: 'grant insert on public.tenant_invitations to service_role;', to: 'grant insert on public.tenant_invitations to service_role, authenticated;' },
+  { id: 'I03', file: TC, suites: [S015B], why: '015c grants DELETE as well',
+    from: 'grant insert on public.tenant_invitations to service_role;', to: 'grant insert, delete on public.tenant_invitations to service_role;' },
+  { id: 'I04', file: TC, suites: [S015B], why: '015c grants INSERT to anon as well',
+    from: 'grant insert on public.tenant_invitations to service_role;', to: 'grant insert on public.tenant_invitations to service_role, anon;' },
+  { id: 'I05', file: TCR, suites: [S015B], why: 'the 015c rollback forgets to revoke',
+    from: 'revoke insert on public.tenant_invitations from service_role;\n', to: '' },
 
   // ── 024b ─────────────────────────────────────────────────────────────────
   { id: 'F01', file: F, suites: [S024], why: 'authenticated loses UPDATE',
