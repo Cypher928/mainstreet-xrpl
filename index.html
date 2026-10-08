@@ -6979,6 +6979,41 @@
     .acq-card.acq-card-returned { border-color: #C9973A; box-shadow: 0 0 0 2px rgba(201, 151, 58, 0.35);
       transition: box-shadow 0.6s, border-color 0.6s; }
 
+    /* ── Acquisition Intake (I-1): the front door — the Properties step ──── */
+    .acq-intake-step { margin-top: 14px; padding: 16px 18px; border: 1px solid rgba(var(--line-rgb), 0.22); border-radius: 12px; background: var(--theme-panel); }
+    .acq-intake-step-head { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; font-size: 1rem; font-weight: 700; color: var(--text-1); }
+    .acq-intake-step-no { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%;
+      background: #C9973A; color: var(--theme-on-accent); font-size: 0.8rem; font-weight: 700; }
+    .acq-intake-lead { margin: 0 0 12px; font-size: 0.85rem; color: var(--text-3); line-height: 1.5; }
+    .acq-intake-prospects { margin-bottom: 12px; font-size: 0.82rem; color: var(--text-3); }
+    .acq-intake-prospects strong { color: var(--text-1); }
+    .acq-intake-rows { display: flex; flex-direction: column; gap: 10px; }
+    .acq-intake-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto; gap: 10px; align-items: end;
+      padding: 10px 12px; border: 1px solid rgba(var(--line-rgb), 0.18); border-radius: 10px; background: var(--theme-surface); }
+    .acq-intake-row-failed { border-color: rgba(239, 68, 68, 0.45); }
+    .acq-intake-row-created { grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-color: rgba(34, 197, 94, 0.45); }
+    .acq-intake-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.76rem; color: var(--text-4); min-width: 0; }
+    .acq-intake-field em { font-style: normal; color: var(--text-5); }
+    .acq-intake-field input { min-height: 40px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(var(--line-rgb), 0.32);
+      background: var(--theme-bg); color: var(--text-1); font-size: 0.9rem; width: 100%; box-sizing: border-box; }
+    .acq-intake-row-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 40px; font-size: 0.8rem; }
+    .acq-intake-row-status { color: var(--text-3); }
+    .acq-intake-row-error { color: var(--c-f87171); overflow-wrap: anywhere; }
+    .acq-intake-remove { min-width: 40px; padding: 0 10px; }
+    .acq-intake-created { font-size: 0.88rem; color: var(--text-1); overflow-wrap: anywhere; }
+    .acq-intake-check { color: var(--c-4ade80); font-weight: 700; }
+    .acq-intake-addr { color: var(--text-3); }
+    .acq-intake-created-note { color: var(--text-4); font-size: 0.78rem; margin-left: 8px; }
+    .acq-intake-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .acq-intake-status { margin-top: 10px; font-size: 0.82rem; color: var(--text-3); line-height: 1.5; }
+    .acq-intake-status:empty { display: none; }
+    @media (max-width: 720px) {
+      .acq-intake-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+      .acq-intake-row-created { grid-template-columns: minmax(0, 1fr); }
+      .acq-intake-actions .acq-btn { min-height: 44px; flex: 1 1 auto; }
+      .acq-intake-row-side { justify-content: space-between; }
+    }
+
     /* ── Portfolio Intelligence Dashboard ──────────────────────────────── */
     .pid-panel        { background: var(--theme-bg); border: 1px solid var(--theme-accent); border-radius: 10px;
                         margin-bottom: 20px; overflow: hidden; }
@@ -8002,7 +8037,8 @@
   <div class="acq-section" id="acqSection">
     <div class="acq-section-head">
       <h2>&#x1F50D; Acquisition Due Diligence</h2>
-      <button class="acq-new-btn" onclick="createAcquisitionReview()">+ New Review</button>
+      <button class="acq-new-btn acq-intake-start" onclick="openAcquisitionIntake()"
+              title="Start an acquisition — one property or many — and bring its documents in">+ New Acquisition</button>
     </div>
     <div id="acqReviewsGrid" class="acq-cards-grid">
       <div class="acq-empty">No due diligence reviews yet. Start one to analyze a property before acquisition.</div>
@@ -8155,6 +8191,32 @@
 
   <!-- Report output -->
   <div id="acqReportContainer"></div>
+</div>
+
+<!-- ── Acquisition Intake (I-1): the front door ─────────────────────────
+     Every acquisition starts here, one property or many. The Properties step
+     names each property; each becomes a prospect through begin_acquisition.
+     Shown by openAcquisitionIntake, left by closeAcquisitionIntake. -->
+<div class="container" id="acqIntakePanel" style="display:none;">
+  <div class="acq-nav-bar" role="navigation" aria-label="Acquisition intake">
+    <button type="button" class="acq-back-btn acq-back-to-acqs" id="acqIntakeBackBtn" onclick="closeAcquisitionIntake()"
+            title="Return to the Acquisitions list">&#x2190; Back to Acquisitions</button>
+  </div>
+  <div class="acq-detail-header">
+    <span class="acq-detail-title">New acquisition</span>
+  </div>
+  <section class="acq-intake-step" id="acqIntakeProperties" aria-labelledby="acqIntakePropertiesHead">
+    <h3 class="acq-intake-step-head" id="acqIntakePropertiesHead"><span class="acq-intake-step-no" aria-hidden="true">1</span> Properties</h3>
+    <p class="acq-intake-lead">Name each property this deal covers — one, or many. Each becomes a prospect you can bring documents into.
+      The address is kept with the acquisition as evidence for matching documents; nothing is written to a property record until the deal is acquired.</p>
+    <div class="acq-intake-prospects" id="acqIntakeProspects" role="status">Open prospects: <strong id="acqIntakeProspectCount">0</strong> <span id="acqIntakeProspectList"></span></div>
+    <div id="acqIntakeRows" class="acq-intake-rows"></div>
+    <div class="acq-intake-actions">
+      <button type="button" class="acq-btn acq-btn-nav" id="acqIntakeAddRowBtn" onclick="acqIntakeAddRow()">+ Another property</button>
+      <button type="button" class="acq-btn acq-btn-primary" id="acqIntakeCreateBtn" onclick="acqIntakeCreate()" disabled>Create prospect</button>
+    </div>
+    <div class="acq-intake-status" id="acqIntakeStatus" role="status" aria-live="polite"></div>
+  </section>
 </div>
 
 <!-- ── Property Breadcrumb ───────────────────────────────────────────── -->

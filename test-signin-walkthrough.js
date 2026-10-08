@@ -110,9 +110,14 @@ const HIT = function (sel) {
   var box = { w: Math.round(r.width), h: Math.round(r.height) };
   if (cs.display === 'none' || cs.visibility === 'hidden' || r.width < 2 || r.height < 2)
     return { found: true, painted: false, box: box, hit: false };
-  var pts = [[r.left + r.width / 2, r.top + r.height / 2],
-             [r.left + 4, r.top + 4], [r.right - 4, r.top + 4],
-             [r.left + 4, r.bottom - 4], [r.right - 4, r.bottom - 4]];
+  // A region taller or wider than the viewport (the portfolio, now that the
+  // Acquisitions section is part of a first screen) is sampled on the part of
+  // it that is on screen; a control that fits is sampled exactly as before.
+  var v = { left: Math.max(r.left, 0), top: Math.max(r.top, 0), right: Math.min(r.right, innerWidth), bottom: Math.min(r.bottom, innerHeight) };
+  if (v.right - v.left < 2 || v.bottom - v.top < 2) return { found: true, painted: true, box: box, hit: false, blockedBy: 'off-screen' };
+  var pts = [[(v.left + v.right) / 2, (v.top + v.bottom) / 2],
+             [v.left + 4, v.top + 4], [v.right - 4, v.top + 4],
+             [v.left + 4, v.bottom - 4], [v.right - 4, v.bottom - 4]];
   var blockedBy = null, hits = 0;
   pts.forEach(function (p) {
     if (p[0] < 0 || p[1] < 0 || p[0] > innerWidth || p[1] > innerHeight) return;

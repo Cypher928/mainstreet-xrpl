@@ -355,11 +355,13 @@ sec('E. Server refusals (P3): the hydrator and list_properties know the stage; t
   const gMgd = await MCP.call('get_property', { propertyId: P_MGD }, ctx());
   t('E16 get_property on a managed property still answers', gMgd.data && gMgd.data.propertyId === P_MGD, JSON.stringify(codes(gMgd)));
 
-  // the client: a deal is born only through begin_acquisition (migration 034)
-  const create = fnSource(SCRIPT, 'createAcquisitionReview');
-  t('E17 createAcquisitionReview calls begin_acquisition with the name and the new review data', create.includes("db.rpc('begin_acquisition', { p_name: review.name, p_data: review.data })"));
+  // the client: a deal is born only through begin_acquisition (migration 034) —
+  // in ONE place, _acqCreateProspect, which "+ New Review" and the Intake (I-1) share
+  const create = fnSource(SCRIPT, '_acqCreateProspect');
+  t('E17 _acqCreateProspect calls begin_acquisition with the name and the new review data', create.includes("db.rpc('begin_acquisition', { p_name: review.name, p_data: review.data })"));
+  t('E17b createAcquisitionReview goes through it and calls begin_acquisition nowhere itself', fnSource(SCRIPT, 'createAcquisitionReview').includes('await _acqCreateProspect(') && !/begin_acquisition/.test(fnSource(SCRIPT, 'createAcquisitionReview')));
   t('E18 and no longer inserts the review row itself', !/\.from\('acquisition_reviews'\)\s*\.insert\(/.test(create));
-  t('E19 a call that returns no record adds nothing on screen', create.includes('if (!created || !created.review_id || !created.property_id) {') && /return;/.test(create.slice(create.indexOf('!created.property_id'))));
+  t('E19 a call that returns no record adds nothing on screen', create.includes('if (!created || !created.review_id || !created.property_id) {') && /return \{ ok: false/.test(create.slice(create.indexOf('!created.property_id'))));
   t('E20 the returned ids and revision are adopted', create.includes('review.property_id  = created.property_id') && create.includes('_acqRevs.set(id, review.updated_at)'));
   t('E21 nowhere in script.js is a row inserted or upserted into acquisition_reviews any more', !/\.from\('acquisition_reviews'\)\s*\.(insert|upsert)\(/.test(SCRIPT));
   const save = fnSource(SCRIPT, '_saveAcqReview');

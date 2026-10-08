@@ -521,6 +521,14 @@ const SUITES = [
   // Every long action (lease and invoice uploads, the analysis, each document
   // and term act) is walked with the switch made mid-flight, both directions.
   { label: 'Acquisition cross-review isolation (e2e)',  cmd: 'node test-e2e-acquisition-isolation.js' },
+  // Acquisition Intake I-1 — the front door: every acquisition starts in the
+  // Properties step, one property or many, each created as a prospect through
+  // begin_acquisition one after another by the ONE creation path "+ New Review"
+  // shares; a failure stops the sequence and keeps what was created; the
+  // address stays on the review as evidence; nothing else is written; the
+  // Acquisitions section is shown to a brand-new account.
+  { label: 'Acquisition Intake — properties (structural)', cmd: 'node test-acquisition-intake.js' },
+  { label: 'Acquisition Intake — properties walk (e2e)',  cmd: 'node test-e2e-acquisition-intake.js' },
   // §4l — one tenant row per leasehold. Found on the Pilot: a correction made
   // in the Lease Terms panel (65,000 → 67,000) never reached the Rent Roll,
   // which read one raw row per uploaded FILE. The analysis, the Rent Roll and

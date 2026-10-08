@@ -462,10 +462,12 @@ t('a revision is recorded only from rows READ from the database (and our own ins
   ok(adopt.includes('_acqRevs.set(row.id, String(row.updated_at))'), 'adopt records the read revision');
   const load = fnBody(S, '_loadAcqReviews');
   ok(load.includes('.map(_acqAdopt)'), 'loaded rows are adopted');
-  const create = fnBody(S, 'createAcquisitionReview');
+  // I-1: creation lives in ONE place, _acqCreateProspect, which "+ New Review" and the Intake share.
+  const create = fnBody(S, '_acqCreateProspect');
   ok(create.includes('_acqRevs.set(id, review.updated_at)'), 'an insert records what it stored');
   ok(create.includes('_AW().newReviewData()'), 'a new review is created at v2');
   ok(create.includes("type: 'review_created'"), 'creation is recorded');
+  ok(fnBody(S, 'createAcquisitionReview').includes('await _acqCreateProspect('), '"+ New Review" creates through the one path');
   const demo = fnBody(S, 'ensureDemoAcqReview');
   ok(demo.includes('_acqReviews.unshift(_AW().upgradeReview(review))'), 'the seeded review is upgraded');
   ok(!demo.includes('_acqAdopt(review)'), 'the seed must NOT record the timestamp it sent — an upsert-as-update replaces it');

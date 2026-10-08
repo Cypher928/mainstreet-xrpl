@@ -116,8 +116,10 @@ const MUTANTS = [
     from: '    return (data || []).map(_acqAdopt);', to: '    return data || [];' },
   { id: 'G04', file: S, why: 'adopt forgets the revision it read',
     from: '  if (row && row.id && row.updated_at) _acqRevs.set(row.id, String(row.updated_at));', to: '  void row;' },
+  // (I-1: creation lives in _acqCreateProspect, and the new review's data carries the Intake's evidence.)
   { id: 'G05', file: S, why: 'a new review is created in the legacy shape',
-    from: '      data:       _AW().newReviewData(),', to: '      data:       { tenants: [], invoices: [], totalSqFt: 0, documents: [], analysis: null },' },
+    from: '      data:       Object.assign(_AW().newReviewData(), _acqIntakeEvidence(evidence)),',
+    to:   '      data:       Object.assign({ tenants: [], invoices: [], totalSqFt: 0, documents: [], analysis: null }, _acqIntakeEvidence(evidence)),' },
   { id: 'G06', file: S, why: 'conversion does not mark the review acquired',
     from: '    review.data   = _AW().markAcquired(review, { actor: _acqActor(), repair: _isRepair }).data;', to: '    void _isRepair;' },
   { id: 'G07', file: S, why: 'a revert does not re-derive the stage',

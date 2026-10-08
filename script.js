@@ -26968,9 +26968,10 @@ function renderPortfolio(props) {
   _tglEmpty('#ptfSearchInput', _hasAny);
   _tglEmpty('.ptf-global-search-wrap', _hasAny);
   _tglEmpty('#ptfSortRow', _hasAny);
-  // The acquisitions a person has are their work too: shown whenever any exist,
-  // not only once a managed property does (a prospect is not in `props`).
-  _tglEmpty('#acqSection', _hasAny || (Array.isArray(_acqReviews) && _acqReviews.length > 0));
+  // The acquisitions section is the front door to a deal (Intake, I-1): shown
+  // for a brand-new account too, so a first acquisition can begin before any
+  // managed property exists.
+  _tglEmpty('#acqSection', true);
 
   // KPI tiles
   const k = portfolioKPIs(props);
@@ -35215,46 +35216,47 @@ function _renderAcqCards(grid, reviews) {
   }).join('');
 }
 
-async function createAcquisitionReview() {
-  const name = prompt('Due diligence review name (e.g. "123 Main Street"):');
-  if (!name || !name.trim()) return;
+// The ONE way a deal begins (I-1: the Intake and "+ New Review" both come here).
+// P3 — a deal is a property from its first minute. begin_acquisition
+// (migration 034) creates the PROSPECT property and its acquisition episode in
+// ONE transaction and returns both ids; no half-created deal is possible, and a
+// direct insert of either row is refused by the database. The activity entry is
+// recorded into the data the function stores, so "Review created" is in the row
+// from the start. `evidence` is folded into the new review's data — the Intake
+// puts the address there (data.address): what a person knows about the
+// property, kept with the acquisition as evidence for matching documents,
+// never a property column. Answers { ok, review } or { ok: false, error }.
+async function _acqCreateProspect(name, evidence) {
   try {
     const { data: { user } } = await db.auth.getUser();
-    if (!user?.id) { alert('Please sign in first.'); return; }
-    // P3 — a deal is a property from its first minute. begin_acquisition
-    // (migration 034) creates the PROSPECT property and its acquisition
-    // episode in ONE transaction and returns both ids; no half-created deal is
-    // possible, and a direct insert of either row is refused by the database.
-    // The activity entry is recorded into the data the function stores, so
-    // "Review created" is in the row from the start, as before.
+    if (!user?.id) return { ok: false, error: 'Please sign in first.' };
     const review = {
       id:         null,
       user_id:    user.id,
-      name:       name.trim(),
+      name:       String(name || '').trim(),
       status:     'draft',
-      data:       _AW().newReviewData(),
+      data:       Object.assign(_AW().newReviewData(), _acqIntakeEvidence(evidence)),
       created_at: null,
       updated_at: null,
     };
+    if (!review.name) return { ok: false, error: 'A property needs a name.' };
     _acqRecord(review, { type: 'review_created', summary: 'Review created — ' + review.name });
     const { data: created, error } = await db.rpc('begin_acquisition', { p_name: review.name, p_data: review.data });
     if (error) {
       const code = error.code || '';
       let hint = '';
-      if (code === '42P01') hint = '\n\nFix: run migrations/006_acquisition_reviews.sql in Supabase.';
-      else if (code === 'PGRST202' || code === '42883') hint = '\n\nFix: begin_acquisition is missing — apply migrations/034_property_at_new_acquisition.sql.';
-      else if (code === '42501' || code === 'PGRST301') hint = '\n\nFix: the database refused the call — check the acquisition policies and grants.';
+      if (code === '42P01') hint = ' Fix: run migrations/006_acquisition_reviews.sql in Supabase.';
+      else if (code === 'PGRST202' || code === '42883') hint = ' Fix: begin_acquisition is missing — apply migrations/034_property_at_new_acquisition.sql.';
+      else if (code === '42501' || code === 'PGRST301') hint = ' Fix: the database refused the call — check the acquisition policies and grants.';
       console.error('[acq] create error:', error.code, error.message);
-      alert('Could not create review.\n\n' + error.message + hint);
-      return;
+      return { ok: false, error: error.message + hint };
     }
     if (!created || !created.review_id || !created.property_id) {
       // The database answered without a record. Nothing was created that this
       // client can point at, so nothing is added here — a card with no row
       // behind it would be a review that can never save.
       console.error('[acq] create error: begin_acquisition returned no record', created);
-      alert('Could not create review.\n\nThe database did not return the new record.');
-      return;
+      return { ok: false, error: 'The database did not return the new record.' };
     }
     const id = created.review_id;
     review.id           = id;
@@ -35268,12 +35270,182 @@ async function createAcquisitionReview() {
     _acqRevs.set(id, review.updated_at);
     _acqReviews.unshift(review);
     _renderAcqSection(_acqReviews);
-    selectAcquisitionReview(id);
+    return { ok: true, review };
   } catch (e) {
-    console.error('[acq] createAcquisitionReview:', e.message);
-    alert('Could not create review.\n\n' + e.message);
+    console.error('[acq] _acqCreateProspect:', e.message);
+    return { ok: false, error: e.message };
   }
 }
+
+// What a person knows about a property when the deal begins, as review data.
+// Only the address for now, and only when one was given.
+function _acqIntakeEvidence(evidence) {
+  const out = {};
+  const address = evidence && typeof evidence.address === 'string' ? evidence.address.trim() : '';
+  if (address) out.address = address;
+  return out;
+}
+
+// "+ New Review" as it always was — a name asked for, the review opened — kept
+// as a callable path; the screen's control is "+ New Acquisition", the Intake.
+async function createAcquisitionReview() {
+  const name = prompt('Due diligence review name (e.g. "123 Main Street"):');
+  if (!name || !name.trim()) return;
+  const r = await _acqCreateProspect(name, null);
+  if (!r.ok) { alert('Could not create review.\n\n' + r.error); return; }
+  selectAcquisitionReview(r.review.id);
+}
+
+// ── Acquisition Intake (I-1): the front door — properties ────────────────────
+// Every acquisition starts here, one property or many. A person names each
+// property (and, when known, its address); each is created as a PROSPECT
+// through _acqCreateProspect, one after another, so a failure stops the
+// sequence at the row it hit and leaves the rows already created where they
+// are — Create again goes on from the row that failed. Nothing else is written:
+// no document, no property column, no tenant. The address is kept on the
+// review (data.address) as evidence for matching documents later; a property
+// record is written only when the deal is acquired (acquire_property), as
+// before. The rows live in this tab only.
+let _acqIntakeRows = [];        // the Properties step's rows
+let _acqIntakeBusy = false;     // one Create at a time
+let _acqIntakeSeq  = 0;
+
+function _acqIntakeNewRow() {
+  return { id: 'row-' + (++_acqIntakeSeq), name: '', address: '', state: 'new', error: null, reviewId: null };
+}
+
+// Open prospects: the acquisitions a document can still be filed into. A
+// converted review is a closed acquisition (P5-6A) and is not one.
+function _acqIntakeOpenProspects() {
+  return _acqReviews.filter(r => r && r.id && r.status !== 'converted' && !_acqFrozen(r));
+}
+
+function openAcquisitionIntake(opts) {
+  if (!_acqIntakeRows.some(r => r.state !== 'created')) _acqIntakeRows.push(_acqIntakeNewRow());
+  document.getElementById('portfolioDashboard').style.display = 'none';
+  document.getElementById('acqDetailPanel').style.display     = 'none';
+  document.getElementById('propertyBreadcrumb').style.display = 'none';
+  document.getElementById('propertyWorkspaceNavCard').style.display = 'none';
+  document.getElementById('mainWorkflow').style.display       = 'none';
+  document.getElementById('acqIntakePanel').style.display     = 'block';
+  _renderAcqIntake();
+  window.scrollTo({ top: 0 });
+  if (!(opts && opts.focus === false)) {
+    const first = document.querySelector('#acqIntakeRows input[data-field="name"]');
+    if (first) first.focus();
+  }
+}
+
+function closeAcquisitionIntake() {
+  document.getElementById('acqIntakePanel').style.display     = 'none';
+  document.getElementById('portfolioDashboard').style.display = 'block';
+  _renderAcqSection(_acqReviews);
+  const sec = document.getElementById('acqSection');
+  if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'start' });
+}
+
+function _renderAcqIntake() {
+  const rowsEl = document.getElementById('acqIntakeRows');
+  if (!rowsEl) return;
+  const open = _acqIntakeOpenProspects();
+  const countEl = document.getElementById('acqIntakeProspectCount');
+  if (countEl) countEl.textContent = String(open.length);
+  const listEl = document.getElementById('acqIntakeProspectList');
+  if (listEl) listEl.textContent = open.length ? '— ' + open.slice(0, 6).map(r => r.name).join(', ') + (open.length > 6 ? ', …' : '') : '';
+  const editable = _acqIntakeRows.filter(r => r.state !== 'created').length;
+  rowsEl.innerHTML = _acqIntakeRows.map(row => {
+    const id = esc(row.id);
+    if (row.state === 'created') {
+      return `<div class="acq-intake-row acq-intake-row-created" data-row="${id}" data-state="created">
+        <div class="acq-intake-created"><span class="acq-intake-check" aria-hidden="true">✓</span> <strong>${esc(row.name)}</strong>${row.address ? ` <span class="acq-intake-addr">${esc(row.address)}</span>` : ''}<span class="acq-intake-created-note">created as a prospect</span></div>
+        <button type="button" class="acq-btn acq-btn-nav acq-intake-open" onclick="selectAcquisitionReview('${esc(row.reviewId)}')">Open</button>
+      </div>`;
+    }
+    const busy = row.state === 'creating';
+    return `<div class="acq-intake-row${row.state === 'failed' ? ' acq-intake-row-failed' : ''}" data-row="${id}" data-state="${esc(row.state)}">
+        <label class="acq-intake-field"><span>Property name</span>
+          <input type="text" data-field="name" value="${esc(row.name)}" placeholder="e.g. Maple Plaza"${busy ? ' disabled' : ''} oninput="acqIntakeEdit('${id}', 'name', this.value)"></label>
+        <label class="acq-intake-field"><span>Address <em>(optional)</em></span>
+          <input type="text" data-field="address" value="${esc(row.address)}" placeholder="e.g. 120 Maple Ave, Springfield"${busy ? ' disabled' : ''} oninput="acqIntakeEdit('${id}', 'address', this.value)"></label>
+        <div class="acq-intake-row-side">
+          ${busy ? '<span class="acq-intake-row-status">Creating…</span>' : ''}
+          ${row.state === 'failed' ? `<span class="acq-intake-row-error" role="alert">${esc(row.error || 'Could not create this prospect.')}</span>` : ''}
+          ${!busy && editable > 1 ? `<button type="button" class="acq-btn acq-btn-nav acq-intake-remove" onclick="acqIntakeRemoveRow('${id}')" aria-label="Remove this row">×</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+  _acqIntakeUpdateCreateBtn();
+}
+
+function _acqIntakeUpdateCreateBtn() {
+  const btn = document.getElementById('acqIntakeCreateBtn');
+  if (!btn) return;
+  const n = _acqIntakeRows.filter(r => r.state !== 'created' && r.name.trim()).length;
+  btn.disabled = _acqIntakeBusy || n === 0;
+  btn.textContent = _acqIntakeBusy ? 'Creating…' : (n > 1 ? `Create ${n} prospects` : 'Create prospect');
+}
+
+// Typing updates the row in place; the list is not redrawn under the cursor.
+function acqIntakeEdit(rowId, field, value) {
+  const row = _acqIntakeRows.find(r => r.id === rowId);
+  if (!row || row.state === 'created' || row.state === 'creating') return;
+  if (field === 'name') row.name = value;
+  else if (field === 'address') row.address = value;
+  _acqIntakeUpdateCreateBtn();
+}
+function acqIntakeAddRow() {
+  _acqIntakeRows.push(_acqIntakeNewRow());
+  _renderAcqIntake();
+  const inputs = document.querySelectorAll('#acqIntakeRows input[data-field="name"]');
+  const last = inputs[inputs.length - 1];
+  if (last) last.focus();
+}
+function acqIntakeRemoveRow(rowId) {
+  const i = _acqIntakeRows.findIndex(r => r.id === rowId);
+  if (i === -1 || _acqIntakeRows[i].state === 'created' || _acqIntakeRows[i].state === 'creating') return;
+  _acqIntakeRows.splice(i, 1);
+  if (!_acqIntakeRows.some(r => r.state !== 'created')) _acqIntakeRows.push(_acqIntakeNewRow());
+  _renderAcqIntake();
+}
+
+// One after another, through begin_acquisition. A failure stops here: the rows
+// already created stay created, the row that failed keeps what was typed and
+// says why, and the rows after it are untouched — Create again continues from
+// it. A blank row is ignored; an address without a name is asked for a name.
+async function acqIntakeCreate() {
+  if (_acqIntakeBusy) return;
+  const status  = document.getElementById('acqIntakeStatus');
+  const pending = _acqIntakeRows.filter(r => r.state !== 'created');
+  const unnamed = pending.filter(r => !r.name.trim() && r.address.trim());
+  if (unnamed.length) {
+    unnamed.forEach(r => { r.state = 'failed'; r.error = 'Name this property, or clear its address.'; });
+    _renderAcqIntake();
+    if (status) status.textContent = 'Every property needs a name.';
+    return;
+  }
+  const named = pending.filter(r => r.name.trim());
+  if (!named.length) { if (status) status.textContent = 'Name at least one property.'; return; }
+  _acqIntakeBusy = true;
+  let created = 0, stoppedAt = null;
+  for (const row of named) {
+    row.state = 'creating'; row.error = null;
+    _renderAcqIntake();
+    const r = await _acqCreateProspect(row.name.trim(), { address: row.address.trim() || null });
+    if (!r.ok) { row.state = 'failed'; row.error = r.error; stoppedAt = row; break; }
+    row.state = 'created'; row.reviewId = r.review.id; created++;
+  }
+  _acqIntakeBusy = false;
+  if (created && !stoppedAt && !_acqIntakeRows.some(r => r.state !== 'created')) _acqIntakeRows.push(_acqIntakeNewRow());
+  _renderAcqIntake();
+  if (status) {
+    status.textContent = stoppedAt
+      ? `Created ${created} of ${named.length}. Stopped at "${stoppedAt.name.trim()}": ${stoppedAt.error} `
+        + (created ? `The ${created === 1 ? 'one' : created} already created ${created === 1 ? 'is' : 'are'} kept. ` : '')
+        + 'Fix the row and press Create again to go on.'
+      : `Created ${created} prospect${created === 1 ? '' : 's'}. Each is an acquisition you can open now.`;
+  }
+}
+// ── end of Acquisition Intake (I-1) ──────────────────────────────────────────
 
 function selectAcquisitionReview(id) {
   const review = _acqReviews.find(r => r.id === id);
