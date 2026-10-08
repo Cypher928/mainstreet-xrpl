@@ -35339,6 +35339,7 @@ function openAcquisitionIntake(opts) {
   _renderAcqIntake();
   _acqIntakeDropHandlers();   // I-2: the Documents step's drop zone, armed once
   _renderAcqIntakeDocs();     // I-2: whatever is held in this tab, as it stands
+  if (_acqIntakeHeld.length) { _acqIntakeEnsureProfiles(); _acqIntakeRecompute(); }   // I-3b: and what the evidence says about it
   window.scrollTo({ top: 0 });
   if (!(opts && opts.focus === false)) {
     const first = document.querySelector('#acqIntakeRows input[data-field="name"]');
@@ -35447,6 +35448,7 @@ async function acqIntakeCreate() {
   _acqIntakeBusy = false;
   if (created && !stoppedAt && !_acqIntakeRows.some(r => r.state !== 'created')) _acqIntakeRows.push(_acqIntakeNewRow());
   _renderAcqIntake();
+  if (created) _acqIntakeProfilesChanged();   // I-3b: a new prospect is a new candidate for every held file
   if (status) {
     status.textContent = stoppedAt
       ? `Created ${created} of ${named.length}. Stopped at "${stoppedAt.name.trim()}": ${stoppedAt.error} `
@@ -35496,7 +35498,8 @@ function acqIntakeAddFiles(fileList) {
     _acqIntakeHeld.push(item);
     added++;
   }
-  _renderAcqIntakeDocs();
+  _acqIntakeEnsureProfiles();   // I-3b: what is known about each open prospect, read once
+  _acqIntakeRecompute();
   _acqIntakeSyncUnload();
   if (added) _acqIntakeReadNext();
 }
@@ -35519,7 +35522,7 @@ function _acqIntakeReadNext() {
     .then(() => {
       _acqIntakeReader.running = false;
       if (_acqIntakeReader.current === next.itemId) _acqIntakeReader.current = null;
-      _renderAcqIntakeDocs();
+      _acqIntakeRecompute();   // I-3b: what the evidence says now, for every held file
       _acqIntakeSyncUnload();
       _acqIntakeReadNext();
     });
@@ -35591,7 +35594,7 @@ function _acqIntakeMove(itemId, event, info) {
   const AI = _ACQI(), item = _acqIntakeItem(itemId);
   if (!AI || !item) return null;
   try { AI.transition(item, event, info); } catch (e) { console.warn('[acq-intake]', event, item.name, e && e.message); return null; }
-  _renderAcqIntakeDocs();
+  _acqIntakeRecompute();   // I-3b: a type change can change whether a document may cover several properties
   _acqIntakeSyncUnload();
   return item;
 }
@@ -35605,7 +35608,7 @@ function acqIntakeRemove(itemId) {
   if (i === -1) return;
   _acqIntakeHeld[i].removed = true;       // an in-flight read of it is discarded when it lands
   _acqIntakeHeld.splice(i, 1);
-  _renderAcqIntakeDocs();
+  _acqIntakeRecompute();
   _acqIntakeSyncUnload();
 }
 function acqIntakeClearHeld() {
@@ -35613,7 +35616,7 @@ function acqIntakeClearHeld() {
   _acqIntakeHeld.forEach(x => { x.removed = true; });
   _acqIntakeHeld = [];
   _acqIntakeRefused = [];
-  _renderAcqIntakeDocs();
+  _acqIntakeRecompute();
   _acqIntakeSyncUnload();
 }
 function acqIntakeDismissRefused(i) { _acqIntakeRefused.splice(i, 1); _renderAcqIntakeDocs(); }
@@ -35636,15 +35639,17 @@ function _acqIntakeDocHtml(item) {
           <option value="">Choose a type…</option>${AI.picksFor(item).map(t => `<option value="${esc(t)}"${item.type.value === t ? ' selected' : ''}>${esc(labelOf(t))}</option>`).join('')}
         </select></label>` : '';
   const canRetry = settled && item.type.source !== 'human';
+  const selectable = settled && !item.assignment && _acqIntakeProfiles.length > 0;   // I-3b: bulk human assignment
   return `<div class="acq-intake-doc acq-intake-doc-${esc(item.state)}" data-item="${id}" data-state="${esc(item.state)}">
       <div class="acq-intake-doc-main">
-        <div class="acq-intake-doc-name">${esc(item.name)} <span class="acq-intake-doc-size">${esc(_acqDocSize(item.bytes))}</span></div>
+        <div class="acq-intake-doc-name">${selectable ? `<input type="checkbox" class="acq-intake-doc-select" data-select aria-label="Select ${esc(item.name)} for assignment" ${item.selected ? 'checked' : ''} onchange="acqIntakeToggleSelect('${id}', this.checked)"> ` : ''}${esc(item.name)} <span class="acq-intake-doc-size">${esc(_acqDocSize(item.bytes))}</span></div>
         <div class="acq-intake-doc-type"><strong>${esc(d.label)}</strong>${d.badge ? ` <span class="acq-intake-badge">${esc(d.badge)}</span>` : ''}${d.note ? ` <span class="acq-intake-doc-note">${esc(d.note)}</span>` : ''}</div>
         ${hints.length ? `<div class="acq-intake-doc-hints">${esc(hints.join(' · '))}</div>` : ''}
         ${item.lane && item.state !== 'left_out' ? `<div class="acq-intake-doc-lane">${esc(AI.laneLabel(item.lane))}</div>` : ''}
         ${warns.map(w => `<div class="acq-intake-doc-warn">${esc(w)}</div>`).join('')}
         ${item.state !== 'read_failed' && item.error ? `<div class="acq-intake-doc-error">${esc(item.error)}</div>` : ''}
         ${picker}
+        ${_acqIntakePropertyHtml(item)}
       </div>
       <div class="acq-intake-doc-actions">
         ${item.state === 'classified' && !item.picking ? `<button type="button" class="acq-btn acq-btn-nav acq-intake-doc-change" onclick="acqIntakePick('${id}')">Change type</button>` : ''}
@@ -35675,6 +35680,8 @@ function _renderAcqIntakeDocs() {
   const actions = document.getElementById('acqIntakeDocActions');
   if (actions) actions.style.display = (_acqIntakeHeld.length || _acqIntakeRefused.length) ? 'flex' : 'none';
   _renderAcqIntakeReadStatus();
+  _renderAcqIntakeStrip();   // I-3b
+  _renderAcqIntakeBulk();    // I-3b
 }
 function _renderAcqIntakeReadStatus() {
   const el = document.getElementById('acqIntakeReadStatus');
@@ -35705,6 +35712,230 @@ function _acqIntakeSyncUnload() {
   const want = _acqIntakeHeld.some(i => i.state !== 'left_out');
   if (want && !_acqIntakeUnloadArmed) { window.addEventListener('beforeunload', _acqIntakeBeforeUnload); _acqIntakeUnloadArmed = true; }
   else if (!want && _acqIntakeUnloadArmed) { window.removeEventListener('beforeunload', _acqIntakeBeforeUnload); _acqIntakeUnloadArmed = false; }
+}
+// ── Acquisition Intake (I-3b): which property — the proposal on screen ───────
+// acquisition-assignment.js decides (I-3a); this is the screen for it. Every
+// read row shows what the evidence says — proposed, candidates, several, or
+// none — with the reasons and the pages they came from, and NOTHING is
+// preselected: a person accepts, chooses, ticks, clears, or leaves out, and
+// that is the only way an assignment is set, always through the module's own
+// validator. Recompute runs whenever the evidence changes (a file read, a
+// prospect created, an assignment made — siblings lend clues) and never touches
+// an assignment. Still nothing is written: I-4 is the first step that files.
+// File names are never evidence; the module ignores them.
+function _ACQA() { return window.AcquisitionAssignment; }
+function _acqIntakeDeps() { const AL = window.AcquisitionLeasehold; return { compareTenantNames: AL && AL.compareTenantNames }; }
+let _acqIntakeProfiles = [];           // AcquisitionAssignment.profileOf(...) per open prospect — read-only
+let _acqIntakeProfilesKey = '';        // which prospects the profiles describe
+let _acqIntakeProfilesLoading = false;
+let _acqIntakeDecisions = {};          // itemId → the module's decision, verbatim
+let _acqIntakeTallies = {};            // itemId → the module's ranked tallies (for the explanation)
+let _acqIntakeDups = [];               // near-duplicates in the batch
+let _acqIntakeBulkTarget = '';
+
+function _acqIntakeProspectKey() { return _acqIntakeOpenProspects().map(r => r.id).sort().join('|'); }
+
+// Profiles from what is already in the browser (the review rows and the
+// cached families and documents), then the families and documents of each
+// prospect read once through the existing loaders — RLS-scoped selects, into
+// their existing caches. Reads only.
+function _acqIntakeQuickProfiles() {
+  const AA = _ACQA(); if (!AA) return [];
+  const deps = _acqIntakeDeps();
+  return _acqIntakeOpenProspects().map(r => AA.profileOf(r, _acqFamilyRows(r.id), _acqDocRows(r.id), deps));
+}
+function _acqIntakeEnsureProfiles() {
+  const key = _acqIntakeProspectKey();
+  if (key === _acqIntakeProfilesKey) return;
+  _acqIntakeProfilesKey = key;
+  _acqIntakeProfiles = _acqIntakeQuickProfiles();
+  if (key) _acqIntakeLoadProfiles(key);
+}
+async function _acqIntakeLoadProfiles(key) {
+  if (_acqIntakeProfilesLoading) return;
+  _acqIntakeProfilesLoading = true;
+  try {
+    for (const r of _acqIntakeOpenProspects()) {
+      await _acqLoadFamilies(r.id);
+      await _acqLoadDocuments(r.id);
+    }
+  } catch (e) {
+    console.warn('[acq-intake] profiles:', e && e.message);
+  } finally {
+    _acqIntakeProfilesLoading = false;
+  }
+  if (_acqIntakeProspectKey() !== key) { _acqIntakeProfilesKey = ''; _acqIntakeEnsureProfiles(); return; }
+  _acqIntakeProfiles = _acqIntakeQuickProfiles();
+  _acqIntakeRecompute();
+}
+function _acqIntakeProfilesChanged() { _acqIntakeProfilesKey = ''; _acqIntakeEnsureProfiles(); _acqIntakeRecompute(); }
+
+// What the evidence says — never what a person decided. The module's answer is
+// stored as it comes; nothing here re-ranks, re-labels or preselects.
+function _acqIntakeRecompute() {
+  const AA = _ACQA();
+  if (!AA) { _renderAcqIntakeDocs(); return; }
+  const deps = _acqIntakeDeps();
+  const r = AA.recompute(_acqIntakeHeld, _acqIntakeProfiles, deps);
+  _acqIntakeDecisions = r.decisions;
+  _acqIntakeTallies = r.tallies;
+  _acqIntakeDups = AA.nearDuplicates(_acqIntakeHeld, deps);
+  _renderAcqIntakeDocs();
+}
+
+// The ONE place an assignment is set: by a person, validated by the module
+// (known prospects only; several only when the decision allowed it).
+function _acqIntakeSetAssignment(item, reviewIds) {
+  const AA = _ACQA();
+  if (!AA || !item) return false;
+  const verdict = AA.assign(_acqIntakeDecisions[item.itemId] || null, reviewIds, _acqIntakeProfiles, new Date().toISOString());
+  if (!verdict.ok) { showToast(verdict.error, { color: '#92400e', textColor: '#fef3c7' }); return false; }
+  item.assignment = verdict.assignment;
+  item.selected = false;
+  return true;
+}
+function acqIntakeAcceptProposal(itemId) {
+  const item = _acqIntakeItem(itemId), d = _acqIntakeDecisions[itemId];
+  if (!item || !d || !d.proposal) return;
+  if (_acqIntakeSetAssignment(item, [d.proposal.reviewId])) _acqIntakeRecompute();
+}
+function acqIntakeAssign(itemId, reviewId) {
+  const item = _acqIntakeItem(itemId);
+  if (!item || !reviewId) return;
+  if (_acqIntakeSetAssignment(item, [reviewId])) _acqIntakeRecompute(); else _renderAcqIntakeDocs();
+}
+function acqIntakeAssignChecked(itemId) {
+  const item = _acqIntakeItem(itemId);
+  if (!item) return;
+  const ids = Array.from(document.querySelectorAll(`.acq-intake-doc[data-item="${itemId}"] input[data-multi]:checked`)).map(i => i.value);
+  if (!ids.length) { showToast('Tick at least one property.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  if (_acqIntakeSetAssignment(item, ids)) _acqIntakeRecompute(); else _renderAcqIntakeDocs();
+}
+function acqIntakeClearAssignment(itemId) {
+  const item = _acqIntakeItem(itemId);
+  if (!item) return;
+  item.assignment = null;
+  _acqIntakeRecompute();
+}
+function acqIntakeToggleEvidence(itemId) { const item = _acqIntakeItem(itemId); if (!item) return; item.showEvidence = !item.showEvidence; _renderAcqIntakeDocs(); }
+function acqIntakeToggleSelect(itemId, on) { const item = _acqIntakeItem(itemId); if (!item) return; item.selected = !!on; _renderAcqIntakeBulk(); }
+function acqIntakeBulkTarget(v) { _acqIntakeBulkTarget = v || ''; _renderAcqIntakeBulk(); }
+// Several files, one property, one human act — each still validated one by one.
+function acqIntakeAssignSelected() {
+  const target = _acqIntakeBulkTarget;
+  if (!target) { showToast('Choose the property first.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const picked = _acqIntakeHeld.filter(i => i.selected && i.state !== 'left_out');
+  if (!picked.length) return;
+  let n = 0;
+  picked.forEach(i => { if (_acqIntakeSetAssignment(i, [target])) n++; });
+  _acqIntakeBulkTarget = '';
+  _acqIntakeRecompute();
+  if (n) showToast(n + ' file' + (n === 1 ? '' : 's') + ' assigned by you. Nothing is filed yet.', {});
+}
+
+// A picker that preselects nothing: the first option is always empty.
+function _acqIntakePropertyPicker(itemId, decision, label) {
+  const first = (decision && decision.candidates ? decision.candidates : []).map(r => r.reviewId);
+  const rest = _acqIntakeProfiles.map(p => p.reviewId).filter(id => first.indexOf(id) === -1)
+    .sort((a, b) => _acqIntakeProfileName(a).localeCompare(_acqIntakeProfileName(b)));
+  const opts = first.concat(rest).map(rid => `<option value="${esc(rid)}">${esc(_acqIntakeProfileName(rid))}</option>`).join('');
+  return `<label class="acq-intake-prop-pick"><span>${esc(label)}</span>
+      <select data-prop onchange="acqIntakeAssign('${esc(itemId)}', this.value)"><option value="">Choose a property…</option>${opts}</select></label>`;
+}
+function _acqIntakeProfileName(reviewId) { const p = _acqIntakeProfiles.find(x => x.reviewId === reviewId); return p ? p.name : 'a prospect'; }
+
+// The property block of one row: the module's decision, in the module's words.
+function _acqIntakePropertyHtml(item) {
+  const AA = _ACQA();
+  if (!AA) return '';
+  const settled = item.state === 'classified' || item.state === 'needs_type' || item.state === 'read_failed';
+  if (!settled) return '';
+  const id = esc(item.itemId);
+  if (!_acqIntakeProfiles.length) {
+    return `<div class="acq-intake-prop" data-prop-state="no_prospects"><div class="acq-intake-prop-head">No open prospects yet — name the property in the Properties step, then say where this file belongs.</div></div>`;
+  }
+  const d = _acqIntakeDecisions[item.itemId];
+  if (!d) return '';
+  const x = AA.explain(d, _acqIntakeTallies[item.itemId] || [], _acqIntakeProfiles);
+  const a = item.assignment;
+  const nameOf = (rid) => esc(_acqIntakeProfileName(rid));
+  const dups = _acqIntakeDups.filter(p => p.a === item.itemId || p.b === item.itemId);
+  const li = (arr) => arr.map(s => `<li>${esc(s)}</li>`).join('');
+  // The block's state is the module's state, verbatim — or "assigned" once a person has spoken.
+  const cls = a ? 'assigned' : d.state;
+  let head = '', body = '', controls = '';
+  if (a) {
+    const disagree = d.proposal && !(a.reviewIds.length === 1 && a.reviewIds[0] === d.proposal.reviewId);
+    head = `<div class="acq-intake-prop-head"><strong>Assigned to ${a.reviewIds.map(nameOf).join(' and ')}</strong> <span class="acq-intake-prop-by">${a.fromProposal ? 'by you, as proposed' : 'by you'}</span></div>`;
+    if (disagree) body += `<div class="acq-intake-prop-note acq-intake-prop-stands">The evidence points at ${nameOf(d.proposal.reviewId)} — your choice stands.</div>`;
+    controls = `<button type="button" class="acq-btn acq-btn-nav acq-intake-prop-clear" onclick="acqIntakeClearAssignment('${id}')">Clear</button>`;
+  } else if (d.state === 'proposed') {
+    head = `<div class="acq-intake-prop-head"><strong>${esc(x.headline)}</strong></div><ul class="acq-intake-reasons">${li(x.reasons)}</ul>`;
+    controls = `<button type="button" class="acq-btn acq-btn-primary acq-intake-prop-accept" onclick="acqIntakeAcceptProposal('${id}')">Accept ${nameOf(d.proposal.reviewId)}</button>`
+             + _acqIntakePropertyPicker(item.itemId, d, 'Or choose another');
+  } else if (d.state === 'several') {
+    head = `<div class="acq-intake-prop-head"><strong>${esc(x.headline)}</strong></div>`;
+    const strong = d.candidates.filter(r => r.strong > 0);
+    body += `<div class="acq-intake-prop-multi">${strong.map(r => `<label><input type="checkbox" data-multi value="${esc(r.reviewId)}"> ${nameOf(r.reviewId)}</label>`).join('')}
+        <button type="button" class="acq-btn acq-btn-primary acq-intake-prop-multi-go" onclick="acqIntakeAssignChecked('${id}')">Assign to the ticked</button></div>`;
+    controls = _acqIntakePropertyPicker(item.itemId, d, 'Or one property');
+  } else if (d.state === 'candidates') {
+    head = `<div class="acq-intake-prop-head"><strong>${esc(x.headline)}</strong></div>`;
+    body += `<ul class="acq-intake-cands">${d.candidates.slice(0, 4).map(r => { const o = x.others.find(z => z.reviewId === r.reviewId) || { reasons: [] }; return `<li><strong>${nameOf(r.reviewId)}</strong> — ${esc(o.reasons.join(' '))}</li>`; }).join('')}</ul>`;
+    controls = _acqIntakePropertyPicker(item.itemId, d, 'Which is it?');
+  } else {
+    head = `<div class="acq-intake-prop-head"><strong>${esc(x.headline)}</strong></div>`;
+    controls = _acqIntakePropertyPicker(item.itemId, d, 'Say where it belongs');
+  }
+  if (x.notes.length) body += `<ul class="acq-intake-prop-notes">${li(x.notes)}</ul>`;
+  dups.forEach(p => { body += `<div class="acq-intake-doc-warn">${esc(p.text)}</div>`; });
+  const target = a ? a.reviewIds[0] : (d.proposal ? d.proposal.reviewId : null);
+  if (target) {
+    const prof = _acqIntakeProfiles.find(p => p.reviewId === target);
+    AA.filedConflicts(item, prof, _acqIntakeDeps()).forEach(c => { body += `<div class="acq-intake-doc-warn">${esc(c.text)}</div>`; });
+  }
+  const others = x.others.filter(o => !(d.proposal && o.reviewId === d.proposal.reviewId));
+  const why = `<button type="button" class="acq-intake-prop-why" onclick="acqIntakeToggleEvidence('${id}')">${item.showEvidence ? 'Hide the evidence' : 'Why? Show the evidence'}</button>`
+    + (item.showEvidence ? `<ul class="acq-intake-others">${others.map(o => `<li><strong>${esc(o.name)}</strong> (${esc(o.strength)}): ${esc(o.reasons.join(' '))}</li>`).join('')}</ul>` : '');
+  return `<div class="acq-intake-prop acq-intake-prop-${esc(cls)}" data-prop-state="${esc(cls)}">${head}${body}<div class="acq-intake-prop-controls">${controls}</div>${why}</div>`;
+}
+
+// Above the list: where the batch stands, by property.
+function _renderAcqIntakeStrip() {
+  const el = document.getElementById('acqIntakeByProperty');
+  if (!el) return;
+  const live = _acqIntakeHeld.filter(i => i.state === 'classified' || i.state === 'needs_type' || i.state === 'read_failed');
+  if (!live.length || !_acqIntakeProfiles.length) { el.textContent = ''; return; }
+  const per = {};
+  _acqIntakeProfiles.forEach(p => { per[p.reviewId] = { name: p.name, assigned: 0, proposed: 0 }; });
+  let needPerson = 0, several = 0, none = 0;
+  live.forEach(i => {
+    if (i.assignment) { i.assignment.reviewIds.forEach(rid => { if (per[rid]) per[rid].assigned++; }); return; }
+    const d = _acqIntakeDecisions[i.itemId]; if (!d) return;
+    if (d.state === 'proposed') { if (per[d.proposal.reviewId]) per[d.proposal.reviewId].proposed++; }
+    else if (d.state === 'several') several++;
+    else if (d.state === 'candidates') needPerson++;
+    else none++;
+  });
+  const parts = Object.values(per).filter(p => p.assigned || p.proposed)
+    .map(p => p.name + ': ' + [p.assigned ? p.assigned + ' assigned' : '', p.proposed ? p.proposed + ' proposed' : ''].filter(Boolean).join(', '));
+  if (needPerson) parts.push(needPerson + ' need a person');
+  if (several) parts.push(several + ' mention several');
+  if (none) parts.push(none + ' no property');
+  el.textContent = parts.join(' · ');
+}
+// Below the strip: the bulk human act, shown only when files are ticked.
+function _renderAcqIntakeBulk() {
+  const el = document.getElementById('acqIntakeBulk');
+  if (!el) return;
+  const n = _acqIntakeHeld.filter(i => i.selected && !i.assignment && i.state !== 'left_out').length;
+  if (!n || !_acqIntakeProfiles.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const opts = _acqIntakeProfiles.slice().sort((a, b) => a.name.localeCompare(b.name))
+    .map(p => `<option value="${esc(p.reviewId)}"${_acqIntakeBulkTarget === p.reviewId ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  el.style.display = 'flex';
+  el.innerHTML = `<span>${n} file${n === 1 ? '' : 's'} ticked — assign to</span>
+    <select id="acqIntakeBulkSelect" onchange="acqIntakeBulkTarget(this.value)"><option value="">Choose a property…</option>${opts}</select>
+    <button type="button" class="acq-btn acq-btn-primary" id="acqIntakeBulkGo" onclick="acqIntakeAssignSelected()"${_acqIntakeBulkTarget ? '' : ' disabled'}>Assign</button>`;
 }
 // ── end of Acquisition Intake (I-1) ──────────────────────────────────────────
 

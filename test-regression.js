@@ -541,6 +541,11 @@ const SUITES = [
   // the one-hop sibling clue, the validator a person's choice passes through,
   // the words the screen shows. Pure; proposes only — a person assigns.
   { label: 'Acquisition Intake — property proposal rules (pure)', cmd: 'node test-acquisition-assignment.js' },
+  // Acquisition Intake I-3b — the proposal on screen: ten properties, sixty
+  // documents; nothing preselected; a person accepts, chooses, ticks or clears
+  // through the module's validator; recompute never touches an assignment;
+  // still nothing is written.
+  { label: 'Acquisition Intake — property proposal walk (e2e, 10 × 60)', cmd: 'node test-e2e-acquisition-intake-assignment.js' },
   // §4l — one tenant row per leasehold. Found on the Pilot: a correction made
   // in the Lease Terms panel (65,000 → 67,000) never reached the Rent Roll,
   // which read one raw row per uploaded FILE. The analysis, the Rent Roll and

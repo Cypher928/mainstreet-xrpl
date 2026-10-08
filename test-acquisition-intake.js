@@ -268,6 +268,77 @@ t('the I-2 suites are registered', () => {
   ok(R.includes("cmd: 'node test-acquisition-intake-module.js'") && R.includes("cmd: 'node test-e2e-acquisition-intake-documents.js'"));
 });
 
+sec('I-3b: the module decides, the screen shows it, a person assigns');
+
+const I3B_START = '// ── Acquisition Intake (I-3b): which property — the proposal on screen ──';
+const I3B = stripComments(RAW.slice(RAW.indexOf(I3B_START), RAW.indexOf(END)));
+const INTAKE_BLOCK = stripComments(RAW.slice(RAW.indexOf(START), RAW.indexOf(END)));
+
+t('the screen consumes the module\'s decision verbatim: recompute stores it, nothing re-ranks or re-labels, and no state string is minted here', () => {
+  ok(RAW.indexOf(I3B_START) > -1 && I3B.length > 3000, 'the I-3b block is missing or shorter than expected');
+  const rc = fnBody(S, '_acqIntakeRecompute');
+  ok(rc.includes('const r = AA.recompute(_acqIntakeHeld, _acqIntakeProfiles, deps);') && rc.includes('_acqIntakeDecisions = r.decisions;') && rc.includes('_acqIntakeTallies = r.tallies;'), 'the decision is not the module\'s');
+  ok(rc.includes('_acqIntakeDups = AA.nearDuplicates(_acqIntakeHeld, deps);'));
+  ok(!/\.assignment/.test(rc), 'recompute touches an assignment');
+  ok(!/\.(state|proposal|candidates|multiAllowed)\s*=[^=]/.test(I3B), 'the screen rewrites a decision');
+  // The only place a state word may appear outside a `d.state === '…'` comparison is the CSS idiom
+  // that hides the empty bulk bar — `style.display = 'none'` — which is not a decision.
+  const I3B_NO_CSS = I3B.replace(/style\.display = 'none'/g, 'style.display = HIDDEN');
+  ok(!/(?<!=== )'(proposed|candidates|several|none)'/.test(I3B_NO_CSS), 'a decision state is minted on the screen rather than read from the module');
+  ok(I3B.includes("const cls = a ? 'assigned' : d.state;"), 'the block state is not the module\'s state');
+});
+
+t('an assignment is set in exactly one place, by a person, through the module\'s validator; cleared in one', () => {
+  const writes = INTAKE_BLOCK.match(/\.assignment\s*=[^=]/g) || [];
+  eq(writes.length, 2, 'assignment writes in the Intake block: ' + JSON.stringify(writes));
+  const set = fnBody(S, '_acqIntakeSetAssignment');
+  ok(set.includes('const verdict = AA.assign(_acqIntakeDecisions[item.itemId] || null, reviewIds, _acqIntakeProfiles, new Date().toISOString());'), 'the validator is not the module\'s');
+  ok(set.includes('if (!verdict.ok) {') && set.includes('return false;') && set.includes('item.assignment = verdict.assignment;'), 'a refused choice is applied');
+  for (const fn of ['acqIntakeAcceptProposal', 'acqIntakeAssign', 'acqIntakeAssignChecked', 'acqIntakeAssignSelected']) ok(fnBody(S, fn).includes('_acqIntakeSetAssignment('), fn + ' goes around the setter');
+  ok(fnBody(S, 'acqIntakeClearAssignment').includes('item.assignment = null;'), 'Clear does not clear');
+  ok(/by: 'human'/.test(fs.readFileSync(path.join(ROOT, 'acquisition-assignment.js'), 'utf8')) && !/by: 'human'/.test(I3B), 'the screen mints an assignment itself');
+});
+
+t('nothing is preselected: every picker starts empty; Accept only on a proposal; tick-boxes only where several is allowed', () => {
+  const picker = fnBody(S, '_acqIntakePropertyPicker');
+  ok(picker.includes('<option value="">Choose a property…</option>'), 'the picker has no empty first option');
+  ok(!/ selected/.test(picker), 'the picker preselects');
+  const html = fnBody(S, '_acqIntakePropertyHtml');
+  eq((I3B.match(/data-multi value=/g) || []).length, 1, 'tick-boxes are drawn in more than one place');
+  const several = html.slice(html.indexOf("d.state === 'several'"), html.indexOf("d.state === 'candidates'"));
+  ok(several.includes('data-multi value=') && !html.slice(0, html.indexOf("d.state === 'several'")).includes('data-multi'), 'tick-boxes outside the several branch');
+  ok(several.includes('const strong = d.candidates.filter(r => r.strong > 0);'), 'tick-boxes for more than the strongly named');
+  eq((I3B.match(/acq-intake-prop-accept/g) || []).length, 1, 'Accept is drawn in more than one place');
+  const proposed = html.slice(html.indexOf("d.state === 'proposed'"), html.indexOf("d.state === 'several'"));
+  ok(proposed.includes('acq-intake-prop-accept'), 'Accept is not in the proposed branch');
+});
+
+t('the evidence stays visible: reasons, candidates with theirs, notes, duplicates, filed conflicts, and Why? for the others', () => {
+  const html = fnBody(S, '_acqIntakePropertyHtml');
+  ok(html.includes('const x = AA.explain(d, _acqIntakeTallies[item.itemId] || [], _acqIntakeProfiles);'), 'the words are not the module\'s');
+  for (const cls of ['acq-intake-reasons', 'acq-intake-cands', 'acq-intake-prop-notes', 'acq-intake-others', 'acq-intake-prop-why']) ok(html.includes(cls), cls + ' is not drawn');
+  ok(html.includes('AA.filedConflicts(item, prof, _acqIntakeDeps())'), 'what the prospect already holds is not shown');
+  ok(html.includes('_acqIntakeDups.filter(p => p.a === item.itemId || p.b === item.itemId)'), 'near-duplicates are not shown');
+  ok(html.includes('your choice stands'), 'an override hides the evidence');
+  ok(html.includes('No open prospects yet — name the property in the Properties step, then say where this file belongs.'), 'no prospects says nothing');
+  ok(/id="acqIntakeByProperty"/.test(H) && /id="acqIntakeBulk"/.test(H), 'the strip or the bulk bar is missing');
+});
+
+t('recompute runs after every change in evidence — a read, a transition, a new prospect, an assignment — and profiles are read-only', () => {
+  ok(/_acqIntakeRecompute\(\);[^\n]*\n\s*_acqIntakeSyncUnload\(\);\s*\n\s*_acqIntakeReadNext\(\);/.test(fnBody(S, '_acqIntakeReadNext')), 'a landed read does not recompute');
+  ok(fnBody(S, '_acqIntakeMove').includes('_acqIntakeRecompute();'), 'a transition does not recompute');
+  const add = fnBody(S, 'acqIntakeAddFiles');
+  ok(add.includes('_acqIntakeEnsureProfiles();') && add.includes('_acqIntakeRecompute();'), 'a drop does not recompute');
+  for (const fn of ['acqIntakeRemove', 'acqIntakeClearHeld']) ok(fnBody(S, fn).includes('_acqIntakeRecompute();'), fn);
+  ok(fnBody(S, 'openAcquisitionIntake').includes('if (_acqIntakeHeld.length) { _acqIntakeEnsureProfiles(); _acqIntakeRecompute(); }'), 'opening the Intake does not recompute what is held');
+  ok(fnBody(S, 'acqIntakeCreate').includes('if (created) _acqIntakeProfilesChanged();'), 'a new prospect does not refresh the profiles');
+  for (const fn of ['acqIntakeAcceptProposal', 'acqIntakeAssign', 'acqIntakeAssignChecked', 'acqIntakeClearAssignment', 'acqIntakeAssignSelected']) ok(fnBody(S, fn).includes('_acqIntakeRecompute()'), fn + ' does not recompute');
+  const load = fnBody(S, '_acqIntakeLoadProfiles');
+  ok(load.includes('await _acqLoadFamilies(r.id);') && load.includes('await _acqLoadDocuments(r.id);'), 'profiles are not read through the existing loaders');
+  ok(!/\.insert\(|\.upsert\(|\.update\(|\.delete\(|_acqSaveDocument|_acqSaveFamily|_acqSaveReview/.test(I3B), 'the property block writes');
+  ok(R.includes("cmd: 'node test-e2e-acquisition-intake-assignment.js'"), 'the 10 × 60 walk is not registered');
+});
+
 console.log('\n' + '─'.repeat(64));
 console.log(`RESULT: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILED:'); failures.forEach(f => console.log('  - ' + f)); }
