@@ -687,6 +687,9 @@ async function claudeFetch(body, opts = {}) {
     try { parsed = await resp.json(); detail = parsed?.error?.message || parsed?.message || detail; } catch {}
     const err = new Error(detail);
     err.status = resp.status;
+    // A 429 carries the server's own window (api/_rate-limit.js sends it as
+    // `retryAfter`, in seconds) so a caller can wait exactly that long.
+    err.retryAfterSec = parsed && typeof parsed.retryAfter === 'number' ? parsed.retryAfter : null;
     err.upstreamTimeout = resp.status === 504 || parsed?.timeout === true;
     // The server names the cause when it can tell them apart — `unparsable` is
     // not something a status code can say. Carried as-is; the vocabulary is
@@ -31851,7 +31854,11 @@ async function _acqSupersedePrevious(reviewId, fileName, intakeId, newDocId) {
 // A failure here is not a failure of the intake: the document stays on file,
 // unclassified, and a person can say what it is. Classification is an
 // improvement to a preserved source, never a gate on preserving it.
-async function _acqClassifyDocument(text, fileName) {
+// `opts.rethrow === true` (the Intake's reader, I-2) rethrows ONLY a 429, so
+// the one reader can pause for the interval the server named instead of
+// marking the file unclassified; every other error, for every caller, is still
+// swallowed into null. Existing callers pass two arguments and are unchanged.
+async function _acqClassifyDocument(text, fileName, opts) {
   const body = String(text || '').trim();
   if (body.length < 40) return null;
   try {
@@ -31868,6 +31875,7 @@ async function _acqClassifyDocument(text, fileName) {
     if (!data || !data.docType) return null;
     return data;
   } catch (e) {
+    if (opts && opts.rethrow === true && e && e.status === 429) throw e;
     console.warn('[acq] classification failed:', fileName, e && e.message);
     return null;
   }
@@ -35329,6 +35337,8 @@ function openAcquisitionIntake(opts) {
   document.getElementById('mainWorkflow').style.display       = 'none';
   document.getElementById('acqIntakePanel').style.display     = 'block';
   _renderAcqIntake();
+  _acqIntakeDropHandlers();   // I-2: the Documents step's drop zone, armed once
+  _renderAcqIntakeDocs();     // I-2: whatever is held in this tab, as it stands
   window.scrollTo({ top: 0 });
   if (!(opts && opts.focus === false)) {
     const first = document.querySelector('#acqIntakeRows input[data-field="name"]');
@@ -35444,6 +35454,257 @@ async function acqIntakeCreate() {
         + 'Fix the row and press Create again to go on.'
       : `Created ${created} prospect${created === 1 ? '' : 's'}. Each is an acquisition you can open now.`;
   }
+}
+// ── Acquisition Intake (I-2): documents, held and read before any lane ───────
+// The Documents step. Files dropped here are HELD in this tab — never uploaded,
+// never written to a row — while one reader reads them one at a time (a text
+// file as it is; a PDF's text layer through pdf.js, as the lease lane reads it;
+// never an image, never a scan) and asks the server-owned classifier what each
+// one is. acquisition-intake.js holds every rule; this is the reader and the
+// screen. A 429 from the classifier pauses the queue for the interval the server
+// named and resumes it — it never fails a file. Nothing is filed: I-4 is the
+// first step that writes anywhere.
+function _ACQI() { return window.AcquisitionIntake; }
+let _acqIntakeHeld    = [];     // the files held in this tab, in the order they arrived
+let _acqIntakeRefused = [];     // refused at the drop: name, reason, hint
+const _acqIntakeReader = { running: false, paused: false, resumeAt: null, current: null, timer: null };
+let _acqIntakeDropArmed = false;
+let _acqIntakeUnloadArmed = false;
+
+function acqIntakeAddFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const AI = _ACQI();
+  if (!AI) { showToast('Intake is unavailable — the page did not load completely. Refresh and try again.', { color: '#92400e', textColor: '#fef3c7' }); return; }
+  const _L = window.MSRequestLimits;
+  let added = 0;
+  for (const f of files) {
+    if (_acqIntakeHeld.length >= AI.MAX_HELD) {
+      _acqIntakeRefused.push({ name: f.name, reason: AI.MAX_HELD + ' files are already held.', hint: 'File some of them before adding more.' });
+      continue;
+    }
+    const v = AI.accept({ name: f.name, type: f.type, size: f.size });
+    if (!v.ok) { _acqIntakeRefused.push({ name: f.name, reason: v.reason, hint: v.hint }); continue; }
+    const item = AI.newItem({ name: f.name, type: f.type, size: f.size, ext: v.ext });
+    item.file = f;
+    // Over the upload limit is a warning here, not a refusal: the text can
+    // still be read and classified; the original will not be stored (D-11).
+    const sz = _L ? _L.checkUploadSize(f.size, 'document') : { ok: true };
+    if (!sz.ok) item.warnings.push(AI.WARN.ORIGINAL_NOT_STORABLE);
+    const dup = AI.duplicateOf(_acqIntakeHeld, item);
+    if (dup) { item.warnings.push(AI.WARN.DUPLICATE); item.duplicateOf = dup.itemId; AI.transition(item, 'leave_out'); }
+    _acqIntakeHeld.push(item);
+    added++;
+  }
+  _renderAcqIntakeDocs();
+  _acqIntakeSyncUnload();
+  if (added) _acqIntakeReadNext();
+}
+
+// One file at a time, in the order they arrived. One reader, never two: the
+// classification call is rate-limited per user (20 a minute), and a 429 pauses
+// this queue rather than failing a file.
+function _acqIntakeReadNext() {
+  const AI = _ACQI();
+  if (!AI || _acqIntakeReader.running || _acqIntakeReader.paused) return;
+  const next = AI.nextToRead(_acqIntakeHeld);
+  if (!next) { _renderAcqIntakeReadStatus(); return; }
+  _acqIntakeReader.running = true;
+  _acqIntakeReader.current = next.itemId;
+  AI.transition(next, 'read_start');
+  const token = next.readToken;
+  _renderAcqIntakeDocs();
+  _acqIntakeReadOne(next, token)
+    .catch(e => { console.warn('[acq-intake] read failed:', next.name, e && e.message); })
+    .then(() => {
+      _acqIntakeReader.running = false;
+      if (_acqIntakeReader.current === next.itemId) _acqIntakeReader.current = null;
+      _renderAcqIntakeDocs();
+      _acqIntakeSyncUnload();
+      _acqIntakeReadNext();
+    });
+}
+
+// Read ONE held file, then ask what it is. A text file is read as it is; a PDF
+// through pdf.js, exactly as the lease lane reads one; an image is not read at
+// all — the module turns it into a question for a person, and so a PDF whose
+// text layer is too thin to be one (a scan). Nothing is transcribed here: a
+// scanned lease a person names is read by the lease reader when it is FILED.
+// A read that lands after the file was left out or removed is dropped — the
+// token moved. A 429 re-queues the file and pauses the reader.
+async function _acqIntakeReadOne(item, token) {
+  const AI = _ACQI();
+  const live = () => !item.removed && item.readToken === token && item.state === 'reading';
+  let text = '', textSource = 'text', pagesRead = 0;
+  try {
+    if (item.image) {
+      textSource = 'image';
+    } else if (item.ext === 'pdf') {
+      text = (await extractPdfText(item.file)) || '';
+      textSource = 'pdf';
+      pagesRead = (text.match(/^--- Page \d+ ---$/gm) || []).length;
+    } else {
+      text = (await item.file.text()) || '';
+    }
+  } catch (e) {
+    if (live()) AI.transition(item, 'read_failed', { error: (e && e.message) || 'The file could not be read.' });
+    return;
+  }
+  if (!live()) return;
+  AI.transition(item, 'read_ok', { text, textSource, pagesRead });
+  if (item.state !== 'reading') return;        // an image, a scan, nothing to read: a person's call
+  _renderAcqIntakeDocs();
+  try {
+    const reading = await _acqClassifyDocument(item.text, item.name, { rethrow: true });
+    if (!live()) return;
+    AI.transition(item, 'classified', { reading });
+  } catch (e) {
+    if (!live()) return;
+    if (e && e.status === 429) {
+      // Not the file's fault. Back to the queue as it was; the reader waits as
+      // long as the server asked and then goes on from here.
+      AI.transition(item, 'requeue');
+      _acqIntakePause(e.retryAfterSec);
+      return;
+    }
+    AI.transition(item, 'classified', { reading: null });   // the classifier was unavailable: a person's call
+  }
+}
+
+function _acqIntakePause(seconds) {
+  const secs = Math.max(1, Math.min(600, Number(seconds) || 20));
+  _acqIntakeReader.paused = true;
+  _acqIntakeReader.resumeAt = Date.now() + secs * 1000;
+  clearTimeout(_acqIntakeReader.timer);
+  _acqIntakeReader.timer = setTimeout(() => {
+    _acqIntakeReader.paused = false;
+    _acqIntakeReader.resumeAt = null;
+    _acqIntakeReader.timer = null;
+    _renderAcqIntakeReadStatus();
+    _acqIntakeReadNext();
+  }, secs * 1000);
+  _renderAcqIntakeReadStatus();
+}
+
+function _acqIntakeItem(itemId) { return _acqIntakeHeld.find(i => i.itemId === itemId) || null; }
+function _acqIntakeMove(itemId, event, info) {
+  const AI = _ACQI(), item = _acqIntakeItem(itemId);
+  if (!AI || !item) return null;
+  try { AI.transition(item, event, info); } catch (e) { console.warn('[acq-intake]', event, item.name, e && e.message); return null; }
+  _renderAcqIntakeDocs();
+  _acqIntakeSyncUnload();
+  return item;
+}
+function acqIntakeSetType(itemId, type) { if (type) _acqIntakeMove(itemId, 'set_type', { type }); }
+function acqIntakePick(itemId) { const item = _acqIntakeItem(itemId); if (!item) return; item.picking = !item.picking; _renderAcqIntakeDocs(); }
+function acqIntakeLeaveOut(itemId) { _acqIntakeMove(itemId, 'leave_out'); }
+function acqIntakeInclude(itemId) { if (_acqIntakeMove(itemId, 'include')) _acqIntakeReadNext(); }
+function acqIntakeRetry(itemId) { if (_acqIntakeMove(itemId, 'retry')) _acqIntakeReadNext(); }
+function acqIntakeRemove(itemId) {
+  const i = _acqIntakeHeld.findIndex(x => x.itemId === itemId);
+  if (i === -1) return;
+  _acqIntakeHeld[i].removed = true;       // an in-flight read of it is discarded when it lands
+  _acqIntakeHeld.splice(i, 1);
+  _renderAcqIntakeDocs();
+  _acqIntakeSyncUnload();
+}
+function acqIntakeClearHeld() {
+  if (!_acqIntakeHeld.length && !_acqIntakeRefused.length) return;
+  _acqIntakeHeld.forEach(x => { x.removed = true; });
+  _acqIntakeHeld = [];
+  _acqIntakeRefused = [];
+  _renderAcqIntakeDocs();
+  _acqIntakeSyncUnload();
+}
+function acqIntakeDismissRefused(i) { _acqIntakeRefused.splice(i, 1); _renderAcqIntakeDocs(); }
+
+// One held file's row: what it is (and who said so), the hints the reading
+// gave, its lane, its warnings, and the controls a person has — a type to pick
+// where one is needed, Change type on a proposal, Read again except for a type
+// a person set, Leave out / Include, Remove. Nothing here is a filing control.
+function _acqIntakeDocHtml(item) {
+  const AI = _ACQI(), AD = _AD();
+  const id = esc(item.itemId);
+  const d = AI.describe(item);
+  const hints = item.state === 'left_out' ? [] : AI.hintsFor(item.reading);
+  const warns = item.warnings || [];
+  const labelOf = (t) => AD ? AD.docTypeLabel(t) : t;
+  const settled = item.state !== 'queued' && item.state !== 'reading' && item.state !== 'left_out';
+  const picker = settled && (item.state !== 'classified' || item.picking)
+    ? `<label class="acq-intake-pick"><span>${item.state === 'classified' ? 'Change the type' : 'What is it?'}</span>
+        <select data-type onchange="acqIntakeSetType('${id}', this.value)">
+          <option value="">Choose a type…</option>${AI.picksFor(item).map(t => `<option value="${esc(t)}"${item.type.value === t ? ' selected' : ''}>${esc(labelOf(t))}</option>`).join('')}
+        </select></label>` : '';
+  const canRetry = settled && item.type.source !== 'human';
+  return `<div class="acq-intake-doc acq-intake-doc-${esc(item.state)}" data-item="${id}" data-state="${esc(item.state)}">
+      <div class="acq-intake-doc-main">
+        <div class="acq-intake-doc-name">${esc(item.name)} <span class="acq-intake-doc-size">${esc(_acqDocSize(item.bytes))}</span></div>
+        <div class="acq-intake-doc-type"><strong>${esc(d.label)}</strong>${d.badge ? ` <span class="acq-intake-badge">${esc(d.badge)}</span>` : ''}${d.note ? ` <span class="acq-intake-doc-note">${esc(d.note)}</span>` : ''}</div>
+        ${hints.length ? `<div class="acq-intake-doc-hints">${esc(hints.join(' · '))}</div>` : ''}
+        ${item.lane && item.state !== 'left_out' ? `<div class="acq-intake-doc-lane">${esc(AI.laneLabel(item.lane))}</div>` : ''}
+        ${warns.map(w => `<div class="acq-intake-doc-warn">${esc(w)}</div>`).join('')}
+        ${item.state !== 'read_failed' && item.error ? `<div class="acq-intake-doc-error">${esc(item.error)}</div>` : ''}
+        ${picker}
+      </div>
+      <div class="acq-intake-doc-actions">
+        ${item.state === 'classified' && !item.picking ? `<button type="button" class="acq-btn acq-btn-nav acq-intake-doc-change" onclick="acqIntakePick('${id}')">Change type</button>` : ''}
+        ${canRetry ? `<button type="button" class="acq-btn acq-btn-nav acq-intake-doc-retry" onclick="acqIntakeRetry('${id}')">Read again</button>` : ''}
+        ${item.state === 'left_out'
+          ? `<button type="button" class="acq-btn acq-btn-nav acq-intake-doc-include" onclick="acqIntakeInclude('${id}')">Include</button>`
+          : `<button type="button" class="acq-btn acq-btn-nav acq-intake-doc-leave" onclick="acqIntakeLeaveOut('${id}')">Leave out</button>`}
+        <button type="button" class="acq-btn acq-btn-nav acq-intake-doc-remove" onclick="acqIntakeRemove('${id}')" aria-label="Remove ${esc(item.name)}">Remove</button>
+      </div>
+    </div>`;
+}
+
+function _renderAcqIntakeDocs() {
+  const AI = _ACQI();
+  const held = document.getElementById('acqIntakeHeld');
+  if (!held || !AI) return;
+  held.innerHTML = _acqIntakeHeld.map(_acqIntakeDocHtml).join('');
+  const sum = document.getElementById('acqIntakeDocSummary');
+  if (sum) sum.textContent = AI.summaryText(_acqIntakeHeld);
+  const ref = document.getElementById('acqIntakeRefused');
+  if (ref) {
+    ref.innerHTML = _acqIntakeRefused.map((r, i) => `<div class="acq-intake-refused-row" role="alert">
+        <span class="acq-intake-refused-name">${esc(r.name)}</span>
+        <span class="acq-intake-refused-reason">${esc(r.reason)}${r.hint ? ' ' + esc(r.hint) : ''}</span>
+        <button type="button" class="acq-intake-refused-dismiss" onclick="acqIntakeDismissRefused(${i})" aria-label="Dismiss">×</button>
+      </div>`).join('');
+  }
+  const actions = document.getElementById('acqIntakeDocActions');
+  if (actions) actions.style.display = (_acqIntakeHeld.length || _acqIntakeRefused.length) ? 'flex' : 'none';
+  _renderAcqIntakeReadStatus();
+}
+function _renderAcqIntakeReadStatus() {
+  const el = document.getElementById('acqIntakeReadStatus');
+  const AI = _ACQI();
+  if (!el || !AI) return;
+  el.textContent = AI.readerStatus(_acqIntakeHeld, { paused: _acqIntakeReader.paused, resumeAt: _acqIntakeReader.resumeAt, current: _acqIntakeReader.current, now: Date.now() });
+}
+
+// The drop zone, armed once: dragging over it marks it; dropping adds the files.
+function _acqIntakeDropHandlers() {
+  if (_acqIntakeDropArmed) return;
+  const zone = document.getElementById('acqIntakeDropZone');
+  if (!zone) return;
+  _acqIntakeDropArmed = true;
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('acq-intake-drop-over'); }));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('acq-intake-drop-over'); }));
+  zone.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) acqIntakeAddFiles(e.dataTransfer.files); });
+}
+
+// Held files are browser-held, temporary state: nothing is stored anywhere.
+// While any is held, closing or reloading the tab asks first.
+function _acqIntakeBeforeUnload(e) {
+  if (!_acqIntakeHeld.some(i => i.state !== 'left_out')) return;
+  e.preventDefault();
+  e.returnValue = '';
+}
+function _acqIntakeSyncUnload() {
+  const want = _acqIntakeHeld.some(i => i.state !== 'left_out');
+  if (want && !_acqIntakeUnloadArmed) { window.addEventListener('beforeunload', _acqIntakeBeforeUnload); _acqIntakeUnloadArmed = true; }
+  else if (!want && _acqIntakeUnloadArmed) { window.removeEventListener('beforeunload', _acqIntakeBeforeUnload); _acqIntakeUnloadArmed = false; }
 }
 // ── end of Acquisition Intake (I-1) ──────────────────────────────────────────
 

@@ -529,6 +529,13 @@ const SUITES = [
   // Acquisitions section is shown to a brand-new account.
   { label: 'Acquisition Intake — properties (structural)', cmd: 'node test-acquisition-intake.js' },
   { label: 'Acquisition Intake — properties walk (e2e)',  cmd: 'node test-e2e-acquisition-intake.js' },
+  // Acquisition Intake I-2 — the Documents step: sixty files held in the tab,
+  // read one at a time and classified by the server-owned task; an image or a
+  // scan is never transcribed and waits for a person; a 429 pauses the reader
+  // and re-queues the file; a person's type wins and keeps the AI's beside it;
+  // nothing is filed — I-4 is the first step that writes.
+  { label: 'Acquisition Intake — held documents rules (pure)', cmd: 'node test-acquisition-intake-module.js' },
+  { label: 'Acquisition Intake — documents walk (e2e)',        cmd: 'node test-e2e-acquisition-intake-documents.js' },
   // §4l — one tenant row per leasehold. Found on the Pilot: a correction made
   // in the Lease Terms panel (65,000 → 67,000) never reached the Rent Roll,
   // which read one raw row per uploaded FILE. The analysis, the Rent Roll and

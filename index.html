@@ -7007,6 +7007,50 @@
     .acq-intake-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
     .acq-intake-status { margin-top: 10px; font-size: 0.82rem; color: var(--text-3); line-height: 1.5; }
     .acq-intake-status:empty { display: none; }
+    /* ── Acquisition Intake (I-2): the Documents step — held, read, waiting for a person ── */
+    .acq-intake-drop { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 18px; border: 2px dashed rgba(var(--line-rgb), 0.35);
+      border-radius: 12px; background: var(--theme-surface); transition: border-color 0.15s, background 0.15s; }
+    .acq-intake-drop.acq-intake-drop-over { border-color: #C9973A; background: rgba(201, 151, 58, 0.08); }
+    .acq-intake-drop-hint { font-size: 0.85rem; color: var(--text-3); }
+    .acq-intake-read-status { margin-top: 10px; font-size: 0.82rem; color: var(--text-3); min-height: 1.2em; }
+    .acq-intake-read-status:empty { display: none; }
+    .acq-intake-doc-summary { margin-top: 6px; font-size: 0.82rem; color: var(--text-2); }
+    .acq-intake-doc-summary:empty { display: none; }
+    .acq-intake-held { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .acq-intake-doc { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: start; padding: 10px 12px;
+      border: 1px solid rgba(var(--line-rgb), 0.18); border-radius: 10px; background: var(--theme-surface); }
+    .acq-intake-doc-queued, .acq-intake-doc-reading { opacity: 0.9; }
+    .acq-intake-doc-needs_type { border-color: rgba(251, 191, 36, 0.55); }
+    .acq-intake-doc-read_failed { border-color: rgba(239, 68, 68, 0.45); }
+    .acq-intake-doc-left_out { opacity: 0.6; }
+    .acq-intake-doc-main { min-width: 0; }
+    .acq-intake-doc-name { font-size: 0.88rem; font-weight: 600; color: var(--text-1); overflow-wrap: anywhere; }
+    .acq-intake-doc-size { font-weight: 400; color: var(--text-5); font-size: 0.76rem; margin-left: 4px; }
+    .acq-intake-doc-type { margin-top: 4px; font-size: 0.84rem; color: var(--text-2); }
+    .acq-intake-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em; background: rgba(251, 191, 36, 0.18); color: var(--c-fbbf24, #fbbf24); }
+    .acq-intake-doc-note { color: var(--text-4); font-size: 0.78rem; margin-left: 6px; }
+    .acq-intake-doc-hints, .acq-intake-doc-lane { margin-top: 3px; font-size: 0.78rem; color: var(--text-4); }
+    .acq-intake-doc-warn { margin-top: 4px; font-size: 0.78rem; color: var(--c-fbbf24, #fbbf24); overflow-wrap: anywhere; }
+    .acq-intake-doc-error { margin-top: 4px; font-size: 0.78rem; color: var(--c-f87171); overflow-wrap: anywhere; }
+    .acq-intake-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 0.78rem; color: var(--text-4); max-width: 320px; }
+    .acq-intake-pick select { min-height: 40px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(var(--line-rgb), 0.32);
+      background: var(--theme-bg); color: var(--text-1); font-size: 0.9rem; }
+    .acq-intake-doc-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .acq-intake-doc-actions .acq-btn { min-height: 34px; padding: 0 10px; font-size: 0.78rem; }
+    .acq-intake-refused { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .acq-intake-refused-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px;
+      border: 1px dashed rgba(239, 68, 68, 0.45); border-radius: 8px; font-size: 0.82rem; }
+    .acq-intake-refused-name { font-weight: 600; color: var(--text-2); overflow-wrap: anywhere; }
+    .acq-intake-refused-reason { color: var(--text-4); overflow-wrap: anywhere; flex: 1 1 240px; }
+    .acq-intake-refused-dismiss { background: none; border: none; color: var(--text-4); font-size: 1rem; cursor: pointer; min-height: 32px; min-width: 32px; }
+    @media (max-width: 720px) {
+      .acq-intake-doc { grid-template-columns: minmax(0, 1fr); }
+      .acq-intake-doc-actions { justify-content: flex-start; }
+      .acq-intake-doc-actions .acq-btn { min-height: 44px; }
+      .acq-intake-drop { flex-direction: column; align-items: stretch; }
+      .acq-intake-drop .acq-btn { min-height: 44px; }
+    }
     @media (max-width: 720px) {
       .acq-intake-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
       .acq-intake-row-created { grid-template-columns: minmax(0, 1fr); }
@@ -8217,6 +8261,24 @@
     </div>
     <div class="acq-intake-status" id="acqIntakeStatus" role="status" aria-live="polite"></div>
   </section>
+  <section class="acq-intake-step" id="acqIntakeDocuments" aria-labelledby="acqIntakeDocumentsHead">
+    <h3 class="acq-intake-step-head" id="acqIntakeDocumentsHead"><span class="acq-intake-step-no" aria-hidden="true">2</span> Documents</h3>
+    <p class="acq-intake-lead">Drop the deal's documents — leases, amendments, rent rolls, statements, invoices — in one go. They are held in this tab and read here;
+      nothing is filed until you say so. Images and scanned PDFs are not read: you say what they are, and a lease you name is read when it is filed.</p>
+    <div class="acq-intake-drop" id="acqIntakeDropZone">
+      <label class="acq-btn acq-btn-secondary acq-intake-drop-btn">Choose files
+        <input type="file" id="acqIntakeFileInput" accept=".pdf,.txt,.jpg,.jpeg,.png,.webp" multiple style="display:none"
+               onchange="acqIntakeAddFiles(this.files); this.value = '';"></label>
+      <span class="acq-intake-drop-hint">or drop them here — PDF, text, JPG, PNG or WebP</span>
+    </div>
+    <div class="acq-intake-read-status" id="acqIntakeReadStatus" role="status" aria-live="polite"></div>
+    <div class="acq-intake-doc-summary" id="acqIntakeDocSummary"></div>
+    <div id="acqIntakeHeld" class="acq-intake-held"></div>
+    <div id="acqIntakeRefused" class="acq-intake-refused"></div>
+    <div class="acq-intake-actions" id="acqIntakeDocActions" style="display:none;">
+      <button type="button" class="acq-btn acq-btn-nav" id="acqIntakeClearBtn" onclick="acqIntakeClearHeld()">Clear all</button>
+    </div>
+  </section>
 </div>
 
 <!-- ── Property Breadcrumb ───────────────────────────────────────────── -->
@@ -9259,6 +9321,8 @@
 <script src="acquisition-workspace.js"></script>
 <!-- Acquisition Review Phase 1 (P1-2): what may be written about a document and which columns a list asks for — pure; script.js writes it through the authenticated Supabase client, and migration 023's RLS and composite foreign key are what actually enforce ownership. -->
 <script src="acquisition-documents.js"></script>
+<!-- Acquisition Intake (I-2): what a dropped file becomes while it is held — pure rules, after the type table it mirrors. -->
+<script src="acquisition-intake.js"></script>
 <!-- Acquisition Review Phase 1 (P1-4, P4-1): the 27 lease terms and the shape of what one document says about each — pure; script.js asks the server-owned acquisition_abstraction task and stores the result on the document row. -->
 <!-- P5-3: the "which decision stands" rule, shared by the acquisition resolver
      and the Property Workspace. Pure; must load before acquisition-terms.js. -->
