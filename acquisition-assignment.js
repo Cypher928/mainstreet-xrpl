@@ -316,7 +316,9 @@
 
   // Addresses in the text that match no prospect: a house number followed by
   // one to three words ending in a street suffix. A unit number ("Suite 110,
-  // Maple Plaza") is not a house number. Up to three are named.
+  // Maple Plaza") is not a house number; nor is a date or reference fragment
+  // ("2024-06-30", "6/30"), and an address is one line — a number that ends a
+  // line is not the house number of the next. Up to three are named.
   function unknownAddresses(item, profiles) {
     var text = _str(item && item.text);
     var tokens = tokenize(text);
@@ -329,7 +331,12 @@
     for (var i = 0; i < tokens.length; i++) {
       if (!_isNum(tokens[i].w) || tokens[i].w.length > 6) continue;
       if (i > 0 && UNIT_WORDS[_norm(tokens[i - 1].w)]) continue;
+      // A number joined to the token before it — "2024-06-30", "6/30", "3.2", "10:30" — is a date or a
+      // reference fragment, never a house number.
+      if (i > 0 && /^[-\/.:]$/.test(text.slice(tokens[i - 1].e, tokens[i].s))) continue;
       for (var len = 1; len <= 3 && i + len < tokens.length; len++) {
+        // An address is one line: a number that ends a line is not the house number of the words on the next.
+        if (/[\r\n]/.test(text.slice(tokens[i].e, tokens[i + len].s))) break;
         var suffix = _norm(tokens[i + len].w);
         if (STREET_SUFFIX[suffix]) {
           var street = tokens.slice(i + 1, i + len + 1).map(function (t) { return _norm(t.w); });
@@ -573,7 +580,14 @@
     var headline;
     if (d.state === STATE.PROPOSED) headline = 'Proposed: ' + _nameOf(profiles, d.proposal.reviewId);
     else if (d.state === STATE.SEVERAL) headline = 'Names several properties — and may cover them';
-    else if (d.state === STATE.CANDIDATES) headline = 'Could belong to ' + names.join(' or ') + ' — which is it?';
+    else if (d.state === STATE.CANDIDATES) {
+      // Only weak clues anywhere: the list is what the faint clues point at, not where the file belongs.
+      var faint = names.length > 0 && _arr(d.candidates).every(function (r) { return !r.strong && !r.medium; });
+      if (!faint)                  headline = 'Could belong to ' + names.join(' or ') + ' — which is it?';
+      else if (names.length === 1) headline = 'Faint clues point to ' + names[0] + ' — it may belong to none of your prospects.';
+      else if (names.length === 2) headline = 'Faint clues point to ' + names.join(' or ') + ' — it may be neither.';
+      else                         headline = 'Faint clues point to ' + names.join(' or ') + ' — it may be none of them.';
+    }
     else headline = 'No property is named in this document.';
     var reasons = d.proposal ? d.proposal.clues.map(function (c) { return clueSentence(c, profiles, d.proposal.reviewId); }) : [];
     var others = _arr(ranked).map(function (t) {

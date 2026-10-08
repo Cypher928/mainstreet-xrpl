@@ -166,6 +166,18 @@ t('an address nobody has is named (up to three); a known address and a unit numb
   eq(AA.unknownAddresses(item('c.txt', 'Suite 110, Maple Plaza' + PAD, {}, null), ALL), []);
 });
 
+t('a date or a page marker that ends a line is not the house number of the next line; a number joined by "-", "/", "." or ":" is not one either; real addresses still are', () => {
+  const addr = (text) => AA.unknownAddresses(item('d.txt', text + PAD, {}, null), ALL).map(x => x.address);
+  eq(addr('RENT ROLL AS OF 2024-06-30\nMAPLE PLAZA - 120 Maple Ave, Springfield'), [], 'a date fragment bled into the next line (the "30 MAPLE PLAZA" case)');
+  eq(addr('Dated June 30, 2024\nCEDAR COURT - 45 Cedar Ct'), [], 'a year bled into the next line');
+  eq(addr('--- Page 3 ---\nBirch Plaza, a shopping center'), [], 'a page marker bled into the next line');
+  eq(addr('Table: 2024-06-30 | Birch Plaza | $2,400'), [], 'a date fragment on the same line, joined by "-"');
+  eq(addr('Ref 6/30 Birch Plaza'), [], 'a fragment joined by "/"');
+  eq(addr('Dated 2024-06-30 at 77 Birch Road'), ['77 Birch Road'], 'a real address after a date on the same line');
+  eq(addr('Suite 110, 77 Birch Road'), ['77 Birch Road'], 'a real address after a unit number');
+  eq(addr('Premises:\n77 Birch Road, Springfield'), ['77 Birch Road'], 'an address that starts a line');
+});
+
 sec('the decision');
 
 t('one strong clue and nothing elsewhere: proposed; a weak mention elsewhere is a faint note, not a block', () => {
@@ -356,6 +368,18 @@ t('explain: a question names the candidates; several says so; none says so; the 
   eq(n.headline, 'No property is named in this document.'); eq(n.reasons, []);
   const u = AA.explain(one([item('u.txt', 'Premises: 77 Birch Road, Springfield.' + PAD, { tenantName: 'Pine Dental PC' }, 'original_lease')]).d, [], ALL);
   ok(u.notes.some(x => x === 'Names an address not among your prospects: “77 Birch Road” — create a prospect for it?'), u.notes.join(' | '));
+});
+
+t('explain: when every candidate is only faintly named, the headline says the clues are faint and the file may belong to neither — not "which is it?"', () => {
+  const head = (text, reading, type, profiles) => AA.explain(one([item('w.txt', text + PAD, reading || {}, type || 'other')], profiles).d, [], profiles || ALL).headline;
+  eq(head('Somewhere on Maple Avenue, near the cedar trees.'), 'Faint clues point to Maple Plaza or Cedar Court — it may be neither.');
+  eq(head('The maple trees along the lot.'), 'Faint clues point to Maple Plaza — it may belong to none of your prospects.');
+  eq(head('Maple trees, cedar trees and oak trees.'), 'Faint clues point to Cedar Court or Maple Plaza or Oak Ridge — it may be none of them.');
+  const withUnknown = one([item('u.txt', 'Premises: 77 Birch Road. Somewhere on Maple Avenue.' + PAD, {}, 'other')]).d;
+  eq(withUnknown.basis, 'unknown_address');
+  eq(AA.explain(withUnknown, [], ALL).headline, 'Faint clues point to Maple Plaza — it may belong to none of your prospects.', 'weak-only with an unknown address is still faint');
+  eq(head('NOTICE', { tenantName: 'Summit Fitness LLC' }), 'Could belong to Oak Ridge — which is it?', 'a medium clue keeps the question');
+  eq(head(lease(MAPLE, 'Summit Fitness LLC'), { tenantName: 'Summit Fitness LLC' }, 'original_lease'), 'Could belong to Maple Plaza or Oak Ridge — which is it?', 'competition keeps the question');
 });
 
 t('the sentences for the clue kinds and the notes the screen never invents', () => {

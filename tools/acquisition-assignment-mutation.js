@@ -38,6 +38,9 @@
  *     A25  the address reason drops its snippet
  *     A26  a question is headlined as several
  *     A27  a single open prospect is implicitly its own
+ *     A28  a number joined to the token before it is a house number (the date fragment returns)
+ *     A29  a number that ends a line is the house number of the next line
+ *     A30  weak-only candidates are headlined as if the list were authoritative
  *
  * A FAILING BASELINE IS NOT A PASS.
  */
@@ -112,11 +115,18 @@ const MUTANTS = [
     from: "      case KIND.ADDRESS:        return 'Its address “' + c.matched + '” appears' + times + ' (' + c.snippet + ') — the address you gave.';",
     to:   "      case KIND.ADDRESS:        return 'Its address “' + c.matched + '” appears' + times + ' — the address you gave.';" },
   { id: 'A26', file: A, why: 'a question is headlined as several',
-    from: "    else if (d.state === STATE.CANDIDATES) headline = 'Could belong to ' + names.join(' or ') + ' — which is it?';",
-    to:   "    else if (d.state === STATE.CANDIDATES) headline = 'Names several properties — and may cover them';" },
+    from: "      if (!faint)                  headline = 'Could belong to ' + names.join(' or ') + ' — which is it?';",
+    to:   "      if (!faint)                  headline = 'Names several properties — and may cover them';" },
   { id: 'A27', file: A, why: 'a single open prospect is implicitly its own',
     from: "    out.state = STATE.NONE; out.basis = unknown.length ? 'unknown_address' : 'no_clue';",
     to:   "    if (c.prospectsCount === 1 && ranked.length) { out.state = STATE.PROPOSED; out.proposal = ranked[0]; out.candidates = [ranked[0]]; out.basis = 'only'; addUnknown(); return out; }\n    out.state = STATE.NONE; out.basis = unknown.length ? 'unknown_address' : 'no_clue';" },
+  { id: 'A28', file: A, why: 'a number joined to the token before it is a house number (the date fragment returns)',
+    from: "      if (i > 0 && /^[-\\/.:]$/.test(text.slice(tokens[i - 1].e, tokens[i].s))) continue;\n", to: "" },
+  { id: 'A29', file: A, why: 'a number that ends a line is the house number of the next line',
+    from: "        if (/[\\r\\n]/.test(text.slice(tokens[i].e, tokens[i + len].s))) break;\n", to: "" },
+  { id: 'A30', file: A, why: 'weak-only candidates are headlined as if the list were authoritative',
+    from: "      var faint = names.length > 0 && _arr(d.candidates).every(function (r) { return !r.strong && !r.medium; });",
+    to:   "      var faint = false;" },
 ];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acq-assign-mut-'));
