@@ -42,6 +42,11 @@
  *     G09  the row stops naming what it produced
  *     G10  an invoice's original is not stored
  *
+ *   The per-file lane cores (I-0) — script.js
+ *     I01  the lease core files into the review on screen, not the one it was told
+ *     I02  the other lane files only the first file of a batch
+ *     I03  the other lane's failed row names the review on screen
+ *
  *   The migration — migrations/023_*.sql
  *     M01  row-level security is never enabled
  *     M02  the owner policy lets everyone read everything
@@ -123,15 +128,18 @@ const MUTANTS = [
     to:   '    if (row) void row;' },
 
   // ── the intake ───────────────────────────────────────────────────────────
+  // (I-0: the per-file work lives in the lane cores _acqFileLease / _acqFileOther,
+  //  one indent shallower than the loop bodies these anchors were written against;
+  //  G01 and G02 also now name the intake id every write has carried since P1-3.)
   { id: 'G01', file: S, why: 'no row is written until the extraction has finished',
-    from: "    const docRow = await _acqSaveDocument({\n      reviewId: review.id, fileName: file.name, intakeKind: 'lease',\n      byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',\n    });\n    if (docRow) placeholder._documentId = docRow.id;",
-    to:   "    const docRow = null;" },
+    from: "  const docRow = await _acqSaveDocument({\n    reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',\n    byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',\n  });\n  if (docRow) placeholder._documentId = docRow.id;",
+    to:   "  const docRow = null;" },
   { id: 'G02', file: S, why: 'a failed extraction leaves no row again',
-    from: "      await _acqSaveDocument({\n        reviewId: review.id, fileName: file.name, intakeKind: 'lease',\n        byteSize: file.size, contentType: file.type || null,\n        storagePath: storage.ref, parsingStatus: 'failed',",
-    to:   "      await Promise.resolve({\n        reviewId: review.id, fileName: file.name, intakeKind: 'lease',\n        byteSize: file.size, contentType: file.type || null,\n        storagePath: storage.ref, parsingStatus: 'failed'," },
+    from: "    await _acqSaveDocument({\n      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, parsingStatus: 'failed',",
+    to:   "    await Promise.resolve({\n      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, parsingStatus: 'failed'," },
   { id: 'G03', file: S, why: 'the row forgets where the original is',
-    from: "        storagePath: storage.ref, extractedText: storedText || null,",
-    to:   "        storagePath: null, extractedText: storedText || null," },
+    from: "      storagePath: storage.ref, extractedText: storedText || null,",
+    to:   "      storagePath: null, extractedText: storedText || null," },
   { id: 'G04', file: S, why: 'the size gate is skipped, so an unstored file claims to be stored',
     from: "  if (!_L || !_v.ok) {\n    const reason = _v ? _v.error : 'request-limits.js is not loaded';",
     to:   "  if (false) {\n    const reason = _v ? _v.error : 'request-limits.js is not loaded';" },
@@ -145,14 +153,25 @@ const MUTANTS = [
     from: "  _acqLoadDocuments(id).then(() => { if (_activeAcqId === id) _renderAcqDocuments(); });",
     to:   "  void id;" },
   { id: 'G08', file: S, why: 'a scanned lease is filed with no text',
-    from: "        visionTextPromise = extractTextFromPdfDirect(file).catch(e => {",
-    to:   "        visionTextPromise = Promise.resolve(null).catch(e => {" },
+    from: "      visionTextPromise = extractTextFromPdfDirect(file).catch(e => {",
+    to:   "      visionTextPromise = Promise.resolve(null).catch(e => {" },
   { id: 'G09', file: S, why: 'the row stops naming what it produced',
-    from: "        producedKind: 'tenant', producedId: normalized.id || null,",
-    to:   "        producedKind: null, producedId: null," },
+    from: "      producedKind: 'tenant', producedId: normalized.id || null,",
+    to:   "      producedKind: null, producedId: null," },
   { id: 'G10', file: S, why: "an invoice's original is not stored",
-    from: "      const [stored, d] = await Promise.all([\n        _acqStoreOriginal(file, review.id),\n        callClaude(file, 'invoice_extraction'),\n      ]);",
-    to:   "      const [stored, d] = await Promise.all([\n        Promise.resolve({ ref: null, reason: null }),\n        callClaude(file, 'invoice_extraction'),\n      ]);" },
+    from: "    const [stored, d] = await Promise.all([\n      _acqStoreOriginal(file, review.id),\n      callClaude(file, 'invoice_extraction'),\n    ]);",
+    to:   "    const [stored, d] = await Promise.all([\n      Promise.resolve({ ref: null, reason: null }),\n      callClaude(file, 'invoice_extraction'),\n    ]);" },
+
+  // ── I-0: the per-file lane cores, told which review ───────────────────────
+  { id: 'I01', file: S, why: 'the lease core files into the review on screen, not the one it was told',
+    from: 'async function _acqFileLease(review, file, tenants) {',
+    to:   'async function _acqFileLease(_given, file, tenants) {\n  const review = _acqReviews.find(r => r.id === _activeAcqId);' },
+  { id: 'I02', file: S, why: 'the other lane files only the first file of a batch',
+    from: '  for (const file of files) await _acqFileOther(review, file, invoices);   // I-0: one file, one lane core, told the review',
+    to:   '  await _acqFileOther(review, files[0], invoices);' },
+  { id: 'I03', file: S, why: "the other lane's failed row names the review on screen",
+    from: "    await _acqSaveDocument({\n      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, parsingStatus: 'failed',",
+    to:   "    await _acqSaveDocument({\n      reviewId: _activeAcqId, fileName: file.name, intakeId, intakeKind: 'invoice',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, parsingStatus: 'failed'," },
 
   // ── the migration ────────────────────────────────────────────────────────
   { id: 'M01', file: M, why: 'row-level security is never enabled',

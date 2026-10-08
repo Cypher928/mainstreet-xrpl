@@ -45,15 +45,16 @@ const ROOT = path.join(__dirname, '..');
 const S = 'script.js';
 
 const MUTANTS = [
+  // (I-0: the per-file lines live in the lane cores _acqFileLease / _acqFileOther, one indent shallower than the loop bodies they were written against.)
   { id: 'I01', file: S, why: 'a lease upload appends to the list on screen',
-    from: '    tenants.push(placeholder);\n    if (_acqIsActive(review)) _renderAcqLeaselist();',
-    to:   '    _acqTenants.push(placeholder);\n    _renderAcqLeaselist();' },
+    from: '  tenants.push(placeholder);\n  if (_acqIsActive(review)) _renderAcqLeaselist();',
+    to:   '  _acqTenants.push(placeholder);\n  _renderAcqLeaselist();' },
   { id: 'I02', file: S, why: 'a lease upload saves the list on screen over its own review',
     from: "  review.data.tenants = tenants.filter(t => t._status !== 'error');",
     to:   "  review.data.tenants = _acqTenants.filter(t => t._status !== 'error');" },
   { id: 'I03', file: S, why: 'an invoice upload appends to the list on screen',
-    from: '    invoices.push(placeholder);\n    if (_acqIsActive(review)) _renderAcqInvoiceList();',
-    to:   '    _acqInvoices.push(placeholder);\n    _renderAcqInvoiceList();' },
+    from: '  invoices.push(placeholder);\n  if (_acqIsActive(review)) _renderAcqInvoiceList();',
+    to:   '  _acqInvoices.push(placeholder);\n  _renderAcqInvoiceList();' },
   { id: 'I04', file: S, why: 'an invoice upload saves the list on screen over its own review',
     from: "  review.data.invoices = invoices.filter(i => i._status !== 'error' && i.amount);",
     to:   "  review.data.invoices = _acqInvoices.filter(i => i._status !== 'error' && i.amount);" },

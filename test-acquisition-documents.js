@@ -381,8 +381,11 @@ t('the bucket list is unchanged — no new bucket, no new storage policy', () =>
 sec('the intake — the rules this increment exists for');
 
 const S = code('script.js');
-const lease   = fnBody(S, 'acqHandleLeaseFiles');
-const invoice = fnBody(S, 'acqHandleInvoiceFiles');
+// I-0: what happens to one file lives in the lane cores; the handlers keep the batch.
+const lease   = fnBody(S, '_acqFileLease');
+const invoice = fnBody(S, '_acqFileOther');
+const leaseBatch   = fnBody(S, 'acqHandleLeaseFiles');
+const invoiceBatch = fnBody(S, 'acqHandleInvoiceFiles');
 
 t('the row is written BEFORE anything is extracted, for both kinds', () => {
   for (const [label, body] of [['lease', lease], ['invoice', invoice]]) {
@@ -458,7 +461,48 @@ t('uploads keep working when the table is absent — extraction is not held host
 });
 
 t('the activity entry carries the document ids', () => {
-  ok(/documentIds/.test(lease) && /documentIds/.test(invoice));
+  ok(/documentIds/.test(leaseBatch) && /documentIds/.test(invoiceBatch));
+});
+
+// ── I-0 — the per-file lane cores, told which review ─────────────────────────
+sec('I-0 — the per-file lane cores, told which review');
+
+t('each upload handler hands every file to its lane core, one at a time, with the review it captured', () => {
+  ok(leaseBatch.includes('for (const file of files) await _acqFileLease(review, file, tenants);'), 'lease');
+  ok(invoiceBatch.includes('for (const file of files) await _acqFileOther(review, file, invoices);'), 'other');
+  for (const [label, body] of [['lease', leaseBatch], ['other', invoiceBatch]]) {
+    ok(!/_acqSaveDocument\(|_acqStoreOriginal\(|callClaude|extractLeaseText/.test(body), label + ': per-file work is left in the handler');
+  }
+});
+
+t('a core is told its review: it never reads the active one, and every write names the review it was given', () => {
+  ok(/^async function _acqFileLease\(review, file, tenants\) \{/m.test(S), 'the lease core signature');
+  ok(/^async function _acqFileOther\(review, file, invoices\) \{/m.test(S), 'the other core signature');
+  for (const [label, body] of [['lease', lease], ['other', invoice]]) {
+    ok(!/_activeAcqId|_acqReviews\.find/.test(body), label + ': the core reads the active review');
+    const ids = body.match(/reviewId:\s*[\w.]+/g) || [];
+    ok(ids.length >= 3 && ids.every(s => s === 'reviewId: review.id'), label + ': a write names another review: ' + ids.join(', '));
+    ok(/_acqStoreOriginal\(file, review\.id\)/.test(body), label + ': the original is stored under another review');
+    ok(/\n  return placeholder;/.test(body), label + ': the core does not hand back what it made of the file');
+  }
+});
+
+t('the handlers keep the batch work: guard, then the captured list, then the loop, then the activity entry and the save', () => {
+  for (const [label, body, list] of [['lease', leaseBatch, 'tenants'], ['other', invoiceBatch, 'invoices']]) {
+    const guard = body.indexOf('_acqRefuseFrozen(review)');
+    const captured = body.indexOf(`const ${list} = _acqWorkingList(review, '${list}'`);
+    const loop = body.indexOf('for (const file of files)');
+    const record = body.indexOf("type: 'documents_added'");
+    const save = body.indexOf('_saveAcqReview(review)');
+    ok(guard > -1 && captured > guard && loop > captured && record > loop && save > record,
+       `${label}: guard@${guard} list@${captured} loop@${loop} record@${record} save@${save}`);
+  }
+});
+
+t('a core asks whether its review is the one on screen before it draws a list', () => {
+  for (const [label, body] of [['lease', lease], ['other', invoice]]) {
+    ok((body.match(/_acqIsActive\(review\)/g) || []).length >= 2, label + ': the core draws without asking whose screen it is');
+  }
 });
 
 t('index.html has the Documents panel', () => {

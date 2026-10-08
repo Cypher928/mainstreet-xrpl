@@ -581,7 +581,7 @@ t('at intake, the document is read AFTER it is stored and AFTER it is classified
   // Once. A second call from the unclassified row would write `skipped` on a
   // lease for the moment before its classification landed — a state that is
   // false the instant it is written.
-  const intake = fnBody(S, 'acqHandleLeaseFiles');
+  const intake = fnBody(S, '_acqFileLease');   // I-0: the per-file work lives in the lane core
   eq((intake.match(/_acqAbstractDocument\(/g) || []).length, 1, 'abstraction calls in the intake');
 });
 

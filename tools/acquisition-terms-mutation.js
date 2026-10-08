@@ -157,9 +157,10 @@ const MUTANTS = [
   { id: 'C03', file: S, why: 'the status lands without its evidence',
     from: '    abstractedFields:  built.abstraction,\n    abstractionStatus: built.status,',
     to:   '    abstractionStatus: built.status,' },
+  // (I-0: these lines live in the lane core _acqFileLease, one indent shallower than the loop body they were written against.)
   { id: 'C04', file: S, why: 'the document is read BEFORE it is classified, from the unclassified row',
-    from: "      let classified = saved;\n      if (saved && storedText) {",
-    to:   "      let classified = saved;\n      if (saved) await _acqAbstractDocument(review.id, saved, storedText);\n      if (saved && storedText) {" },
+    from: "    let classified = saved;\n    if (saved && storedText) {",
+    to:   "    let classified = saved;\n    if (saved) await _acqAbstractDocument(review.id, saved, storedText);\n    if (saved && storedText) {" },
   { id: 'C05', file: S, why: 'a correction into a lease-family type does not re-read',
     from: '    if (isAbstractable && !wasAbstractable) {',
     to:   '    if (false && isAbstractable && !wasAbstractable) {' },

@@ -119,12 +119,13 @@ const MUTANTS = [
     to:   "    Object.keys(byFamily).forEach(function (k) { void k; });" },
 
   // ── the data layer ───────────────────────────────────────────────────────
+  // (I-0: these lines live in the lane core _acqFileLease, one indent shallower than the loop body they were written against.)
   { id: 'C01', file: S, why: 'the two writes of one upload get different identities',
-    from: "        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',\n        byteSize: file.size, contentType: file.type || null,\n        storagePath: storage.ref, extractedText: storedText || null,",
-    to:   "        reviewId: review.id, fileName: file.name, intakeId: _acqMintIntakeId(), intakeKind: 'lease',\n        byteSize: file.size, contentType: file.type || null,\n        storagePath: storage.ref, extractedText: storedText || null," },
+    from: "      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, extractedText: storedText || null,",
+    to:   "      reviewId: review.id, fileName: file.name, intakeId: _acqMintIntakeId(), intakeKind: 'lease',\n      byteSize: file.size, contentType: file.type || null,\n      storagePath: storage.ref, extractedText: storedText || null," },
   { id: 'C02', file: S, why: 'a re-upload replaces its predecessor again (D-14 regression)',
-    from: '    const replaced = docRow ? await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id) : null;',
-    to:   '    const replaced = null;' },
+    from: '  const replaced = docRow ? await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id) : null;',
+    to:   '  const replaced = null;' },
   { id: 'C03', file: S, why: 'the AI path writes a confirmation',
     from: "    docTypeStatus: type === 'unknown' ? 'unclassified' : 'proposed',",
     to:   "    docTypeStatus: type === 'unknown' ? 'unclassified' : 'confirmed'," },
@@ -132,8 +133,8 @@ const MUTANTS = [
     from: "    fields.familyStatus = 'proposed';",
     to:   "    fields.familyStatus = opts.inheritedFamily ? 'confirmed' : 'proposed';" },
   { id: 'C05', file: S, why: 'classification is awaited before the source is stored',
-    from: '      const saved = await _acqSaveDocument({',
-    to:   '      await _acqClassifyDocument(leaseText, file.name);\n      const saved = await _acqSaveDocument({' },
+    from: '    const saved = await _acqSaveDocument({',
+    to:   '    await _acqClassifyDocument(leaseText, file.name);\n    const saved = await _acqSaveDocument({' },
   { id: 'C06', file: S, why: 'the classifier is given the file name to classify from',
     from: '        `File name (context only, do not classify from it): ${fileName || \'unknown\'}\\n\\n` +',
     to:   '        `File name: ${fileName || \'unknown\'}\\n\\n` +' },

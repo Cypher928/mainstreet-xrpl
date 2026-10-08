@@ -35934,6 +35934,126 @@ function _acqWorkingList(review, key, displayed) {
   return list;
 }
 
+// ── Acquisition Intake (I-0): the per-file lane cores ───────────────────────
+// What happens to ONE file — the row first, the original stored while it is
+// read, what it is, what it says, the honest failed row — is a lane core that is
+// TOLD which review it files into; it never reads the active review. The two
+// upload handlers keep their batch work exactly as it was (the active review,
+// the freeze guard, the working list captured before the first await, the
+// activity entry, the save) and hand each file to its lane's core. Nothing a
+// person sees changes; a later step may call a core for a review that is not
+// the one on screen.
+async function _acqFileLease(review, file, tenants) {
+  const placeholder = { tenant_name: file.name, _status: 'pending', _fileName: file.name };
+  tenants.push(placeholder);
+  if (_acqIsActive(review)) _renderAcqLeaselist();
+
+  // THE ROW FIRST. That this file arrived is a fact, and a tab closed
+  // mid-extraction must not lose it. Everything after this updates that row,
+  // keyed on the intake id so it stays ONE row (D-14).
+  const intakeId = _acqMintIntakeId();
+  const docRow = await _acqSaveDocument({
+    reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
+    byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
+  });
+  if (docRow) placeholder._documentId = docRow.id;
+  // If this name was already used, the earlier upload is marked superseded —
+  // kept, with its own original and text, not overwritten.
+  const replaced = docRow ? await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id) : null;
+  _renderAcqDocuments();
+
+  let storage = { ref: null, reason: null };
+  try {
+    // The original goes to storage while its text is being read — neither
+    // waits on the other, the shape processFile and the amendment path share.
+    const [stored, leaseText] = await Promise.all([
+      _acqStoreOriginal(file, review.id),
+      extractLeaseText(file),
+    ]);
+    storage = stored;
+
+    let extracted;
+    let usedPdfDirect     = false;
+    let visionTextPromise = null;
+    if (leaseText && leaseText.length >= 50) {
+      extracted = await callClaudeForLease(leaseText, file.name);
+    } else {
+      // A SCANNED LEASE MUST STILL BE ASKABLE. The vision path returns fields,
+      // not text, so the row's extracted_text would be null and every later
+      // increment that reads the document would find nothing. Intake and the
+      // amendment path both solve this with a second transcription pass; the
+      // same call is made here for the same reason.
+      usedPdfDirect     = true;
+      visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
+        console.warn('[acq] vision text pass failed:', file.name, e && e.message);
+        return null;
+      });
+      extracted = await callClaudeWithPdfDirect(file);
+    }
+    if (!extracted) throw new Error('Extraction returned null');
+
+    const storedText = usedPdfDirect ? (await visionTextPromise) : leaseText;
+    const normalized = mintTenantIdentity(normalizeTenant(extracted));
+    Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
+    if (docRow) placeholder._documentId = docRow.id;
+
+    const saved = await _acqSaveDocument({
+      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
+      byteSize: file.size, contentType: file.type || null,
+      storagePath: storage.ref, extractedText: storedText || null,
+      // 'partial' is the honest word for "the fields were read, the text was
+      // not kept" — the same distinction lease_documents draws.
+      parsingStatus: storedText ? 'success' : 'partial',
+      extractionModel: extracted._extractionModel ?? null,
+      usedPdfDirect, errorMessage: storage.reason,
+      producedKind: 'tenant', producedId: normalized.id || null,
+    });
+
+    // WHAT IT IS (P1-3). Read from the text already stored, after the source
+    // is safe — a classification that fails costs the review nothing.
+    let classified = saved;
+    if (saved && storedText) {
+      const reading = await _acqClassifyDocument(storedText, file.name);
+      if (reading) {
+        classified = (await _acqApplyClassification(review.id, saved, reading,
+          { inheritedFamily: !!(replaced && replaced.inherit && replaced.inherit.family_id) })) || saved;
+      }
+      _renderAcqDocuments();
+    }
+
+    // WHAT IT SAYS (P1-4). After the source is safe and after it is
+    // classified, because whether it is read at all depends on what it is:
+    // a lease-family document is read for its terms; a rent roll is
+    // `skipped`; a document with no stored text is `failed`, honestly.
+    // Like classification, this costs the review nothing when it fails.
+    if (classified) {
+      await _acqAbstractDocument(review.id, classified, storedText);
+      _renderAcqDocuments();
+    }
+  } catch (e) {
+    console.warn('[acq] lease extraction failed:', file.name, e.message);
+    placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
+    placeholder._status = 'error';
+    placeholder._error  = e.message;
+    // A failed extraction used to leave nothing at all. The file was still
+    // given to the review, and the row says so — with the original attached
+    // when it reached storage, so the manager can open what was uploaded.
+    await _acqSaveDocument({
+      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
+      byteSize: file.size, contentType: file.type || null,
+      storagePath: storage.ref, parsingStatus: 'failed',
+      errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
+    });
+  }
+
+  if (_acqIsActive(review)) {
+    _renderAcqLeaselist();
+    _renderAcqDocuments();
+    _updateAcqAnalyzeBtn();
+  }
+  return placeholder;
+}
+
 async function acqHandleLeaseFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
@@ -35943,115 +36063,7 @@ async function acqHandleLeaseFiles(fileList) {
   // Captured now, before anything is awaited — see "Cross-review isolation".
   const tenants = _acqWorkingList(review, 'tenants', _acqTenants);
 
-  for (const file of files) {
-    const placeholder = { tenant_name: file.name, _status: 'pending', _fileName: file.name };
-    tenants.push(placeholder);
-    if (_acqIsActive(review)) _renderAcqLeaselist();
-
-    // THE ROW FIRST. That this file arrived is a fact, and a tab closed
-    // mid-extraction must not lose it. Everything after this updates that row,
-    // keyed on the intake id so it stays ONE row (D-14).
-    const intakeId = _acqMintIntakeId();
-    const docRow = await _acqSaveDocument({
-      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
-      byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
-    });
-    if (docRow) placeholder._documentId = docRow.id;
-    // If this name was already used, the earlier upload is marked superseded —
-    // kept, with its own original and text, not overwritten.
-    const replaced = docRow ? await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id) : null;
-    _renderAcqDocuments();
-
-    let storage = { ref: null, reason: null };
-    try {
-      // The original goes to storage while its text is being read — neither
-      // waits on the other, the shape processFile and the amendment path share.
-      const [stored, leaseText] = await Promise.all([
-        _acqStoreOriginal(file, review.id),
-        extractLeaseText(file),
-      ]);
-      storage = stored;
-
-      let extracted;
-      let usedPdfDirect     = false;
-      let visionTextPromise = null;
-      if (leaseText && leaseText.length >= 50) {
-        extracted = await callClaudeForLease(leaseText, file.name);
-      } else {
-        // A SCANNED LEASE MUST STILL BE ASKABLE. The vision path returns fields,
-        // not text, so the row's extracted_text would be null and every later
-        // increment that reads the document would find nothing. Intake and the
-        // amendment path both solve this with a second transcription pass; the
-        // same call is made here for the same reason.
-        usedPdfDirect     = true;
-        visionTextPromise = extractTextFromPdfDirect(file).catch(e => {
-          console.warn('[acq] vision text pass failed:', file.name, e && e.message);
-          return null;
-        });
-        extracted = await callClaudeWithPdfDirect(file);
-      }
-      if (!extracted) throw new Error('Extraction returned null');
-
-      const storedText = usedPdfDirect ? (await visionTextPromise) : leaseText;
-      const normalized = mintTenantIdentity(normalizeTenant(extracted));
-      Object.assign(placeholder, normalized, { _status: 'ok', _fileName: file.name });
-      if (docRow) placeholder._documentId = docRow.id;
-
-      const saved = await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
-        byteSize: file.size, contentType: file.type || null,
-        storagePath: storage.ref, extractedText: storedText || null,
-        // 'partial' is the honest word for "the fields were read, the text was
-        // not kept" — the same distinction lease_documents draws.
-        parsingStatus: storedText ? 'success' : 'partial',
-        extractionModel: extracted._extractionModel ?? null,
-        usedPdfDirect, errorMessage: storage.reason,
-        producedKind: 'tenant', producedId: normalized.id || null,
-      });
-
-      // WHAT IT IS (P1-3). Read from the text already stored, after the source
-      // is safe — a classification that fails costs the review nothing.
-      let classified = saved;
-      if (saved && storedText) {
-        const reading = await _acqClassifyDocument(storedText, file.name);
-        if (reading) {
-          classified = (await _acqApplyClassification(review.id, saved, reading,
-            { inheritedFamily: !!(replaced && replaced.inherit && replaced.inherit.family_id) })) || saved;
-        }
-        _renderAcqDocuments();
-      }
-
-      // WHAT IT SAYS (P1-4). After the source is safe and after it is
-      // classified, because whether it is read at all depends on what it is:
-      // a lease-family document is read for its terms; a rent roll is
-      // `skipped`; a document with no stored text is `failed`, honestly.
-      // Like classification, this costs the review nothing when it fails.
-      if (classified) {
-        await _acqAbstractDocument(review.id, classified, storedText);
-        _renderAcqDocuments();
-      }
-    } catch (e) {
-      console.warn('[acq] lease extraction failed:', file.name, e.message);
-      placeholder.tenant_name = file.name.replace(/\.[^.]+$/, '');
-      placeholder._status = 'error';
-      placeholder._error  = e.message;
-      // A failed extraction used to leave nothing at all. The file was still
-      // given to the review, and the row says so — with the original attached
-      // when it reached storage, so the manager can open what was uploaded.
-      await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'lease',
-        byteSize: file.size, contentType: file.type || null,
-        storagePath: storage.ref, parsingStatus: 'failed',
-        errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
-      });
-    }
-
-    if (_acqIsActive(review)) {
-      _renderAcqLeaselist();
-      _renderAcqDocuments();
-      _updateAcqAnalyzeBtn();
-    }
-  }
+  for (const file of files) await _acqFileLease(review, file, tenants);   // I-0: one file, one lane core, told the review
 
   review.data = review.data || {};
   review.data.tenants = tenants.filter(t => t._status !== 'error');
@@ -36070,6 +36082,89 @@ async function acqHandleLeaseFiles(fileList) {
   document.getElementById('acqLeaseInput').value = '';
 }
 
+// The other lane: everything that is not a lease, through the invoice reader.
+async function _acqFileOther(review, file, invoices) {
+  // An id so the document row can name what this file produced. Invoices
+  // carried none; the analysis engine reads them positionally and is
+  // unaffected by one being present.
+  const placeholder = {
+    id: 'acqinv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+    vendorName: file.name, amount: null, _status: 'pending', fileName: file.name,
+  };
+  invoices.push(placeholder);
+  if (_acqIsActive(review)) _renderAcqInvoiceList();
+
+  // The row first — see _acqFileLease.
+  const intakeId = _acqMintIntakeId();
+  const docRow = await _acqSaveDocument({
+    reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
+    byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
+  });
+  if (docRow) placeholder._documentId = docRow.id;
+  if (docRow) await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id);
+  _renderAcqDocuments();
+
+  let storage = { ref: null, reason: null };
+  try {
+    const [stored, d] = await Promise.all([
+      _acqStoreOriginal(file, review.id),
+      callClaude(file, 'invoice_extraction'),
+    ]);
+    storage = stored;
+    if (d) {
+      const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
+      let category     = d.category || 'other';
+      if (category === 'other') {
+        const norm = normalizeCategory(vendorName, '');
+        if (norm) category = norm.category;
+      }
+      Object.assign(placeholder, {
+        vendorName:  cleanHTML(vendorName),
+        amount:      d.amount || null,
+        category,
+        invoiceDate: cleanHTML(d.invoiceDate || ''),
+        _status:     'ok',
+      });
+      // An invoice has no text layer to keep — the fields ARE what was read,
+      // so a successful extraction is 'success' rather than 'partial'.
+      // An invoice's type is a fact of the lane it came through, not a
+      // reading — so it is classified from the intake control, recorded as
+      // `intake_kind` provenance, and never dressed up as an AI proposal.
+      await _acqSaveDocument({
+        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
+        byteSize: file.size, contentType: file.type || null,
+        storagePath: storage.ref, parsingStatus: 'success',
+        errorMessage: storage.reason,
+        producedKind: 'invoice', producedId: placeholder.id,
+        docType: 'invoice', docTypeStatus: 'proposed', docTypeSource: 'intake_kind',
+        docDate: /^\d{4}-\d{2}-\d{2}$/.test(d.invoiceDate || '') ? d.invoiceDate : null,
+        classificationHistory: _AD().appendHistory(docRow && docRow.classification_history, {
+          action: 'proposed', field: 'doc_type', to: 'invoice', source: 'intake_kind',
+        }),
+      });
+    } else {
+      throw new Error('Extraction returned null');
+    }
+  } catch (e) {
+    console.warn('[acq] invoice extraction failed:', file.name, e.message);
+    placeholder._status = 'error';
+    placeholder._error  = e.message;
+    await _acqSaveDocument({
+      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
+      byteSize: file.size, contentType: file.type || null,
+      storagePath: storage.ref, parsingStatus: 'failed',
+      errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
+    });
+  }
+
+  if (_acqIsActive(review)) {
+    _renderAcqInvoiceList();
+    _renderAcqDocuments();
+    _updateAcqAnalyzeBtn();
+  }
+  return placeholder;
+}
+
 async function acqHandleInvoiceFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
@@ -36079,86 +36174,7 @@ async function acqHandleInvoiceFiles(fileList) {
   // Captured now, before anything is awaited — see "Cross-review isolation".
   const invoices = _acqWorkingList(review, 'invoices', _acqInvoices);
 
-  for (const file of files) {
-    // An id so the document row can name what this file produced. Invoices
-    // carried none; the analysis engine reads them positionally and is
-    // unaffected by one being present.
-    const placeholder = {
-      id: 'acqinv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
-      vendorName: file.name, amount: null, _status: 'pending', fileName: file.name,
-    };
-    invoices.push(placeholder);
-    if (_acqIsActive(review)) _renderAcqInvoiceList();
-
-    // The row first — see acqHandleLeaseFiles.
-    const intakeId = _acqMintIntakeId();
-    const docRow = await _acqSaveDocument({
-      reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
-      byteSize: file.size, contentType: file.type || null, parsingStatus: 'pending',
-    });
-    if (docRow) placeholder._documentId = docRow.id;
-    if (docRow) await _acqSupersedePrevious(review.id, file.name, intakeId, docRow.id);
-    _renderAcqDocuments();
-
-    let storage = { ref: null, reason: null };
-    try {
-      const [stored, d] = await Promise.all([
-        _acqStoreOriginal(file, review.id),
-        callClaude(file, 'invoice_extraction'),
-      ]);
-      storage = stored;
-      if (d) {
-        const vendorName = d.vendorName || file.name.replace(/\.(pdf|jpe?g|png|webp)$/i, '');
-        let category     = d.category || 'other';
-        if (category === 'other') {
-          const norm = normalizeCategory(vendorName, '');
-          if (norm) category = norm.category;
-        }
-        Object.assign(placeholder, {
-          vendorName:  cleanHTML(vendorName),
-          amount:      d.amount || null,
-          category,
-          invoiceDate: cleanHTML(d.invoiceDate || ''),
-          _status:     'ok',
-        });
-        // An invoice has no text layer to keep — the fields ARE what was read,
-        // so a successful extraction is 'success' rather than 'partial'.
-        // An invoice's type is a fact of the lane it came through, not a
-        // reading — so it is classified from the intake control, recorded as
-        // `intake_kind` provenance, and never dressed up as an AI proposal.
-        await _acqSaveDocument({
-          reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
-          byteSize: file.size, contentType: file.type || null,
-          storagePath: storage.ref, parsingStatus: 'success',
-          errorMessage: storage.reason,
-          producedKind: 'invoice', producedId: placeholder.id,
-          docType: 'invoice', docTypeStatus: 'proposed', docTypeSource: 'intake_kind',
-          docDate: /^\d{4}-\d{2}-\d{2}$/.test(d.invoiceDate || '') ? d.invoiceDate : null,
-          classificationHistory: _AD().appendHistory(docRow && docRow.classification_history, {
-            action: 'proposed', field: 'doc_type', to: 'invoice', source: 'intake_kind',
-          }),
-        });
-      } else {
-        throw new Error('Extraction returned null');
-      }
-    } catch (e) {
-      console.warn('[acq] invoice extraction failed:', file.name, e.message);
-      placeholder._status = 'error';
-      placeholder._error  = e.message;
-      await _acqSaveDocument({
-        reviewId: review.id, fileName: file.name, intakeId, intakeKind: 'invoice',
-        byteSize: file.size, contentType: file.type || null,
-        storagePath: storage.ref, parsingStatus: 'failed',
-        errorMessage: [e.message, storage.reason].filter(Boolean).join(' · '),
-      });
-    }
-
-    if (_acqIsActive(review)) {
-      _renderAcqInvoiceList();
-      _renderAcqDocuments();
-      _updateAcqAnalyzeBtn();
-    }
-  }
+  for (const file of files) await _acqFileOther(review, file, invoices);   // I-0: one file, one lane core, told the review
 
   review.data = review.data || {};
   review.data.invoices = invoices.filter(i => i._status !== 'error' && i.amount);

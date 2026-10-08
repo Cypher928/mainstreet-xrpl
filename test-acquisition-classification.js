@@ -617,13 +617,13 @@ sec('the data layer keeps P1-2’s storage flow and RLS pattern');
   });
 
   t('the intake mints one identity per file and reuses it for that upload', () => {
-    const lease = fnBody(S, 'acqHandleLeaseFiles');
+    const lease = fnBody(S, '_acqFileLease');   // I-0: the per-file work lives in the lane core
     ok(/const intakeId = _acqMintIntakeId\(\)/.test(lease), 'no identity is minted');
     eq((lease.match(/intakeId,/g) || []).length >= 3, true, 'the identity is not reused by every write');
   });
 
   t('classification runs AFTER the source is safe, and never gates it', () => {
-    const lease = fnBody(S, 'acqHandleLeaseFiles');
+    const lease = fnBody(S, '_acqFileLease');   // I-0: the per-file work lives in the lane core
     const saveAt = lease.indexOf('const saved = await _acqSaveDocument');
     const classAt = lease.indexOf('_acqClassifyDocument');
     ok(saveAt > -1 && classAt > saveAt, 'classification does not follow the save');
