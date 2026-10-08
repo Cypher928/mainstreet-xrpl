@@ -536,6 +536,11 @@ const SUITES = [
   // nothing is filed — I-4 is the first step that writes.
   { label: 'Acquisition Intake — held documents rules (pure)', cmd: 'node test-acquisition-intake-module.js' },
   { label: 'Acquisition Intake — documents walk (e2e)',        cmd: 'node test-e2e-acquisition-intake-documents.js' },
+  // Acquisition Intake I-3a — which property a held document belongs to: the
+  // clue kinds and strengths, what blocks a proposal, when "several" is allowed,
+  // the one-hop sibling clue, the validator a person's choice passes through,
+  // the words the screen shows. Pure; proposes only — a person assigns.
+  { label: 'Acquisition Intake — property proposal rules (pure)', cmd: 'node test-acquisition-assignment.js' },
   // §4l — one tenant row per leasehold. Found on the Pilot: a correction made
   // in the Lease Terms panel (65,000 → 67,000) never reached the Rent Roll,
   // which read one raw row per uploaded FILE. The analysis, the Rent Roll and
